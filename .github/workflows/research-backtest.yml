@@ -31,6 +31,8 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+      - name: Validate execution model before collecting
+        run: python3 -m unittest discover -s tests -v
       - name: Collect historical quotes and outcomes
         env:
           ASSET: ${{ inputs.asset }}
