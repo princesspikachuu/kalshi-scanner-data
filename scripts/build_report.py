@@ -75,6 +75,64 @@ def comparison_grid(rows, minutes):
     return lines
 
 
+
+def build_execution_report():
+    """Rank only evidence-backed proxies; never describe as proven real fills."""
+    by_asset = {}
+    for asset, title, folder, _ref, _minutes in ASSETS:
+        data=[]
+        for filename in sorted(folder.glob("????-??-??.execution.csv")):
+            with filename.open(newline="",encoding="utf-8") as f:
+                data.extend(csv.DictReader(f))
+        by_asset[asset]=(title,data)
+    report=[
+      "# Maker execution evidence and bid offsets", "",
+      "**Not verified fills.** Public trade history provides only a counterfactual",
+      "trade-through proxy. The strategy has not joined the historical order queue.",
+      "At-price trades alone do not count as fills. One simulated contract per attempt.",
+      "A fixed 1-cent fee stress is used, not a statement of actual maker fees.",
+      "Candidates below 30 independent markets or 5 separate days are NOT ranked.",
+      "Quote freshness: up to 60 seconds; simulated order lifetime: 60 seconds.",
+      "",
+    ]
+    with Path("backtests/EXECUTION_BY_BID_OFFSET.csv").open("w",newline="",encoding="utf-8") as f:
+        writer=csv.writer(f)
+        writer.writerow(["asset","minutes_before_close","baseline_band","offset_cents",
+                         "attempts","independent_markets","days","trade_through_proxies",
+                         "at_price_only","proxy_fill_rate_percent",
+                         "proxy_net_cents_per_attempt","proxy_net_cents_per_through"])
+        for asset,(title,rows) in by_asset.items():
+            report.extend(["## "+title,""])
+            groups=defaultdict(list)
+            for row in rows:
+                key=(row["minutes_before_close"],row["baseline_band"],row["bid_offset_cents"])
+                groups[key].append(row)
+            ranked=[]
+            for (mins,band,offset),items in sorted(groups.items()):
+                attempts=len(items)
+                unique=len({r["ticker"] for r in items})
+                days=len({r["date"] for r in items})
+                through=sum(r["evidence"]=="trade_through" for r in items)
+                at=sum(r["evidence"]=="at_price_only" for r in items)
+                net=sum(float(r["net_cents_per_attempt_proxy"]) for r in items)
+                rate=100*through/attempts
+                per_attempt=net/attempts
+                per_through=net/through if through else 0
+                writer.writerow([asset,mins,band,offset,attempts,unique,days,
+                                 through,at,round(rate,2),
+                                 round(per_attempt,4),round(per_through,4)])
+                if unique>=30 and days>=5 and through>=10:
+                    ranked.append((per_attempt,mins,band,offset,attempts,unique,days,through,rate))
+            if not ranked:
+                report.extend(["Insufficient execution evidence to rank bid offsets.", ""])
+                continue
+            report.extend(["| Time left | Baseline price band | Bid adjustment | Attempts | Events | Days | Trade-through proxies | Proxy rate | Net per attempt (proxy) |",
+              "|---:|---|---:|---:|---:|---:|---:|---:|---:|"])
+            for net,mins,band,offset,attempts,unique,days,through,rate in sorted(ranked,reverse=True)[:15]:
+                report.append(f"| {mins}m | {band}¢ | {int(offset):+}¢ | {attempts} | {unique} | {days} | {through} | {rate:.1f}% | {net:+.3f}¢ |")
+            report.append("")
+    Path("backtests/EXECUTION_REPORT.md").write_text("\n".join(report)+"\n",encoding="utf-8")
+
 def build():
     overview=[
         "# Kalshi Pocket Analytics — average maker P/L by entry time and price",
@@ -190,6 +248,7 @@ def build():
                          "sampled_markets","wins","win_rate_percent","average_purchase_price_cents",
                          "average_profit_loss_cents_per_contract","hypothetical_roi_percent","sampled_days"])
         writer.writerows(rows_for_csv)
+    build_execution_report()
     print("Updated entry-time by price-band reports and CSV.")
 
 if __name__=="__main__":
