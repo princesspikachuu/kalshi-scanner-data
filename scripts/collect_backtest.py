@@ -40,8 +40,6 @@ DAILY_WEATHER_SERIES={
     "KXHIGHAUS":("high_temperature","Austin"),
     "KXHIGHDEN":("high_temperature","Denver"),
     "KXHIGHTEWR":("high_temperature","Newark"),
-    "KXLOWTMIA":("low_temperature","Miami"),
-    "KXRAIN":("daily_rain","Multiple cities"),
 }
 # Calendar-day equity index close only. Weekly/monthly price targets excluded.
 DAILY_FINANCIAL_SERIES={
