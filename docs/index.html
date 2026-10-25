@@ -320,9 +320,10 @@ function initCollection(){
 document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){state.asset=b.dataset.asset;id("detail").classList.remove("visible");render()})});
 document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;id("detail").classList.remove("visible");render()})});
 id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);id("detail").classList.remove("visible");render()});
-id("refresh").addEventListener("click",load);
+id("refresh").addEventListener("click",function(){load();loadExecutionSummary()});
 initCollection();
 checkBackend();
 load();
+loadExecutionSummary();
 })();
 </script></body></html>
