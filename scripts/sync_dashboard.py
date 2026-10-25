@@ -32,6 +32,10 @@ def main():
         if not EXPECTED.issubset(set(rows[0]) if rows else set()):
             raise SystemExit("Generated P/L CSV is empty or missing expected columns")
     shutil.copyfile(src, DOCS / "data.csv")
+    latest=BACKTESTS / "LATEST_BY_CATEGORY.csv"
+    if latest.exists():shutil.copyfile(latest,DOCS / "latest-data.csv")
+    latest_meta=BACKTESTS / "LATEST_METADATA.json"
+    if latest_meta.exists():shutil.copyfile(latest_meta,DOCS / "latest-meta.json")
     execution_src = BACKTESTS / "EXECUTION_BY_BID_OFFSET.csv"
     if execution_src.exists():
         shutil.copyfile(execution_src, DOCS / "execution.csv")
