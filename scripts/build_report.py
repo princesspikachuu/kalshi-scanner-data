@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Human-friendly, maker-only historical P/L grouped by market type and cost band.
+"""Maker-only average P/L grouped by entry time and cost band.
 
-Each headline row uses one reference entry time per contract to avoid counting
-different snapshots of the same contract as independent trades.
+Each contract is counted once within each time-by-price cell; different time
+rows may reuse the same contracts. Quoted bids do not establish filled orders.
 """
 import csv
 from collections import defaultdict
