@@ -39,12 +39,18 @@ jobs:
           DAYS_AGO: ${{ inputs.days_ago }}
           MAX_MARKETS: ${{ inputs.max_markets }}
           DAYS_TO_COLLECT: ${{ inputs.days_to_collect }}
+          POCKET_COLLECTION_STAGE: .run-collection
         run: |
           if [ "$DAYS_TO_COLLECT" -lt 1 ] || [ "$DAYS_TO_COLLECT" -gt 7 ]; then echo "days_to_collect must be 1-7"; exit 1; fi
           for offset in $(seq 0 $((DAYS_TO_COLLECT - 1))); do
             day=$((DAYS_AGO + offset))
             python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$day" --max-markets "$MAX_MARKETS"
           done
+      - name: Publish latest collection snapshot
+        env:
+          ASSET: ${{ inputs.asset }}
+          POCKET_COLLECTION_STAGE: .run-collection
+        run: python3 scripts/publish_latest.py
       - name: Build plain-English reports
         run: python3 scripts/build_report.py
       - name: Publish dashboard files
@@ -53,7 +59,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backtests/ docs/data.csv docs/dataset-meta.json docs/status-*.json
+          git add backtests/ docs/data.csv docs/dataset-meta.json docs/status-*.json docs/latest-data.csv docs/latest-meta.json
           if ! git diff --cached --quiet; then
             git commit -m "Update Kalshi historical analysis"
             git pull --rebase
