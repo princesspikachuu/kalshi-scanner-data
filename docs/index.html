@@ -39,16 +39,53 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 .state{padding:36px;text-align:center;color:var(--muted)}.bottom{font-size:12px;color:#aebdcb}.bottom a{margin-right:12px}
 @media(max-width:640px){.shell{padding:18px 12px 64px}header{padding:0 5px;margin-bottom:20px}.panel{padding:17px 13px}.stats{grid-template-columns:repeat(2,1fr)}.stat{padding:12px}.stat strong{font-size:22px}.detailgrid{grid-template-columns:repeat(2,1fr)}.notice{font-size:12px}.heatmap{border-spacing:4px;min-width:570px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* Historical data collection preferences (manual GitHub Actions handoff). */
+.collectionfields{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin:17px 0}
+.collectionfields label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.collectionfields input,.collectionfields select{display:block;width:100%;min-width:0;background:var(--raised);border:1px solid var(--border);border-radius:11px;padding:11px 12px;color:var(--text);font:inherit;height:46px}
+.collectionfields input:focus-visible,.collectionfields select:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+.collectionActions{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-top:12px}
+.collectionActions button,.collectionActions a{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 16px;border-radius:12px;border:1px solid #4d8171;text-decoration:none;color:#072118;background:var(--mint);font-weight:800}
+.collectionActions button.secondary{background:var(--raised);color:var(--text);border-color:var(--border)}
+.collectionActions [aria-disabled=true]{opacity:.45;pointer-events:none}
+.collectionHint{font-size:13px;color:#ccddd7;padding:11px 12px;border:1px solid #3f655c;background:#152d2c;border-radius:11px}
+.collectionHint.error{background:#3d2029;border-color:#864758;color:#ffd3d6}
+.collectionWarning{font-size:12px;color:var(--muted);margin:12px 0 0}
+#collectionFeedback{font-size:12px;color:var(--mint);margin:10px 0 0;min-height:18px}
+@media(max-width:720px){.collectionfields{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:410px){.collectionfields{grid-template-columns:1fr}}
+
 </style>
 </head><body>
 <div class="shell">
 <header><div class="brand"><div class="logo" aria-hidden="true">↗</div><div><div class="eyebrow">Historical research · maker only</div><h1>Pocket Analytics</h1></div></div><button class="refresh" id="refresh" type="button" aria-label="Reload historical data">↻ Refresh</button></header>
 <div class="notice"><strong>Simulation, not actual trade performance.</strong> Every result assumes your maker buy filled at a historical quoted bid. Fees, queue position, available order size and fill probability are not verified. Treat small samples cautiously.</div>
 <nav class="tabs" aria-label="Market type"><button class="tab" data-asset="weather" aria-selected="true">🌤 Hourly weather</button><button class="tab" data-asset="btc" aria-selected="false">₿ Bitcoin · 15m</button><button class="tab" data-asset="eth" aria-selected="false">Ξ Ethereum · 15m</button></nav>
+
+<section class="panel" aria-labelledby="collectHeading">
+  <div class="eyebrow">Data collection settings</div>
+  <h2 id="collectHeading">How much history should we sample?</h2>
+  <p class="muted small">Choose settings for your <strong>next historical collection run</strong>. This controls how many markets are analyzed, not the minimum observations shown in a heatmap cell.</p>
+  <div class="collectionfields">
+    <div><label for="collectAsset">Market type</label><select id="collectAsset"><option value="weather">Hourly weather</option><option value="btc">Bitcoin · 15m</option><option value="eth">Ethereum · 15m</option></select></div>
+    <div><label for="collectMarkets">Markets per day</label><input id="collectMarkets" type="number" min="1" max="300" step="1" value="100" inputmode="numeric"/></div>
+    <div><label for="collectDays">Days to collect</label><select id="collectDays"><option value="1">1 day</option><option value="2">2 days</option><option value="3">3 days</option><option value="5">5 days</option><option value="7">7 days</option></select></div>
+    <div><label for="collectOffset">Starting how many days ago?</label><input id="collectOffset" type="number" min="1" max="30" step="1" value="2" inputmode="numeric"/></div>
+  </div>
+  <div class="collectionHint" id="collectionHint" aria-live="polite">Choose your sample settings above.</div>
+  <div class="collectionActions">
+    <button class="secondary" id="copyCollection" type="button">Copy run settings</button>
+    <a id="openWorkflow" href="https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml" target="_blank" rel="noopener noreferrer">Open GitHub to run ↗</a>
+  </div>
+  <p id="collectionFeedback" role="status" aria-live="polite"></p>
+  <p class="collectionWarning">You can select and save the settings here, but <strong>collecting new data still requires clicking Run workflow on GitHub</strong> and entering the chosen values. A public web page cannot securely trigger your private GitHub workflow on its own. After it finishes, tap Refresh above to load the results.</p>
+</section>
+
 <section class="panel" aria-labelledby="marketHeading">
 <div class="heading"><div><div class="eyebrow" id="marketLabel">All hourly weather contracts</div><h2 id="marketHeading">Average profit &amp; loss</h2><p class="muted small">Time until settlement × entry price (maker bid)</p></div><div class="muted small" id="updated">Loading saved results…</div></div>
 <div class="stats"><div class="stat"><label>Markets sampled</label><strong id="marketCount">—</strong></div><div class="stat"><label>Days in sample</label><strong id="dayCount">—</strong></div><div class="stat"><label>Price observations</label><strong id="obsCount">—</strong></div><div class="stat"><label>Market coverage</label><strong id="coverage">—</strong></div></div>
-<div class="controls"><div><label for="minSample">Show results with at least</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
+<div class="controls"><div><label for="minSample">Hide cells with fewer than</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
 <div class="gridwrap"><table class="heatmap" aria-label="Average historical profit and loss by purchase price and settlement time"><thead><tr><th scope="col">Time left</th><th scope="col">50–59.9¢</th><th scope="col">60–69.9¢</th><th scope="col">70–79.9¢</th><th scope="col">80–89.9¢</th><th scope="col">90–99.9¢</th></tr></thead><tbody id="matrix"><tr><td colspan="6" class="state">Loading…</td></tr></tbody></table></div>
 <div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
 <div id="detail" class="detail" aria-live="polite"></div><div class="summaryline" id="dataNote">One cell represents one hypothetical maker decision per market at that entry time. The same market can appear at other times.</div>
@@ -102,6 +139,7 @@ function render(){
   if(st.sampling_truncated)msg+=" The research sampled only part of the available market set.";
   if(state.metric==="roi")msg+=" ROI compares simulated profit with the amount invested; it excludes fees.";
   id("dataNote").textContent=msg;
+  renderCollection();
 }
 function showDetail(r,min,band){
   var n=number(r.sampled_markets),wins=number(r.wins);
@@ -129,10 +167,67 @@ function load(){
     }));
   }).then(render).catch(function(e){id("matrix").innerHTML='<tr><td class="state" colspan="6">Could not load results. Check your connection or use Refresh.</td></tr>';id("updated").textContent="Data unavailable";id("dataNote").textContent=e.message});
 }
+
+/* These preferences configure a future manual workflow run, not a client-side resample. */
+var WORKFLOW="https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml";
+function collectionConfig(){
+  return {asset:id("collectAsset").value,markets:Number(id("collectMarkets").value),
+    days:Number(id("collectDays").value),offset:Number(id("collectOffset").value)};
+}
+function wholeInRange(x,min,max){return Number.isInteger(x)&&x>=min&&x<=max}
+function validCollection(p){return wholeInRange(p.markets,1,300)&&wholeInRange(p.days,1,7)&&wholeInRange(p.offset,1,30)&&p.offset+p.days-1<=30&&ASSETS[p.asset]!=null}
+function collectionText(p){
+ return ["Asset: "+p.asset,"Days ago: "+p.offset,"Days to collect: "+p.days,"Max markets: "+p.markets].join("\n");
+}
+function renderCollection(){
+ var p=collectionConfig(),ok=validCollection(p),last=p.offset+p.days-1;
+ var current=state.meta[p.asset]||{},extra=(current.markets_sampled!=null)?
+ " Currently saved latest-day sample: "+current.markets_sampled+" of "+(current.markets_available??"unknown")+" available markets.":"";
+ var msg=ok?"Next run will inspect up to "+p.markets+" settled markets per day over "+
+ p.days+" historical UTC day(s), from "+p.offset+" to "+last+
+ " day(s) ago (at most "+(p.markets*p.days)+" market candle requests)."+extra:
+ "Enter whole numbers: 1–300 markets/day, 1–7 days, starting 1–30 days ago; the entire range must fit within 30 days.";
+ id("collectionHint").textContent=msg;
+ id("collectionHint").classList.toggle("error",!ok);
+ id("copyCollection").disabled=!ok;
+ id("openWorkflow").setAttribute("aria-disabled",String(!ok));
+ try{if(ok)localStorage.setItem("pocketAnalyticsCollectionV1",JSON.stringify(p))}catch(e){}
+}
+function initCollection(){
+ try{
+  var stored=JSON.parse(localStorage.getItem("pocketAnalyticsCollectionV1")||"null");
+  if(stored && validCollection(stored)){
+   id("collectAsset").value=stored.asset;id("collectMarkets").value=stored.markets;
+   id("collectDays").value=String(stored.days);id("collectOffset").value=stored.offset;
+  }else id("collectAsset").value=state.asset;
+ }catch(e){id("collectAsset").value=state.asset;}
+ ["collectAsset","collectMarkets","collectDays","collectOffset"].forEach(function(name){
+    id(name).addEventListener("input",function(){renderCollection();id("collectionFeedback").textContent=""});
+    id(name).addEventListener("change",renderCollection);
+ });
+ id("copyCollection").addEventListener("click",function(){
+    var p=collectionConfig();if(!validCollection(p))return;
+    var text=collectionText(p);
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){
+       id("collectionFeedback").textContent="Settings copied. Open GitHub, select Run workflow, and enter these values.";
+      }).catch(function(){
+       id("collectionFeedback").textContent="Clipboard unavailable. Use the four settings displayed above when running on GitHub.";
+      });
+    }else id("collectionFeedback").textContent="Clipboard unavailable. Use the settings displayed above in GitHub Actions.";
+ });
+ id("openWorkflow").addEventListener("click",function(event){
+    if(!validCollection(collectionConfig())){event.preventDefault();return;}
+    id("collectionFeedback").textContent="On GitHub select Run workflow and enter these four settings; then refresh the app when complete.";
+ });
+ renderCollection();
+}
+
 document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){state.asset=b.dataset.asset;id("detail").classList.remove("visible");render()})});
 document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;id("detail").classList.remove("visible");render()})});
 id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);id("detail").classList.remove("visible");render()});
 id("refresh").addEventListener("click",load);
+initCollection();
 load();
 })();
 </script></body></html>
