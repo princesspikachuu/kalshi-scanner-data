@@ -17,13 +17,34 @@ WEATHER_SERIES={
     "KXTEMPLAH":("station","Los Angeles"),
     "KXTEMPDCH":("station","Washington DC"),
 }
-SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],"weather":list(WEATHER_SERIES)}
-MINUTES={"btc":[15,10,5,3,1],"eth":[15,10,5,3,1],"weather":[60,45,30,20,15,10,5,3,1]}
+# Same 15-minute UP/DOWN settlement format; exclude 15m coin-race markets.
+CRYPTO_SERIES={
+    "KXBTC15M":"BTC", "KXETH15M":"ETH", "KXSOL15M":"SOL",
+    "KXXRP15M":"XRP", "KXDOGE15M":"DOGE", "KXBNB15M":"BNB",
+    "KXHYPE15M":"HYPE", "KXZEC15M":"ZEC", "KXNEAR15M":"NEAR",
+}
+# Sports game/match winners only. Do not pool spreads, totals or outrights.
+SPORTS_SERIES={
+    "KXNBAGAME":"NBA", "KXNFLGAME":"NFL", "KXNHLGAME":"NHL",
+    "KXMLBGAME":"MLB", "KXNCAAFGAME":"NCAA Football",
+    "KXATPMATCH":"ATP Tennis", "KXWTAMATCH":"WTA Tennis",
+}
+SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],
+        "crypto":list(CRYPTO_SERIES),"weather":list(WEATHER_SERIES),
+        "sports":list(SPORTS_SERIES)}
+MINUTES={"btc":[15,10,5,3,1],"eth":[15,10,5,3,1],
+         "crypto":[15,10,5,3,1],"weather":[60,45,30,20,15,10,5,3,1],
+         "sports":[360,180,120,60,30,15,5]}
 MAX_LOOKBACK_SECONDS={asset:max(minutes)*60+120 for asset,minutes in MINUTES.items()}
 COLUMNS=["date","asset","weather_type","city","series","ticker","event_ticker","close_time","side","minutes_before_close","price_band","maker_bid","won","quote_age_seconds","roi_maker_zero","roi_maker_fee_stress","market_volume"]
 SUM=["weather_type","city","series","minutes_before_close","price_band","observations","unique_markets","unique_events","days_sampled","win_rate","mean_maker_bid_cents","maker_mean_roi_no_fee","maker_stake_weighted_roi_no_fee","maker_mean_roi_fee_stress","maker_stake_weighted_roi_fee_stress"]
 def weather_metadata(series):
-    return WEATHER_SERIES.get(series,("crypto",""))
+    # The historical CSV retains weather_type/city columns for compatibility.
+    # For crypto/sports, they represent contract family and coin/league.
+    if series in WEATHER_SERIES:return WEATHER_SERIES[series]
+    if series in CRYPTO_SERIES:return ("crypto15m",CRYPTO_SERIES[series])
+    if series in SPORTS_SERIES:return ("game_winner",SPORTS_SERIES[series])
+    return ("unknown","")
 def req(path,params):
     url=BASE+path+"?"+urllib.parse.urlencode(params)
     for attempt in range(4):
@@ -82,8 +103,8 @@ def run(asset,days_ago,cap):
         print(series,len(rows),"settled markets",flush=True)
         for market in rows:market["series_ticker"]=series
         allm.extend(rows)
-    # Stratify by series, then sample hourly events throughout the UTC day.
-    # This prevents the busier Weather Index series from crowding out stations.
+    # Stratify by series and event across the day. This prevents busy coins
+    # or sports leagues from crowding out other subcategories.
     events=defaultdict(list)
     for market in allm:
         key=(market["series_ticker"],market.get("event_ticker") or market["ticker"])
@@ -156,7 +177,7 @@ def run(asset,days_ago,cap):
             failed.append({"ticker":market.get("ticker","?"),"error":str(exc)})
     if failed:raise RuntimeError("Aborting incomplete run; candle errors: "+json.dumps(failed[:5]))
     if not sample or not observations:raise RuntimeError("No usable settled markets/quotes for "+asset+" on "+str(day))
-    folder=Path("backtests")/("weather_hourly" if asset=="weather" else asset+"15m")
+    folder=Path("backtests")/({"weather":"weather_hourly","sports":"sports_game","crypto":"crypto15m"}.get(asset,asset+"15m"))
     folder.mkdir(parents=True,exist_ok=True)
     output=folder/(str(day)+".csv")
     with output.open("w",newline="") as handle:
@@ -199,8 +220,10 @@ def run(asset,days_ago,cap):
         "sampled_by_series":dict(sorted((series,sum(m["series_ticker"]==series for m in sample))
                                  for series in SERIES[asset])),
         "hourly_types":sorted(set(weather_metadata(m["series_ticker"])[0] for m in sample)),
+        "sampled_subtypes":sorted(set(weather_metadata(m["series_ticker"])[1] for m in sample)),
+        "requested_markets":cap,"markets_shortfall":max(0,cap-len(sample)),
         "historical_endpoint":archive,
-        "method":"simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+        "method":"simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
         "updated_at":dt.datetime.now(dt.timezone.utc).isoformat()},indent=2))
     print("Saved",output,"observations",len(observations))
 if __name__=="__main__":
