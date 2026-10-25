@@ -6,6 +6,16 @@ The analysis is organized by **contract type × minutes remaining × maker purch
 - **Bitcoin:** 15-minute contracts.
 - **Ethereum:** 15-minute contracts.
 
+## Mobile dashboard app
+
+The **Pocket Analytics** app now lives in [`docs/index.html`](docs/index.html). It is a responsive, installable web app (with an app manifest/icon), and reads the maker-only summary in `backtests/AVERAGES_BY_TIME_AND_PRICE.csv` directly from this public GitHub repository. Its data updates when the historical research workflow commits new results; tap **Refresh** to reload.
+
+To publish an app URL using **GitHub Pages**, the owner of this repository should open **Settings → Pages**, set **Build and deployment → Deploy from a branch**, choose **main** and the **/docs** folder, then save. GitHub will display the published URL once the Pages build succeeds. Expected URL pattern: `https://princesspikachuu.github.io/kalshi-scanner-data/` (only after Pages is enabled).
+
+On a phone, open that URL in a browser and choose **Add to Home screen** / **Install app**, if offered. An installation does not turn historical simulations into verified trading results.
+
+Cloudflare remains a separate deployment: we have not modified or redeployed your existing Worker, because this GitHub connection does not control the Cloudflare account.
+
 ## See the results
 
 **[Open the main time-by-price report](backtests/OVERVIEW.md)** — separate tables for hourly weather, Bitcoin and Ethereum. Each cell is the **average simulated profit/loss in cents per contract**, with sample size in parentheses.
