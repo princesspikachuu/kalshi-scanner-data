@@ -18,7 +18,7 @@ WEATHER_SERIES={
     "KXTEMPDCH":("station","Washington DC"),
 }
 SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],"weather":list(WEATHER_SERIES)}
-MINUTES={"btc":[10,5,3,1],"eth":[10,5,3,1],"weather":[60,45,30,20,15,10,5,3,1]}
+MINUTES={"btc":[15,10,5,3,1],"eth":[15,10,5,3,1],"weather":[60,45,30,20,15,10,5,3,1]}
 MAX_LOOKBACK_SECONDS={asset:max(minutes)*60+120 for asset,minutes in MINUTES.items()}
 COLUMNS=["date","asset","weather_type","city","series","ticker","event_ticker","close_time","side","minutes_before_close","price_band","maker_bid","won","quote_age_seconds","roi_maker_zero","roi_maker_fee_stress","market_volume"]
 SUM=["weather_type","city","series","minutes_before_close","price_band","observations","unique_markets","unique_events","days_sampled","win_rate","mean_maker_bid_cents","maker_mean_roi_no_fee","maker_stake_weighted_roi_no_fee","maker_mean_roi_fee_stress","maker_stake_weighted_roi_fee_stress"]
