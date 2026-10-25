@@ -107,7 +107,7 @@ async function routes(request,env,url) {
     if(!result.ok)return respond({error:result.message},502);
     const entries=Array.isArray(result.payload?.workflow_runs)?result.payload.workflow_runs:[];
     return respond({runs:entries.map(r=>({id:r.id,created_at:r.created_at,status:r.status,
-      conclusion:r.conclusion,html_url:r.html_url,run_started_at:r.run_started_at,updated_at:r.updated_at}))
+      conclusion:r.conclusion,html_url:r.html_url,display_title:r.display_title,run_started_at:r.run_started_at,updated_at:r.updated_at}))
     },200,{"cache-control":"public, max-age=8"});
   }
   if(url.pathname==="/api/runs" && request.method==="POST"){
