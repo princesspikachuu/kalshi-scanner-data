@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import defaultdict
 
 BASE="https://external-api.kalshi.com/trade-api/v2"
-SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],"weather":["KXTEMPNYCH","KXTEMPCHIH","KXTEMPMIAH","KXTEMPLAH"]}
+SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],"weather":["KXTEMPNYCHS","KXTEMPCHIHS","KXTEMPMIAH","KXTEMPLAXHS"]}
 MINUTES={"btc":[10,5,3,1],"eth":[10,5,3,1],"weather":[15,10,5,3,1]}
 COLUMNS=["date","asset","series","ticker","event_ticker","close_time","side","minutes_before_close","price_band","maker_bid","taker_ask","won","quote_age_seconds","roi_maker_zero","roi_maker_fee_stress","roi_taker","market_volume"]
 SUM=["minutes_before_close","price_band","observations","unique_markets","unique_events","days_sampled","win_rate","mean_roi_no_fees_if_filled","mean_roi_maker_fee_stress","mean_roi_taker_if_filled","paired_observations","matched_maker_mean_roi","matched_taker_mean_roi","matched_maker_stake_weighted_roi","matched_taker_stake_weighted_roi","quote_coverage_rate","series"]
