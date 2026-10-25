@@ -58,8 +58,9 @@ def run(asset,days_ago,cap):
     start=int(dt.datetime.combine(day,dt.time.min,dt.timezone.utc).timestamp());end=start+86400
     cutoff=req("/historical/cutoff",{})
     # Markets and candles can migrate separately; prefer historical when day is before market cutoff.
-    market_cutoff=cutoff.get("market_settled_ts",cutoff.get("markets_cutoff_ts",0)) or 0
-    archive=start<int(market_cutoff)
+    market_cutoff=stamp(cutoff.get("market_settled_ts"))
+    if market_cutoff is None:raise RuntimeError("Missing historical market cutoff")
+    archive=end<=market_cutoff
     allm=[]
     for s in SERIES[asset]:
         rows=markets(s,start,end,archive);print(s,len(rows),"settled markets")
