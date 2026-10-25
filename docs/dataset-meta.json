@@ -1,42 +1,42 @@
 {
-  "published_at": "2026-10-25T18:54:40.205321+00:00",
-  "dataset_rows": 58,
+  "published_at": "2026-10-25T19:10:49.371504+00:00",
+  "dataset_rows": 60,
   "assets": {
     "weather": {
       "asset": "weather",
-      "days_sampled": 1,
-      "markets_sampled_total": 100,
-      "total_observations": 705,
-      "first_date": "2026-10-23",
+      "days_sampled": 8,
+      "markets_sampled_total": 2194,
+      "total_observations": 14600,
+      "first_date": "2026-10-12",
       "last_date": "2026-10-23",
       "hourly_types": [
         "index"
       ],
       "latest_run_status": {
         "asset": "weather",
-        "date": "2026-10-23",
+        "date": "2026-10-12",
         "markets_available": 960,
-        "markets_sampled": 100,
+        "markets_sampled": 300,
         "sampling_truncated": true,
-        "observations": 705,
-        "total_observations": 705,
-        "days_sampled": 1,
+        "observations": 1883,
+        "total_observations": 14600,
+        "days_sampled": 8,
         "sampled_by_series": {
           "KXTEMPCHIH": 0,
-          "KXTEMPCHIHS": 28,
+          "KXTEMPCHIHS": 84,
           "KXTEMPDCH": 0,
           "KXTEMPLAH": 0,
-          "KXTEMPLAXHS": 24,
-          "KXTEMPMIAH": 24,
+          "KXTEMPLAXHS": 72,
+          "KXTEMPMIAH": 72,
           "KXTEMPNYCH": 0,
-          "KXTEMPNYCHS": 24
+          "KXTEMPNYCHS": 72
         },
         "hourly_types": [
           "index"
         ],
         "historical_endpoint": false,
         "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
-        "updated_at": "2026-10-25T17:27:08.599049+00:00"
+        "updated_at": "2026-10-25T19:10:49.014210+00:00"
       }
     },
     "btc": {
