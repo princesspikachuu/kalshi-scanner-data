@@ -16,6 +16,12 @@ On a phone, open that URL in a browser and choose **Add to Home screen** / **Ins
 
 Cloudflare remains a separate deployment: we have not modified or redeployed your existing Worker, because this GitHub connection does not control the Cloudflare account.
 
+## Dashboard refresh and data synchronization
+
+Every successful `research-backtest.yml` run now executes `scripts/sync_dashboard.py`, publishing `docs/data.csv`, `docs/dataset-meta.json` and `docs/status-{btc,eth,weather}.json` in the **same commit** as the research output. This prevents the app from relying on a fallback GitHub raw URL for refreshed data. The mobile app shows the accumulated sample's actual trading days, observations, market count and date range.
+
+The initial same-origin files were also published from the existing historical results. Use the **Refresh** button to load the new data. If you are using **GitHub Pages**, GitHub Pages must publish the newest commit first. If you are using the **Cloudflare Worker** app, deploy the latest main branch via `deploy-pocket-app.yml`; Cloudflare serves the bundled `docs/` at deploy time, so a new research commit alone cannot update the already deployed static assets. We can later add automatic safe redeployment or a dynamic data endpoint.
+
 ## Dynamic app (Cloudflare Worker)
 
 The repository now includes a **dynamic, authenticated app**:
