@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#0a111c"/><meta name="description" content="Explore historical maker-only Kalshi research by price and entry time."/>
+<link rel="manifest" href="./manifest.webmanifest"/><link rel="icon" type="image/svg+xml" href="./icon.svg"/>
+<title>Kalshi Pocket Analytics</title>
+<style>
+:root{color-scheme:dark;--bg:#0a111c;--surface:#111e2e;--raised:#19283a;--muted:#99acbc;--border:#304255;--text:#f1f8fb;--mint:#74e0b4;--pink:#ff9eaa;--gold:#efcc8f;--radius:18px}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#102337 0,#0a111c 45%);color:var(--text);font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+button,select{font:inherit}button{cursor:pointer}a{color:var(--mint)}.shell{max-width:1100px;margin:0 auto;padding:24px 24px 72px}
+header{display:flex;gap:18px;align-items:center;justify-content:space-between;margin-bottom:24px}.brand{display:flex;align-items:center;gap:12px}.logo{width:44px;height:44px;border-radius:13px;background:#19392f;color:var(--mint);display:grid;place-items:center;font-size:24px;font-weight:800}
+.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:10px;font-weight:800;color:var(--mint)}h1{font-size:clamp(24px,4vw,34px);line-height:1.05;margin:4px 0 0;letter-spacing:-.035em}h2{font-size:20px;margin:0 0 12px;letter-spacing:-.025em}.muted{color:var(--muted)}.small{font-size:12px}.refresh{background:var(--raised);border:1px solid var(--border);border-radius:12px;color:var(--text);padding:10px 13px;white-space:nowrap}
+.notice{border:1px solid #527066;background:#122c2b;padding:14px 17px;border-radius:14px;color:#d4ece6;margin-bottom:20px;font-size:13px}
+nav.tabs{display:flex;gap:8px;overflow:auto;margin:0 0 18px;padding:2px 0 5px;scrollbar-width:thin}
+.tab{border:1px solid var(--border);background:var(--surface);padding:11px 18px;color:#c8d8e0;border-radius:13px;white-space:nowrap;font-weight:700}.tab[aria-selected=true]{background:#184136;color:#a9ffe0;border-color:#358568}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:18px;box-shadow:0 15px 35px #0002}
+.heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}.heading p{margin:2px 0 0}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+.stat{background:#0e1927;border:1px solid #283b4d;border-radius:14px;padding:15px}.stat label{display:block;color:var(--muted);font-size:12px}.stat strong{font-size:23px;letter-spacing:-.035em;display:block;margin-top:3px;font-variant-numeric:tabular-nums}
+.controls{display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;align-items:end;margin:20px 0 16px}.controlgrp{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.controls label{color:var(--muted);font-size:12px;display:block;margin-bottom:4px}
+select{background:var(--raised);border:1px solid var(--border);border-radius:11px;padding:10px 12px;color:var(--text);min-width:175px}
+.pillgroup{display:flex;gap:4px;border:1px solid var(--border);padding:4px;background:#0d1825;border-radius:12px}
+.pillgroup button{background:none;border:0;border-radius:8px;color:var(--muted);padding:8px 10px;font-weight:650}.pillgroup button[aria-pressed=true]{color:#061e19;background:var(--mint)}
+.gridwrap{overflow:auto;margin:0 -5px;padding:0 5px 8px}
+.heatmap{width:100%;border-collapse:separate;border-spacing:5px;table-layout:fixed;min-width:580px}
+.heatmap thead th{font-size:12px;color:#a1b4c3;white-space:nowrap;padding:0 0 8px;font-weight:650}
+.heatmap thead th:first-child{width:102px;text-align:left}.heatmap tbody th{font-size:13px;color:#cad8e4;font-weight:650;text-align:left;white-space:nowrap}
+.heatmap td{padding:0}.heat{display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:11px;border:1px solid transparent;width:100%;min-height:64px;color:var(--text);gap:1px;background:#1b2b3b;transition:transform .12s,border-color .12s}
+.heat:not(:disabled):hover,.heat:focus-visible{transform:translateY(-1px);border-color:#a6c7d9;outline:none}.heat:disabled{cursor:default;opacity:.6}
+.heat.positive{background:linear-gradient(140deg,#204d42,#1b373b);border-color:#356a59}.heat.negative{background:linear-gradient(140deg,#552a38,#382738);border-color:#8b5064}.heat.neutral{background:#28333e;border-color:#45515d}
+.heat.low-sample{background:#25303e;border-style:dashed;border-color:#516377}.heat span{font-weight:750;letter-spacing:-.02em;font-size:16px;font-variant-numeric:tabular-nums}
+.heat small{font-size:11px;color:#c1d2dc}.heat.low-sample span{color:#d5e3ec}
+.legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:8px 0}.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px}
+.detail{display:none;margin-top:17px;border:1px solid #47736b;background:#102a2d;border-radius:14px;padding:16px}.detail.visible{display:block}
+.detail h3{margin:0 0 4px;font-size:17px}.detailgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
+.detailgrid span{display:block;font-size:11px;color:#b2c9c8}.detailgrid strong{display:block;font-size:20px;font-variant-numeric:tabular-nums}.detail p{margin:13px 0 0;font-size:12px;color:#c3d8d5}
+.summaryline{border-top:1px solid var(--border);margin-top:12px;padding-top:12px;font-size:13px;color:#b5cad7}
+.state{padding:36px;text-align:center;color:var(--muted)}.bottom{font-size:12px;color:#aebdcb}.bottom a{margin-right:12px}
+@media(max-width:640px){.shell{padding:18px 12px 64px}header{padding:0 5px;margin-bottom:20px}.panel{padding:17px 13px}.stats{grid-template-columns:repeat(2,1fr)}.stat{padding:12px}.stat strong{font-size:22px}.detailgrid{grid-template-columns:repeat(2,1fr)}.notice{font-size:12px}.heatmap{border-spacing:4px;min-width:570px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head><body>
+<div class="shell">
+<header><div class="brand"><div class="logo" aria-hidden="true">↗</div><div><div class="eyebrow">Historical research · maker only</div><h1>Pocket Analytics</h1></div></div><button class="refresh" id="refresh" type="button" aria-label="Reload historical data">↻ Refresh</button></header>
+<div class="notice"><strong>Simulation, not actual trade performance.</strong> Every result assumes your maker buy filled at a historical quoted bid. Fees, queue position, available order size and fill probability are not verified. Treat small samples cautiously.</div>
+<nav class="tabs" aria-label="Market type"><button class="tab" data-asset="weather" aria-selected="true">🌤 Hourly weather</button><button class="tab" data-asset="btc" aria-selected="false">₿ Bitcoin · 15m</button><button class="tab" data-asset="eth" aria-selected="false">Ξ Ethereum · 15m</button></nav>
+<section class="panel" aria-labelledby="marketHeading">
+<div class="heading"><div><div class="eyebrow" id="marketLabel">All hourly weather contracts</div><h2 id="marketHeading">Average profit &amp; loss</h2><p class="muted small">Time until settlement × entry price (maker bid)</p></div><div class="muted small" id="updated">Loading saved results…</div></div>
+<div class="stats"><div class="stat"><label>Markets sampled</label><strong id="marketCount">—</strong></div><div class="stat"><label>Days in sample</label><strong id="dayCount">—</strong></div><div class="stat"><label>Price observations</label><strong id="obsCount">—</strong></div><div class="stat"><label>Market coverage</label><strong id="coverage">—</strong></div></div>
+<div class="controls"><div><label for="minSample">Show results with at least</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
+<div class="gridwrap"><table class="heatmap" aria-label="Average historical profit and loss by purchase price and settlement time"><thead><tr><th scope="col">Time left</th><th scope="col">50–59.9¢</th><th scope="col">60–69.9¢</th><th scope="col">70–79.9¢</th><th scope="col">80–89.9¢</th><th scope="col">90–99.9¢</th></tr></thead><tbody id="matrix"><tr><td colspan="6" class="state">Loading…</td></tr></tbody></table></div>
+<div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
+<div id="detail" class="detail" aria-live="polite"></div><div class="summaryline" id="dataNote">One cell represents one hypothetical maker decision per market at that entry time. The same market can appear at other times.</div>
+</section>
+<section class="panel"><h2>What am I looking at?</h2><p class="muted">The large number in each square is the <strong style="color:#f1f8fb">average simulated profit or loss per contract</strong>. For example, <strong style="color:#74e0b4">+4.2¢</strong> means that group gained an average of 4.2 cents per hypothetically filled contract before fees. A loss of <strong style="color:#ff9eaa">−8¢</strong> means it lost an average of eight cents.</p><p class="muted small">Tap any populated square to see its number of wins, average bid, ROI, and days represented. Comparing rows is exploratory: repeated observations of the same contracts are not independent trades.</p></section>
+<footer class="bottom"><p>Source: <a href="https://github.com/princesspikachuu/kalshi-scanner-data/blob/main/backtests/OVERVIEW.md" target="_blank" rel="noopener noreferrer">Historical research</a><a href="https://github.com/princesspikachuu/kalshi-scanner-data" target="_blank" rel="noopener noreferrer">GitHub repository</a></p><p>Built for research; no brokerage connection and no order placement.</p></footer>
+</div>
+<script>
+(function(){
+"use strict";
+var REPO="https://raw.githubusercontent.com/princesspikachuu/kalshi-scanner-data/main/";
+var ASSETS={weather:{label:"All hourly weather markets",times:[60,45,30,20,15,10,5,3,1],status:"weather_hourly"},btc:{label:"Bitcoin · 15-minute markets",times:[15,10,5,3,1],status:"btc15m"},eth:{label:"Ethereum · 15-minute markets",times:[15,10,5,3,1],status:"eth15m"}};
+var BANDS=["50-60","60-70","70-80","80-90","90-100"];
+var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},loadedAt:null};
+function id(x){return document.getElementById(x)}
+function htmlSafe(x){return String(x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+function csv(s){var rows=[],cur="",row=[],quote=false;for(var i=0;i<s.length;i++){var c=s[i];if(quote){if(c==='"'&&s[i+1]==='"'){cur+='"';i++}else if(c==='"'){quote=false}else cur+=c}else if(c==='"'){quote=true}else if(c===","){row.push(cur);cur=""}else if(c==="\n"){row.push(cur.replace(/\r$/,""));rows.push(row);row=[];cur=""}else cur+=c}if(cur||row.length){row.push(cur);rows.push(row)}var names=rows.shift();if(!names)return[];return rows.filter(function(r){return r.some(Boolean)}).map(function(r){var out={};names.forEach(function(k,i){out[k]=r[i]||""});return out})}
+function number(x){var v=Number(x);return Number.isFinite(v)?v:0}
+function format(n,unit){if(!Number.isFinite(n))return"—";return(n>0?"+":"")+n.toFixed(unit==="%"?1:2)+unit}
+function lookup(asset,mins,band){return state.records.find(function(r){return r.asset===asset&&Number(r.minutes_before_close)===mins&&r.price_band_cents===band})}
+function determineValue(r){if(state.metric==="pnl")return number(r.average_profit_loss_cents_per_contract);if(state.metric==="roi")return number(r.hypothetical_roi_percent);return number(r.win_rate_percent)}
+function describeValue(r){var v=determineValue(r);return state.metric==="pnl"?format(v,"¢"):state.metric==="roi"?format(v,"%"):v.toFixed(1)+"%"}
+function render(){
+  var a=ASSETS[state.asset],records=state.records.filter(function(r){return r.asset===state.asset}),st=state.meta[state.asset]||{},has=records.length>0;
+  id("marketLabel").textContent=a.label;
+  id("updated").textContent=state.loadedAt?"Updated from saved data · "+state.loadedAt:"No dataset loaded";
+  id("marketCount").textContent=st.markets_sampled!=null?Number(st.markets_sampled).toLocaleString():(has?"See sample":"—");
+  id("dayCount").textContent=has?Math.max.apply(null,records.map(function(r){return number(r.sampled_days)})):"0";
+  id("obsCount").textContent=st.total_observations!=null?Number(st.total_observations).toLocaleString():"—";
+  id("coverage").textContent=st.markets_available&&st.markets_sampled?Math.round(100*st.markets_sampled/st.markets_available)+"%":"—";
+  document.querySelectorAll(".tab").forEach(function(b){b.setAttribute("aria-selected",String(b.dataset.asset===state.asset))});
+  document.querySelectorAll("[data-metric]").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.metric===state.metric))});
+  var body=id("matrix");body.innerHTML="";
+  if(!has){body.innerHTML='<tr><td class="state" colspan="6">No saved '+htmlSafe(a.label)+' results yet. Run the historical research workflow for this market type.</td></tr>';id("dataNote").textContent="No data: this does not mean the strategy lost money.";id("detail").classList.remove("visible");return}
+  a.times.forEach(function(min){
+    var tr=document.createElement("tr"),th=document.createElement("th");th.scope="row";th.textContent=min+" min";tr.appendChild(th);
+    BANDS.forEach(function(band){
+      var td=document.createElement("td"),r=lookup(state.asset,min,band),n=r?number(r.sampled_markets):0;
+      var btn=document.createElement("button");btn.type="button";btn.className="heat";
+      if(!r||n<state.minimum){btn.disabled=true;btn.classList.add("neutral");btn.innerHTML="<span>—</span><small>"+(n?n+" sample":"no quotes")+"</small>"}
+      else{var val=determineValue(r);btn.classList.add(n<10?"low-sample":state.metric==="win"?"neutral":val>0?"positive":val<0?"negative":"neutral");
+        btn.innerHTML="<span>"+htmlSafe(describeValue(r))+"</span><small>n="+n+"</small>";
+        btn.setAttribute("aria-label",a.label+", "+min+" minutes left, "+band+" cents, "+describeValue(r)+", "+n+" observations");
+        btn.addEventListener("click",function(){showDetail(r,min,band)});
+      }
+      td.appendChild(btn);tr.appendChild(td);
+    });body.appendChild(tr);
+  });
+  var msg="One time×price cell includes at most one hypothetical buy per contract. Multiple rows can reuse those contracts.";
+  if(state.asset==="weather"&&Array.isArray(st.hourly_types)&&st.hourly_types.length===1&&st.hourly_types[0]==="index")msg+=" Current weather sample contains Weather Index contracts only; no single-station data.";
+  if(st.sampling_truncated)msg+=" The research sampled only part of the available market set.";
+  if(state.metric==="roi")msg+=" ROI compares simulated profit with the amount invested; it excludes fees.";
+  id("dataNote").textContent=msg;
+}
+function showDetail(r,min,band){
+  var n=number(r.sampled_markets),wins=number(r.wins);
+  id("detail").innerHTML='<h3>'+htmlSafe(ASSETS[state.asset].label)+' · '+min+' minutes · '+band+'¢</h3><div class="muted small">Historical maker-bid simulation · before fees</div>'+
+    '<div class="detailgrid">'+
+    '<div><span>Average P/L</span><strong>'+htmlSafe(format(number(r.average_profit_loss_cents_per_contract),"¢"))+'</strong></div>'+
+    '<div><span>Win rate</span><strong>'+(100*wins/(n||1)).toFixed(1)+'%</strong></div>'+
+    '<div><span>Average bid</span><strong>'+number(r.average_purchase_price_cents).toFixed(1)+'¢</strong></div>'+
+    '<div><span>ROI on cost</span><strong>'+htmlSafe(format(number(r.hypothetical_roi_percent),"%"))+'</strong></div>'+
+    '</div><p>'+wins+' of '+n+' hypothetical positions resolved as wins; '+number(r.sampled_days)+' UTC trading day(s) sampled. This does not show whether a maker order could actually fill. Small groups are very unreliable.</p>';
+  id("detail").classList.add("visible");
+}
+function readText(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw Error("HTTP "+r.status);return r.text()})}
+function readJSON(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw Error("HTTP "+r.status);return r.json()})}
+function load(){
+  id("updated").textContent="Refreshing saved data…";
+  var local="./data.csv",remote=REPO+"backtests/AVERAGES_BY_TIME_AND_PRICE.csv";
+  var query="?v="+Date.now();
+  return readText(local+query).catch(function(){return readText(remote+query)}).then(function(s){
+    state.records=csv(s);state.loadedAt=new Date().toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+    return Promise.all(Object.keys(ASSETS).map(function(asset){
+      return readJSON("./status-"+asset+".json"+query)
+       .catch(function(){return readJSON(REPO+"backtests/"+ASSETS[asset].status+"/status.json"+query)})
+       .then(function(v){state.meta[asset]=v}).catch(function(){});
+    }));
+  }).then(render).catch(function(e){id("matrix").innerHTML='<tr><td class="state" colspan="6">Could not load results. Check your connection or use Refresh.</td></tr>';id("updated").textContent="Data unavailable";id("dataNote").textContent=e.message});
+}
+document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){state.asset=b.dataset.asset;id("detail").classList.remove("visible");render()})});
+document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;id("detail").classList.remove("visible");render()})});
+id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);id("detail").classList.remove("visible");render()});
+id("refresh").addEventListener("click",load);
+load();
+})();
+</script></body></html>
