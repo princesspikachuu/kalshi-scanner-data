@@ -66,7 +66,28 @@ async function github(path, env, method="GET", body) {
   try{payload=await res.json()}catch(_e){}
   return {ok:true,payload};
 }
+async function repoData(file) {
+  const origin = "https://raw.githubusercontent.com/princesspikachuu/kalshi-scanner-data/main/";
+  const target = origin+file+"?nocache="+Date.now();
+  const result = await fetch(target,{headers:{"accept":"text/plain,application/json;q=0.9"},
+    cf:{cacheTtl:0}});
+  if(result.status===404) return respond({error:"No collected results for this market yet."},404);
+  if(!result.ok) return respond({error:"Could not load the latest committed data."},502);
+  const contentType=file.endsWith(".csv")?"text/csv; charset=utf-8":"application/json; charset=utf-8";
+  return new Response(await result.text(),{status:200,headers:{
+    "content-type":contentType,"cache-control":"no-store, max-age=0",
+    "x-content-type-options":"nosniff"
+  }});
+}
 async function routes(request,env,url) {
+  if(request.method==="GET" && url.pathname==="/api/data") {
+    return repoData("backtests/AVERAGES_BY_TIME_AND_PRICE.csv");
+  }
+  if(request.method==="GET" && /^\/api\/status\/(btc|eth|weather)$/.test(url.pathname)) {
+    const name=url.pathname.split("/").pop();
+    const folder={btc:"btc15m",eth:"eth15m",weather:"weather_hourly"}[name];
+    return repoData("backtests/"+folder+"/status.json");
+  }
   if(url.pathname==="/api/health" && request.method==="GET"){
     return respond({backend:"online",enabled:Boolean(env.GITHUB_ACTIONS_TOKEN&&env.APP_ADMIN_KEY),require_auth:true,
       max_batch_markets:MAX_BATCH_MARKETS});
