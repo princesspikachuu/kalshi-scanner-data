@@ -15,6 +15,10 @@ ASSETS = [
      (15, 10, 5, 3, 1)),
     ("eth", "Ethereum (15-minute)", Path("backtests/eth15m"), 5,
      (15, 10, 5, 3, 1)),
+    ("crypto", "Crypto (pooled 15-minute)", Path("backtests/crypto15m"), 5,
+     (15, 10, 5, 3, 1)),
+    ("sports", "Sports (game/match winners)", Path("backtests/sports_game"), 60,
+     (360, 180, 120, 60, 30, 15, 5)),
 ]
 BANDS = ("50-60", "60-70", "70-80", "80-90", "90-100")
 
