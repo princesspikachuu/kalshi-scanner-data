@@ -75,11 +75,17 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
   </div>
   <div class="collectionHint" id="collectionHint" aria-live="polite">Choose your sample settings above.</div>
   <div class="collectionActions">
+    <button id="runCollection" type="button">▶ Run collection in app</button>
     <button class="secondary" id="copyCollection" type="button">Copy run settings</button>
     <a id="openWorkflow" href="https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml" target="_blank" rel="noopener noreferrer">Open GitHub to run ↗</a>
   </div>
+  <div class="collectionfields" style="grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px">
+    <div><label for="accessKey">App access key (stored only in this page session)</label><input id="accessKey" type="password" autocomplete="off" placeholder="Enter your Worker app key"/></div>
+    <div style="align-self:end"><button class="refresh" type="button" id="checkRuns">Check job status</button></div>
+  </div>
+  <p id="runStatus" class="collectionHint" role="status">Checking whether the dynamic backend is available…</p>
   <p id="collectionFeedback" role="status" aria-live="polite"></p>
-  <p class="collectionWarning">You can select and save the settings here, but <strong>collecting new data still requires clicking Run workflow on GitHub</strong> and entering the chosen values. A public web page cannot securely trigger your private GitHub workflow on its own. After it finishes, tap Refresh above to load the results.</p>
+  <p class="collectionWarning">When hosted on the Cloudflare Worker, Run collection starts a GitHub Actions job directly. The app key authorizes the request; your GitHub token stays on the server. GitHub Pages still works as a read-only fallback. Do not use a sensitive personal password as the app key.</p>
 </section>
 
 <section class="panel" aria-labelledby="marketHeading">
@@ -97,6 +103,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 (function(){
 "use strict";
 var REPO="https://raw.githubusercontent.com/princesspikachuu/kalshi-scanner-data/main/";
+var apiBase="/api";var workerAvailable=false;
 var ASSETS={weather:{label:"All hourly weather markets",times:[60,45,30,20,15,10,5,3,1],status:"weather_hourly"},btc:{label:"Bitcoin · 15-minute markets",times:[15,10,5,3,1],status:"btc15m"},eth:{label:"Ethereum · 15-minute markets",times:[15,10,5,3,1],status:"eth15m"}};
 var BANDS=["50-60","60-70","70-80","80-90","90-100"];
 var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},loadedAt:null};
@@ -190,9 +197,63 @@ function renderCollection(){
  id("collectionHint").textContent=msg;
  id("collectionHint").classList.toggle("error",!ok);
  id("copyCollection").disabled=!ok;
+ id("runCollection").disabled=!ok||!workerAvailable;
  id("openWorkflow").setAttribute("aria-disabled",String(!ok));
  try{if(ok)localStorage.setItem("pocketAnalyticsCollectionV1",JSON.stringify(p))}catch(e){}
 }
+
+function statusText(text,error){
+ id("runStatus").textContent=text;
+ id("runStatus").classList.toggle("error",!!error);
+}
+async function checkRunStatus(){
+ if(!workerAvailable)return;
+ try{
+  const r=await fetch(apiBase+"/runs",{cache:"no-store"});
+  if(!r.ok)throw Error("Job status unavailable");
+  const data=await r.json(),latest=data.runs&&data.runs[0];
+  if(!latest){statusText("Backend ready. No historical runs found.");return;}
+  let status=latest.status==="completed"?(latest.conclusion==="success"?"Completed successfully":("Finished: "+latest.conclusion)):
+    "In progress: "+latest.status;
+  statusText("Latest research job: "+status+". "+new Date(latest.created_at).toLocaleString(),latest.conclusion==="failure");
+  if(latest.status==="completed"&&latest.conclusion==="success"){
+    id("collectionFeedback").textContent="Research job finished. Use Refresh at the top to retrieve its saved results.";
+  }
+ }catch(e){statusText("Connected, but GitHub job status could not be loaded.",true)}
+}
+async function checkBackend(){
+ try{
+  const r=await fetch(apiBase+"/health",{cache:"no-store"});
+  if(!r.ok)throw Error("backend unavailable");
+  const result=await r.json();
+  if(result.backend!=="online")throw Error("not a worker");
+  workerAvailable=!!result.enabled;
+  if(workerAvailable){
+    statusText("Dynamic collection is available. Enter your app key and tap Run collection.");
+    await checkRunStatus();
+  }else statusText("Worker is online, but the server secrets have not been configured.",true);
+ }catch(e){workerAvailable=false;statusText("Read-only mode. Deploy the Cloudflare Worker to run research directly from here.");}
+ renderCollection();
+}
+async function startCollection(){
+ const p=collectionConfig(),key=id("accessKey").value;
+ if(!workerAvailable||!validCollection(p))return;
+ if(!key){statusText("Enter your app access key before starting a run.",true);return;}
+ const b=id("runCollection");b.disabled=true;b.textContent="Starting…";
+ try{
+  const response=await fetch(apiBase+"/runs",{method:"POST",
+   headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+   body:JSON.stringify({asset:p.asset,max_markets:p.markets,
+    days_ago:p.offset,days_to_collect:p.days})});
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||("HTTP "+response.status));
+  statusText("Collection requested successfully. Check job status to track progress.");
+  id("collectionFeedback").textContent="GitHub Actions is now processing your historical sample.";
+  await checkRunStatus();
+ }catch(e){statusText(e.message,true)}
+ finally{b.textContent="▶ Run collection in app";renderCollection()}
+}
+
 function initCollection(){
  try{
   var stored=JSON.parse(localStorage.getItem("pocketAnalyticsCollectionV1")||"null");
@@ -205,6 +266,8 @@ function initCollection(){
     id(name).addEventListener("input",function(){renderCollection();id("collectionFeedback").textContent=""});
     id(name).addEventListener("change",renderCollection);
  });
+ id("runCollection").addEventListener("click",startCollection);
+ id("checkRuns").addEventListener("click",checkRunStatus);
  id("copyCollection").addEventListener("click",function(){
     var p=collectionConfig();if(!validCollection(p))return;
     var text=collectionText(p);
@@ -228,6 +291,7 @@ document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListene
 id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);id("detail").classList.remove("visible");render()});
 id("refresh").addEventListener("click",load);
 initCollection();
+checkBackend();
 load();
 })();
 </script></body></html>
