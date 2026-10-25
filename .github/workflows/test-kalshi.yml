@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/cheRetriev5
 
       - name: Retrieve Kalshi markets
         run: |
