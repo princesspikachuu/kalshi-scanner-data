@@ -22,7 +22,7 @@ function exactInteger(x, low, high) {
 }
 function validSettings(p) {
   if (!p || typeof p !== "object" || Array.isArray(p)) return "Invalid collection settings.";
-  if (!["weather","btc","eth","crypto","sports"].includes(p.asset)) return "Choose weather, Bitcoin, Ethereum, pooled crypto, or sports.";
+  if (!["weather","btc","eth","crypto","sports","weather_daily","financial_daily"].includes(p.asset)) return "Choose hourly/daily weather, Bitcoin, Ethereum, pooled crypto, sports, or daily financial indices.";
   if (!exactInteger(p.max_markets,1,300)) return "Markets per day must be 1–300.";
   if (!exactInteger(p.days_ago,1,30) || !exactInteger(p.days_to_collect,1,7) ||
       p.days_ago+p.days_to_collect-1>30) return "Choose 1–7 complete UTC days within the last 30 days.";
@@ -86,9 +86,9 @@ async function routes(request,env,url) {
   if(request.method==="GET" && url.pathname==="/api/data") {
     return repoData("backtests/AVERAGES_BY_TIME_AND_PRICE.csv");
   }
-  if(request.method==="GET" && /^\/api\/status\/(btc|eth|weather|crypto|sports)$/.test(url.pathname)) {
+  if(request.method==="GET" && /^\/api\/status\/(btc|eth|weather|crypto|sports|weather_daily|financial_daily)$/.test(url.pathname)) {
     const name=url.pathname.split("/").pop();
-    const folder={btc:"btc15m",eth:"eth15m",crypto:"crypto15m",sports:"sports_game",weather:"weather_hourly"}[name];
+    const folder={btc:"btc15m",eth:"eth15m",crypto:"crypto15m",sports:"sports_game",weather_daily:"weather_daily",financial_daily:"financial_daily",weather:"weather_hourly"}[name];
     return repoData("backtests/"+folder+"/status.json");
   }
   if(url.pathname==="/api/health" && request.method==="GET"){
