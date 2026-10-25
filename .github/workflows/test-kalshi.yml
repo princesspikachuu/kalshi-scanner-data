@@ -1,0 +1,45 @@
+name: Test Kalshi API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test Kalshi market data
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          import urllib.error
+
+          url = (
+              "https://external-api.kalshi.com"
+              "/trade-api/v2/markets?limit=1"
+          )
+
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/json",
+                  "User-Agent": "KalshiPocketScanner/1.0"
+              }
+          )
+
+          try:
+              with urllib.request.urlopen(
+                  request, timeout=20
+              ) as response:
+                  data = json.load(response)
+                  markets = data.get("markets", [])
+                  print("SUCCESS!")
+                  print("HTTP status:", response.status)
+                  print("Markets received:", len(markets))
+                  if markets:
+                      print("Example:", markets[0].get("title"))
+          except urllib.error.HTTPError as error:
+              print("FAILED!")
+              print("HTTP status:", error.code)
+              raise
+          PY
