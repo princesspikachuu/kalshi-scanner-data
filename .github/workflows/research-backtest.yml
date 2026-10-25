@@ -1,4 +1,5 @@
 name: Kalshi historical research (weather + crypto)
+run-name: "${{ inputs.asset }} | ${{ inputs.days_to_collect }} day(s) × ${{ inputs.max_markets }} markets/day | starting ${{ inputs.days_ago }} days ago"
 on:
   workflow_dispatch:
     inputs:
@@ -49,6 +50,9 @@ jobs:
       - name: Publish latest collection snapshot
         env:
           ASSET: ${{ inputs.asset }}
+          DAYS_AGO: ${{ inputs.days_ago }}
+          DAYS_TO_COLLECT: ${{ inputs.days_to_collect }}
+          MAX_MARKETS: ${{ inputs.max_markets }}
           POCKET_COLLECTION_STAGE: .run-collection
         run: python3 scripts/publish_latest.py
       - name: Build plain-English reports
