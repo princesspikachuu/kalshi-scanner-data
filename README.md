@@ -1,27 +1,31 @@
-# Kalshi Pocket Analytics — maker-only research
+# Kalshi Pocket Analytics — maker-only historical research
 
-Research scope:
-- **Crypto:** Bitcoin and Ethereum 15-minute markets.
-- **Weather:** hourly multi-station Weather Index contracts **and** hourly single-station temperature contracts. The strategy and entry-time/price-band tests are the same for both, but results are segmented by type, city and series.
-- **No taker statistics**, no daily high/low or monthly weather contracts, and no automated live-market polling.
+The analysis is organized by **contract type × minutes remaining × maker purchase-price range**:
 
-## Manual historical research
+- **Hourly weather:** both hourly Weather Index (multi-station) and hourly single-station temperature contracts, pooled across cities (sample permitting).
+- **Bitcoin:** 15-minute contracts.
+- **Ethereum:** 15-minute contracts.
 
-[Run the historical backtest workflow](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml).
+## See the results
 
-Choose an asset (`btc`, `eth`, `weather`), completed UTC day offset `days_ago`, `days_to_collect` (1–7), and per-day `max_markets`. The workflow makes historical API requests only when manually triggered and writes:
-- `backtests/btc15m/`
-- `backtests/eth15m/`
-- `backtests/weather_hourly/`
+**[Open the main time-by-price report](backtests/OVERVIEW.md)** — separate tables for hourly weather, Bitcoin and Ethereum. Each cell is the **average simulated profit/loss in cents per contract**, with sample size in parentheses.
 
-## Maker interpretation
+**[Open the full sortable data as CSV](backtests/AVERAGES_BY_TIME_AND_PRICE.csv)** — includes number of contracts, wins, win rate, average maker bid, average profit/loss per contract, hypothetical percentage ROI and sampled days.
 
-The entry price is the *historical best bid*, modeled as a resting **buy maker** order that fills at that price. This fill is **hypothetical**, not observed: historical minute candles do not reveal order queue positions or order sizes.
+The individual market-type reports appear in `backtests/weather_hourly/REPORT.md`, `backtests/btc15m/REPORT.md` and `backtests/eth15m/REPORT.md` as data becomes available.
 
-Each summary reports sample sizes, unique markets/events/days, win rate, average bid price, mean ROI and stake-weighted ROI for assumed maker fills without fees and with an illustrative maker-fee stress test. Real maker fees depend on contract series and current fee schedules.
+## On-demand historical collection
 
-Weather results are grouped at four levels: all weather, Index versus station, city, and series. Crypto uses the same maker-only metrics. Legacy CSVs collected before this update are readable, but their simulated returns are not validated executable returns.
+Run [Kalshi historical research](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml) with asset `weather`, `btc` or `eth`; `days_ago` (1–30); `days_to_collect` (1–7); and per-day `max_markets` (1–300).
 
-**Important:** Old `summary.csv` results still present until that asset's collector is rerun; those results may use the previous columns and biased first-60-market selection. Re-run October 23 BTC before relying on it.
+- Hourly weather entry times: **60, 45, 30, 20, 15, 10, 5, 3, 1 minutes** remaining.
+- Bitcoin/Ethereum entry times: **15, 10, 5, 3, 1 minutes** remaining.
+- Jobs run only on manual request; the old live-market scanner schedule is retired.
 
-Collector: [scripts/collect_backtest.py](scripts/collect_backtest.py). No trading orders are placed.
+The workflow runs `scripts/collect_backtest.py`, creates the summary with `scripts/build_report.py`, then commits the resulting research files.
+
+## Important limitations
+
+**None of the reported profits are verified executed trades.** Each observation assumes a passive maker buy was filled at the historical bid, without accounting for order-book queue position, fill probability, market depth, slippage or actual series-specific fees. The grid reports **pre-fee** returns. Correlated weather strikes and repeated market observations across entry times must not be treated as independent bets.
+
+Incomplete or missing contract types indicate inadequate historical coverage, not a measured result. A single day of favorable results is not strong evidence of a durable advantage.
