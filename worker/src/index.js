@@ -119,14 +119,8 @@ async function routes(request,env,url) {
     const active=(recent.payload?.workflow_runs||[]).find(r=>r.status!=="completed");
     if(active)return respond({error:"A research collection is already queued or running.",existing_run:{
       id:active.id,html_url:active.html_url,status:active.status}},409);
-    const latest = (recent.payload?.workflow_runs || [])[0];
-
-if (latest &&
-    Date.now() - Date.parse(latest.created_at) < 600000)
-  return respond({
-    error: "Wait 10 minutes between collection requests."
-  }, 429);
-
+    // Allow another collection after the preceding job completes;
+    // the Cloudflare one-per-minute limiter still applies.
 const { success } = await env.COLLECTION_RATE_LIMIT.limit({
   key: "research-collection"
 });
