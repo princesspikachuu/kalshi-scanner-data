@@ -165,10 +165,11 @@ function load(){
   id("updated").textContent="Refreshing saved data…";
   var local="./data.csv",remote=REPO+"backtests/AVERAGES_BY_TIME_AND_PRICE.csv";
   var query="?v="+Date.now();
-  return readText(local+query).catch(function(){return readText(remote+query)}).then(function(s){
+  return readText("/api/data"+query).catch(function(){return readText(local+query)}).catch(function(){return readText(remote+query)}).then(function(s){
     state.records=csv(s);state.loadedAt=new Date().toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
     return Promise.all(Object.keys(ASSETS).map(function(asset){
-      return readJSON("./status-"+asset+".json"+query)
+      return readJSON("/api/status/"+asset+query)
+       .catch(function(){return readJSON("./status-"+asset+".json"+query)})
        .catch(function(){return readJSON(REPO+"backtests/"+ASSETS[asset].status+"/status.json"+query)})
        .then(function(v){state.meta[asset]=v}).catch(function(){});
     }));
