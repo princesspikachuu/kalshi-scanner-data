@@ -83,6 +83,12 @@ async function routes(request,env,url) {
   if(request.method==="GET" && url.pathname==="/api/execution") {
     return repoData("backtests/EXECUTION_BY_BID_OFFSET.csv");
   }
+  if(request.method==="GET" && url.pathname==="/api/latest-data") {
+    return repoData("backtests/LATEST_BY_CATEGORY.csv");
+  }
+  if(request.method==="GET" && url.pathname==="/api/latest-meta") {
+    return repoData("backtests/LATEST_METADATA.json");
+  }
   if(request.method==="GET" && url.pathname==="/api/data") {
     return repoData("backtests/AVERAGES_BY_TIME_AND_PRICE.csv");
   }
