@@ -288,7 +288,7 @@ async function checkRunStatus(){
   if(!latest){statusText("Backend ready. No historical runs found.");return;}
   let status=latest.status==="completed"?(latest.conclusion==="success"?"Completed successfully":("Finished: "+latest.conclusion)):
     "In progress: "+latest.status;
-  statusText("Latest research job: "+status+". "+new Date(latest.created_at).toLocaleString(),latest.conclusion==="failure");
+  statusText("Latest research job: "+(latest.display_title||"Research collection")+" — "+status+". Started "+new Date(latest.created_at).toLocaleString(),latest.conclusion==="failure");
   if(latest.status==="completed"&&latest.conclusion==="success"){
     id("collectionFeedback").textContent="Research job finished. Use Refresh at the top to retrieve its saved results.";
   }
