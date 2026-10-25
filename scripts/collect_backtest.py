@@ -5,10 +5,24 @@ from pathlib import Path
 from collections import defaultdict
 
 BASE="https://external-api.kalshi.com/trade-api/v2"
-SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],"weather":["KXTEMPNYCHS","KXTEMPCHIHS","KXTEMPMIAH","KXTEMPLAXHS"]}
+# Hourly Weather Index (multi-station) and legacy single-station hourly contracts.
+# No daily high/low or rainfall contracts.
+WEATHER_SERIES={
+    "KXTEMPNYCHS":("index","New York City"),
+    "KXTEMPCHIHS":("index","Chicago"),
+    "KXTEMPMIAH":("index","Miami"),
+    "KXTEMPLAXHS":("index","Coastal Los Angeles"),
+    "KXTEMPNYCH":("station","New York City"),
+    "KXTEMPCHIH":("station","Chicago"),
+    "KXTEMPLAH":("station","Los Angeles"),
+    "KXTEMPDCH":("station","Washington DC"),
+}
+SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],"weather":list(WEATHER_SERIES)}
 MINUTES={"btc":[10,5,3,1],"eth":[10,5,3,1],"weather":[15,10,5,3,1]}
-COLUMNS=["date","asset","series","ticker","event_ticker","close_time","side","minutes_before_close","price_band","maker_bid","taker_ask","won","quote_age_seconds","roi_maker_zero","roi_maker_fee_stress","roi_taker","market_volume"]
-SUM=["minutes_before_close","price_band","observations","unique_markets","unique_events","days_sampled","win_rate","mean_roi_no_fees_if_filled","mean_roi_maker_fee_stress","mean_roi_taker_if_filled","paired_observations","matched_maker_mean_roi","matched_taker_mean_roi","matched_maker_stake_weighted_roi","matched_taker_stake_weighted_roi","quote_coverage_rate","series"]
+COLUMNS=["date","asset","weather_type","city","series","ticker","event_ticker","close_time","side","minutes_before_close","price_band","maker_bid","won","quote_age_seconds","roi_maker_zero","roi_maker_fee_stress","market_volume"]
+SUM=["weather_type","city","series","minutes_before_close","price_band","observations","unique_markets","unique_events","days_sampled","win_rate","mean_maker_bid_cents","maker_mean_roi_no_fee","maker_stake_weighted_roi_no_fee","maker_mean_roi_fee_stress","maker_stake_weighted_roi_fee_stress"]
+def weather_metadata(series):
+    return WEATHER_SERIES.get(series,("crypto",""))
 def req(path,params):
     url=BASE+path+"?"+urllib.parse.urlencode(params)
     for attempt in range(4):
@@ -62,26 +76,42 @@ def run(asset,days_ago,cap):
     if market_cutoff is None:raise RuntimeError("Missing historical market cutoff")
     archive=end<=market_cutoff
     allm=[]
-    for s in SERIES[asset]:
-        rows=markets(s,start,end,archive);print(s,len(rows),"settled markets")
-        for m in rows:m["series_ticker"]=s
+    for series in SERIES[asset]:
+        rows=markets(series,start,end,archive)
+        print(series,len(rows),"settled markets",flush=True)
+        for market in rows:market["series_ticker"]=series
         allm.extend(rows)
-    # Distribute the sample over the entire day and across events.
-    # The old implementation selected the earliest N markets and was time-biased.
+    # Stratify by series, then sample hourly events throughout the UTC day.
+    # This prevents the busier Weather Index series from crowding out stations.
     events=defaultdict(list)
-    for m in allm:
-        events[m.get("event_ticker") or m["ticker"]].append(m)
-    event_keys=sorted(events,key=lambda k:(stamp(events[k][0].get("close_time")) or 0,k))
-    selected_keys=event_keys
-    if len(event_keys)>cap:
-        selected_keys=[event_keys[int(i*len(event_keys)/cap)] for i in range(cap)]
+    for market in allm:
+        key=(market["series_ticker"],market.get("event_ticker") or market["ticker"])
+        events[key].append(market)
+    byseries=defaultdict(list)
+    for key,group in events.items():
+        byseries[key[0]].append(key)
+    active=sorted(byseries)
+    selected_keys=[]
+    if active:
+        for ix,series in enumerate(active):
+            eventkeys=sorted(byseries[series],key=lambda k:(stamp(events[k][0].get("close_time")) or 0,k[1]))
+            quota=cap//len(active)+(ix<cap%len(active))
+            count=min(len(eventkeys),quota)
+            for i in range(count):
+                selected_keys.append(eventkeys[i*len(eventkeys)//count])
+        if len(selected_keys)<cap:
+            extra=[key for series in active for key in sorted(byseries[series])
+                   if key not in selected_keys]
+            extra.sort(key=lambda k:(stamp(events[k][0].get("close_time")) or 0,k))
+            selected_keys+=extra[:cap-len(selected_keys)]
     sample=[]
     offsets={}
     for key in selected_keys:
         group=sorted(events[key],key=lambda x:x["ticker"])
-        offsets[key]=int.from_bytes(hashlib.sha256(key.encode()).digest()[:4],"big")%len(group)
+        seed=key[0]+":"+key[1]
+        offsets[key]=int.from_bytes(hashlib.sha256(seed.encode()).digest()[:4],"big")%len(group)
         sample.append(group[offsets[key]])
-    # If fewer events than our cap, rotate additional strikes between events.
+    # Extra strike thresholds if there are fewer events than the market cap.
     depth=1
     while len(sample)<cap:
         added=False
@@ -93,66 +123,83 @@ def run(asset,days_ago,cap):
             if len(sample)>=cap:break
         if not added:break
         depth+=1
-    observations=[];failed=[];crossed_quotes=0
-    for m in sample:
+    observations=[];failed=[]
+    for market in sample:
         try:
-            close=stamp(m.get("close_time"));cs=candles(m,archive,close-1800,close+60)
+            close=stamp(market.get("close_time"))
+            if close is None:raise ValueError("Market missing close_time")
+            bars=candles(market,archive,close-1800,close+60)
+            kind,city=weather_metadata(market["series_ticker"])
             for mins in MINUTES[asset]:
                 target=close-mins*60
-                eligible=[c for c in cs if c.get("end_period_ts") is not None and 0<=target-int(c["end_period_ts"])<=120]
+                eligible=[c for c in bars if c.get("end_period_ts") is not None
+                          and 0<=target-int(c["end_period_ts"])<=120]
                 if not eligible:continue
-                c=max(eligible,key=lambda x:x["end_period_ts"])
+                candle=max(eligible,key=lambda x:x["end_period_ts"])
                 for side in ("yes","no"):
-                    bid=val(c,side,"bid");ask=val(c,side,"ask")
-                    # Some Kalshi candles provide only YES bid/ask. Derive NO from complementary executable quotes.
-                    if side=="no":
-                        if bid is None and val(c,"yes","ask") is not None:bid=1-val(c,"yes","ask")
-                        if ask is None and val(c,"yes","bid") is not None:ask=1-val(c,"yes","bid")
-                    if bid is None or not .5<=bid<1:continue
-                    if ask is not None and ask<bid:
-                        crossed_quotes+=1
-                        ask=None
-                    won=int(m["result"]==side);band=f"{int(bid*100)//10*10:02d}-{int(bid*100)//10*10+10:02d}"
-                    observations.append([str(day),asset,m["series_ticker"],m["ticker"],m.get("event_ticker",""),m["close_time"],side,mins,band,round(bid,5),round(ask,5) if ask else "",won,target-int(c["end_period_ts"]),roi(bid,won,0),roi(bid,won,.0175),roi(ask,won,.07) if ask else "",m.get("volume_fp",m.get("volume",""))])
+                    bid=val(candle,side,"bid")
+                    if side=="no" and bid is None:
+                        # Historical API expresses NO bid as 1 - YES ask.
+                        yes_ask=val(candle,"yes","ask")
+                        if yes_ask is not None:bid=1-yes_ask
+                    if bid is None or not .50<=bid<1:continue
+                    won=int(market["result"]==side)
+                    ten=int(bid*100)//10*10
+                    band=f"{ten:02d}-{ten+10:02d}"
+                    observations.append([str(day),asset,kind,city,market["series_ticker"],
+                         market["ticker"],market.get("event_ticker",""),
+                         market["close_time"],side,mins,band,round(bid,5),won,
+                         target-int(candle["end_period_ts"]),roi(bid,won,0),
+                         roi(bid,won,.0175),market.get("volume_fp",market.get("volume",""))])
         except Exception as exc:
-            failed.append({"ticker":m["ticker"],"error":str(exc)})
+            failed.append({"ticker":market.get("ticker","?"),"error":str(exc)})
     if failed:raise RuntimeError("Aborting incomplete run; candle errors: "+json.dumps(failed[:5]))
     if not sample or not observations:raise RuntimeError("No usable settled markets/quotes for "+asset+" on "+str(day))
-    folder=Path("backtests")/("weather_hourly" if asset=="weather" else asset+"15m");folder.mkdir(parents=True,exist_ok=True)
-    f=folder/(str(day)+".csv")
-    with f.open("w",newline="") as out:w=csv.writer(out);w.writerow(COLUMNS);w.writerows(observations)
+    folder=Path("backtests")/("weather_hourly" if asset=="weather" else asset+"15m")
+    folder.mkdir(parents=True,exist_ok=True)
+    output=folder/(str(day)+".csv")
+    with output.open("w",newline="") as handle:
+        writer=csv.writer(handle);writer.writerow(COLUMNS);writer.writerows(observations)
     allrows=[]
-    for path in folder.glob("????-??-??.csv"):
-        with path.open(newline="") as infile:allrows.extend(csv.DictReader(infile))
+    for dailyfile in sorted(folder.glob("????-??-??.csv")):
+        with dailyfile.open(newline="") as handle:allrows.extend(csv.DictReader(handle))
     groups=defaultdict(list)
     for row in allrows:
-        key=(int(row["minutes_before_close"]),row["price_band"])
-        groups[key+("ALL",)].append(row)
-        groups[key+(row["series"],)].append(row)
-    with (folder/"summary.csv").open("w",newline="") as out:
-        w=csv.writer(out);w.writerow(SUM)
-        for (mins,band,series),rows in sorted(groups.items()):
-            def mean(items,key):
-                values=[float(r[key]) for r in items if r.get(key) not in ("",None)]
+        kind,city=weather_metadata(row["series"])
+        kind=row.get("weather_type") or kind
+        city=row.get("city") or city
+        mins=int(row["minutes_before_close"]);band=row["price_band"]
+        # Overall, by weather type, by city, and individual series.
+        scopes=[("ALL","ALL","ALL"),(kind,"ALL","ALL"),
+                (kind,city,"ALL"),(kind,city,row["series"])]
+        for scope in set(scopes):groups[scope+(mins,band)].append(row)
+    with (folder/"summary.csv").open("w",newline="") as handle:
+        writer=csv.writer(handle);writer.writerow(SUM)
+        for (kind,city,series,mins,band),rows in sorted(groups.items()):
+            def mean(field):
+                values=[float(row[field]) for row in rows if row.get(field) not in (None,"")]
                 return sum(values)/len(values) if values else ""
-            paired=[r for r in rows if r.get("roi_taker") not in ("",None)
-                    and r.get("taker_ask") not in ("",None)]
-            def weighted(items,price_key,coef):
-                costs=[float(r[price_key])*100+fee(float(r[price_key]),coef) for r in items]
-                total=sum(costs)
-                return (sum(100*int(r["won"]) for r in items)-total)/total if total else ""
-            w.writerow([mins,band,len(rows),len(set(r["ticker"] for r in rows)),
-                        len(set(r["event_ticker"] for r in rows)),len(set(r["date"] for r in rows)),
-                        mean(rows,"won"),mean(rows,"roi_maker_zero"),
-                        mean(rows,"roi_maker_fee_stress"),mean(paired,"roi_taker"),
-                        len(paired),mean(paired,"roi_maker_zero"),mean(paired,"roi_taker"),
-                        weighted(paired,"maker_bid",0),weighted(paired,"taker_ask",.07),
-                        len(paired)/len(rows),series])
+            def weighted(coefficient):
+                costs=[float(row["maker_bid"])*100+
+                       fee(float(row["maker_bid"]),coefficient) for row in rows]
+                invested=sum(costs)
+                return (sum(100*int(row["won"]) for row in rows)-invested)/invested if invested else ""
+            writer.writerow([kind,city,series,mins,band,len(rows),
+                len(set(row["ticker"] for row in rows)),
+                len(set(row["event_ticker"] for row in rows)),
+                len(set(row["date"] for row in rows)),
+                mean("won"),100*mean("maker_bid"),mean("roi_maker_zero"),
+                weighted(0),mean("roi_maker_fee_stress"),weighted(.0175)])
     (folder/"status.json").write_text(json.dumps({
-        "asset":asset,"date":str(day),"markets_available":len(allm),"markets_sampled":len(sample),
-        "sampling_truncated":len(allm)>len(sample),"observations":len(observations),
-        "total_observations":len(allrows),"days_sampled":len(set(r["date"] for r in allrows)),
-        "crossed_quotes_ignored":crossed_quotes,"historical_endpoint":archive,
+        "asset":asset,"date":str(day),"markets_available":len(allm),
+        "markets_sampled":len(sample),"sampling_truncated":len(allm)>len(sample),
+        "observations":len(observations),"total_observations":len(allrows),
+        "days_sampled":len(set(row["date"] for row in allrows)),
+        "sampled_by_series":dict(sorted((series,sum(m["series_ticker"]==series for m in sample))
+                                 for series in SERIES[asset])),
+        "hourly_types":sorted(set(weather_metadata(m["series_ticker"])[0] for m in sample)),
+        "historical_endpoint":archive,
+        "method":"simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
         "updated_at":dt.datetime.now(dt.timezone.utc).isoformat()},indent=2))
     print("Saved",f,"observations",len(observations))
 if __name__=="__main__":
