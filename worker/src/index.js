@@ -89,7 +89,7 @@ async function routes(request,env,url) {
     return repoData("backtests/"+folder+"/status.json");
   }
   if(url.pathname==="/api/health" && request.method==="GET"){
-    return respond({backend:"online",enabled:Boolean(env.GITHUB_ACTIONS_TOKEN&&env.APP_ADMIN_KEY),require_auth:true,
+    return respond({backend:"online",enabled:Boolean(env.GITHUB_ACTIONS_TOKEN&&env.COLLECTION_RATE_LIMIT),require_auth:false,
       max_batch_markets:MAX_BATCH_MARKETS});
   }
   if(url.pathname==="/api/runs" && request.method==="GET"){
@@ -102,9 +102,9 @@ async function routes(request,env,url) {
     },200,{"cache-control":"public, max-age=8"});
   }
   if(url.pathname==="/api/runs" && request.method==="POST"){
-    if(!env.GITHUB_ACTIONS_TOKEN || !env.APP_ADMIN_KEY) return respond({error:"Server is not configured yet. Set the Worker secrets first."},503);
+    if (!env.GITHUB_ACTIONS_TOKEN || !env.COLLECTION_RATE_LIMIT)
+  return respond({error:"Worker not configured."},503);
     if(!validateOrigin(request))return respond({error:"Cross-origin requests are not allowed."},403);
-    if(!authorized(request,env))return respond({error:"Incorrect app access key."},401);
     const contentType=request.headers.get("content-type")||"";
     if(!contentType.toLowerCase().startsWith("application/json"))return respond({error:"Expected JSON settings."},415);
     if(Number(request.headers.get("content-length")||0)>2048)return respond({error:"Request too large."},413);
@@ -119,6 +119,22 @@ async function routes(request,env,url) {
     const active=(recent.payload?.workflow_runs||[]).find(r=>r.status!=="completed");
     if(active)return respond({error:"A research collection is already queued or running.",existing_run:{
       id:active.id,html_url:active.html_url,status:active.status}},409);
+    const latest = (recent.payload?.workflow_runs || [])[0];
+
+if (latest &&
+    Date.now() - Date.parse(latest.created_at) < 600000)
+  return respond({
+    error: "Wait 10 minutes between collection requests."
+  }, 429);
+
+const { success } = await env.COLLECTION_RATE_LIMIT.limit({
+  key: "research-collection"
+});
+
+if (!success)
+  return respond({
+    error: "Too many requests. Try again shortly."
+  }, 429);
     const result=await github("/actions/workflows/"+WORKFLOW+"/dispatches",env,"POST",{
       ref:"main",
       inputs:{asset:body.asset,days_ago:String(body.days_ago),
