@@ -83,6 +83,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
   <button class="refresh" type="button" id="checkRuns">Check job status</button>
   </div>
   <p id="runStatus" class="collectionHint" role="status">Checking whether the dynamic backend is available…</p>
+  <div class="collectionHint" id="lastRunDetails" aria-live="polite">Loading latest collection details…</div>
   <p id="collectionFeedback" role="status" aria-live="polite"></p>
 <p class="collectionWarning">
   Run Collection starts a historical research job directly from the app.
@@ -118,6 +119,42 @@ var apiBase="/api";var workerAvailable=false;
 var ASSETS={weather:{label:"All hourly weather markets",times:[60,45,30,20,15,10,5,3,1],status:"weather_hourly"},btc:{label:"Bitcoin · 15-minute markets",times:[15,10,5,3,1],status:"btc15m"},eth:{label:"Ethereum · 15-minute markets",times:[15,10,5,3,1],status:"eth15m"},crypto:{label:"Crypto · pooled 15-minute markets",times:[15,10,5,3,1],status:"crypto15m"},sports:{label:"Sports · game/match winners",times:[360,180,120,60,30,15,5],status:"sports_game"},weather_daily:{label:"Daily weather · high temperatures",times:[360,180,120,60,30,15,5],status:"weather_daily"},financial_daily:{label:"Daily financial index closing targets",times:[360,180,120,60,30,15,5],status:"financial_daily"}};
 var BANDS=["50-60","60-70","70-80","80-90","90-100"];
 var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},latestRecords:[],latestMeta:{},view:"historical",loadedAt:null};
+function saveView(){
+ try{localStorage.setItem("pocketAnalyticsViewV1",JSON.stringify({
+  asset:state.asset,view:state.view,metric:state.metric,minimum:state.minimum
+ }))}catch(e){}
+}
+function restoreView(){
+ try{
+  var v=JSON.parse(localStorage.getItem("pocketAnalyticsViewV1")||"null");
+  if(!v)return;
+  if(ASSETS[v.asset])state.asset=v.asset;
+  if(["historical","latest"].includes(v.view))state.view=v.view;
+  if(["pnl","roi","win"].includes(v.metric))state.metric=v.metric;
+  if([1,5,10,20,30].includes(Number(v.minimum)))state.minimum=Number(v.minimum);
+ }catch(e){}
+ id("datasetView").value=state.view;
+ id("minSample").value=String(state.minimum);
+}
+function renderLastRun(){
+ var all=Object.keys(state.latestMeta||{}).map(function(asset){
+  return state.latestMeta[asset];
+ }).filter(function(m){return m&&m.run_id&&m.run_id!=="local"});
+ all.sort(function(a,b){return String(b.collected_at||"").localeCompare(String(a.collected_at||""))});
+ var latest=all[0],dest=id("lastRunDetails");
+ if(!latest){dest.textContent="No published run details yet. New collections will show their category, settings, and dates here.";return}
+ var label=ASSETS[latest.asset]?ASSETS[latest.asset].label:latest.asset;
+ var date=latest.collected_at?new Date(latest.collected_at).toLocaleString():"Time unavailable";
+ var range=latest.first_date?(latest.first_date===latest.last_date?latest.first_date:latest.first_date+" to "+latest.last_date):"No sampled dates";
+ var planned=latest.requested_markets_per_day?latest.requested_markets_per_day+" markets/day for "+latest.requested_days+" day(s)":"Settings unavailable for older run";
+ dest.innerHTML="<strong>Last published collection: "+htmlSafe(label)+"</strong><div>"+
+  htmlSafe(date)+" · "+htmlSafe(range)+"</div><div>"+
+  htmlSafe(planned)+" · "+number(latest.markets_sampled_total).toLocaleString()+" distinct markets · "+
+  number(latest.total_observations).toLocaleString()+" price observations</div>"+
+  '<a href="https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/'+
+  encodeURIComponent(latest.run_id)+'" target="_blank" rel="noopener noreferrer">View run #'+
+  htmlSafe(latest.run_id)+" on GitHub</a>";
+}
 function id(x){return document.getElementById(x)}
 function htmlSafe(x){return String(x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function csv(s){var rows=[],cur="",row=[],quote=false;for(var i=0;i<s.length;i++){var c=s[i];if(quote){if(c==='"'&&s[i+1]==='"'){cur+='"';i++}else if(c==='"'){quote=false}else cur+=c}else if(c==='"'){quote=true}else if(c===","){row.push(cur);cur=""}else if(c==="\n"){row.push(cur.replace(/\r$/,""));rows.push(row);row=[];cur=""}else cur+=c}if(cur||row.length){row.push(cur);rows.push(row)}var names=rows.shift();if(!names)return[];return rows.filter(function(r){return r.some(Boolean)}).map(function(r){var out={};names.forEach(function(k,i){out[k]=r[i]||""});return out})}
@@ -208,7 +245,7 @@ function load(){
   }).then(function(){return Promise.all([
     readText("/api/latest-data"+query).catch(function(){return readText("./latest-data.csv"+query)}).catch(function(){return readText(REPO+"backtests/LATEST_BY_CATEGORY.csv"+query)}).then(function(v){state.latestRecords=csv(v)}).catch(function(){state.latestRecords=[]}),
     readJSON("/api/latest-meta"+query).catch(function(){return readJSON("./latest-meta.json"+query)}).catch(function(){return readJSON(REPO+"backtests/LATEST_METADATA.json"+query)}).then(function(v){state.latestMeta=v}).catch(function(){state.latestMeta={}})
-  ])}).then(render).catch(function(e){id("matrix").innerHTML='<tr><td class="state" colspan="6">Could not load results. Check your connection or use Refresh.</td></tr>';id("updated").textContent="Data unavailable";id("dataNote").textContent=e.message});
+  ])}).then(function(){renderLastRun();render()}).catch(function(e){id("matrix").innerHTML='<tr><td class="state" colspan="6">Could not load results. Check your connection or use Refresh.</td></tr>';id("updated").textContent="Data unavailable";id("dataNote").textContent=e.message});
 }
 
 /* These preferences configure a future manual workflow run, not a client-side resample. */
@@ -323,11 +360,12 @@ function initCollection(){
  renderCollection();
 }
 
-document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){state.asset=b.dataset.asset;id("detail").classList.remove("visible");render()})});
-document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;id("detail").classList.remove("visible");render()})});
-id("datasetView").addEventListener("change",function(){state.view=this.value;id("detail").classList.remove("visible");render()});
-id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);id("detail").classList.remove("visible");render()});
+document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){state.asset=b.dataset.asset;saveView();id("detail").classList.remove("visible");render()})});
+document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;saveView();id("detail").classList.remove("visible");render()})});
+id("datasetView").addEventListener("change",function(){state.view=this.value;saveView();id("detail").classList.remove("visible");render()});
+id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);saveView();id("detail").classList.remove("visible");render()});
 id("refresh").addEventListener("click",function(){load();loadExecutionSummary()});
+restoreView();
 initCollection();
 checkBackend();
 load();
