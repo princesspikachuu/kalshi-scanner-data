@@ -112,6 +112,40 @@ def candles(m,archived,start,end):
     if archived:path="/historical/markets/"+m["ticker"]+"/candlesticks"
     else:path="/series/"+m["series_ticker"]+"/markets/"+m["ticker"]+"/candlesticks"
     return req(path,{"start_ts":start,"end_ts":end,"period_interval":1}).get("candlesticks",[])
+# Execution-evidence requests are strictly optional and must never stall the
+# ordinary full-size backtest. One research day can contain up to 300 markets.
+EXECUTION_MARKETS_PER_DAY = 60
+EXECUTION_SECONDS_PER_DAY = 45
+EXECUTION_TRADE_PAGES = 2
+
+def execution_sample_indices(total, limit=EXECUTION_MARKETS_PER_DAY):
+    """Evenly distribute a capped execution subsample across selected markets."""
+    if total <= 0 or limit <= 0:return set()
+    count=min(total,limit)
+    return {i*total//count for i in range(count)}
+
+def quick_trade_history(market, archived, start, end):
+    """Fail fast for optional execution evidence; NEVER treat truncated data as no fills."""
+    out=[];cursor=""
+    endpoint="/historical/trades" if archived else "/markets/trades"
+    for _page in range(EXECUTION_TRADE_PAGES):
+        args={"ticker":market["ticker"],"limit":1000,"min_ts":start,"max_ts":end}
+        if cursor:args["cursor"]=cursor
+        url=BASE+endpoint+"?"+urllib.parse.urlencode(args)
+        request=urllib.request.Request(url,headers={
+            "User-Agent":"KalshiPocketAnalytics/1.1","Accept":"application/json"})
+        try:
+            with urllib.request.urlopen(request,timeout=7) as handle:
+                payload=json.load(handle)
+        except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError) as exc:
+            print("Execution evidence skipped:",market["ticker"],str(exc)[:160],flush=True)
+            return None
+        out.extend(payload.get("trades",[]))
+        cursor=payload.get("cursor") or ""
+        if not cursor:return out
+    print("Execution evidence skipped: trade pagination truncated",market["ticker"],flush=True)
+    return None
+
 def run(asset,days_ago,cap):
     day=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=days_ago)).date()
     start=int(dt.datetime.combine(day,dt.time.min,dt.timezone.utc).timestamp());end=start+86400
@@ -176,29 +210,43 @@ def run(asset,days_ago,cap):
         if not added:break
         depth+=1
     observations=[];failed=[];attempts=[]
-    for market in sample:
+    execution_indices=execution_sample_indices(len(sample))
+    execution_started=time.monotonic()
+    execution_checked=0
+    execution_skipped=0
+    trade_cutoff=stamp(cutoff.get("trades_created_ts"))
+    for market_index,market in enumerate(sample):
         try:
             close=stamp(market.get("close_time"))
             if close is None:raise ValueError("Market missing close_time")
             bars=candles(market,archive,close-MAX_LOOKBACK_SECONDS[asset],close+60)
             kind,city=weather_metadata(market["series_ticker"])
-            # Trade history is public, bounded to the sampled market ticker.
-            # If unavailable, do not invent fill outcomes; keep legacy analysis.
-            try:
-                trades=[]; cursor=""
-                for trade_page in range(20):
-                    args={"ticker":market["ticker"],"limit":1000,
-                          "min_ts":close-MAX_LOOKBACK_SECONDS[asset]-120,
-                          "max_ts":close+60}
-                    if cursor:args["cursor"]=cursor
-                    page=req("/historical/trades" if archive else "/markets/trades",args)
-                    trades.extend(page.get("trades",[]))
-                    cursor=page.get("cursor") or ""
-                    if not cursor:break
-                if cursor:raise ValueError("Trade history truncated")
-            except Exception as exc:
-                print("Execution evidence unavailable:",market["ticker"],str(exc),flush=True)
-                trades=None
+            # Full historical candle collection is unaffected by expensive
+            # secondary trade-history analysis. Sample evenly and enforce a
+            # strict per-day time budget, including API errors or rate limits.
+            trades=None
+            if market_index in execution_indices and (
+                    time.monotonic()-execution_started < EXECUTION_SECONDS_PER_DAY):
+                # Don't query trades for markets with no usable post-only quote.
+                has_candidate=False
+                for mins in MINUTES[asset]:
+                    target=close-mins*60
+                    eligible=[c for c in bars if c.get("end_period_ts") is not None
+                              and 0<=target-int(c["end_period_ts"])<=60]
+                    if eligible:
+                        from execution_model import best_quote
+                        if best_quote(max(eligible,key=lambda x:x["end_period_ts"])) is not None:
+                            has_candidate=True
+                            break
+                if has_candidate:
+                    trades=quick_trade_history(market,
+                        archive if trade_cutoff is None else close+60<=trade_cutoff,
+                        close-MAX_LOOKBACK_SECONDS[asset]-120,close+60)
+                    if trades is None:execution_skipped+=1
+                    else:execution_checked+=1
+            if market_index%25==0:
+                print("Progress",asset,str(day),market_index+1,"of",len(sample),
+                      "markets; execution checked",execution_checked,flush=True)
             for mins in MINUTES[asset]:
                 target=close-mins*60
                 eligible=[c for c in bars if c.get("end_period_ts") is not None
@@ -304,6 +352,10 @@ def run(asset,days_ago,cap):
         "markets_sampled":len(sample),"sampling_truncated":len(allm)>len(sample),
         "observations":len(observations),"total_observations":len(allrows),
         "execution_attempts":len(attempts),"execution_through_proxies":sum(row[15]=="trade_through" for row in attempts),
+        "execution_markets_checked":execution_checked,
+        "execution_markets_skipped":execution_skipped,
+        "execution_subsample_limit":EXECUTION_MARKETS_PER_DAY,
+        "execution_time_budget_seconds":EXECUTION_SECONDS_PER_DAY,
         "days_sampled":len(set(row["date"] for row in allrows)),
         "sampled_by_series":dict(sorted((series,sum(m["series_ticker"]==series for m in sample))
                                  for series in SERIES[asset])),
