@@ -98,8 +98,15 @@ def run(asset,days_ago,cap):
     if market_cutoff is None:raise RuntimeError("Missing historical market cutoff")
     archive=end<=market_cutoff
     allm=[]
+    unavailable_series=[]
     for series in SERIES[asset]:
-        rows=markets(series,start,end,archive)
+        try:
+            rows=markets(series,start,end,archive)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404: raise
+            unavailable_series.append(series)
+            print("Series unavailable (HTTP 404):",series,flush=True)
+            continue
         print(series,len(rows),"settled markets",flush=True)
         for market in rows:market["series_ticker"]=series
         allm.extend(rows)
@@ -222,6 +229,7 @@ def run(asset,days_ago,cap):
         "hourly_types":sorted(set(weather_metadata(m["series_ticker"])[0] for m in sample)),
         "sampled_subtypes":sorted(set(weather_metadata(m["series_ticker"])[1] for m in sample)),
         "requested_markets":cap,"markets_shortfall":max(0,cap-len(sample)),
+        "unavailable_series":unavailable_series,
         "historical_endpoint":archive,
         "method":"simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
         "updated_at":dt.datetime.now(dt.timezone.utc).isoformat()},indent=2))
