@@ -230,20 +230,20 @@ async function checkBackend(){
   if(result.backend!=="online")throw Error("not a worker");
   workerAvailable=!!result.enabled;
   if(workerAvailable){
-    statusText("Dynamic collection is available. Enter your app key and tap Run collection.");
-    await checkRunStatus();
+  statusText("Backend connected. Collection controls are available.");
+  await checkRunStatus();
+  }
   }else statusText("Worker is online, but the server secrets have not been configured.",true);
  }catch(e){workerAvailable=false;statusText("Read-only mode. Deploy the Cloudflare Worker to run research directly from here.");}
  renderCollection();
 }
 async function startCollection(){
- const p=collectionConfig(),key=id("accessKey").value;
+ const p=collectionConfig();
  if(!workerAvailable||!validCollection(p))return;
- if(!key){statusText("Enter your app access key before starting a run.",true);return;}
  const b=id("runCollection");b.disabled=true;b.textContent="Starting…";
  try{
   const response=await fetch(apiBase+"/runs",{method:"POST",
-   headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+   headers:{"Content-Type":"application/json"},
    body:JSON.stringify({asset:p.asset,max_markets:p.markets,
     days_ago:p.offset,days_to_collect:p.days})});
   const data=await response.json();
