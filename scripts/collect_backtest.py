@@ -201,7 +201,7 @@ def run(asset,days_ago,cap):
         "historical_endpoint":archive,
         "method":"simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
         "updated_at":dt.datetime.now(dt.timezone.utc).isoformat()},indent=2))
-    print("Saved",f,"observations",len(observations))
+    print("Saved",output,"observations",len(observations))
 if __name__=="__main__":
     p=argparse.ArgumentParser();p.add_argument("--asset",choices=SERIES,required=True);p.add_argument("--days-ago",type=int,default=2);p.add_argument("--max-markets",type=int,default=60);a=p.parse_args()
     if not 1<=a.days_ago<=30 or not 1<=a.max_markets<=300:raise SystemExit("out of bounds")
