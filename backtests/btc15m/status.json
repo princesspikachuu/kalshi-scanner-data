@@ -1,0 +1,10 @@
+{
+  "asset": "btc",
+  "date": "2026-10-23",
+  "markets_available": 96,
+  "markets_sampled": 60,
+  "sampling_truncated": true,
+  "observations": 240,
+  "historical_endpoint": false,
+  "updated_at": "2026-10-25T17:04:09.594182+00:00"
+}
