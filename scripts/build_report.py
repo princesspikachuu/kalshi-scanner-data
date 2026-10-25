@@ -83,107 +83,123 @@ def comparison_grid(rows, minutes):
         lines.append("| "+str(mins)+"m | "+" | ".join(parts)+" |")
     return lines
 
+
 def build():
     overview=[
-        "# Kalshi Pocket Analytics — Average maker P/L by market type and purchase price",
+        "# Kalshi Pocket Analytics — average maker P/L by entry time and price",
         "",
-        "## How to read the results",
+        "**Main metric:** average simulated profit/loss per contract, in cents.",
+        "Each cell pools all hourly weather contracts (regardless of city), or",
+        "all Bitcoin or Ethereum contracts within the specified time and purchase-price range.",
+        "Each cell shows the average profit/loss followed by the number of markets (n).",
         "",
-        "Each row pools contracts of the **same market type**, regardless of city, strike, or YES/NO outcome.",
-        "All weather hourly markets are combined. Bitcoin and Ethereum are separate categories.",
-        "The reference entry time is **30 minutes before close for hourly weather** and",
-        "**5 minutes before close for 15-minute crypto**. These are reference times",
-        "chosen to prevent counting the same contract repeatedly in the headline table.",
-        "The detailed timing comparison appears below each asset report.",
+        "**These are not executed trades.** We assume a maker buy fills at the",
+        "historical best bid. Fees and fill probability aren't included.",
+        "Each entry time reuses some of the same underlying contracts: do not",
+        "add sample counts across time rows.",
         "",
-        "**Average P/L per contract** = total settlement payouts minus hypothetical",
-        "bid purchase costs, divided by the number of sampled contracts. One",
-        "YES/NO position is selected per contract at each reference time.",
-        "**Return on amount invested** = total simulated net P/L divided by total hypothetical cost.",
-        "**Both figures are before fees and assume every maker bid filled. They are NOT actual trade results.**",
-        "A positive number is not evidence of a reliably profitable maker strategy.",
-        "",
-        "## Summary by category and price range",
-        "",
-        "| Market type | Reference entry | Price range | Markets | Wins | Avg. cost | Avg. P/L per contract | P/L per $100 invested | Days |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|",
     ]
-    for key,title,folder,ref,minutes in ASSETS:
-        rows=read_rows(folder)
-        sampled = distinct_markets_at_time(rows,ref)
-        for band, m in primary_rows(rows,ref):
-            if m is None:
-                overview.append(f"| {title} | {ref}m | {band}¢ | — | — | — | — | — | — |")
-            else:
-                overview.append(
-                    f"| {title} | {ref}m | {band}¢ | {m['n']} | {m['wins']} "
-                    f"| {m['avg_price_cents']:.1f}¢ | {format_money(m['avg_pl_cents'],'¢')} "
+    rows_for_csv=[]
+    for asset,title,folder,reference,minutes in ASSETS:
+        raw=read_rows(folder)
+        days=len({r["date"] for r in raw})
+        markets=len({r["ticker"] for r in raw})
+        overview += [
+            "## "+title,
+            "",
+            f"**Coverage:** {days} UTC day(s), {markets} distinct markets.",
+            "",
+            "### Average profit/loss (¢ per contract) by time and bid price",
+            "",
+            *comparison_grid(raw,minutes),
+            "",
+        ]
+        detail=[
+            "# "+title+": maker profit/loss by time and purchase price",
+            "",
+            "**Main metric:** average profit/loss in cents per contract.",
+            f"Coverage: {days} UTC day(s), {markets} distinct markets.",
+            "Simulated filled maker bids; P/L excludes fees.",
+            "",
+            "## Average profit/loss grid",
+            "",
+            *comparison_grid(raw,minutes),
+            "",
+            "## Complete results",
+            "",
+            "| Time left | Price range | Markets | Wins | Win rate | Avg. purchase | Avg. P/L per contract | Hypothetical ROI | Days |",
+            "|---:|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        for minute in minutes:
+            markets_at_time=distinct_markets_at_time(raw,minute)
+            for band in BANDS:
+                selected=[r for r in markets_at_time if r["price_band"]==band]
+                m=metrics(selected)
+                if m is None:
+                    detail.append(f"| {minute}m | {band}¢ | — | — | — | — | — | — | — |")
+                    continue
+                winrate=100*m["wins"]/m["n"]
+                rows_for_csv.append([asset,title,minute,band,m["n"],m["wins"],
+                                    round(winrate,4),round(m["avg_price_cents"],4),
+                                    round(m["avg_pl_cents"],4),round(m["roi_per_100"],4),m["days"]])
+                detail.append(
+                    f"| {minute}m | {band}¢ | {m['n']} | {m['wins']} "
+                    f"| {winrate:.1f}% | {m['avg_price_cents']:.2f}¢ "
+                    f"| {format_money(m['avg_pl_cents'],'¢')} "
                     f"| {format_money(m['roi_per_100'],'%')} | {m['days']} |"
                 )
-        if not rows:
-            continue
-        detail=[
-            "# "+title+" — Average maker profit/loss by price band",
+        if asset=="weather":
+            counts=defaultdict(set)
+            for r in raw:
+                counts[r.get("weather_type") or "unknown"].add(r["ticker"])
+            detail.extend([
+                "",
+                "## Weather market types in sample",
+                f"- Multi-station Weather Index: {len(counts['index'])} markets",
+                f"- Single-station hourly: {len(counts['station'])} markets",
+                "If a type is absent, that reflects no usable data in the sampled dates.",
+            ])
+        detail.extend([
             "",
-            f"**Primary comparison uses bids {ref} minutes before settlement.**",
-            "Markets are pooled across contracts; no city or strike selection is required.",
-            "All maker bids are hypothetical fills, and P/L figures exclude trading fees.",
+            "## Interpretation and limitations",
+            "The same market may appear at multiple entry times. Each time/price",
+            "cell includes at most one YES or NO position per ticker. Do not sum",
+            "time rows as independent bets.",
+            "Quote prices do not guarantee a limit-order fill or quantity.",
+            "All P/L is hypothetical and before fees.",
+            "A short or incomplete historical sample cannot prove an edge.",
             "",
-            "## Average P/L by cost range",
-            "",
-            *table_header(),
-            *(tablerow(band+"¢",m) for band,m in primary_rows(rows,ref)),
-            "",
-            "## Timing comparison: average profit/loss per contract",
-            "",
-            "Cells show average P/L in **cents per contract**, followed by the number",
-            "of sampled markets in parentheses. A dash means no quote in that band.",
-            "Each time row is a different hypothetical trading decision; do not",
-            "add row counts across times as if they were independent contracts.",
-            "",
-            *comparison_grid(rows,minutes),
-            "",
-        ]
-        if key=="weather":
-            kindcounts=defaultdict(set)
-            for r in rows:
-                kindcounts[r.get("weather_type") or "unknown"].add(r["ticker"])
-            detail+=["## Weather types covered",""]
-            for kind in ("index","station"):
-                detail.append(f"- {kind.title()} hourly: {len(kindcounts[kind])} unique markets sampled.")
-            detail.append("")
-        detail += [
-            f"**Coverage:** {len({r['date'] for r in rows})} UTC day(s), "
-            f"{len({r['ticker'] for r in rows})} unique market tickers.",
-            "",
-            "**Research limitations:** Maker orders may not fill, fill rates are",
-            "unmeasured, outcomes from one weather event are correlated, and",
-            "one or a few days cannot establish a repeatable edge.",
-            "",
-        ]
-        folder.mkdir(parents=True,exist_ok=True)
-        (folder/"REPORT.md").write_text("\n".join(detail),encoding="utf-8")
-    overview += [
+        ])
+        if raw:
+            folder.mkdir(parents=True,exist_ok=True)
+            (folder/"REPORT.md").write_text("\n".join(detail),encoding="utf-8")
+            overview.extend([
+                "For example, +4.2¢ (n=36) means an average gain of 4.2 cents per",
+                "hypothetically filled contract among 36 sampled markets in that cell.",
+                "",
+                f"[Detailed {title} metrics]({folder.name}/REPORT.md)",
+                "",
+            ])
+        else:
+            overview.extend(["No historical observations collected yet for this market type.",""])
+    overview.extend([
+        "## Research cautions",
+        "- These are simulated maker bids, NOT verified trades or fills.",
+        "- Different entry-time rows can reflect the same underlying contract.",
+        "- Hourly weather pools Weather Index and single-station contracts; see the weather details for coverage.",
+        "- A dash indicates no observations, not a loss.",
+        "- The report is preliminary until we collect multiple days and study maker fill likelihood.",
         "",
-        "## Interpretation",
-        "",
-        "- **Positive P/L** means the sample would have earned money only if the displayed maker bids actually filled.",
-        "- **Negative P/L** means the sample lost money even under optimistic fill assumptions.",
-        "- **Missing Ethereum/station rows** mean data collection has not produced a usable sample, not that trading there is unprofitable.",
-        "- Treat rows with fewer than 7 days or 30 distinct markets as especially preliminary.",
-        "- Never add results for different entry times as though each were an independent contract.",
-        "",
-        "### View timing breakdowns",
-        "",
-        "- [Hourly weather](weather_hourly/REPORT.md)",
-        "- [Bitcoin](btc15m/REPORT.md)",
-        "- [Ethereum](eth15m/REPORT.md)",
-        "",
-    ]
-    out=Path("backtests/OVERVIEW.md")
-    out.parent.mkdir(parents=True,exist_ok=True)
-    out.write_text("\n".join(overview),encoding="utf-8")
-    print("Built",out)
+    ])
+    Path("backtests").mkdir(exist_ok=True)
+    Path("backtests/OVERVIEW.md").write_text("\n".join(overview),encoding="utf-8")
+    with Path("backtests/AVERAGES_BY_TIME_AND_PRICE.csv").open("w",newline="",encoding="utf-8") as stream:
+        writer=csv.writer(stream)
+        writer.writerow(["asset","market_type","minutes_before_close","price_band_cents",
+                         "sampled_markets","wins","win_rate_percent","average_purchase_price_cents",
+                         "average_profit_loss_cents_per_contract","hypothetical_roi_percent","sampled_days"])
+        writer.writerows(rows_for_csv)
+    print("Updated entry-time by price-band reports and CSV.")
 
 if __name__=="__main__":
     build()
