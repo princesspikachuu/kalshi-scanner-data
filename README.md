@@ -16,6 +16,28 @@ On a phone, open that URL in a browser and choose **Add to Home screen** / **Ins
 
 Cloudflare remains a separate deployment: we have not modified or redeployed your existing Worker, because this GitHub connection does not control the Cloudflare account.
 
+## Dynamic app (Cloudflare Worker)
+
+The repository now includes a **dynamic, authenticated app**:
+
+- `worker/src/index.js`: same-origin backend with `GET /api/health`, `GET /api/runs` and authenticated `POST /api/runs`.
+- `docs/index.html`: mobile UI with **Run collection in app** and **Check job status**.
+- `wrangler.jsonc`: serves the UI and API on the same Cloudflare Worker hostname.
+- `.github/workflows/deploy-pocket-app.yml`: **manual-only** Cloudflare deployment, not a scheduled scan.
+
+**One-time setup (must be completed by repository and Cloudflare account owner):**
+
+1. In GitHub repository **Settings → Secrets and variables → Actions**, set `CLOUDFLARE_API_TOKEN` (Cloudflare token scoped to deploy Workers on your account) and `CLOUDFLARE_ACCOUNT_ID`.
+2. Create a GitHub fine-grained personal access token scoped only to `princesspikachuu/kalshi-scanner-data` with **Actions: Read and write** and **Metadata: Read**, so it can dispatch and check workflow runs. Save it as GitHub Actions secret `POCKET_GITHUB_ACTIONS_TOKEN`. Don't paste the token in chat or source files.
+3. Generate a unique, high-entropy app access key; save it as `POCKET_APP_ADMIN_KEY` in the GitHub Actions secrets. This is the key you'll enter into the phone app to authorize a collection. Do **not** reuse a password or a GitHub token.
+4. Open [Deploy Pocket Analytics dynamic Worker](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/deploy-pocket-app.yml) and click **Run workflow** once. The job deploys app assets and installs the two server-side secrets into Cloudflare. You can then use the `*.workers.dev` URL shown by Cloudflare or the deployment log.
+
+**Important:** The existing GitHub Pages app remains read-only; it cannot trigger runs. Open the **Cloudflare Worker URL** to see the working Run button. Configure custom domains inside Cloudflare if desired. The backend does not run automatically, place trades, or continuously poll Kalshi; it only launches the explicitly requested historical GitHub Actions collection.
+
+**Security:** No GitHub token is sent to browsers. The access key is submitted over HTTPS per run, stored only in the active browser session's form field, and checked by the Worker. Keep the Worker URL and access key private; anyone with the key can start a bounded collection job. For additional protection, use Cloudflare Access or another identity-based authentication layer. If the app is public, do not share the admin key.
+
+**Operation:** Set asset, days ago, number of days (up to 7), and markets/day (up to 300, capped at 900 sampled markets for one request). The API validates the input and refuses a second run while one is active. The dashboard's **Check job status** shows recent run state. When completed, **Refresh** loads the latest committed dataset from GitHub. This still relies on the existing GitHub Actions collector; it is not a live-trading bot.
+
 ## See the results
 
 **[Open the main time-by-price report](backtests/OVERVIEW.md)** — separate tables for hourly weather, Bitcoin and Ethereum. Each cell is the **average simulated profit/loss in cents per contract**, with sample size in parentheses.
