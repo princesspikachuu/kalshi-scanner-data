@@ -79,9 +79,8 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
     <button class="secondary" id="copyCollection" type="button">Copy run settings</button>
     <a id="openWorkflow" href="https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml" target="_blank" rel="noopener noreferrer">Open GitHub to run ↗</a>
   </div>
-  <div class="collectionfields" style="grid-template-columns:minmax(0,1fr) auto;margin-bottom:8px">
-    <div><label for="accessKey">App access key (stored only in this page session)</label><input id="accessKey" type="password" autocomplete="off" placeholder="Enter your Worker app key"/></div>
-    <div style="align-self:end"><button class="refresh" type="button" id="checkRuns">Check job status</button></div>
+  <div class="collectionActions">
+  <button class="refresh" type="button" id="checkRuns">Check job status</button>
   </div>
   <p id="runStatus" class="collectionHint" role="status">Checking whether the dynamic backend is available…</p>
   <p id="collectionFeedback" role="status" aria-live="polite"></p>
