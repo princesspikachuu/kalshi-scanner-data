@@ -3,6 +3,7 @@
 import argparse,csv,datetime as dt,json,time,urllib.parse,urllib.request,urllib.error,hashlib
 from pathlib import Path
 from collections import defaultdict
+from execution_model import ATTEMPT_COLUMNS, simulate
 
 BASE="https://external-api.kalshi.com/trade-api/v2"
 # Hourly Weather Index (multi-station) and legacy single-station hourly contracts.
@@ -152,19 +153,36 @@ def run(asset,days_ago,cap):
             if len(sample)>=cap:break
         if not added:break
         depth+=1
-    observations=[];failed=[]
+    observations=[];failed=[];attempts=[]
     for market in sample:
         try:
             close=stamp(market.get("close_time"))
             if close is None:raise ValueError("Market missing close_time")
             bars=candles(market,archive,close-MAX_LOOKBACK_SECONDS[asset],close+60)
             kind,city=weather_metadata(market["series_ticker"])
+            # Trade history is public, bounded to the sampled market ticker.
+            # If unavailable, do not invent fill outcomes; keep legacy analysis.
+            try:
+                trades=[]; cursor=""
+                for trade_page in range(20):
+                    args={"ticker":market["ticker"],"limit":1000}
+                    if cursor:args["cursor"]=cursor
+                    page=req("/markets/trades",args)
+                    trades.extend(page.get("trades",[]))
+                    cursor=page.get("cursor") or ""
+                    if not cursor:break
+                if cursor:raise ValueError("Trade history truncated")
+            except Exception as exc:
+                print("Execution evidence unavailable:",market["ticker"],str(exc),flush=True)
+                trades=None
             for mins in MINUTES[asset]:
                 target=close-mins*60
                 eligible=[c for c in bars if c.get("end_period_ts") is not None
                           and 0<=target-int(c["end_period_ts"])<=120]
                 if not eligible:continue
                 candle=max(eligible,key=lambda x:x["end_period_ts"])
+                if trades is not None:
+                    attempts.extend(simulate(market,asset,str(day),mins,candle,trades,target,close))
                 for side in ("yes","no"):
                     bid=val(candle,side,"bid")
                     if side=="no" and bid is None:
@@ -187,6 +205,9 @@ def run(asset,days_ago,cap):
     folder=Path("backtests")/({"weather":"weather_hourly","sports":"sports_game","crypto":"crypto15m"}.get(asset,asset+"15m"))
     folder.mkdir(parents=True,exist_ok=True)
     output=folder/(str(day)+".csv")
+    execution_file=folder/(str(day)+".execution.csv")
+    with execution_file.open("w",newline="") as handle:
+        writer=csv.writer(handle);writer.writerow(ATTEMPT_COLUMNS);writer.writerows(attempts)
     with output.open("w",newline="") as handle:
         writer=csv.writer(handle);writer.writerow(COLUMNS);writer.writerows(observations)
     allrows=[]
@@ -223,6 +244,7 @@ def run(asset,days_ago,cap):
         "asset":asset,"date":str(day),"markets_available":len(allm),
         "markets_sampled":len(sample),"sampling_truncated":len(allm)>len(sample),
         "observations":len(observations),"total_observations":len(allrows),
+        "execution_attempts":len(attempts),"execution_through_proxies":sum(row[15]=="trade_through" for row in attempts),
         "days_sampled":len(set(row["date"] for row in allrows)),
         "sampled_by_series":dict(sorted((series,sum(m["series_ticker"]==series for m in sample))
                                  for series in SERIES[asset])),
