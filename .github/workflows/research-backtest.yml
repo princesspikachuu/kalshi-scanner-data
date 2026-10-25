@@ -6,7 +6,7 @@ on:
         description: Select market group
         required: true
         type: choice
-        options: [btc, eth, crypto, weather, sports]
+        options: [btc, eth, crypto, weather, sports, weather_daily, financial_daily]
         default: btc
       days_ago:
         description: Completed UTC day offset (1-30)
