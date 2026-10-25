@@ -1,0 +1,12 @@
+{
+  "crypto": {
+    "asset": "crypto",
+    "first_date": "2026-10-05",
+    "last_date": "2026-10-11",
+    "days_sampled": 7,
+    "markets_sampled_total": 2100,
+    "total_observations": 8366,
+    "run_id": "40236162905",
+    "run_attempt": "1"
+  }
+}
