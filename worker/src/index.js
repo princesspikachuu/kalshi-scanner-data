@@ -8,7 +8,7 @@
 const REPO = "princesspikachuu/kalshi-scanner-data";
 const WORKFLOW = "research-backtest.yml";
 const API = "https://api.github.com/repos/" + REPO;
-const MAX_BATCH_MARKETS = 900;
+const MAX_BATCH_MARKETS = 2100;
 const DEFAULT_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -27,7 +27,7 @@ function validSettings(p) {
   if (!exactInteger(p.days_ago,1,30) || !exactInteger(p.days_to_collect,1,7) ||
       p.days_ago+p.days_to_collect-1>30) return "Choose 1–7 complete UTC days within the last 30 days.";
   if (p.max_markets*p.days_to_collect > MAX_BATCH_MARKETS)
-    return "One run is limited to 900 sampled markets total. Reduce the sample or number of days.";
+    return "One run is limited to 2,100 sampled markets total (300 per day for up to 7 days).";
   return "";
 }
 function timingEqual(value, expected) {
