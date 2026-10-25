@@ -13,6 +13,8 @@ SOURCES = {
     "weather": BACKTESTS / "weather_hourly",
     "btc": BACKTESTS / "btc15m",
     "eth": BACKTESTS / "eth15m",
+    "crypto": BACKTESTS / "crypto15m",
+    "sports": BACKTESTS / "sports_game",
 }
 EXPECTED = {
     "asset", "minutes_before_close", "price_band_cents",
