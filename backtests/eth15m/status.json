@@ -1,0 +1,19 @@
+{
+  "asset": "eth",
+  "date": "2026-10-17",
+  "markets_available": 96,
+  "markets_sampled": 96,
+  "sampling_truncated": false,
+  "observations": 383,
+  "total_observations": 2654,
+  "days_sampled": 7,
+  "sampled_by_series": {
+    "KXETH15M": 96
+  },
+  "hourly_types": [
+    "crypto"
+  ],
+  "historical_endpoint": false,
+  "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+  "updated_at": "2026-10-25T20:12:03.489557+00:00"
+}

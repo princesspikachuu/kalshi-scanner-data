@@ -54,19 +54,22 @@ hypothetically filled contract among 36 sampled markets in that cell.
 
 ## Ethereum (15-minute)
 
-**Coverage:** 0 UTC day(s), 0 distinct markets.
+**Coverage:** 7 UTC day(s), 664 distinct markets.
 
 ### Average profit/loss (¢ per contract) by time and bid price
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
 | 15m | — | — | — | — | — |
-| 10m | — | — | — | — | — |
-| 5m | — | — | — | — | — |
-| 3m | — | — | — | — | — |
-| 1m | — | — | — | — | — |
+| 10m | +3.85¢ (142) | +4.02¢ (155) | +1.68¢ (164) | -4.67¢ (114) | -0.28¢ (88) |
+| 5m | +4.30¢ (66) | +3.36¢ (90) | +4.42¢ (90) | +3.90¢ (124) | +0.32¢ (294) |
+| 3m | -2.02¢ (50) | +6.62¢ (48) | -3.65¢ (62) | +3.89¢ (87) | +0.66¢ (416) |
+| 1m | +7.15¢ (13) | +12.29¢ (17) | +4.60¢ (15) | -14.53¢ (34) | +0.51¢ (585) |
 
-No historical observations collected yet for this market type.
+For example, +4.2¢ (n=36) means an average gain of 4.2 cents per
+hypothetically filled contract among 36 sampled markets in that cell.
+
+[Detailed Ethereum (15-minute) metrics](eth15m/REPORT.md)
 
 ## Research cautions
 - These are simulated maker bids, NOT verified trades or fills.
