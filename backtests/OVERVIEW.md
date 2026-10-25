@@ -71,6 +71,43 @@ hypothetically filled contract among 36 sampled markets in that cell.
 
 [Detailed Ethereum (15-minute) metrics](eth15m/REPORT.md)
 
+## Crypto (pooled 15-minute)
+
+**Coverage:** 7 UTC day(s), 2100 distinct markets.
+
+### Average profit/loss (¢ per contract) by time and bid price
+
+| Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
+|---:|---:|---:|---:|---:|---:|
+| 15m | — | — | — | — | — |
+| 10m | +4.82¢ (449) | +0.97¢ (473) | +3.45¢ (445) | -2.64¢ (444) | +0.48¢ (275) |
+| 5m | +0.55¢ (212) | +1.54¢ (252) | +2.59¢ (295) | +4.90¢ (374) | +1.15¢ (949) |
+| 3m | +3.79¢ (162) | -0.71¢ (174) | -2.74¢ (177) | +2.17¢ (269) | -0.10¢ (1308) |
+| 1m | -11.41¢ (44) | +8.20¢ (51) | -9.59¢ (69) | +3.39¢ (118) | +0.31¢ (1812) |
+
+For example, +4.2¢ (n=36) means an average gain of 4.2 cents per
+hypothetically filled contract among 36 sampled markets in that cell.
+
+[Detailed Crypto (pooled 15-minute) metrics](crypto15m/REPORT.md)
+
+## Sports (game/match winners)
+
+**Coverage:** 0 UTC day(s), 0 distinct markets.
+
+### Average profit/loss (¢ per contract) by time and bid price
+
+| Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
+|---:|---:|---:|---:|---:|---:|
+| 360m | — | — | — | — | — |
+| 180m | — | — | — | — | — |
+| 120m | — | — | — | — | — |
+| 60m | — | — | — | — | — |
+| 30m | — | — | — | — | — |
+| 15m | — | — | — | — | — |
+| 5m | — | — | — | — | — |
+
+No historical observations collected yet for this market type.
+
 ## Research cautions
 - These are simulated maker bids, NOT verified trades or fills.
 - Different entry-time rows can reflect the same underlying contract.

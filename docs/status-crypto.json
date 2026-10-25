@@ -1,0 +1,50 @@
+{
+  "asset": "crypto",
+  "days_sampled": 7,
+  "markets_sampled_total": 2100,
+  "total_observations": 8352,
+  "first_date": "2026-10-18",
+  "last_date": "2026-10-24",
+  "hourly_types": [],
+  "latest_run_status": {
+    "asset": "crypto",
+    "date": "2026-10-18",
+    "markets_available": 864,
+    "markets_sampled": 300,
+    "sampling_truncated": true,
+    "observations": 1198,
+    "total_observations": 8352,
+    "days_sampled": 7,
+    "sampled_by_series": {
+      "KXBNB15M": 34,
+      "KXBTC15M": 34,
+      "KXDOGE15M": 34,
+      "KXETH15M": 33,
+      "KXHYPE15M": 33,
+      "KXNEAR15M": 33,
+      "KXSOL15M": 33,
+      "KXXRP15M": 33,
+      "KXZEC15M": 33
+    },
+    "hourly_types": [
+      "crypto15m"
+    ],
+    "sampled_subtypes": [
+      "BNB",
+      "BTC",
+      "DOGE",
+      "ETH",
+      "HYPE",
+      "NEAR",
+      "SOL",
+      "XRP",
+      "ZEC"
+    ],
+    "requested_markets": 300,
+    "markets_shortfall": 0,
+    "unavailable_series": [],
+    "historical_endpoint": false,
+    "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
+    "updated_at": "2026-10-25T20:48:44.629548+00:00"
+  }
+}
