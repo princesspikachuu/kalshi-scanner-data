@@ -1,5 +1,5 @@
 {
-  "published_at": "2026-10-25T19:10:49.371504+00:00",
+  "published_at": "2026-10-25T19:15:52.591558+00:00",
   "dataset_rows": 60,
   "assets": {
     "weather": {
@@ -41,21 +41,21 @@
     },
     "btc": {
       "asset": "btc",
-      "days_sampled": 15,
-      "markets_sampled_total": 1424,
-      "total_observations": 5696,
+      "days_sampled": 19,
+      "markets_sampled_total": 1800,
+      "total_observations": 7200,
       "first_date": "2026-10-05",
       "last_date": "2026-10-23",
       "hourly_types": [],
       "latest_run_status": {
         "asset": "btc",
-        "date": "2026-10-05",
+        "date": "2026-10-17",
         "markets_available": 96,
         "markets_sampled": 96,
         "sampling_truncated": false,
         "observations": 384,
-        "total_observations": 5696,
-        "days_sampled": 15,
+        "total_observations": 7200,
+        "days_sampled": 19,
         "sampled_by_series": {
           "KXBTC15M": 96
         },
@@ -64,7 +64,7 @@
         ],
         "historical_endpoint": false,
         "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
-        "updated_at": "2026-10-25T18:54:39.970110+00:00"
+        "updated_at": "2026-10-25T19:15:52.265386+00:00"
       }
     },
     "eth": {
