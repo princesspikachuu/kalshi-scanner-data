@@ -43,6 +43,8 @@ jobs:
             day=$((DAYS_AGO + offset))
             python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$day" --max-markets "$MAX_MARKETS"
           done
+      - name: Build plain-English reports
+        run: python3 scripts/build_report.py
       - name: Commit research dataset
         run: |
           git config user.name "github-actions[bot]"
