@@ -165,9 +165,11 @@ def run(asset,days_ago,cap):
             try:
                 trades=[]; cursor=""
                 for trade_page in range(20):
-                    args={"ticker":market["ticker"],"limit":1000}
+                    args={"ticker":market["ticker"],"limit":1000,
+                          "min_ts":close-MAX_LOOKBACK_SECONDS[asset]-120,
+                          "max_ts":close+60}
                     if cursor:args["cursor"]=cursor
-                    page=req("/markets/trades",args)
+                    page=req("/historical/trades" if archive else "/markets/trades",args)
                     trades.extend(page.get("trades",[]))
                     cursor=page.get("cursor") or ""
                     if not cursor:break
