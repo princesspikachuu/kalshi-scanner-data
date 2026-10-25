@@ -56,19 +56,6 @@ def primary_rows(rows, ref_minute):
 def format_money(x, unit=""):
     return ("+" if x>0 else "")+f"{x:.2f}"+unit
 
-def tablerow(label, m):
-    if m is None:
-        return f"| {label} | — | — | — | — | — | — |"
-    return (f"| {label} | {m['n']} | {m['wins']}/{m['n']} "
-            f"| {m['avg_price_cents']:.1f}¢ | {format_money(m['avg_pl_cents'],'¢')} "
-            f"| {format_money(m['roi_per_100'],'%')} | {m['days']} |")
-
-def table_header():
-    return [
-        "| Bid price range | Markets | Wins / tested | Avg. purchase | Avg. profit/loss per contract | Return on amount invested | Days |",
-        "|---|---:|---:|---:|---:|---:|---:|",
-    ]
-
 def comparison_grid(rows, minutes):
     lines = [
         "| Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |",
