@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Publish per-category latest-run snapshots from staged unmerged observations."""
-import csv,json,os
+import csv,json,os,datetime as dt
 from pathlib import Path
 from collections import defaultdict
 from build_report import ASSETS,BANDS,distinct_markets_at_time,metrics
@@ -42,6 +42,11 @@ data[asset]={"asset":asset,"first_date":dates[0] if dates else None,
              "days_sampled":len(dates),"markets_sampled_total":len(tickers),
              "total_observations":len(rows),
              "run_id":os.environ.get("GITHUB_RUN_ID","local"),
-             "run_attempt":os.environ.get("GITHUB_RUN_ATTEMPT","1")}
+             "run_attempt":os.environ.get("GITHUB_RUN_ATTEMPT","1"),
+             "collected_at":dt.datetime.now(dt.timezone.utc).isoformat(),
+             "requested_markets_per_day":int(os.environ.get("MAX_MARKETS","0")),
+             "requested_days":int(os.environ.get("DAYS_TO_COLLECT","0")),
+             "requested_days_ago":int(os.environ.get("DAYS_AGO","0")),
+             "daily_market_limit":int(os.environ.get("MAX_MARKETS","0"))}
 meta.write_text(json.dumps(data,indent=2)+"\n")
 print("Latest snapshot:",asset,len(tickers),"markets",len(dates),"days")
