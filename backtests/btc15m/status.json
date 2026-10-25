@@ -2,9 +2,18 @@
   "asset": "btc",
   "date": "2026-10-23",
   "markets_available": 96,
-  "markets_sampled": 60,
-  "sampling_truncated": true,
-  "observations": 240,
+  "markets_sampled": 96,
+  "sampling_truncated": false,
+  "observations": 384,
+  "total_observations": 384,
+  "days_sampled": 1,
+  "sampled_by_series": {
+    "KXBTC15M": 96
+  },
+  "hourly_types": [
+    "crypto"
+  ],
   "historical_endpoint": false,
-  "updated_at": "2026-10-25T17:04:09.594182+00:00"
+  "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+  "updated_at": "2026-10-25T17:16:13.998916+00:00"
 }
