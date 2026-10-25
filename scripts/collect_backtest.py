@@ -118,6 +118,9 @@ EXECUTION_MARKETS_PER_DAY = 60
 EXECUTION_SECONDS_PER_DAY = 45
 EXECUTION_TRADE_PAGES = 2
 
+class OptionalTradeRateLimit(Exception):
+    """Circuit breaker: stop optional trade history after a 429 for the day."""
+
 def execution_sample_indices(total, limit=EXECUTION_MARKETS_PER_DAY):
     """Evenly distribute a capped execution subsample across selected markets."""
     if total <= 0 or limit <= 0:return set()
@@ -137,7 +140,12 @@ def quick_trade_history(market, archived, start, end):
         try:
             with urllib.request.urlopen(request,timeout=7) as handle:
                 payload=json.load(handle)
-        except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError) as exc:
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise OptionalTradeRateLimit() from exc
+            print("Execution evidence skipped:",market["ticker"],"HTTP",exc.code,flush=True)
+            return None
+        except (urllib.error.URLError,TimeoutError,ValueError) as exc:
             print("Execution evidence skipped:",market["ticker"],str(exc)[:160],flush=True)
             return None
         out.extend(payload.get("trades",[]))
@@ -214,6 +222,7 @@ def run(asset,days_ago,cap):
     execution_started=time.monotonic()
     execution_checked=0
     execution_skipped=0
+    execution_rate_limited=False
     trade_cutoff=stamp(cutoff.get("trades_created_ts"))
     for market_index,market in enumerate(sample):
         try:
@@ -225,7 +234,7 @@ def run(asset,days_ago,cap):
             # secondary trade-history analysis. Sample evenly and enforce a
             # strict per-day time budget, including API errors or rate limits.
             trades=None
-            if market_index in execution_indices and (
+            if not execution_rate_limited and market_index in execution_indices and (
                     time.monotonic()-execution_started < EXECUTION_SECONDS_PER_DAY):
                 # Don't query trades for markets with no usable post-only quote.
                 has_candidate=False
@@ -239,9 +248,14 @@ def run(asset,days_ago,cap):
                             has_candidate=True
                             break
                 if has_candidate:
-                    trades=quick_trade_history(market,
-                        archive if trade_cutoff is None else close+60<=trade_cutoff,
-                        close-MAX_LOOKBACK_SECONDS[asset]-120,close+60)
+                    try:
+                        trades=quick_trade_history(market,
+                            archive if trade_cutoff is None else close+60<=trade_cutoff,
+                            close-MAX_LOOKBACK_SECONDS[asset]-120,close+60)
+                    except OptionalTradeRateLimit:
+                        execution_rate_limited=True
+                        trades=None
+                        print("Kalshi HTTP 429: pausing optional execution analysis for this UTC day.",flush=True)
                     if trades is None:execution_skipped+=1
                     else:execution_checked+=1
             if market_index%25==0:
@@ -354,6 +368,7 @@ def run(asset,days_ago,cap):
         "execution_attempts":len(attempts),"execution_through_proxies":sum(row[15]=="trade_through" for row in attempts),
         "execution_markets_checked":execution_checked,
         "execution_markets_skipped":execution_skipped,
+        "execution_rate_limited":execution_rate_limited,
         "execution_subsample_limit":EXECUTION_MARKETS_PER_DAY,
         "execution_time_budget_seconds":EXECUTION_SECONDS_PER_DAY,
         "days_sampled":len(set(row["date"] for row in allrows)),
