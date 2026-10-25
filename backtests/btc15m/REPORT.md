@@ -1,47 +1,53 @@
-# Bitcoin (15-minute) — maker profit/loss by entry time and bid range
+# Bitcoin (15-minute): maker profit/loss by time and purchase price
 
-**Coverage:** 1 UTC day(s); 96 distinct market tickers.
-**Metric:** average settlement profit or loss *per hypothetically filled maker contract*, in cents, **before fees**. Each cell displays observation count.
+**Main metric:** average profit/loss in cents per contract.
+Coverage: 8 UTC day(s), 760 distinct markets.
+Simulated filled maker bids; P/L excludes fees.
 
-## Average P/L (cents) by minutes remaining × entry price
+## Average profit/loss grid
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
 | 15m | — | — | — | — | — |
-| 10m | -9.56¢ (n=27) | +12.53¢ (n=17) | -7.30¢ (n=30) | -16.00¢ (n=13) | +7.02¢ (n=9) |
-| 5m | -0.08¢ (n=13) | -3.30¢ (n=10) | -26.87¢ (n=15) | +1.05¢ (n=22) | +4.22¢ (n=36) |
-| 3m | +16.40¢ (n=10) | -6.67¢ (n=12) | -6.67¢ (n=9) | -8.15¢ (n=13) | +0.32¢ (n=52) |
-| 1m | -57.00¢ (n=1) | +36.00¢ (n=2) | -70.00¢ (n=1) | +0.29¢ (n=7) | +1.05¢ (n=85) |
+| 10m | +2.43¢ (199) | -1.52¢ (170) | +2.86¢ (195) | +3.45¢ (138) | +3.49¢ (58) |
+| 5m | +11.99¢ (93) | +3.41¢ (87) | -2.74¢ (117) | -1.44¢ (160) | +0.44¢ (303) |
+| 3m | +4.13¢ (70) | -10.35¢ (72) | -2.16¢ (80) | -1.01¢ (113) | +0.49¢ (425) |
+| 1m | -2.74¢ (19) | -0.18¢ (22) | +3.78¢ (18) | +4.79¢ (47) | -0.46¢ (654) |
 
-## Breakdown: win rates, purchase prices and returns
+## Complete results
 
-| Time left | Bid range | Sampled markets | Wins | Win rate | Avg. bid | Avg. P/L per contract | ROI on cost | Days |
+| Time left | Price range | Markets | Wins | Win rate | Avg. purchase | Avg. P/L per contract | Hypothetical ROI | Days |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|
 | 15m | 50-60¢ | — | — | — | — | — | — | — |
 | 15m | 60-70¢ | — | — | — | — | — | — | — |
 | 15m | 70-80¢ | — | — | — | — | — | — | — |
 | 15m | 80-90¢ | — | — | — | — | — | — | — |
 | 15m | 90-100¢ | — | — | — | — | — | — | — |
-| 10m | 50-60¢ | 27 | 12 | 44.4% | 54.00¢ | -9.56¢ | -17.70% | 1 |
-| 10m | 60-70¢ | 17 | 13 | 76.5% | 63.94¢ | +12.53¢ | +19.60% | 1 |
-| 10m | 70-80¢ | 30 | 20 | 66.7% | 73.97¢ | -7.30¢ | -9.87% | 1 |
-| 10m | 80-90¢ | 13 | 9 | 69.2% | 85.23¢ | -16.00¢ | -18.77% | 1 |
-| 10m | 90-100¢ | 9 | 9 | 100.0% | 92.98¢ | +7.02¢ | +7.55% | 1 |
-| 5m | 50-60¢ | 13 | 7 | 53.8% | 53.92¢ | -0.08¢ | -0.14% | 1 |
-| 5m | 60-70¢ | 10 | 6 | 60.0% | 63.30¢ | -3.30¢ | -5.21% | 1 |
-| 5m | 70-80¢ | 15 | 7 | 46.7% | 73.53¢ | -26.87¢ | -36.54% | 1 |
-| 5m | 80-90¢ | 22 | 19 | 86.4% | 85.32¢ | +1.05¢ | +1.23% | 1 |
-| 5m | 90-100¢ | 36 | 36 | 100.0% | 95.78¢ | +4.22¢ | +4.41% | 1 |
-| 3m | 50-60¢ | 10 | 7 | 70.0% | 53.60¢ | +16.40¢ | +30.60% | 1 |
-| 3m | 60-70¢ | 12 | 7 | 58.3% | 65.00¢ | -6.67¢ | -10.26% | 1 |
-| 3m | 70-80¢ | 9 | 6 | 66.7% | 73.33¢ | -6.67¢ | -9.09% | 1 |
-| 3m | 80-90¢ | 13 | 10 | 76.9% | 85.08¢ | -8.15¢ | -9.58% | 1 |
-| 3m | 90-100¢ | 52 | 51 | 98.1% | 97.76¢ | +0.32¢ | +0.33% | 1 |
-| 1m | 50-60¢ | 1 | 0 | 0.0% | 57.00¢ | -57.00¢ | -100.00% | 1 |
-| 1m | 60-70¢ | 2 | 2 | 100.0% | 64.00¢ | +36.00¢ | +56.25% | 1 |
-| 1m | 70-80¢ | 1 | 0 | 0.0% | 70.00¢ | -70.00¢ | -100.00% | 1 |
-| 1m | 80-90¢ | 7 | 6 | 85.7% | 85.43¢ | +0.29¢ | +0.33% | 1 |
-| 1m | 90-100¢ | 85 | 85 | 100.0% | 98.95¢ | +1.05¢ | +1.07% | 1 |
+| 10m | 50-60¢ | 199 | 113 | 56.8% | 54.35¢ | +2.43¢ | +4.47% | 8 |
+| 10m | 60-70¢ | 170 | 107 | 62.9% | 64.46¢ | -1.52¢ | -2.36% | 8 |
+| 10m | 70-80¢ | 195 | 151 | 77.4% | 74.58¢ | +2.86¢ | +3.83% | 8 |
+| 10m | 80-90¢ | 138 | 122 | 88.4% | 84.96¢ | +3.45¢ | +4.06% | 8 |
+| 10m | 90-100¢ | 58 | 56 | 96.6% | 93.06¢ | +3.49¢ | +3.75% | 8 |
+| 5m | 50-60¢ | 93 | 62 | 66.7% | 54.68¢ | +11.99¢ | +21.93% | 8 |
+| 5m | 60-70¢ | 87 | 59 | 67.8% | 64.40¢ | +3.41¢ | +5.30% | 8 |
+| 5m | 70-80¢ | 117 | 84 | 71.8% | 74.53¢ | -2.74¢ | -3.67% | 8 |
+| 5m | 80-90¢ | 160 | 133 | 83.1% | 84.57¢ | -1.44¢ | -1.71% | 8 |
+| 5m | 90-100¢ | 303 | 292 | 96.4% | 95.93¢ | +0.44¢ | +0.46% | 8 |
+| 3m | 50-60¢ | 70 | 41 | 58.6% | 54.44¢ | +4.13¢ | +7.58% | 8 |
+| 3m | 60-70¢ | 72 | 39 | 54.2% | 64.51¢ | -10.35¢ | -16.04% | 8 |
+| 3m | 70-80¢ | 80 | 58 | 72.5% | 74.66¢ | -2.16¢ | -2.90% | 8 |
+| 3m | 80-90¢ | 113 | 95 | 84.1% | 85.08¢ | -1.01¢ | -1.19% | 8 |
+| 3m | 90-100¢ | 425 | 416 | 97.9% | 97.39¢ | +0.49¢ | +0.51% | 8 |
+| 1m | 50-60¢ | 19 | 10 | 52.6% | 55.37¢ | -2.74¢ | -4.94% | 8 |
+| 1m | 60-70¢ | 22 | 14 | 63.6% | 63.82¢ | -0.18¢ | -0.28% | 7 |
+| 1m | 70-80¢ | 18 | 14 | 77.8% | 74.00¢ | +3.78¢ | +5.11% | 7 |
+| 1m | 80-90¢ | 47 | 42 | 89.4% | 84.57¢ | +4.79¢ | +5.66% | 8 |
+| 1m | 90-100¢ | 654 | 644 | 98.5% | 98.93¢ | -0.46¢ | -0.46% | 8 |
 
-**Limits:** Maker bid quotations do not prove order fills or executable size. Market times reuse contracts, and weather strike prices can be correlated within the same hourly event. One day is not enough to establish an edge.
-
+## Interpretation and limitations
+The same market may appear at multiple entry times. Each time/price
+cell includes at most one YES or NO position per ticker. Do not sum
+time rows as independent bets.
+Quote prices do not guarantee a limit-order fill or quantity.
+All P/L is hypothetical and before fees.
+A short or incomplete historical sample cannot prove an edge.

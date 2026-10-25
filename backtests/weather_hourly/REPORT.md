@@ -1,25 +1,26 @@
-# Hourly weather — maker profit/loss by entry time and bid range
+# Hourly weather: maker profit/loss by time and purchase price
 
-**Coverage:** 1 UTC day(s); 100 distinct market tickers.
-**Metric:** average settlement profit or loss *per hypothetically filled maker contract*, in cents, **before fees**. Each cell displays observation count.
+**Main metric:** average profit/loss in cents per contract.
+Coverage: 1 UTC day(s), 100 distinct markets.
+Simulated filled maker bids; P/L excludes fees.
 
-## Average P/L (cents) by minutes remaining × entry price
+## Average profit/loss grid
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
 | 60m | — | — | — | — | — |
-| 45m | +46.25¢ (n=4) | +11.00¢ (n=4) | +24.67¢ (n=3) | +2.87¢ (n=8) | +2.63¢ (n=65) |
-| 30m | -20.33¢ (n=3) | +34.67¢ (n=3) | +26.00¢ (n=1) | +16.50¢ (n=6) | +2.24¢ (n=71) |
-| 20m | -1.00¢ (n=2) | +32.50¢ (n=2) | +25.00¢ (n=2) | +14.50¢ (n=6) | +1.95¢ (n=76) |
-| 15m | +50.00¢ (n=1) | -66.00¢ (n=1) | +23.00¢ (n=1) | +16.00¢ (n=3) | +2.19¢ (n=74) |
-| 10m | -7.00¢ (n=2) | +31.00¢ (n=1) | +25.00¢ (n=2) | +15.40¢ (n=5) | +1.90¢ (n=71) |
-| 5m | -58.00¢ (n=2) | +35.00¢ (n=2) | — | -4.40¢ (n=5) | +1.65¢ (n=91) |
-| 3m | -51.00¢ (n=1) | -13.50¢ (n=2) | +29.00¢ (n=1) | -2.80¢ (n=5) | +1.55¢ (n=82) |
-| 1m | — | -63.00¢ (n=1) | -40.67¢ (n=3) | +17.75¢ (n=4) | +1.61¢ (n=89) |
+| 45m | +46.25¢ (4) | +11.00¢ (4) | +24.67¢ (3) | +2.88¢ (8) | +2.63¢ (65) |
+| 30m | -20.33¢ (3) | +34.67¢ (3) | +26.00¢ (1) | +16.50¢ (6) | +2.24¢ (71) |
+| 20m | -1.00¢ (2) | +32.50¢ (2) | +25.00¢ (2) | +14.50¢ (6) | +1.95¢ (76) |
+| 15m | +50.00¢ (1) | -66.00¢ (1) | +23.00¢ (1) | +16.00¢ (3) | +2.19¢ (74) |
+| 10m | -7.00¢ (2) | +31.00¢ (1) | +25.00¢ (2) | +15.40¢ (5) | +1.90¢ (71) |
+| 5m | -58.00¢ (2) | +35.00¢ (2) | — | -4.40¢ (5) | +1.65¢ (91) |
+| 3m | -51.00¢ (1) | -13.50¢ (2) | +29.00¢ (1) | -2.80¢ (5) | +1.55¢ (82) |
+| 1m | — | -63.00¢ (1) | -40.67¢ (3) | +17.75¢ (4) | +1.61¢ (89) |
 
-## Breakdown: win rates, purchase prices and returns
+## Complete results
 
-| Time left | Bid range | Sampled markets | Wins | Win rate | Avg. bid | Avg. P/L per contract | ROI on cost | Days |
+| Time left | Price range | Markets | Wins | Win rate | Avg. purchase | Avg. P/L per contract | Hypothetical ROI | Days |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|
 | 60m | 50-60¢ | — | — | — | — | — | — | — |
 | 60m | 60-70¢ | — | — | — | — | — | — | — |
@@ -29,7 +30,7 @@
 | 45m | 50-60¢ | 4 | 4 | 100.0% | 53.75¢ | +46.25¢ | +86.05% | 1 |
 | 45m | 60-70¢ | 4 | 3 | 75.0% | 64.00¢ | +11.00¢ | +17.19% | 1 |
 | 45m | 70-80¢ | 3 | 3 | 100.0% | 75.33¢ | +24.67¢ | +32.74% | 1 |
-| 45m | 80-90¢ | 8 | 7 | 87.5% | 84.63¢ | +2.87¢ | +3.40% | 1 |
+| 45m | 80-90¢ | 8 | 7 | 87.5% | 84.62¢ | +2.88¢ | +3.40% | 1 |
 | 45m | 90-100¢ | 65 | 65 | 100.0% | 97.37¢ | +2.63¢ | +2.70% | 1 |
 | 30m | 50-60¢ | 3 | 1 | 33.3% | 53.67¢ | -20.33¢ | -37.89% | 1 |
 | 30m | 60-70¢ | 3 | 3 | 100.0% | 65.33¢ | +34.67¢ | +53.06% | 1 |
@@ -67,9 +68,15 @@
 | 1m | 80-90¢ | 4 | 4 | 100.0% | 82.25¢ | +17.75¢ | +21.58% | 1 |
 | 1m | 90-100¢ | 89 | 89 | 100.0% | 98.39¢ | +1.61¢ | +1.63% | 1 |
 
-**Hourly weather composition:** index: 100 contracts.
-**Warning:** Single-station hourly contracts were not represented in the current sample.
+## Weather market types in sample
+- Multi-station Weather Index: 100 markets
+- Single-station hourly: 0 markets
+If a type is absent, that reflects no usable data in the sampled dates.
 
-
-**Limits:** Maker bid quotations do not prove order fills or executable size. Market times reuse contracts, and weather strike prices can be correlated within the same hourly event. One day is not enough to establish an edge.
-
+## Interpretation and limitations
+The same market may appear at multiple entry times. Each time/price
+cell includes at most one YES or NO position per ticker. Do not sum
+time rows as independent bets.
+Quote prices do not guarantee a limit-order fill or quantity.
+All P/L is hypothetical and before fees.
+A short or incomplete historical sample cannot prove an edge.
