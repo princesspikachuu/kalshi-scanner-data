@@ -54,17 +54,17 @@ hypothetically filled contract among 36 sampled markets in that cell.
 
 ## Ethereum (15-minute)
 
-**Coverage:** 7 UTC day(s), 664 distinct markets.
+**Coverage:** 12 UTC day(s), 1136 distinct markets.
 
 ### Average profit/loss (¢ per contract) by time and bid price
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
 | 15m | — | — | — | — | — |
-| 10m | +3.85¢ (142) | +4.02¢ (155) | +1.68¢ (164) | -4.67¢ (114) | -0.28¢ (88) |
-| 5m | +4.30¢ (66) | +3.36¢ (90) | +4.42¢ (90) | +3.90¢ (124) | +0.32¢ (294) |
-| 3m | -2.02¢ (50) | +6.62¢ (48) | -3.65¢ (62) | +3.89¢ (87) | +0.66¢ (416) |
-| 1m | +7.15¢ (13) | +12.29¢ (17) | +4.60¢ (15) | -14.53¢ (34) | +0.51¢ (585) |
+| 10m | -0.54¢ (246) | -1.24¢ (250) | +1.65¢ (276) | -1.47¢ (212) | +1.30¢ (151) |
+| 5m | +7.06¢ (120) | +4.36¢ (129) | +4.64¢ (159) | +1.92¢ (212) | +0.54¢ (516) |
+| 3m | +4.16¢ (86) | +0.83¢ (83) | -1.31¢ (98) | +4.10¢ (155) | +0.78¢ (712) |
+| 1m | +15.75¢ (20) | +17.36¢ (28) | +9.00¢ (26) | -6.06¢ (52) | +0.43¢ (1010) |
 
 For example, +4.2¢ (n=36) means an average gain of 4.2 cents per
 hypothetically filled contract among 36 sampled markets in that cell.

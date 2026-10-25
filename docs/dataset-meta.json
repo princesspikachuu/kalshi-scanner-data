@@ -1,5 +1,5 @@
 {
-  "published_at": "2026-10-25T20:12:03.918983+00:00",
+  "published_at": "2026-10-25T20:30:46.528033+00:00",
   "dataset_rows": 80,
   "assets": {
     "weather": {
@@ -69,21 +69,21 @@
     },
     "eth": {
       "asset": "eth",
-      "days_sampled": 7,
-      "markets_sampled_total": 664,
-      "total_observations": 2654,
-      "first_date": "2026-10-17",
+      "days_sampled": 12,
+      "markets_sampled_total": 1136,
+      "total_observations": 4541,
+      "first_date": "2026-10-12",
       "last_date": "2026-10-23",
       "hourly_types": [],
       "latest_run_status": {
         "asset": "eth",
-        "date": "2026-10-17",
+        "date": "2026-10-12",
         "markets_available": 96,
         "markets_sampled": 96,
         "sampling_truncated": false,
-        "observations": 383,
-        "total_observations": 2654,
-        "days_sampled": 7,
+        "observations": 384,
+        "total_observations": 4541,
+        "days_sampled": 12,
         "sampled_by_series": {
           "KXETH15M": 96
         },
@@ -92,7 +92,7 @@
         ],
         "historical_endpoint": false,
         "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
-        "updated_at": "2026-10-25T20:12:03.489557+00:00"
+        "updated_at": "2026-10-25T20:30:46.087698+00:00"
       }
     }
   }
