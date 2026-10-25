@@ -30,12 +30,35 @@ SPORTS_SERIES={
     "KXMLBGAME":"MLB", "KXNCAAFGAME":"NCAA Football",
     "KXATPMATCH":"ATP Tennis", "KXWTAMATCH":"WTA Tennis",
 }
+# Only one-calendar-day underlying outcomes. Excludes weekly/monthly
+# economic releases, futures, and longer-horizon prediction contracts.
+DAILY_WEATHER_SERIES={
+    "KXHIGHNY":("high_temperature","New York City"),
+    "KXHIGHCHI":("high_temperature","Chicago"),
+    "KXHIGHLAX":("high_temperature","Los Angeles"),
+    "KXHIGHMIA":("high_temperature","Miami"),
+    "KXHIGHAUS":("high_temperature","Austin"),
+    "KXHIGH DEN":("high_temperature","Denver"),
+    "KXHIGHTEWR":("high_temperature","Newark"),
+    "KXLOWTMIA":("low_temperature","Miami"),
+    "KXRAIN":("daily_rain","Multiple cities"),
+}
+DAILY_WEATHER_SERIES["KXHIGHDEN"]=DAILY_WEATHER_SERIES.pop("KXHIGH DEN")
+# Calendar-day equity index close only. Weekly/monthly price targets excluded.
+DAILY_FINANCIAL_SERIES={
+    "KXINX":"S&P 500 daily close",
+    "KXNASDAQ100":"Nasdaq-100 daily close",
+}
 SERIES={"btc":["KXBTC15M"],"eth":["KXETH15M"],
         "crypto":list(CRYPTO_SERIES),"weather":list(WEATHER_SERIES),
-        "sports":list(SPORTS_SERIES)}
+        "sports":list(SPORTS_SERIES),
+        "weather_daily":list(DAILY_WEATHER_SERIES),
+        "financial_daily":list(DAILY_FINANCIAL_SERIES)}
 MINUTES={"btc":[15,10,5,3,1],"eth":[15,10,5,3,1],
          "crypto":[15,10,5,3,1],"weather":[60,45,30,20,15,10,5,3,1],
-         "sports":[360,180,120,60,30,15,5]}
+         "sports":[360,180,120,60,30,15,5],
+         "weather_daily":[360,180,120,60,30,15,5],
+         "financial_daily":[360,180,120,60,30,15,5]}
 MAX_LOOKBACK_SECONDS={asset:max(minutes)*60+120 for asset,minutes in MINUTES.items()}
 COLUMNS=["date","asset","weather_type","city","series","ticker","event_ticker","close_time","side","minutes_before_close","price_band","maker_bid","won","quote_age_seconds","roi_maker_zero","roi_maker_fee_stress","market_volume"]
 SUM=["weather_type","city","series","minutes_before_close","price_band","observations","unique_markets","unique_events","days_sampled","win_rate","mean_maker_bid_cents","maker_mean_roi_no_fee","maker_stake_weighted_roi_no_fee","maker_mean_roi_fee_stress","maker_stake_weighted_roi_fee_stress"]
@@ -45,6 +68,8 @@ def weather_metadata(series):
     if series in WEATHER_SERIES:return WEATHER_SERIES[series]
     if series in CRYPTO_SERIES:return ("crypto15m",CRYPTO_SERIES[series])
     if series in SPORTS_SERIES:return ("game_winner",SPORTS_SERIES[series])
+    if series in DAILY_WEATHER_SERIES:return DAILY_WEATHER_SERIES[series]
+    if series in DAILY_FINANCIAL_SERIES:return ("daily_index",DAILY_FINANCIAL_SERIES[series])
     return ("unknown","")
 def req(path,params):
     url=BASE+path+"?"+urllib.parse.urlencode(params)
@@ -203,8 +228,12 @@ def run(asset,days_ago,cap):
         except Exception as exc:
             failed.append({"ticker":market.get("ticker","?"),"error":str(exc)})
     if failed:raise RuntimeError("Aborting incomplete run; candle errors: "+json.dumps(failed[:5]))
-    if not sample or not observations:raise RuntimeError("No usable settled markets/quotes for "+asset+" on "+str(day))
-    folder=Path("backtests")/({"weather":"weather_hourly","sports":"sports_game","crypto":"crypto15m"}.get(asset,asset+"15m"))
+    if not sample or not observations:
+        if asset not in ("weather_daily","financial_daily"):
+            raise RuntimeError("No usable settled markets/quotes for "+asset+" on "+str(day))
+        print("No eligible one-day observations for",asset,str(day),flush=True)
+    folder=Path("backtests")/({"weather":"weather_hourly","sports":"sports_game","crypto":"crypto15m",
+        "weather_daily":"weather_daily","financial_daily":"financial_daily"}.get(asset,asset+"15m"))
     folder.mkdir(parents=True,exist_ok=True)
     output=folder/(str(day)+".csv")
     execution_file=folder/(str(day)+".execution.csv")
