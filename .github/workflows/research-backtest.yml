@@ -1,0 +1,45 @@
+name: Kalshi historical research (weather + crypto)
+on:
+  workflow_dispatch:
+    inputs:
+      asset:
+        description: Select market group
+        required: true
+        type: choice
+        options: [btc, eth, weather]
+        default: btc
+      days_ago:
+        description: Completed UTC day offset (1-30)
+        required: true
+        default: '2'
+      max_markets:
+        description: Max markets across events (1-300)
+        required: true
+        default: '60'
+permissions:
+  contents: write
+concurrency:
+  group: kalshi-historical-research
+  cancel-in-progress: false
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect historical quotes and outcomes
+        env:
+          ASSET: ${{ inputs.asset }}
+          DAYS_AGO: ${{ inputs.days_ago }}
+          MAX_MARKETS: ${{ inputs.max_markets }}
+        run: python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$DAYS_AGO" --max-markets "$MAX_MARKETS"
+      - name: Commit research dataset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backtests/
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Kalshi historical analysis"
+            git pull --rebase
+            git push
+          fi
