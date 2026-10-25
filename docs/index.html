@@ -99,6 +99,13 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 <div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
 <div id="detail" class="detail" aria-live="polite"></div><div class="summaryline" id="dataNote">One cell represents one hypothetical maker decision per market at that entry time. The same market can appear at other times.</div>
 </section>
+<section class="panel" aria-labelledby="executionHeading">
+<div class="eyebrow">Execution-adjusted research</div>
+<h2 id="executionHeading">Best supported maker bids</h2>
+<p class="muted small">Ranked by net P/L per attempt using conservative historical trade-through proxies (not real fills). At least 30 distinct contracts, 5 UTC days and 10 trade-through proxies required. One-contract orders, 60-second lifespan, hypothetical 1¢ cost stress. No result guarantees future profit.</p>
+<div id="executionSummary" class="state">Run a new collection to generate execution evidence.</div>
+<p class="muted small"><a href="https://github.com/princesspikachuu/kalshi-scanner-data/blob/main/backtests/EXECUTION_REPORT.md" target="_blank" rel="noopener noreferrer">View full execution study</a></p>
+</section>
 <section class="panel"><h2>What am I looking at?</h2><p class="muted">The large number in each square is the <strong style="color:#f1f8fb">average simulated profit or loss per contract</strong>. For example, <strong style="color:#74e0b4">+4.2¢</strong> means that group gained an average of 4.2 cents per hypothetically filled contract before fees. A loss of <strong style="color:#ff9eaa">−8¢</strong> means it lost an average of eight cents.</p><p class="muted small">Tap any populated square to see its number of wins, average bid, ROI, and days represented. Comparing rows is exploratory: repeated observations of the same contracts are not independent trades.</p></section>
 <footer class="bottom"><p>Source: <a href="https://github.com/princesspikachuu/kalshi-scanner-data/blob/main/backtests/OVERVIEW.md" target="_blank" rel="noopener noreferrer">Historical research</a><a href="https://github.com/princesspikachuu/kalshi-scanner-data" target="_blank" rel="noopener noreferrer">GitHub repository</a></p><p>Built for research; no brokerage connection and no order placement.</p></footer>
 </div>
@@ -163,6 +170,25 @@ function showDetail(r,min,band){
   id("detail").classList.add("visible");
 }
 function readText(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw Error("HTTP "+r.status);return r.text()})}
+function loadExecutionSummary(){
+ const dest=id("executionSummary");
+ const query="?v="+Date.now();
+ readText("/api/execution"+query)
+  .catch(function(){return readText("./execution.csv"+query)})
+  .catch(function(){return readText(REPO+"backtests/EXECUTION_BY_BID_OFFSET.csv"+query)})
+  .then(function(content){
+    var rows=csv(content).filter(function(r){
+      return Number(r.independent_markets)>=30&&Number(r.days)>=5&&
+        Number(r.trade_through_proxies)>=10;
+    }).sort(function(a,b){return Number(b.proxy_net_cents_per_attempt)-Number(a.proxy_net_cents_per_attempt)});
+    if(!rows.length){dest.textContent="No bid offsets have enough independent history to rank yet. Collect more data across at least five days.";return;}
+    var top=rows.slice(0,8);
+    dest.innerHTML='<div style="overflow-x:auto"><table class="heatmap" style="min-width:610px"><thead><tr><th>Category</th><th>Time</th><th>Bid offset</th><th>Proxy fill</th><th>Net/attempt</th></tr></thead><tbody>'+top.map(function(r){
+      var offset=Number(r.offset_cents),net=Number(r.proxy_net_cents_per_attempt);
+      return '<tr><td>'+htmlSafe(r.asset)+'</td><td>'+htmlSafe(r.minutes_before_close)+'m</td><td>'+htmlSafe((offset>0?'+':'')+offset)+'¢</td><td>'+htmlSafe(r.proxy_fill_rate_percent)+'%</td><td>'+htmlSafe((net>0?'+':'')+net.toFixed(3))+'¢</td></tr>';
+    }).join("")+'</tbody></table></div>';
+  }).catch(function(){dest.textContent="No execution study has been published yet. Complete a fresh research collection first."});
+}
 function readJSON(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw Error("HTTP "+r.status);return r.json()})}
 function load(){
   id("updated").textContent="Refreshing saved data…";
