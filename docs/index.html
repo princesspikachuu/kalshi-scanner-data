@@ -179,7 +179,8 @@ function loadExecutionSummary(){
   .then(function(content){
     var rows=csv(content).filter(function(r){
       return Number(r.independent_markets)>=30&&Number(r.days)>=5&&
-        Number(r.trade_through_proxies)>=10;
+        Number(r.trade_through_proxies)>=10&&
+        Number(r.proxy_net_cents_per_attempt)>0;
     }).sort(function(a,b){return Number(b.proxy_net_cents_per_attempt)-Number(a.proxy_net_cents_per_attempt)});
     if(!rows.length){dest.textContent="No bid offsets have enough independent history to rank yet. Collect more data across at least five days.";return;}
     var top=rows.slice(0,8);
