@@ -30,6 +30,9 @@ def main():
         if not EXPECTED.issubset(set(rows[0]) if rows else set()):
             raise SystemExit("Generated P/L CSV is empty or missing expected columns")
     shutil.copyfile(src, DOCS / "data.csv")
+    execution_src = BACKTESTS / "EXECUTION_BY_BID_OFFSET.csv"
+    if execution_src.exists():
+        shutil.copyfile(execution_src, DOCS / "execution.csv")
     assets = {}
     for asset, folder in SOURCES.items():
         files = sorted(folder.glob("????-??-??.csv")) if folder.exists() else []
