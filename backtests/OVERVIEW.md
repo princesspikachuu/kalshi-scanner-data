@@ -92,21 +92,24 @@ hypothetically filled contract among 36 sampled markets in that cell.
 
 ## Sports (game/match winners)
 
-**Coverage:** 0 UTC day(s), 0 distinct markets.
+**Coverage:** 7 UTC day(s), 931 distinct markets.
 
 ### Average profit/loss (¢ per contract) by time and bid price
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
-| 360m | — | — | — | — | — |
-| 180m | — | — | — | — | — |
-| 120m | — | — | — | — | — |
-| 60m | — | — | — | — | — |
-| 30m | — | — | — | — | — |
-| 15m | — | — | — | — | — |
-| 5m | — | — | — | — | — |
+| 360m | +2.67¢ (248) | -7.81¢ (146) | -13.04¢ (107) | -2.85¢ (55) | +7.63¢ (30) |
+| 180m | +2.13¢ (294) | -5.35¢ (207) | +7.12¢ (114) | -4.88¢ (81) | -1.94¢ (49) |
+| 120m | -11.41¢ (231) | +4.15¢ (193) | +5.97¢ (155) | -9.66¢ (121) | -1.63¢ (84) |
+| 60m | -2.06¢ (166) | -7.04¢ (162) | +7.15¢ (170) | +5.01¢ (157) | +2.49¢ (185) |
+| 30m | +1.76¢ (146) | +15.39¢ (114) | +10.18¢ (159) | +3.80¢ (152) | +2.61¢ (295) |
+| 15m | +17.69¢ (115) | +13.37¢ (83) | +20.02¢ (92) | +13.17¢ (151) | +3.00¢ (440) |
+| 5m | +0.32¢ (37) | +28.57¢ (30) | +24.24¢ (42) | +14.42¢ (100) | +2.56¢ (675) |
 
-No historical observations collected yet for this market type.
+For example, +4.2¢ (n=36) means an average gain of 4.2 cents per
+hypothetically filled contract among 36 sampled markets in that cell.
+
+[Detailed Sports (game/match winners) metrics](sports_game/REPORT.md)
 
 ## Research cautions
 - These are simulated maker bids, NOT verified trades or fills.

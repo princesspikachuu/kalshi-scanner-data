@@ -1,10 +1,45 @@
 {
   "asset": "sports",
-  "days_sampled": 0,
-  "markets_sampled_total": 0,
-  "total_observations": 0,
-  "first_date": null,
-  "last_date": null,
+  "days_sampled": 7,
+  "markets_sampled_total": 931,
+  "total_observations": 5586,
+  "first_date": "2026-10-18",
+  "last_date": "2026-10-24",
   "hourly_types": [],
-  "latest_run_status": {}
+  "latest_run_status": {
+    "asset": "sports",
+    "date": "2026-10-18",
+    "markets_available": 178,
+    "markets_sampled": 178,
+    "sampling_truncated": false,
+    "observations": 1132,
+    "total_observations": 5586,
+    "days_sampled": 7,
+    "sampled_by_series": {
+      "KXATPMATCH": 34,
+      "KXMLBGAME": 2,
+      "KXNBAGAME": 0,
+      "KXNCAAFGAME": 72,
+      "KXNFLGAME": 22,
+      "KXNHLGAME": 22,
+      "KXWTAMATCH": 26
+    },
+    "hourly_types": [
+      "game_winner"
+    ],
+    "sampled_subtypes": [
+      "ATP Tennis",
+      "MLB",
+      "NCAA Football",
+      "NFL",
+      "NHL",
+      "WTA Tennis"
+    ],
+    "requested_markets": 300,
+    "markets_shortfall": 122,
+    "unavailable_series": [],
+    "historical_endpoint": false,
+    "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
+    "updated_at": "2026-10-25T20:55:57.960472+00:00"
+  }
 }
