@@ -1,35 +1,7 @@
 {
-  "published_at": "2026-10-25",
+  "published_at": "2026-10-25T18:54:40.205321+00:00",
   "dataset_rows": 58,
   "assets": {
-    "btc": {
-      "asset": "btc",
-      "days_sampled": 8,
-      "markets_sampled_total": 768,
-      "total_observations": 3040,
-      "first_date": "2026-10-12",
-      "last_date": "2026-10-23",
-      "hourly_types": [],
-      "latest_run_status": {
-        "asset": "btc",
-        "date": "2026-10-12",
-        "markets_available": 96,
-        "markets_sampled": 96,
-        "sampling_truncated": false,
-        "observations": 384,
-        "total_observations": 3040,
-        "days_sampled": 8,
-        "sampled_by_series": {
-          "KXBTC15M": 96
-        },
-        "hourly_types": [
-          "crypto"
-        ],
-        "historical_endpoint": false,
-        "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
-        "updated_at": "2026-10-25T17:55:04.806256+00:00"
-      }
-    },
     "weather": {
       "asset": "weather",
       "days_sampled": 1,
@@ -65,6 +37,34 @@
         "historical_endpoint": false,
         "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
         "updated_at": "2026-10-25T17:27:08.599049+00:00"
+      }
+    },
+    "btc": {
+      "asset": "btc",
+      "days_sampled": 15,
+      "markets_sampled_total": 1424,
+      "total_observations": 5696,
+      "first_date": "2026-10-05",
+      "last_date": "2026-10-23",
+      "hourly_types": [],
+      "latest_run_status": {
+        "asset": "btc",
+        "date": "2026-10-05",
+        "markets_available": 96,
+        "markets_sampled": 96,
+        "sampling_truncated": false,
+        "observations": 384,
+        "total_observations": 5696,
+        "days_sampled": 15,
+        "sampled_by_series": {
+          "KXBTC15M": 96
+        },
+        "hourly_types": [
+          "crypto"
+        ],
+        "historical_endpoint": false,
+        "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+        "updated_at": "2026-10-25T18:54:39.970110+00:00"
       }
     },
     "eth": {

@@ -35,17 +35,17 @@ hypothetically filled contract among 36 sampled markets in that cell.
 
 ## Bitcoin (15-minute)
 
-**Coverage:** 8 UTC day(s), 760 distinct markets.
+**Coverage:** 15 UTC day(s), 1424 distinct markets.
 
 ### Average profit/loss (¢ per contract) by time and bid price
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
 | 15m | — | — | — | — | — |
-| 10m | +2.43¢ (199) | -1.52¢ (170) | +2.86¢ (195) | +3.45¢ (138) | +3.49¢ (58) |
-| 5m | +11.99¢ (93) | +3.41¢ (87) | -2.74¢ (117) | -1.44¢ (160) | +0.44¢ (303) |
-| 3m | +4.13¢ (70) | -10.35¢ (72) | -2.16¢ (80) | -1.01¢ (113) | +0.49¢ (425) |
-| 1m | -2.74¢ (19) | -0.18¢ (22) | +3.78¢ (18) | +4.79¢ (47) | -0.46¢ (654) |
+| 10m | +0.56¢ (367) | -1.64¢ (321) | +2.29¢ (362) | +2.43¢ (276) | +3.88¢ (98) |
+| 5m | +2.40¢ (172) | -0.93¢ (173) | -1.71¢ (209) | -2.16¢ (289) | +0.20¢ (581) |
+| 3m | -1.55¢ (120) | -6.03¢ (128) | -7.78¢ (156) | +1.07¢ (211) | +0.72¢ (809) |
+| 1m | +4.22¢ (37) | -3.37¢ (46) | +8.79¢ (47) | +3.98¢ (90) | +0.02¢ (1204) |
 
 For example, +4.2¢ (n=36) means an average gain of 4.2 cents per
 hypothetically filled contract among 36 sampled markets in that cell.
