@@ -1,0 +1,26 @@
+{
+  "asset": "weather",
+  "date": "2026-10-23",
+  "markets_available": 960,
+  "markets_sampled": 100,
+  "sampling_truncated": true,
+  "observations": 705,
+  "total_observations": 705,
+  "days_sampled": 1,
+  "sampled_by_series": {
+    "KXTEMPCHIH": 0,
+    "KXTEMPCHIHS": 28,
+    "KXTEMPDCH": 0,
+    "KXTEMPLAH": 0,
+    "KXTEMPLAXHS": 24,
+    "KXTEMPMIAH": 24,
+    "KXTEMPNYCH": 0,
+    "KXTEMPNYCHS": 24
+  },
+  "hourly_types": [
+    "index"
+  ],
+  "historical_endpoint": false,
+  "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+  "updated_at": "2026-10-25T17:27:08.599049+00:00"
+}
