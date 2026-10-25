@@ -22,7 +22,7 @@ class ExecutionTests(unittest.TestCase):
                  "count_fp":"99.00","created_time":"2026-10-24T12:00:05Z"},
                 {"taker_outcome_side":"no","yes_price_dollars":"0.60",
                  "count_fp":"2.00","created_time":"2026-10-24T12:00:06Z"}]
-        t=1761307200
+        t=1792843200
         evidence, _count, thru, at=trade_evidence(trades,"yes",60,t,t+60)
         self.assertEqual(evidence,"trade_through")
         self.assertEqual(thru,2)
@@ -31,7 +31,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(no_evidence,"no_trade_evidence")
 
     def test_post_only_offsets_and_proxy_math(self):
-        time=1761307200
+        time=1792843200
         market={"series_ticker":"KXTEST","ticker":"M1","result":"yes"}
         bar={"end_period_ts":time,"yes_bid":{"close_dollars":"0.60"},
              "yes_ask":{"close_dollars":"0.64"}}
