@@ -19,6 +19,10 @@ ASSETS = [
      (15, 10, 5, 3, 1)),
     ("sports", "Sports (game/match winners)", Path("backtests/sports_game"), 60,
      (360, 180, 120, 60, 30, 15, 5)),
+    ("weather_daily", "Daily weather", Path("backtests/weather_daily"), 60,
+     (360, 180, 120, 60, 30, 15, 5)),
+    ("financial_daily", "Daily financial indices", Path("backtests/financial_daily"), 60,
+     (360, 180, 120, 60, 30, 15, 5)),
 ]
 BANDS = ("50-60", "60-70", "70-80", "80-90", "90-100")
 
