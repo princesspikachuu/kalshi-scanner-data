@@ -1,31 +1,27 @@
-# Kalshi Pocket Analytics
+# Kalshi Pocket Analytics — maker-only research
 
-Research scope: **Bitcoin and Ethereum 15-minute contracts**, and **hourly multi-station Kalshi Weather Index** markets in NYC, Chicago, Miami, and coastal Los Angeles. No trading orders or scheduled market scans.
+Research scope:
+- **Crypto:** Bitcoin and Ethereum 15-minute markets.
+- **Weather:** hourly multi-station Weather Index contracts **and** hourly single-station temperature contracts. The strategy and entry-time/price-band tests are the same for both, but results are segmented by type, city and series.
+- **No taker statistics**, no daily high/low or monthly weather contracts, and no automated live-market polling.
 
-## Running historical research
+## Manual historical research
 
-Open [Kalshi historical research](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml), choose **Run workflow**:
+[Run the historical backtest workflow](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml).
 
-- `asset=btc`, `days_ago=2`, `days_to_collect=1`, `max_markets=100` for the first validation run.
-- Then run `asset=eth` with the same settings.
-- Finally run `asset=weather`, `max_markets=100`. Weather has many strike markets per hourly event, so 100 is only a sample.
-- Once each passes, choose up to `days_to_collect=7`, and repeat with earlier `days_ago` to backfill. Each run is **manual-only**.
+Choose an asset (`btc`, `eth`, `weather`), completed UTC day offset `days_ago`, `days_to_collect` (1–7), and per-day `max_markets`. The workflow makes historical API requests only when manually triggered and writes:
+- `backtests/btc15m/`
+- `backtests/eth15m/`
+- `backtests/weather_hourly/`
 
-**Caution:** The Oct 23 BTC dataset was collected with an older, time-biased sampling algorithm. Re-run Oct 23 with the updated collector before comparing results or quoting an ROI.
+## Maker interpretation
 
-## Meaning of the results
-- Maker bid means **hypothetical resting buy filled at quoted bid**; actual execution is NOT verified.
-- Taker ask means **hypothetical immediate purchase at the quoted ask**; quote availability/size are not guaranteed.
-- `mean_roi_no_fees_if_filled` includes maker observations even when no taker ask exists and is NOT directly comparable with `mean_roi_taker_if_filled`.
-- Use `matched_maker_mean_roi` versus `matched_taker_mean_roi` and the paired stake-weighted ROI fields for a comparison using the **same** observations.
-- `series` splits weather cities and includes an `ALL` aggregate.
-- `quote_coverage_rate` reports the fraction of hypothetical maker observations with usable matching taker asks.
-- Backtest uses simplified fee coefficients and simulated fills. The fee schedule may depend on the actual Kalshi series. No model here tests order-book queues or predictability of fills.
-- Every day is a separate file. Summary recalculates from all available daily files. Each `status.json` describes the **latest** collected date, not an entire historical batch.
-- Review `sampling_truncated`, sample counts, and the series represented before interpreting the totals.
+The entry price is the *historical best bid*, modeled as a resting **buy maker** order that fills at that price. This fill is **hypothetical**, not observed: historical minute candles do not reveal order queue positions or order sizes.
 
-Code: [scripts/collect_backtest.py](scripts/collect_backtest.py)
+Each summary reports sample sizes, unique markets/events/days, win rate, average bid price, mean ROI and stake-weighted ROI for assumed maker fills without fees and with an illustrative maker-fee stress test. Real maker fees depend on contract series and current fee schedules.
 
-Data: `backtests/btc15m/`, `backtests/eth15m/`, `backtests/weather_hourly/`.
+Weather results are grouped at four levels: all weather, Index versus station, city, and series. Crypto uses the same maker-only metrics. Legacy CSVs collected before this update are readable, but their simulated returns are not validated executable returns.
 
-The old live-scanner schedule was retired. The Cloudflare app is managed separately and has not been redeployed automatically.
+**Important:** Old `summary.csv` results still present until that asset's collector is rerun; those results may use the previous columns and biased first-60-market selection. Re-run October 23 BTC before relying on it.
+
+Collector: [scripts/collect_backtest.py](scripts/collect_backtest.py). No trading orders are placed.
