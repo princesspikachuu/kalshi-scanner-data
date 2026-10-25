@@ -48,7 +48,7 @@ function validateOrigin(request) {
 async function github(path, env, method="GET", body) {
   const headers = {
     "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2026-03-10",
+    "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "Kalshi-Pocket-Analytics-Backend"
   };
   if (env.GITHUB_ACTIONS_TOKEN) headers.Authorization="Bearer "+env.GITHUB_ACTIONS_TOKEN;
