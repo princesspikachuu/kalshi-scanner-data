@@ -13,9 +13,13 @@ on:
         required: true
         default: '2'
       max_markets:
-        description: Max markets across events (1-300)
+        description: Max markets per day (1-300)
         required: true
-        default: '60'
+        default: '100'
+      days_to_collect:
+        description: Number of past UTC days to fetch (1-7)
+        required: true
+        default: '1'
 permissions:
   contents: write
 concurrency:
@@ -32,7 +36,13 @@ jobs:
           ASSET: ${{ inputs.asset }}
           DAYS_AGO: ${{ inputs.days_ago }}
           MAX_MARKETS: ${{ inputs.max_markets }}
-        run: python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$DAYS_AGO" --max-markets "$MAX_MARKETS"
+          DAYS_TO_COLLECT: ${{ inputs.days_to_collect }}
+        run: |
+          if [ "$DAYS_TO_COLLECT" -lt 1 ] || [ "$DAYS_TO_COLLECT" -gt 7 ]; then echo "days_to_collect must be 1-7"; exit 1; fi
+          for offset in $(seq 0 $((DAYS_TO_COLLECT - 1))); do
+            day=$((DAYS_AGO + offset))
+            python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$day" --max-markets "$MAX_MARKETS"
+          done
       - name: Commit research dataset
         run: |
           git config user.name "github-actions[bot]"
