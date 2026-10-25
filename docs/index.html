@@ -90,7 +90,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 
 <section class="panel" aria-labelledby="marketHeading">
 <div class="heading"><div><div class="eyebrow" id="marketLabel">All hourly weather contracts</div><h2 id="marketHeading">Average profit &amp; loss</h2><p class="muted small">Time until settlement × entry price (maker bid)</p></div><div class="muted small" id="updated">Loading saved results…</div></div>
-<div class="stats"><div class="stat"><label>Markets sampled</label><strong id="marketCount">—</strong></div><div class="stat"><label>Days in sample</label><strong id="dayCount">—</strong></div><div class="stat"><label>Price observations</label><strong id="obsCount">—</strong></div><div class="stat"><label>Market coverage</label><strong id="coverage">—</strong></div></div>
+<div class="stats"><div class="stat"><label>Markets sampled</label><strong id="marketCount">—</strong></div><div class="stat"><label>Days in sample</label><strong id="dayCount">—</strong></div><div class="stat"><label>Price observations</label><strong id="obsCount">—</strong></div><div class="stat"><label>Date range</label><strong id="coverage" style="font-size:13px">—</strong></div></div>
 <div class="controls"><div><label for="minSample">Hide cells with fewer than</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
 <div class="gridwrap"><table class="heatmap" aria-label="Average historical profit and loss by purchase price and settlement time"><thead><tr><th scope="col">Time left</th><th scope="col">50–59.9¢</th><th scope="col">60–69.9¢</th><th scope="col">70–79.9¢</th><th scope="col">80–89.9¢</th><th scope="col">90–99.9¢</th></tr></thead><tbody id="matrix"><tr><td colspan="6" class="state">Loading…</td></tr></tbody></table></div>
 <div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
@@ -119,10 +119,10 @@ function render(){
   var a=ASSETS[state.asset],records=state.records.filter(function(r){return r.asset===state.asset}),st=state.meta[state.asset]||{},has=records.length>0;
   id("marketLabel").textContent=a.label;
   id("updated").textContent=state.loadedAt?"Updated from saved data · "+state.loadedAt:"No dataset loaded";
-  id("marketCount").textContent=st.markets_sampled!=null?Number(st.markets_sampled).toLocaleString():(has?"See sample":"—");
-  id("dayCount").textContent=has?Math.max.apply(null,records.map(function(r){return number(r.sampled_days)})):"0";
+  id("marketCount").textContent=st.markets_sampled_total!=null?Number(st.markets_sampled_total).toLocaleString():(st.markets_sampled!=null?Number(st.markets_sampled).toLocaleString():"—");
+  id("dayCount").textContent=st.days_sampled!=null?st.days_sampled:(has?Math.max.apply(null,records.map(function(r){return number(r.sampled_days)})):"0");
   id("obsCount").textContent=st.total_observations!=null?Number(st.total_observations).toLocaleString():"—";
-  id("coverage").textContent=st.markets_available&&st.markets_sampled?Math.round(100*st.markets_sampled/st.markets_available)+"%":"—";
+  id("coverage").textContent=st.first_date&&st.last_date?st.first_date+" → "+st.last_date:"—";
   document.querySelectorAll(".tab").forEach(function(b){b.setAttribute("aria-selected",String(b.dataset.asset===state.asset))});
   document.querySelectorAll("[data-metric]").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.metric===state.metric))});
   var body=id("matrix");body.innerHTML="";
@@ -143,7 +143,7 @@ function render(){
   });
   var msg="One time×price cell includes at most one hypothetical buy per contract. Multiple rows can reuse those contracts.";
   if(state.asset==="weather"&&Array.isArray(st.hourly_types)&&st.hourly_types.length===1&&st.hourly_types[0]==="index")msg+=" Current weather sample contains Weather Index contracts only; no single-station data.";
-  if(st.sampling_truncated)msg+=" The research sampled only part of the available market set.";
+  if(st.latest_run_status&&st.latest_run_status.sampling_truncated)msg+=" The most recent research run sampled only part of the available market set.";
   if(state.metric==="roi")msg+=" ROI compares simulated profit with the amount invested; it excludes fees.";
   id("dataNote").textContent=msg;
   renderCollection();
