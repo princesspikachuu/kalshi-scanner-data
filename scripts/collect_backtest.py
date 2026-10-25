@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Manual historical research collector. Quotes are not confirmed maker fills."""
-import argparse,csv,datetime as dt,json,time,urllib.parse,urllib.request,urllib.error,hashlib
+import argparse,csv,datetime as dt,json,time,urllib.parse,urllib.request,urllib.error,hashlib,os
 from pathlib import Path
 from collections import defaultdict
 from execution_model import ATTEMPT_COLUMNS, simulate
@@ -234,10 +234,41 @@ def run(asset,days_ago,cap):
     folder.mkdir(parents=True,exist_ok=True)
     output=folder/(str(day)+".csv")
     execution_file=folder/(str(day)+".execution.csv")
-    with execution_file.open("w",newline="") as handle:
-        writer=csv.writer(handle);writer.writerow(ATTEMPT_COLUMNS);writer.writerows(attempts)
-    with output.open("w",newline="") as handle:
-        writer=csv.writer(handle);writer.writerow(COLUMNS);writer.writerows(observations)
+    # Stage exactly this run's output BEFORE merging into cumulative history.
+    # GitHub Actions gives each collection its own runner-local staging directory.
+    stage_path=os.environ.get("POCKET_COLLECTION_STAGE")
+    if stage_path:
+        target=Path(stage_path)/asset
+        target.mkdir(parents=True,exist_ok=True)
+        with (target/(str(day)+".csv")).open("w",newline="") as handle:
+            writer=csv.writer(handle);writer.writerow(COLUMNS);writer.writerows(observations)
+        with (target/(str(day)+".execution.csv")).open("w",newline="") as handle:
+            writer=csv.writer(handle);writer.writerow(ATTEMPT_COLUMNS);writer.writerows(attempts)
+        (target/(str(day)+".status.json")).write_text(json.dumps({
+            "date":str(day),"sampled_markets":len(sample),
+            "sampled_observations":len(observations),
+            "execution_attempts":len(attempts),
+            "available_markets":len(allm)}),encoding="utf-8")
+
+    def merge_day(path,columns,new_rows,key_columns):
+        # A repeat sample of an old date must not delete previously saved markets.
+        combined={}
+        if path.exists():
+            with path.open(newline="",encoding="utf-8") as handle:
+                for previous in csv.DictReader(handle):
+                    if previous.get("ticker"):
+                        combined[tuple(str(previous.get(c,"")) for c in key_columns)]=previous
+        for row in new_rows:
+            record=dict(zip(columns,row))
+            combined[tuple(str(record.get(c,"")) for c in key_columns)]=record
+        with path.open("w",newline="",encoding="utf-8") as handle:
+            writer=csv.DictWriter(handle,fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(combined[k] for k in sorted(combined))
+    merge_day(execution_file,ATTEMPT_COLUMNS,attempts,
+              ("date","series","ticker","side","minutes_before_close","bid_offset_cents"))
+    merge_day(output,COLUMNS,observations,
+              ("date","series","ticker","side","minutes_before_close"))
     allrows=[]
     for dailyfile in sorted(folder.glob("????-??-??.csv")):
         with dailyfile.open(newline="") as handle:allrows.extend(csv.DictReader(handle))
