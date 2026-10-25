@@ -1,42 +1,47 @@
-# Maker-only historical research: btc15m
+# Bitcoin (15-minute) — maker profit/loss by entry time and bid range
 
-**Important:** Entries are simulated at the recorded best bid. The data do not prove a resting limit order would have filled. Do not treat this as executable historical profit.
+**Coverage:** 1 UTC day(s); 96 distinct market tickers.
+**Metric:** average settlement profit or loss *per hypothetically filled maker contract*, in cents, **before fees**. Each cell displays observation count.
 
-## What the numbers mean
+## Average P/L (cents) by minutes remaining × entry price
 
-- **Wins / tested:** Outcomes that paid $1, assuming every listed bid was filled.
-- **Average bid:** Typical hypothetical purchase price.
-- **Profit / $100:** Stake-weighted settlement profit on each $100 hypothetically invested at those bids, **before fees**. This is not a forecast.
-- Results from fewer than 30 distinct markets or fewer than 7 days are marked **limited evidence**.
-- Rows for different entry times may be the same underlying contracts; do not add them together as independent trades.
+| Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
+|---:|---:|---:|---:|---:|---:|
+| 15m | — | — | — | — | — |
+| 10m | -9.56¢ (n=27) | +12.53¢ (n=17) | -7.30¢ (n=30) | -16.00¢ (n=13) | +7.02¢ (n=9) |
+| 5m | -0.08¢ (n=13) | -3.30¢ (n=10) | -26.87¢ (n=15) | +1.05¢ (n=22) | +4.22¢ (n=36) |
+| 3m | +16.40¢ (n=10) | -6.67¢ (n=12) | -6.67¢ (n=9) | -8.15¢ (n=13) | +0.32¢ (n=52) |
+| 1m | -57.00¢ (n=1) | +36.00¢ (n=2) | -70.00¢ (n=1) | +0.29¢ (n=7) | +1.05¢ (n=85) |
 
-## Results by weather type, city, entry time and price band
+## Breakdown: win rates, purchase prices and returns
 
-| Type | City | Time left | Price | Wins / tested | Avg. bid | Profit / $100 | Evidence |
-|---|---|---:|---:|---:|---:|---:|---|
-| crypto | — | 10m | 50-60¢ | 12 / 27 | 54.0¢ | $-17.70 | Limited |
-| crypto | — | 10m | 60-70¢ | 13 / 17 | 63.9¢ | $+19.60 | Limited |
-| crypto | — | 10m | 70-80¢ | 20 / 30 | 74.0¢ | $-9.87 | Limited |
-| crypto | — | 10m | 80-90¢ | 9 / 13 | 85.2¢ | $-18.77 | Limited |
-| crypto | — | 10m | 90-100¢ | 9 / 9 | 93.0¢ | $+7.55 | Limited |
-| crypto | — | 5m | 50-60¢ | 7 / 13 | 53.9¢ | $-0.14 | Limited |
-| crypto | — | 5m | 60-70¢ | 6 / 10 | 63.3¢ | $-5.21 | Limited |
-| crypto | — | 5m | 70-80¢ | 7 / 15 | 73.5¢ | $-36.54 | Limited |
-| crypto | — | 5m | 80-90¢ | 19 / 22 | 85.3¢ | $+1.23 | Limited |
-| crypto | — | 5m | 90-100¢ | 36 / 36 | 95.8¢ | $+4.41 | Limited |
-| crypto | — | 3m | 50-60¢ | 7 / 10 | 53.6¢ | $+30.60 | Limited |
-| crypto | — | 3m | 60-70¢ | 7 / 12 | 65.0¢ | $-10.26 | Limited |
-| crypto | — | 3m | 70-80¢ | 6 / 9 | 73.3¢ | $-9.09 | Limited |
-| crypto | — | 3m | 80-90¢ | 10 / 13 | 85.1¢ | $-9.58 | Limited |
-| crypto | — | 3m | 90-100¢ | 51 / 52 | 97.8¢ | $+0.33 | Limited |
-| crypto | — | 1m | 50-60¢ | 0 / 1 | 57.0¢ | $-100.00 | Limited |
-| crypto | — | 1m | 60-70¢ | 2 / 2 | 64.0¢ | $+56.25 | Limited |
-| crypto | — | 1m | 70-80¢ | 0 / 1 | 70.0¢ | $-100.00 | Limited |
-| crypto | — | 1m | 80-90¢ | 6 / 7 | 85.4¢ | $+0.33 | Limited |
-| crypto | — | 1m | 90-100¢ | 85 / 85 | 98.9¢ | $+1.07 | Limited |
+| Time left | Bid range | Sampled markets | Wins | Win rate | Avg. bid | Avg. P/L per contract | ROI on cost | Days |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 15m | 50-60¢ | — | — | — | — | — | — | — |
+| 15m | 60-70¢ | — | — | — | — | — | — | — |
+| 15m | 70-80¢ | — | — | — | — | — | — | — |
+| 15m | 80-90¢ | — | — | — | — | — | — | — |
+| 15m | 90-100¢ | — | — | — | — | — | — | — |
+| 10m | 50-60¢ | 27 | 12 | 44.4% | 54.00¢ | -9.56¢ | -17.70% | 1 |
+| 10m | 60-70¢ | 17 | 13 | 76.5% | 63.94¢ | +12.53¢ | +19.60% | 1 |
+| 10m | 70-80¢ | 30 | 20 | 66.7% | 73.97¢ | -7.30¢ | -9.87% | 1 |
+| 10m | 80-90¢ | 13 | 9 | 69.2% | 85.23¢ | -16.00¢ | -18.77% | 1 |
+| 10m | 90-100¢ | 9 | 9 | 100.0% | 92.98¢ | +7.02¢ | +7.55% | 1 |
+| 5m | 50-60¢ | 13 | 7 | 53.8% | 53.92¢ | -0.08¢ | -0.14% | 1 |
+| 5m | 60-70¢ | 10 | 6 | 60.0% | 63.30¢ | -3.30¢ | -5.21% | 1 |
+| 5m | 70-80¢ | 15 | 7 | 46.7% | 73.53¢ | -26.87¢ | -36.54% | 1 |
+| 5m | 80-90¢ | 22 | 19 | 86.4% | 85.32¢ | +1.05¢ | +1.23% | 1 |
+| 5m | 90-100¢ | 36 | 36 | 100.0% | 95.78¢ | +4.22¢ | +4.41% | 1 |
+| 3m | 50-60¢ | 10 | 7 | 70.0% | 53.60¢ | +16.40¢ | +30.60% | 1 |
+| 3m | 60-70¢ | 12 | 7 | 58.3% | 65.00¢ | -6.67¢ | -10.26% | 1 |
+| 3m | 70-80¢ | 9 | 6 | 66.7% | 73.33¢ | -6.67¢ | -9.09% | 1 |
+| 3m | 80-90¢ | 13 | 10 | 76.9% | 85.08¢ | -8.15¢ | -9.58% | 1 |
+| 3m | 90-100¢ | 52 | 51 | 98.1% | 97.76¢ | +0.32¢ | +0.33% | 1 |
+| 1m | 50-60¢ | 1 | 0 | 0.0% | 57.00¢ | -57.00¢ | -100.00% | 1 |
+| 1m | 60-70¢ | 2 | 2 | 100.0% | 64.00¢ | +36.00¢ | +56.25% | 1 |
+| 1m | 70-80¢ | 1 | 0 | 0.0% | 70.00¢ | -70.00¢ | -100.00% | 1 |
+| 1m | 80-90¢ | 7 | 6 | 85.7% | 85.43¢ | +0.29¢ | +0.33% | 1 |
+| 1m | 90-100¢ | 85 | 85 | 100.0% | 98.95¢ | +1.05¢ | +1.07% | 1 |
 
-## Data coverage
-- Recorded days: 1
-- Market observations: 384
-- Unique market tickers: 96
-- No claim is made about fees, fills, market impact, confidence intervals, or a reliable trading edge.
+**Limits:** Maker bid quotations do not prove order fills or executable size. Market times reuse contracts, and weather strike prices can be correlated within the same hourly event. One day is not enough to establish an edge.
+
