@@ -38,12 +38,11 @@ DAILY_WEATHER_SERIES={
     "KXHIGHLAX":("high_temperature","Los Angeles"),
     "KXHIGHMIA":("high_temperature","Miami"),
     "KXHIGHAUS":("high_temperature","Austin"),
-    "KXHIGH DEN":("high_temperature","Denver"),
+    "KXHIGHDEN":("high_temperature","Denver"),
     "KXHIGHTEWR":("high_temperature","Newark"),
     "KXLOWTMIA":("low_temperature","Miami"),
     "KXRAIN":("daily_rain","Multiple cities"),
 }
-DAILY_WEATHER_SERIES["KXHIGHDEN"]=DAILY_WEATHER_SERIES.pop("KXHIGH DEN")
 # Calendar-day equity index close only. Weekly/monthly price targets excluded.
 DAILY_FINANCIAL_SERIES={
     "KXINX":"S&P 500 daily close",
