@@ -1,6 +1,7 @@
 """Guard against unbounded optional trade-history work in full-size collections."""
 import io
 import json
+import urllib.error
 import sys
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from collect_backtest import (
     execution_sample_indices, quick_trade_history,
-    EXECUTION_MARKETS_PER_DAY, EXECUTION_TRADE_PAGES,
+    EXECUTION_MARKETS_PER_DAY, EXECUTION_TRADE_PAGES, OptionalTradeRateLimit,
 )
 
 class FakeResponse:
@@ -36,6 +37,14 @@ class CollectionRuntimeTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(request.call_count, 1)
         self.assertEqual(request.call_args.kwargs["timeout"], 7)
+
+    def test_429_opens_optional_analysis_circuit_breaker(self):
+        err = urllib.error.HTTPError("https://example.invalid", 429,
+                                     "Too Many Requests", None, None)
+        with patch("collect_backtest.urllib.request.urlopen", side_effect=err) as request:
+            with self.assertRaises(OptionalTradeRateLimit):
+                quick_trade_history({"ticker":"X"}, False, 10, 20)
+        self.assertEqual(request.call_count, 1)
 
     def test_truncation_is_missing_not_zero_fills(self):
         responses = [FakeResponse({"trades": [{"trade_id": str(n)}], "cursor": "next"})
