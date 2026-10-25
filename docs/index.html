@@ -230,10 +230,11 @@ async function checkBackend(){
   if(result.backend!=="online")throw Error("not a worker");
   workerAvailable=!!result.enabled;
   if(workerAvailable){
-  statusText("Backend connected. Collection controls are available.");
-  await checkRunStatus();
+    statusText("Backend connected. Collection controls are available.");
+    await checkRunStatus();
+  }else{
+    statusText("Worker is online, but collection is not configured.",true);
   }
-  }else statusText("Worker is online, but the server secrets have not been configured.",true);
  }catch(e){workerAvailable=false;statusText("Read-only mode. Deploy the Cloudflare Worker to run research directly from here.");}
  renderCollection();
 }
