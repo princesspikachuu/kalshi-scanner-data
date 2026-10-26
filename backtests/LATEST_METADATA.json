@@ -23,5 +23,20 @@
     "requested_days": 7,
     "requested_days_ago": 14,
     "daily_market_limit": 300
+  },
+  "weather": {
+    "asset": "weather",
+    "first_date": "2026-09-29",
+    "last_date": "2026-10-05",
+    "days_sampled": 7,
+    "markets_sampled_total": 2008,
+    "total_observations": 11831,
+    "run_id": "40259630440",
+    "run_attempt": "1",
+    "collected_at": "2026-10-26T02:42:54.733681+00:00",
+    "requested_markets_per_day": 300,
+    "requested_days": 7,
+    "requested_days_ago": 21,
+    "daily_market_limit": 300
   }
 }

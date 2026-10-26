@@ -1,26 +1,33 @@
 {
-  "published_at": "2026-10-26T02:29:13.671295+00:00",
+  "published_at": "2026-10-26T02:42:55.828966+00:00",
   "dataset_rows": 135,
   "assets": {
     "weather": {
       "asset": "weather",
-      "days_sampled": 8,
-      "markets_sampled_total": 2194,
-      "total_observations": 14600,
-      "first_date": "2026-10-12",
+      "days_sampled": 15,
+      "markets_sampled_total": 4202,
+      "total_observations": 26431,
+      "first_date": "2026-09-29",
       "last_date": "2026-10-23",
       "hourly_types": [
         "index"
       ],
       "latest_run_status": {
         "asset": "weather",
-        "date": "2026-10-12",
+        "date": "2026-09-29",
         "markets_available": 960,
         "markets_sampled": 300,
         "sampling_truncated": true,
-        "observations": 1883,
-        "total_observations": 14600,
-        "days_sampled": 8,
+        "observations": 1573,
+        "total_observations": 26431,
+        "execution_attempts": 734,
+        "execution_through_proxies": 30,
+        "execution_markets_checked": 30,
+        "execution_markets_skipped": 0,
+        "execution_rate_limited": false,
+        "execution_subsample_limit": 60,
+        "execution_time_budget_seconds": 45,
+        "days_sampled": 15,
         "sampled_by_series": {
           "KXTEMPCHIH": 0,
           "KXTEMPCHIHS": 84,
@@ -34,9 +41,18 @@
         "hourly_types": [
           "index"
         ],
+        "sampled_subtypes": [
+          "Chicago",
+          "Coastal Los Angeles",
+          "Miami",
+          "New York City"
+        ],
+        "requested_markets": 300,
+        "markets_shortfall": 0,
+        "unavailable_series": [],
         "historical_endpoint": false,
-        "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
-        "updated_at": "2026-10-25T19:10:49.014210+00:00"
+        "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
+        "updated_at": "2026-10-26T02:42:54.554611+00:00"
       }
     },
     "btc": {
