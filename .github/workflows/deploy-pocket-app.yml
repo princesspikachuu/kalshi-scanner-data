@@ -1,6 +1,15 @@
 name: Deploy Pocket Analytics dynamic Worker
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/index.html'
+      - 'docs/manifest.webmanifest'
+      - 'docs/icon.svg'
+      - 'worker/**'
+      - 'wrangler.jsonc'
+      - '.github/workflows/deploy-pocket-app.yml'
 permissions:
   contents: read
 jobs:
