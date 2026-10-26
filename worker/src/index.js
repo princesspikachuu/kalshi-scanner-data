@@ -80,6 +80,9 @@ async function repoData(file) {
   }});
 }
 async function routes(request,env,url) {
+  if(request.method==="GET" && url.pathname==="/api/loss-prevention") {
+    return repoData("backtests/LOSS_PREVENTION.json");
+  }
   if(request.method==="GET" && url.pathname==="/api/execution") {
     return repoData("backtests/EXECUTION_BY_BID_OFFSET.csv");
   }
