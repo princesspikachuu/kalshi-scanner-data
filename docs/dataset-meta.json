@@ -1,5 +1,5 @@
 {
-  "published_at": "2026-10-25T22:30:02.425482+00:00",
+  "published_at": "2026-10-26T02:29:13.671295+00:00",
   "dataset_rows": 135,
   "assets": {
     "weather": {
@@ -149,29 +149,36 @@
     },
     "sports": {
       "asset": "sports",
-      "days_sampled": 7,
-      "markets_sampled_total": 931,
-      "total_observations": 5586,
-      "first_date": "2026-10-18",
+      "days_sampled": 14,
+      "markets_sampled_total": 1641,
+      "total_observations": 10186,
+      "first_date": "2026-10-06",
       "last_date": "2026-10-24",
       "hourly_types": [],
       "latest_run_status": {
         "asset": "sports",
-        "date": "2026-10-18",
-        "markets_available": 178,
-        "markets_sampled": 178,
+        "date": "2026-10-06",
+        "markets_available": 60,
+        "markets_sampled": 60,
         "sampling_truncated": false,
-        "observations": 1132,
-        "total_observations": 5586,
-        "days_sampled": 7,
+        "observations": 394,
+        "total_observations": 10186,
+        "execution_attempts": 147,
+        "execution_through_proxies": 21,
+        "execution_markets_checked": 6,
+        "execution_markets_skipped": 10,
+        "execution_rate_limited": true,
+        "execution_subsample_limit": 60,
+        "execution_time_budget_seconds": 45,
+        "days_sampled": 14,
         "sampled_by_series": {
-          "KXATPMATCH": 34,
-          "KXMLBGAME": 2,
-          "KXNBAGAME": 0,
-          "KXNCAAFGAME": 72,
-          "KXNFLGAME": 22,
-          "KXNHLGAME": 22,
-          "KXWTAMATCH": 26
+          "KXATPMATCH": 28,
+          "KXMLBGAME": 4,
+          "KXNBAGAME": 10,
+          "KXNCAAFGAME": 0,
+          "KXNFLGAME": 2,
+          "KXNHLGAME": 8,
+          "KXWTAMATCH": 8
         },
         "hourly_types": [
           "game_winner"
@@ -179,17 +186,17 @@
         "sampled_subtypes": [
           "ATP Tennis",
           "MLB",
-          "NCAA Football",
+          "NBA",
           "NFL",
           "NHL",
           "WTA Tennis"
         ],
         "requested_markets": 300,
-        "markets_shortfall": 122,
+        "markets_shortfall": 240,
         "unavailable_series": [],
         "historical_endpoint": false,
         "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
-        "updated_at": "2026-10-25T20:55:57.960472+00:00"
+        "updated_at": "2026-10-26T02:29:12.711285+00:00"
       }
     },
     "weather_daily": {
