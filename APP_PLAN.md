@@ -10,14 +10,16 @@ Markets remain limited to underlying outcomes lasting one day or less: hourly an
 
 ## Required early-sale analysis
 
-Determine empirically when a position is better sold before settlement rather than held. This is a required strategy-testing feature, including the previously requested optional early-sale / loss-reduction switch.
+Determine the downside sale-price threshold for each original purchase-price category at which selling early produces a better expected net result than continuing to hold. The purpose is loss prevention/reduction only; profit-taking targets are outside this feature. This is a required strategy-testing feature with the previously requested on/off loss-reduction switch.
 
 ### Comparisons and controls
 
 - Offer an on/off early-sale control. Off means holding the same entry positions to settlement; on applies the selected exit rules and recalculates outcomes.
-- Test both taking profits early and cutting losses. A loss-reduction rule can still realize a loss; it must not be presented as guaranteed loss avoidance.
-- Compare price-based thresholds (including changes from entry price), time remaining, and combinations of entry and exit rules. Learn which thresholds are useful rather than assume one universal threshold.
-- Analyze results separately by market category/contract family, entry-price range, and time remaining at entry. Show pooled results only where comparable.
+- Estimate a separate downside exit threshold for each original purchase-price category: 50–59.9¢, 60–69.9¢, 70–79.9¢, 80–89.9¢, and 90–99.9¢. Record exact entry prices as well as their category.
+- For each category, compare candidate executable sale-price thresholds with continuing to hold, conditional on the price reaching that threshold. The question is whether accepting the available sale now improves the expected net outcome, including later recoveries, rather than merely reducing the number of losing settlements.
+- Display the suggested threshold as an actual sale price in cents, with its change from entry for context. Define whether the rule triggers at or below that price, and validate that trigger consistently.
+- Analyze thresholds separately by market category/contract family and time remaining. Account for remaining time at the exit decision as well as time remaining at entry; do not imply a universal threshold when these change the result.
+- A loss-reduction rule can still realize a loss; it must not be presented as guaranteed loss avoidance. If no threshold has adequate evidence of improvement, report that explicitly instead of inventing a threshold.
 - Save exit rules with the strategy so backtesting, paper trading, and eventual live execution use the same definitions.
 
 ### Evidence and execution model
@@ -31,7 +33,7 @@ Determine empirically when a position is better sold before settlement rather th
 
 ### Results to show
 
-For each exit rule, show net profit/loss and ROI after modeled costs, the difference from holding, sample size and date coverage, frequency and timing of early exits, realized loss reductions, profits forgone by exiting, and losing-period/drawdown measures. Show uncertainty and performance on later or otherwise held-out data that was not used to choose the threshold.
+For each purchase-price category, show the recommended downside sale-price threshold (or no supported threshold), expected net proceeds from selling versus holding at that decision point, net profit/loss and ROI after modeled costs, improvement or deterioration versus holding, sample size and date coverage, frequency and timing of exits, realized loss reductions, later recoveries missed by exiting, and losing-period/drawdown measures. Include all qualifying trades and price paths, not just positions that eventually lost. Show uncertainty and performance on later or otherwise held-out data that was not used to choose the threshold.
 
 Rank rules on consistent net outcomes, not win rate alone. The interface must distinguish historical simulations, estimated fills, forward paper trading, and actual execution.
 
@@ -39,9 +41,10 @@ Rank rules on consistent net outcomes, not win rate alone. The interface must di
 
 1. Switching early selling off reproduces the hold-to-settlement baseline for the eligible matched sample.
 2. Switching it on recalculates the results and states the exact rule, costs, and coverage used.
-3. The comparison includes both favorable and unfavorable effects of selling early, with missing-data exclusions visible.
-4. Suggested thresholds include supporting sample size and validation outside the data used for tuning.
-5. Paper and live modes can express the same saved exit rule, with actual orders/fills recorded separately from simulations.
+3. Each original purchase-price category has its own tested downside threshold or an explicit statement that no threshold is supported. No profit-taking targets are included.
+4. The comparison includes both favorable and unfavorable effects of selling early, including positions that later recovered, with missing-data exclusions visible.
+5. Suggested thresholds include supporting sample size and validation outside the data used for tuning.
+6. Paper and live modes can express the same saved exit rule, with actual orders/fills recorded separately from simulations.
 
 This section records requirements only. It does not implement early-sale calculations or activate trading in the current dashboard.
 
