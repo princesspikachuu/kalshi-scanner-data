@@ -78,7 +78,7 @@ For archived dates the collector enumerates the complete series archive, reusing
 
 ## Loss prevention by purchase price
 
-The dashboard includes a separate **Loss prevention by purchase price** comparison. Select the entry time and turn **Apply supported loss-prevention thresholds** on or off. Both comparison columns use identical entries and a stated fee-stress scenario: 1¢ entry, plus 2¢ per early sale. The original before-fee heatmap remains unchanged.
+Loss prevention is integrated into the main time-by-purchase-price heatmap. Turn **Apply loss prevention** on or off above the table to recalculate every eligible cell. Cells show the supported downside sale price; tap for the matched hold net, selected net, improvement, recovery counts, and family-specific rules. With usable comparison data, both switch positions use identical entries and a stated fee-stress scenario: 1¢ entry, plus 2¢ per early sale. The summary counts and dates follow that matched sample. Without price paths, switch off shows the original entry-only history and switch on explicitly shows unavailable comparison data. Positive net % in comparison mode counts modeled profitable outcomes, not settlement wins.
 
 Fresh collections now save minute-close YES/NO bid paths in per-day `.paths.json` files using the candles already downloaded, so no extra Kalshi requests are needed. Older entry-only CSVs cannot establish an exit threshold. Collect at least seven distinct dates with usable paths to allow five earlier training days and two later validation days. More history and markets may be needed for individual cost bands.
 

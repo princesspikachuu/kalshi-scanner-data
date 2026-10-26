@@ -46,7 +46,7 @@ Rank rules on consistent net outcomes, not win rate alone. The interface must di
 5. Suggested thresholds include supporting sample size and validation outside the data used for tuning.
 6. Paper and live modes can express the same saved exit rule, with actual orders/fills recorded separately from simulations.
 
-Initial implementation: the current dashboard now includes a separate on/off downside-exit comparison with saved minute-close bid paths, per-family/time/cost-band thresholds, chronological training/validation, matched hold outcomes, and explicit missing-coverage handling. It uses a fixed fee-stress scenario and assumed quote fills. Actual fees, depth/latency/slippage replay, finer exit-time rules, and paper/live execution remain planned; this implementation does not activate trading.
+Initial implementation: the current dashboard now integrates the on/off downside-exit comparison into the main time-by-price heatmap and its cell details with saved minute-close bid paths, per-family/time/cost-band thresholds, chronological training/validation, matched hold outcomes, and explicit missing-coverage handling. It uses a fixed fee-stress scenario and assumed quote fills. Actual fees, depth/latency/slippage replay, finer exit-time rules, and paper/live execution remain planned; this implementation does not activate trading.
 
 ## App areas
 
