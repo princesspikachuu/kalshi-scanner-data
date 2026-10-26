@@ -99,7 +99,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 <div class="controls"><div><label for="minSample">Hide cells with fewer than</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
 <div class="controls"><label><input id="lossEnabled" type="checkbox"/> Apply loss prevention</label></div>
 <p id="lossCoverage" class="muted small" aria-live="polite">Loading price-path coverage…</p>
-<details><summary>Loss-prevention method and costs</summary><p class="muted small">The table uses the same eligible price-path sample with the switch off (hold) or on (supported downside exits). Each cell shows the downside sale price; tap for the matched hold result, improvement, and contract-family rules. Thresholds are tested in 5¢ steps using five earlier training days and at least two later validation days. Training rows are excluded after splitting. Missing paths are excluded; no supported threshold means hold. One-contract fee stress: 1¢ entry plus 2¢ per early sale, not verified market fees. Minute-close bids assume fills without depth, latency or slippage replay.</p></details>
+<details><summary>Loss-prevention method and costs</summary><p class="muted small">Both switch positions retain the full saved dataset. The on view adds only the measured exit-minus-hold difference for covered validation positions; positions without exit evidence remain at the holding baseline. This is a partially modeled overlay, not a full-coverage strategy backtest. Each cell shows the downside sale price; tap for the matched hold result, improvement, and contract-family rules. Thresholds are tested in 5¢ steps using five earlier training days and at least two later validation days. Training rows and missing paths are excluded from exit testing, but remain in the full-table holding baseline. No supported threshold means hold. Entry fees remain excluded consistently with the original table; each modeled early sale adds a 2¢ cost stress, not verified market fees. Minute-close bids assume fills without depth, latency or slippage replay.</p></details>
 <div class="gridwrap"><table class="heatmap" aria-label="Average historical profit and loss by purchase price and settlement time"><thead><tr><th scope="col">Time left</th><th scope="col">50–59.9¢</th><th scope="col">60–69.9¢</th><th scope="col">70–79.9¢</th><th scope="col">80–89.9¢</th><th scope="col">90–99.9¢</th></tr></thead><tbody id="matrix"><tr><td colspan="6" class="state">Loading…</td></tr></tbody></table></div>
 <div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
 <div id="detail" class="detail" aria-live="polite"></div><div class="summaryline" id="dataNote">One cell represents one hypothetical maker decision per market at that entry time. The same market can appear at other times.</div>
@@ -192,12 +192,12 @@ function determineValue(r){if(state.metric==="pnl")return number(r.average_profi
 function describeValue(r){var v=determineValue(r);if(!Number.isFinite(v))return "—";return state.metric==="pnl"?format(v,"¢"):state.metric==="roi"?format(v,"%"):v.toFixed(1)+"%"}
 function render(){
   renderLossControls();
-  var matched=usingLossSample(),scope=lossScope()||{},a=ASSETS[state.asset],dataset=matched?lossTableRecords():state.view==="latest"?state.latestRecords:state.records,records=dataset.filter(function(r){return r.asset===state.asset}),st=matched?Object.assign({},scope,{total_observations:number(scope.comparison_observations)}):(state.view==="latest"?state.latestMeta:state.meta)[state.asset]||{},has=records.length>0;
-  id("marketHeading").textContent=matched?"Average net profit & loss":"Average profit & loss";
-  id("tableMethod").textContent=matched?"Matched price-path sample · "+(state.lossEnabled?"supported downside exits":"hold to settlement")+" · after fee stress":"Time until settlement × entry price (maker bid) · before fees";
+  var matched=usingLossSample(),scope=lossScope()||{},a=ASSETS[state.asset],dataset=matched?lossTableRecords():state.view==="latest"?state.latestRecords:state.records,records=dataset.filter(function(r){return r.asset===state.asset}),st=(state.view==="latest"?state.latestMeta:state.meta)[state.asset]||{},has=records.length>0;
+  id("marketHeading").textContent="Average profit & loss";
+  id("tableMethod").textContent=matched?"Full saved sample · partial downside-exit overlay · before entry fees; modeled exit costs included":"Time until settlement × entry price (maker bid) · before fees";
   id("datasetInfo").textContent=state.view==="latest"?(st.run_id?"Latest completed collection · Run "+st.run_id+" · "+(st.days_sampled||0)+" UTC day(s)":"No latest collection saved for this category yet."):"All saved historical observations for this category (deduplicated by market, side and entry time).";
-  if(matched)id("datasetInfo").textContent=(state.view==="latest"?"Latest collection":"Historical data")+" · "+(state.lossEnabled?"loss prevention on":"loss prevention off")+" · matched eligible paths; earlier training dates excluded after splitting.";
-  document.querySelectorAll('[data-metric="win"]').forEach(function(b){b.textContent=matched?"Positive net %":"Win rate"});
+  if(matched)id("datasetInfo").textContent=(state.view==="latest"?"Latest collection":"Historical data")+" · "+(state.lossEnabled?"loss prevention on":"loss prevention off")+" · full saved sample retained; only covered validation positions receive exit adjustments.";
+  document.querySelectorAll('[data-metric="win"]').forEach(function(b){b.textContent=matched?"Profitable positions %":"Win rate"});
   id("marketLabel").textContent=a.label;
   id("updated").textContent=state.loadedAt?"Updated from saved data · "+state.loadedAt:"No dataset loaded";
   id("marketCount").textContent=st.markets_sampled_total!=null?Number(st.markets_sampled_total).toLocaleString():(st.markets_sampled!=null?Number(st.markets_sampled).toLocaleString():"—");
@@ -207,7 +207,6 @@ function render(){
   document.querySelectorAll(".tab").forEach(function(b){b.setAttribute("aria-selected",String(b.dataset.asset===state.asset))});
   document.querySelectorAll("[data-metric]").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.metric===state.metric))});
   var body=id("matrix");body.innerHTML="";
-  if(!has&&matched){body.innerHTML='<tr><td class="state" colspan="6">Loss-prevention results need usable price paths for this category and dataset. Start a fresh collection; at least seven distinct path dates are needed to validate a threshold.</td></tr>';id("dataNote").textContent="No supported data is shown as a dash, not as a loss. Turn loss prevention off to view the original entry-only history.";id("detail").classList.remove("visible");return}
   if(!has){body.innerHTML='<tr><td class="state" colspan="6">No saved '+htmlSafe(a.label)+' results yet. Run the historical research workflow for this market type.</td></tr>';id("dataNote").textContent="No data: this does not mean the strategy lost money.";id("detail").classList.remove("visible");return}
   a.times.forEach(function(min){
     var tr=document.createElement("tr"),th=document.createElement("th");th.scope="row";th.textContent=min+" min";tr.appendChild(th);
@@ -216,8 +215,8 @@ function render(){
       var btn=document.createElement("button");btn.type="button";btn.className="heat";
       if(!r||n<state.minimum){btn.disabled=true;btn.classList.add("neutral");btn.innerHTML="<span>—</span><small>"+(n?n+" sample":matched?"no paths":"no quotes")+"</small>"}
       else{var val=determineValue(r);btn.classList.add(n<10?"low-sample":state.metric==="win"?"neutral":val>0?"positive":val<0?"negative":"neutral");
-        var exitLabel=matched?(state.lossEnabled?(r.thresholds.length===1&&r.rules.every(function(rule){return rule.supported})?"Sell ≤ "+r.thresholds[0]+"¢":r.thresholds.length?"Family exits · tap":"Hold · no supported exit"):"Hold · exits off"):"";
-        btn.innerHTML="<span>"+htmlSafe(describeValue(r))+"</span><small>n="+n+"</small>"+(exitLabel?"<small>"+htmlSafe(exitLabel)+"</small>":"");
+        var exitLabel=matched?(state.lossEnabled?(r.thresholds.length===1&&r.rules.every(function(rule){return rule.supported})?"Sell ≤ "+r.thresholds[0]+"¢":r.thresholds.length?"Family exits · tap":r.exit_coverage?"Hold · no supported exit":"Hold · no exit coverage"):"Hold · exits off"):"";
+        btn.innerHTML="<span>"+htmlSafe(describeValue(r))+"</span><small>n="+n+(matched?" · exits tested "+r.exit_coverage:"")+"</small>"+(exitLabel?"<small>"+htmlSafe(exitLabel)+"</small>":"");
         btn.setAttribute("aria-label",a.label+", "+min+" minutes left, "+band+" cents, "+describeValue(r)+", "+n+" observations");
         btn.addEventListener("click",function(){showDetail(r,min,band)});
       }
@@ -227,7 +226,7 @@ function render(){
   var msg="One time×price cell includes at most one hypothetical buy per contract. Multiple rows can reuse those contracts.";
   if(state.asset==="weather"&&Array.isArray(st.hourly_types)&&st.hourly_types.length===1&&st.hourly_types[0]==="index")msg+=" Current weather sample contains Weather Index contracts only; no single-station data.";
   if(st.latest_run_status&&st.latest_run_status.sampling_truncated)msg+=" The most recent research run sampled only part of the available market set.";
-  if(matched)msg+=" Both switch positions use identical comparison entries and fee stress. Tap a cell for hold net, exit net, and the difference. Positive net % counts modeled profits, including early sales.";
+  if(matched)msg+=" The full saved sample is retained. Only paired exit-minus-hold changes from covered validation positions are applied; uncovered positions remain the holding baseline, not a tested exit strategy. Entry fees remain excluded as in the original table; incremental exit costs use the study fee stress.";
   if(!matched&&state.metric==="roi")msg+=" ROI compares simulated profit with the amount invested; it excludes fees.";
   id("dataNote").textContent=msg;
   renderCollection();
@@ -268,34 +267,33 @@ function loadExecutionSummary(){
 function lossScope(){
  return state.lossStudy&&state.lossStudy[state.view]&&state.lossStudy[state.view][state.asset];
 }
-function usingLossSample(){
- var scope=lossScope();return state.lossEnabled||!!(scope&&scope.records&&scope.records.length);
-}
+function usingLossSample(){return state.lossEnabled;}
 function lossTableRecords(){
- var scope=lossScope(),groups={};
- ((scope&&scope.records)||[]).forEach(function(r){
-  var key=r.minutes_before_close+":"+r.price_band_cents;
-  (groups[key]||(groups[key]=[])).push(r);
- });
- return Object.keys(groups).map(function(key){
-  var items=groups[key],first=items[0],n=0,hold=0,net=0,paid=0,wins=0,knownWins=true,exits=0,recoveries=0,days=new Set(),thresholds=new Set();
+ var scope=lossScope(),base=state.view==="latest"?state.latestRecords:state.records;
+ return base.filter(function(r){return r.asset===state.asset}).map(function(original){
+  var items=((scope&&scope.records)||[]).filter(function(r){return Number(r.minutes_before_close)===Number(original.minutes_before_close)&&r.price_band_cents===original.price_band_cents});
+  var n=number(original.sampled_markets),covered=0,hold=0,delta=0,exits=0,recoveries=0,thresholds=new Set();
   items.forEach(function(r){
-   var count=number(r.sampled_markets);n+=count;hold+=number(r.hold_net_cents)*count;
-   net+=(state.lossEnabled?number(r.average_profit_loss_cents_per_contract):number(r.hold_net_cents))*count;
-   paid+=(number(r.average_purchase_price_cents)+number(state.lossStudy.entry_fee_cents))*count;
-   var won=state.lossEnabled?r.wins:r.hold_wins;if(won==null)knownWins=false;else wins+=number(won);
-   if(state.lossEnabled){exits+=number(r.early_exits);recoveries+=number(r.missed_recoveries);}
-   (r.sampled_dates||[]).forEach(function(day){days.add(day)});
+   var count=number(r.sampled_markets);covered+=count;hold+=number(r.hold_net_cents)*count;
+   delta+=(number(r.average_profit_loss_cents_per_contract)-number(r.hold_net_cents))*count;
+   exits+=number(r.early_exits);recoveries+=number(r.missed_recoveries);
    (r.supported_thresholds||[]).forEach(function(t){thresholds.add(t)});
   });
+  // The study can cover only a subset of the saved cell. Apply only its paired
+  // exit-minus-hold difference; never substitute that subset's return/sample.
+  var stale=covered>n;
+  if(stale){covered=0;hold=0;delta=0;exits=0;recoveries=0;thresholds.clear();}
+  var baseline=number(original.average_profit_loss_cents_per_contract);
+  var selected=baseline+(n?delta/n:0),price=number(original.average_purchase_price_cents);
   var families=new Set(items.map(function(r){return r.family}));
-  var rules=(scope.rules||[]).filter(function(r){return families.has(r.family)&&Number(r.minutes_before_close)===Number(first.minutes_before_close)&&r.price_band_cents===first.price_band_cents});
-  return {asset:state.asset,minutes_before_close:first.minutes_before_close,price_band_cents:first.price_band_cents,sampled_markets:n,
-   sampled_days:days.size||Math.max.apply(null,items.map(function(r){return number(r.sampled_days)})),
-   average_profit_loss_cents_per_contract:n?net/n:0,hold_net_cents:n?hold/n:0,improvement_cents:n?(net-hold)/n:0,
-   hypothetical_roi_percent:paid?100*net/paid:0,average_purchase_price_cents:n?paid/n-number(state.lossStudy.entry_fee_cents):0,
-   wins:knownWins?wins:null,win_rate_percent:knownWins&&n?100*wins/n:null,early_exits:exits,missed_recoveries:recoveries,
-   thresholds:Array.from(thresholds).sort(function(a,b){return a-b}),rules:rules,loss_comparison:true};
+  var rules=((scope&&scope.rules)||[]).filter(function(r){return families.has(r.family)&&Number(r.minutes_before_close)===Number(original.minutes_before_close)&&r.price_band_cents===original.price_band_cents});
+  return Object.assign({},original,{sampled_markets:n,average_profit_loss_cents_per_contract:selected,
+   hold_net_cents:baseline,improvement_cents:n?delta/n:0,hypothetical_roi_percent:delta===0?number(original.hypothetical_roi_percent):price?100*selected/price:0,
+   wins:Math.max(0,number(original.wins)-recoveries),win_rate_percent:recoveries&&n?100*Math.max(0,number(original.wins)-recoveries)/n:number(original.win_rate_percent),
+   early_exits:exits,missed_recoveries:recoveries,exit_coverage:covered,stale_study:stale,
+   matched_hold_cents:covered?hold/covered+number(state.lossStudy&&state.lossStudy.entry_fee_cents):null,
+   matched_exit_cents:covered?(hold+delta)/covered+number(state.lossStudy&&state.lossStudy.entry_fee_cents):null,
+   thresholds:Array.from(thresholds).sort(function(a,b){return a-b}),rules:stale?[]:rules,loss_comparison:true});
  });
 }
 function renderLossControls(){
@@ -303,20 +301,21 @@ function renderLossControls(){
  var scope=lossScope();
  if(!scope){id("lossCoverage").textContent=state.lossError?"Loss-prevention study could not be loaded. Refresh to retry.":"Loading loss-prevention price-path coverage…";return;}
  var available=number(scope.path_observations),saved=number(scope.saved_observations),compared=number(scope.comparison_observations);
- id("lossCoverage").textContent=available.toLocaleString()+" of "+saved.toLocaleString()+" entry observations have complete price paths; "+compared.toLocaleString()+" comparison observations. "+(usingLossSample()?"The table uses this same matched sample with loss prevention on or off.":"The table shows the original entry-only history. Fresh collections save the paths required for loss prevention.");
+ id("lossCoverage").textContent=available.toLocaleString()+" of "+saved.toLocaleString()+" entry observations have complete price paths; "+compared.toLocaleString()+" comparison observations. "+(state.lossEnabled?"Full dataset retained. Only covered validation positions are adjusted; uncovered positions stay at the holding baseline.":"Full original holding dataset shown. Enabling loss prevention applies only measured exit adjustments, without changing sample counts.");
 }
 function showLossDetail(r,min,band){
  var status=state.lossEnabled?"Loss prevention on":"Holding · loss prevention off";
- id("detail").innerHTML='<h3>'+htmlSafe(ASSETS[state.asset].label)+' · '+min+' minutes · '+htmlSafe(band)+'¢</h3><p class="muted small">'+status+' · matched price-path sample · after fee stress</p><div class="detailgrid">'+
-  '<div><span>Selected net P/L</span><strong>'+htmlSafe(format(r.average_profit_loss_cents_per_contract,"¢"))+'</strong></div>'+
-  '<div><span>Hold net P/L</span><strong>'+htmlSafe(format(r.hold_net_cents,"¢"))+'</strong></div>'+
+ id("detail").innerHTML='<h3>'+htmlSafe(ASSETS[state.asset].label)+' · '+min+' minutes · '+htmlSafe(band)+'¢</h3><p class="muted small">'+status+' · full saved sample · before entry fees; modeled exit costs included</p><div class="detailgrid">'+
+  '<div><span>Selected P/L</span><strong>'+htmlSafe(format(r.average_profit_loss_cents_per_contract,"¢"))+'</strong></div>'+
+  '<div><span>Full-sample hold P/L</span><strong>'+htmlSafe(format(r.hold_net_cents,"¢"))+'</strong></div>'+
   '<div><span>Difference vs hold</span><strong>'+htmlSafe(format(r.improvement_cents,"¢"))+'</strong></div>'+
-  '<div><span>ROI on cost</span><strong>'+htmlSafe(format(r.hypothetical_roi_percent,"%"))+'</strong></div></div><p>'+r.sampled_markets+' observations · '+r.sampled_days+' UTC days · '+r.early_exits+' early exits · '+r.missed_recoveries+' missed recoveries.</p>'+
+  '<div><span>ROI on cost</span><strong>'+htmlSafe(format(r.hypothetical_roi_percent,"%"))+'</strong></div></div><p>'+r.sampled_markets+' observations · '+r.sampled_days+' UTC days · '+r.early_exits+' early exits · '+r.missed_recoveries+' missed recoveries.</p><p>Exit-analysis coverage: '+r.exit_coverage+' of '+r.sampled_markets+' observations. Other positions retain the original holding result.</p>'+
+  (r.exit_coverage?'<p>Covered subset only: hold '+htmlSafe(format(r.matched_hold_cents,"¢"))+'; exits '+htmlSafe(format(r.matched_exit_cents,"¢"))+'. These subset averages do not replace the full-table average.</p>':'<p>No eligible exit evidence in this cell; the displayed result is unchanged from holding.</p>')+
   r.rules.map(function(rule){
-   var label=rule.supported?'Sell at / below '+rule.threshold_cents+'¢':'Hold · no supported threshold';
+   var label=rule.supported?'Sell at / below '+rule.threshold_cents+'¢ (absolute sale bid, not a price drop)':'Hold · no supported threshold';
    var dates=rule.training_last_date?' Training through '+rule.training_last_date+'; validation from '+rule.validation_first_date+'.':'';
    return '<p><strong>'+htmlSafe(rule.family)+': '+htmlSafe(label)+'</strong><br/>'+htmlSafe(rule.reason||"Insufficient evidence")+htmlSafe(dates)+'</p>';
-  }).join("")+'<p class="muted small">Fee stress: '+number(state.lossStudy.entry_fee_cents)+'¢ entry, '+number(state.lossStudy.exit_fee_cents)+'¢ per early sale. Quote-based simulation; fills and actual fees are not verified.</p>';
+  }).join("")+'<p class="muted small">Entry fees are excluded consistently with the original table. Modeled early-sale cost: '+(state.lossStudy?number(state.lossStudy.exit_fee_cents):2)+'¢ per sale. Quote-based simulation; fills and actual fees are not verified.</p>';
  id("detail").classList.add("visible");
 }
 function loadLossStudy(){
