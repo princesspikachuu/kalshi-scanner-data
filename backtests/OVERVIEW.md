@@ -73,17 +73,17 @@ hypothetically filled contract among 36 sampled markets in that cell.
 
 ## Crypto (pooled 15-minute)
 
-**Coverage:** 14 UTC day(s), 4200 distinct markets.
+**Coverage:** 21 UTC day(s), 6300 distinct markets.
 
 ### Average profit/loss (¢ per contract) by time and bid price
 
 | Minutes remaining | 50–59.9¢ | 60–69.9¢ | 70–79.9¢ | 80–89.9¢ | 90–99.9¢ |
 |---:|---:|---:|---:|---:|---:|
 | 15m | — | — | — | — | — |
-| 10m | +2.26¢ (915) | -1.93¢ (904) | +1.65¢ (911) | -0.06¢ (949) | +1.00¢ (495) |
-| 5m | +3.14¢ (442) | +4.51¢ (498) | -0.30¢ (579) | +1.27¢ (770) | +0.91¢ (1886) |
-| 3m | +3.47¢ (312) | -1.24¢ (334) | -1.93¢ (373) | +2.73¢ (559) | +0.05¢ (2605) |
-| 1m | -2.94¢ (99) | +0.31¢ (102) | -4.62¢ (136) | -0.05¢ (219) | +0.47¢ (3630) |
+| 10m | +0.78¢ (1379) | -0.80¢ (1354) | +1.84¢ (1391) | +0.71¢ (1413) | +1.43¢ (721) |
+| 5m | +3.06¢ (670) | +3.53¢ (745) | +0.89¢ (856) | +1.88¢ (1133) | +1.25¢ (2859) |
+| 3m | +3.86¢ (472) | +0.46¢ (478) | +1.38¢ (546) | +2.43¢ (823) | +0.37¢ (3958) |
+| 1m | -1.81¢ (154) | +2.09¢ (156) | +0.29¢ (200) | +0.19¢ (316) | +0.43¢ (5456) |
 
 For example, +4.2¢ (n=36) means an average gain of 4.2 cents per
 hypothetically filled contract among 36 sampled markets in that cell.

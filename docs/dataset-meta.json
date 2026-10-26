@@ -1,5 +1,5 @@
 {
-  "published_at": "2026-10-26T02:42:55.828966+00:00",
+  "published_at": "2026-10-26T05:06:34.333324+00:00",
   "dataset_rows": 135,
   "assets": {
     "weather": {
@@ -113,23 +113,30 @@
     },
     "crypto": {
       "asset": "crypto",
-      "days_sampled": 14,
-      "markets_sampled_total": 4200,
-      "total_observations": 16718,
-      "first_date": "2026-10-05",
+      "days_sampled": 21,
+      "markets_sampled_total": 6300,
+      "total_observations": 25080,
+      "first_date": "2026-09-20",
       "last_date": "2026-10-24",
       "hourly_types": [],
       "latest_run_status": {
         "asset": "crypto",
-        "date": "2026-10-05",
+        "date": "2026-09-20",
         "markets_available": 864,
         "markets_sampled": 300,
         "sampling_truncated": true,
-        "observations": 1197,
-        "total_observations": 16718,
-        "execution_attempts": 2397,
-        "execution_through_proxies": 1645,
-        "days_sampled": 14,
+        "observations": 1193,
+        "total_observations": 25080,
+        "execution_attempts": 223,
+        "execution_through_proxies": 128,
+        "execution_markets_checked": 26,
+        "execution_markets_skipped": 25,
+        "execution_rate_limited": false,
+        "execution_subsample_limit": 60,
+        "execution_time_budget_seconds": 45,
+        "execution_elapsed_seconds": 45.21,
+        "collection_elapsed_seconds": 57.19,
+        "days_sampled": 21,
         "sampled_by_series": {
           "KXBNB15M": 34,
           "KXBTC15M": 34,
@@ -160,7 +167,7 @@
         "unavailable_series": [],
         "historical_endpoint": false,
         "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
-        "updated_at": "2026-10-25T22:30:01.483427+00:00"
+        "updated_at": "2026-10-26T05:06:32.824917+00:00"
       }
     },
     "sports": {
