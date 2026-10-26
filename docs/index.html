@@ -71,9 +71,9 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
     <div><label for="collectAsset">Market type</label><select id="collectAsset"><option value="weather">Hourly weather</option><option value="btc">Bitcoin · 15m</option><option value="eth">Ethereum · 15m</option><option value="crypto">All crypto · 15m</option><option value="sports">Sports · Game winners</option><option value="weather_daily">Daily weather</option><option value="financial_daily">Daily financial indices</option></select></div>
     <div><label for="collectMarkets">Markets per day</label><input id="collectMarkets" type="number" min="1" max="300" step="1" value="300" inputmode="numeric"/></div>
     <div><label for="collectDays">Days to collect</label><select id="collectDays"><option value="1">1 day</option><option value="2">2 days</option><option value="3">3 days</option><option value="5">5 days</option><option value="7">7 days</option></select></div>
-    <div><label for="collectOffset">Starting how many days ago?</label><input id="collectOffset" type="number" min="1" max="30" step="1" value="2" inputmode="numeric"/></div>
+    <div><label for="collectOffset">Starting how many days ago?</label><input id="collectOffset" type="number" min="1" max="3650" step="1" value="2" inputmode="numeric"/></div>
   </div>
-  <div class="collectionHint" id="collectionHint" aria-live="polite">Choose your sample settings above.</div>
+  <div class="collectionHint" id="collectionHint" aria-live="polite">Collect up to 7 days per run, starting as far back as 10 years. Availability depends on the market.</div>
   <div class="collectionActions">
     <button id="runCollection" type="button">▶ Run collection in app</button>
     <button class="secondary" id="copyCollection" type="button">Copy run settings</button>
@@ -276,9 +276,13 @@ function collectionConfig(){
     days:Number(id("collectDays").value),offset:Number(id("collectOffset").value)};
 }
 function wholeInRange(x,min,max){return Number.isInteger(x)&&x>=min&&x<=max}
-function validCollection(p){return wholeInRange(p.markets,1,300)&&wholeInRange(p.days,1,7)&&wholeInRange(p.offset,1,30)&&p.offset+p.days-1<=30&&ASSETS[p.asset]!=null}
+function validCollection(p){return wholeInRange(p.markets,1,300)&&wholeInRange(p.days,1,7)&&wholeInRange(p.offset,1,3650)&&p.offset+p.days-1<=3650&&ASSETS[p.asset]!=null}
 function collectionText(p){
  return ["Asset: "+p.asset,"Days ago: "+p.offset,"Days to collect: "+p.days,"Max markets: "+p.markets].join("\n");
+}
+function collectionDate(offset){
+ var now=new Date(),day=Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate());
+ return new Date(day-offset*86400000).toISOString().slice(0,10);
 }
 function renderCollection(){
  var p=collectionConfig(),ok=validCollection(p),last=p.offset+p.days-1;
@@ -286,8 +290,8 @@ function renderCollection(){
  " Currently saved latest-day sample: "+current.markets_sampled+" of "+(current.markets_available??"unknown")+" available markets.":"";
  var msg=ok?"Next run will inspect up to "+p.markets+" settled markets per day over "+
  p.days+" historical UTC day(s), from "+p.offset+" to "+last+
- " day(s) ago (at most "+(p.markets*p.days)+" market candle requests)."+extra:
- "Enter whole numbers: 1–300 markets/day, 1–7 days, starting 1–30 days ago; the entire range must fit within 30 days.";
+ " day(s) ago ("+collectionDate(last)+" to "+collectionDate(p.offset)+"). Up to "+(p.markets*p.days)+" sampled markets; older coverage depends on Kalshi’s archive."+extra:
+ "Enter whole numbers: 1–300 markets/day, 1–7 days, starting 1–3,650 days ago; the entire range must fit within 10 years.";
  id("collectionHint").textContent=msg;
  id("collectionHint").classList.toggle("error",!ok);
  id("copyCollection").disabled=!ok;

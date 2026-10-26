@@ -10,7 +10,7 @@ on:
         options: [btc, eth, crypto, weather, sports, weather_daily, financial_daily]
         default: btc
       days_ago:
-        description: Completed UTC day offset (1-30)
+        description: Completed UTC day offset (1-3650; older coverage varies)
         required: true
         default: '2'
       max_markets:
@@ -43,8 +43,10 @@ jobs:
           MAX_MARKETS: ${{ inputs.max_markets }}
           DAYS_TO_COLLECT: ${{ inputs.days_to_collect }}
           POCKET_COLLECTION_STAGE: .run-collection
+          POCKET_HISTORY_INDEX: .run-collection/history-index
         run: |
           if [ "$DAYS_TO_COLLECT" -lt 1 ] || [ "$DAYS_TO_COLLECT" -gt 7 ]; then echo "days_to_collect must be 1-7"; exit 1; fi
+          if [ "$DAYS_AGO" -lt 1 ] || [ $((DAYS_AGO + DAYS_TO_COLLECT - 1)) -gt 3650 ]; then echo "Entire range must fit within the last 3650 days"; exit 1; fi
           for offset in $(seq 0 $((DAYS_TO_COLLECT - 1))); do
             day=$((DAYS_AGO + offset))
             python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$day" --max-markets "$MAX_MARKETS"

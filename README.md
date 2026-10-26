@@ -42,7 +42,7 @@ The repository now includes a **dynamic, authenticated app**:
 
 **Security:** No GitHub token is sent to browsers. The access key is submitted over HTTPS per run, stored only in the active browser session's form field, and checked by the Worker. Keep the Worker URL and access key private; anyone with the key can start a bounded collection job. For additional protection, use Cloudflare Access or another identity-based authentication layer. If the app is public, do not share the admin key.
 
-**Operation:** Set asset, days ago, number of days (up to 7), and markets/day (up to 300, capped at 900 sampled markets for one request). The API validates the input and refuses a second run while one is active. The dashboard's **Check job status** shows recent run state. When completed, **Refresh** loads the latest committed dataset from GitHub. This still relies on the existing GitHub Actions collector; it is not a live-trading bot.
+**Operation:** Set asset, days ago (up to 3,650), number of days (up to 7), and markets/day (up to 300, capped at 900 sampled markets for one request). The API validates the input and refuses a second run while one is active. The dashboard's **Check job status** shows recent run state. When completed, **Refresh** loads the latest committed dataset from GitHub. This still relies on the existing GitHub Actions collector; it is not a live-trading bot.
 
 ## See the results
 
@@ -54,7 +54,7 @@ The individual market-type reports appear in `backtests/weather_hourly/REPORT.md
 
 ## On-demand historical collection
 
-Run [Kalshi historical research](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml) with asset `weather`, `btc` or `eth`; `days_ago` (1–30); `days_to_collect` (1–7); and per-day `max_markets` (1–300).
+Run [Kalshi historical research](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/research-backtest.yml) with asset `weather`, `btc` or `eth`; `days_ago` (1–3,650); `days_to_collect` (1–7); and per-day `max_markets` (1–300).
 
 - Hourly weather entry times: **60, 45, 30, 20, 15, 10, 5, 3, 1 minutes** remaining.
 - Bitcoin/Ethereum entry times: **15, 10, 5, 3, 1 minutes** remaining.
@@ -67,3 +67,9 @@ The workflow runs `scripts/collect_backtest.py`, creates the summary with `scrip
 **None of the reported profits are verified executed trades.** Each observation assumes a passive maker buy was filled at the historical bid, without accounting for order-book queue position, fill probability, market depth, slippage or actual series-specific fees. The grid reports **pre-fee** returns. Correlated weather strikes and repeated market observations across entry times must not be treated as independent bets.
 
 Incomplete or missing contract types indicate inadequate historical coverage, not a measured result. A single day of favorable results is not strong evidence of a durable advantage.
+
+## Older historical collections
+
+Set **Starting how many days ago?** to 90, 180, 365, or another offset up to 3,650 (10 years). The app previews the actual UTC date range. Each run still samples at most seven days and 300 markets per day. Availability depends on when that market family began and which quotes Kalshi retains; an older date is not a guarantee of coverage.
+
+For archived dates the collector enumerates the complete series archive, reusing a runner-local index across all requested days. An incomplete archive fails without publishing partial results. The first archive lookup can take longer than a recent-date collection.

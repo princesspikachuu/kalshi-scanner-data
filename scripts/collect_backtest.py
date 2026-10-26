@@ -105,15 +105,45 @@ def req(path,params):
 def stamp(s):
     try:return int(dt.datetime.fromisoformat(s.replace("Z","+00:00")).timestamp())
     except (AttributeError,ValueError):return None
+def archived_markets(series):
+    """Load a complete archive index once per series per workflow, not per day.
+
+    The historical listing accepts series/event/ticker filters, but no close
+    date filter. Never silently stop at the old 25-page ceiling.
+    """
+    cache_dir=os.environ.get("POCKET_HISTORY_INDEX")
+    cache=Path(cache_dir)/(series+".json") if cache_dir else None
+    if cache and cache.exists():
+        return json.loads(cache.read_text(encoding="utf-8"))
+    out=[];cursor="";seen=set()
+    for page in range(1000):
+        args={"series_ticker":series,"limit":1000}
+        if cursor:args["cursor"]=cursor
+        payload=req("/historical/markets",args)
+        # Retain the fields needed for selection and analysis, not full rules.
+        fields=("ticker","event_ticker","close_time","result","volume_fp","volume")
+        out.extend({k:m[k] for k in fields if k in m} for m in payload.get("markets",[]))
+        cursor=payload.get("cursor") or ""
+        if page%10==0:print("Archive index",series,len(out),"markets loaded",flush=True)
+        if not cursor:
+            if cache:
+                cache.parent.mkdir(parents=True,exist_ok=True)
+                cache.write_text(json.dumps(out),encoding="utf-8")
+            return out
+        if cursor in seen:raise RuntimeError("Repeated archive cursor for "+series)
+        seen.add(cursor)
+    raise RuntimeError("Archive index exceeds safety limit for "+series+"; no partial dataset saved")
+
 def markets(series,start,end,archived):
-    path="/historical/markets" if archived else "/markets"
-    out=[]; cursor=""
+    def eligible(rows):
+        return [m for m in rows if start <= (stamp(m.get("close_time")) or 0) < end and m.get("result") in ("yes","no")]
+    if archived:return eligible(archived_markets(series))
+    out=[];cursor=""
     for page in range(25):
-        q={"series_ticker":series,"limit":1000}
-        if not archived:q.update({"min_close_ts":start-1,"max_close_ts":end})
+        q={"series_ticker":series,"limit":1000,"min_close_ts":start-1,"max_close_ts":end}
         if cursor:q["cursor"]=cursor
-        data=req(path,q)
-        out += [m for m in data.get("markets",[]) if start <= (stamp(m.get("close_time")) or 0) < end and m.get("result") in ("yes","no")]
+        data=req("/markets",q)
+        out.extend(eligible(data.get("markets",[])))
         cursor=data.get("cursor") or ""
         if not cursor:return out
     raise RuntimeError("Incomplete pagination for "+series)
@@ -346,7 +376,7 @@ def run(asset,days_ago,cap):
     if failed:raise RuntimeError("Aborting incomplete run; candle errors: "+json.dumps(failed[:5]))
     if not sample or not observations:
         if asset not in ("weather_daily","financial_daily"):
-            raise RuntimeError("No usable settled markets/quotes for "+asset+" on "+str(day))
+            raise RuntimeError("No usable settled markets/quotes for "+asset+" on "+str(day)+". This category may not have existed then, or Kalshi may not retain quotes for that date. Saved history is unchanged.")
         print("No eligible one-day observations for",asset,str(day),flush=True)
     folder=Path("backtests")/({"weather":"weather_hourly","sports":"sports_game","crypto":"crypto15m",
         "weather_daily":"weather_daily","financial_daily":"financial_daily"}.get(asset,asset+"15m"))
@@ -443,5 +473,5 @@ def run(asset,days_ago,cap):
     print("Saved",output,"observations",len(observations))
 if __name__=="__main__":
     p=argparse.ArgumentParser();p.add_argument("--asset",choices=SERIES,required=True);p.add_argument("--days-ago",type=int,default=2);p.add_argument("--max-markets",type=int,default=60);a=p.parse_args()
-    if not 1<=a.days_ago<=30 or not 1<=a.max_markets<=300:raise SystemExit("out of bounds")
+    if not 1<=a.days_ago<=3650 or not 1<=a.max_markets<=300:raise SystemExit("out of bounds")
     run(a.asset,a.days_ago,a.max_markets)

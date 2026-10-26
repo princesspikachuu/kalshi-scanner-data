@@ -1,5 +1,7 @@
 """Guard against unbounded optional trade-history work in full-size collections."""
 import io
+import os
+import tempfile
 import json
 import urllib.error
 import sys
@@ -64,6 +66,24 @@ class CollectionRuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):collector.req("/markets",{})
         self.assertEqual(request.call_count,3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list],[2,4])
+
+    def test_archive_beyond_25_pages_is_complete_and_reused_between_days(self):
+        import collect_backtest as collector
+        pages=[{"markets":[{"ticker":str(i),"close_time":"2026-01-01T12:00:00Z","result":"yes"}],"cursor":str(i+1) if i<26 else ""} for i in range(27)]
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{"POCKET_HISTORY_INDEX":folder}), patch.object(collector,"req",side_effect=pages) as request:
+            rows=collector.markets("OLD",1767225600,1767312000,True)
+            self.assertEqual(len(rows),27)
+            self.assertEqual(request.call_count,27)
+            self.assertEqual(collector.markets("OLD",1767312000,1767398400,True),[])
+            self.assertEqual(request.call_count,27)
+
+    def test_incomplete_archive_is_not_cached(self):
+        import collect_backtest as collector
+        payload={"markets":[],"cursor":"repeated"}
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{"POCKET_HISTORY_INDEX":folder}), patch.object(collector,"req",return_value=payload):
+            with self.assertRaisesRegex(RuntimeError,"Repeated archive cursor"):
+                collector.archived_markets("OLD")
+            self.assertFalse((Path(folder)/"OLD.json").exists())
 
     def test_one_page_trade_fetch(self):
         with patch("collect_backtest.urllib.request.urlopen",
