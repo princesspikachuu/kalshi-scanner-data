@@ -67,7 +67,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backtests/ docs/data.csv docs/dataset-meta.json docs/status-*.json docs/latest-data.csv docs/latest-meta.json
+          git add backtests/ docs/data.csv docs/dataset-meta.json docs/status-*.json docs/latest-data.csv docs/latest-meta.json docs/loss-prevention.json
           if ! git diff --cached --quiet; then
             git commit -m "Update Kalshi historical analysis"
             git pull --rebase

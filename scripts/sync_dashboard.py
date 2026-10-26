@@ -36,6 +36,8 @@ def main():
     if latest.exists():shutil.copyfile(latest,DOCS / "latest-data.csv")
     latest_meta=BACKTESTS / "LATEST_METADATA.json"
     if latest_meta.exists():shutil.copyfile(latest_meta,DOCS / "latest-meta.json")
+    loss_src = BACKTESTS / "LOSS_PREVENTION.json"
+    if loss_src.exists():shutil.copyfile(loss_src,DOCS / "loss-prevention.json")
     execution_src = BACKTESTS / "EXECUTION_BY_BID_OFFSET.csv"
     if execution_src.exists():
         shutil.copyfile(execution_src, DOCS / "execution.csv")

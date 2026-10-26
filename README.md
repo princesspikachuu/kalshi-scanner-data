@@ -75,3 +75,15 @@ Incomplete or missing contract types indicate inadequate historical coverage, no
 Set **Starting how many days ago?** to 90, 180, 365, or another offset up to 3,650 (10 years). The app previews the actual UTC date range. Each run still samples at most seven days and 300 markets per day. Availability depends on when that market family began and which quotes Kalshi retains; an older date is not a guarantee of coverage.
 
 For archived dates the collector enumerates the complete series archive, reusing a runner-local index across all requested days. An incomplete archive fails without publishing partial results. The first archive lookup can take longer than a recent-date collection.
+
+## Loss prevention by purchase price
+
+The dashboard includes a separate **Loss prevention by purchase price** comparison. Select the entry time and turn **Apply supported loss-prevention thresholds** on or off. Both comparison columns use identical entries and a stated fee-stress scenario: 1¢ entry, plus 2¢ per early sale. The original before-fee heatmap remains unchanged.
+
+Fresh collections now save minute-close YES/NO bid paths in per-day `.paths.json` files using the candles already downloaded, so no extra Kalshi requests are needed. Older entry-only CSVs cannot establish an exit threshold. Collect at least seven distinct dates with usable paths to allow five earlier training days and two later validation days. More history and markets may be needed for individual cost bands.
+
+The study tests only downside sale prices, in 5¢ steps, independently by contract family, purchase-price band, and entry time. Candidates must meet minimum market/event/trigger counts and positive event-clustered improvement bounds in training, then pass later validation. A failed candidate is not replaced by another fitted to validation. Training observations are excluded from the displayed comparison after splitting. Each category's latest view is restricted to its staged run's observations; the cumulative view includes eligible saved price paths.
+
+An exit uses the first subsequent positive bid at or below the threshold, strictly before close. A gap below the threshold sells at the observed bid, not the more favorable threshold. Missing quotes exclude that entry; zero bids mean no available buyer. Trades that later recovered count against exiting. No supported threshold means holding, with the reason shown.
+
+These are exploratory minute-close quote simulations with assumed entry and exit fills. The fee stress is not the actual fee schedule. Depth, order queues, execution latency and slippage are not replayed. This feature does not place orders or guarantee loss prevention.

@@ -101,6 +101,16 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 <div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
 <div id="detail" class="detail" aria-live="polite"></div><div class="summaryline" id="dataNote">One cell represents one hypothetical maker decision per market at that entry time. The same market can appear at other times.</div>
 </section>
+<section class="panel" aria-labelledby="lossHeading">
+<div class="eyebrow">Hold versus downside exit</div>
+<h2 id="lossHeading">Loss prevention by purchase price</h2>
+<p class="muted small">Find the downside sale price where cutting a loss improves the modeled result over holding. Only downside exits are tested. The main historical heatmap above stays unchanged.</p>
+<div class="controls"><label><input id="lossEnabled" type="checkbox"/> Apply supported loss-prevention thresholds</label><div><label for="lossTime">Minutes remaining at purchase</label><select id="lossTime"></select></div></div>
+<p id="lossCoverage" class="muted small" aria-live="polite">Loading price-path coverage…</p>
+<div id="lossComparison" class="state" aria-live="polite"></div>
+<p class="muted small">Matched entries and costs in both columns. One-contract fee stress: 1¢ at entry, plus 2¢ per early sale; actual market fees can differ. Minute-close bid quotes assume a fill with no depth, latency or slippage replay. Zero bids cannot be sold. No supported threshold means continue holding.</p>
+<details><summary>How thresholds are checked</summary><p class="muted small">Downside thresholds are tested in 5¢ steps, separately by contract family, entry time, and original purchase-price band. At least five earlier price-path days select a candidate; at least two later days check it. Training dates are excluded from comparisons after a split. Missing minute paths are excluded. Later recoveries count against early exits. This is exploratory simulation, not proof of executable fills or a live trading edge.</p></details>
+</section>
 <section class="panel" aria-labelledby="executionHeading">
 <div class="eyebrow">Execution-adjusted research</div>
 <h2 id="executionHeading">Best supported maker bids</h2>
@@ -118,7 +128,7 @@ var REPO="https://raw.githubusercontent.com/princesspikachuu/kalshi-scanner-data
 var apiBase="/api";var workerAvailable=false;
 var ASSETS={weather:{label:"All hourly weather markets",times:[60,45,30,20,15,10,5,3,1],status:"weather_hourly"},btc:{label:"Bitcoin · 15-minute markets",times:[15,10,5,3,1],status:"btc15m"},eth:{label:"Ethereum · 15-minute markets",times:[15,10,5,3,1],status:"eth15m"},crypto:{label:"Crypto · pooled 15-minute markets",times:[15,10,5,3,1],status:"crypto15m"},sports:{label:"Sports · game/match winners",times:[360,180,120,60,30,15,5],status:"sports_game"},weather_daily:{label:"Daily weather · high temperatures",times:[360,180,120,60,30,15,5],status:"weather_daily"},financial_daily:{label:"Daily financial index closing targets",times:[360,180,120,60,30,15,5],status:"financial_daily"}};
 var BANDS=["50-60","60-70","70-80","80-90","90-100"];
-var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},latestRecords:[],latestMeta:{},view:"historical",loadedAt:null};
+var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},latestRecords:[],latestMeta:{},view:"historical",loadedAt:null,lossEnabled:false,lossMinute:15,lossStudy:null,lossError:false};
 /* Persist the last selected category AND dataset across mobile reloads.
  * URL is a reliable fallback for browsers that evict or disallow localStorage.
  * Do not rewrite URL during initial restoration (deep-linked views must win).
@@ -130,9 +140,11 @@ function applySavedView(v){
  if(v.view==="historical"||v.view==="latest")state.view=v.view;
  if(["pnl","roi","win"].includes(v.metric))state.metric=v.metric;
  if([1,5,10,20,30].includes(Number(v.minimum)))state.minimum=Number(v.minimum);
+ if(typeof v.lossEnabled==="boolean")state.lossEnabled=v.lossEnabled;
+ if(Number.isInteger(v.lossMinute)&&v.lossMinute>0)state.lossMinute=v.lossMinute;
 }
 function saveView(){
- var v={asset:state.asset,view:state.view,metric:state.metric,minimum:state.minimum};
+ var v={asset:state.asset,view:state.view,metric:state.metric,minimum:state.minimum,lossEnabled:state.lossEnabled,lossMinute:state.lossMinute};
  try{localStorage.setItem(VIEW_STORAGE_KEY,JSON.stringify(v))}catch(e){}
  try{
   var url=new URL(window.location.href);
@@ -140,6 +152,7 @@ function saveView(){
   url.searchParams.set("pa_view",v.view);
   url.searchParams.set("pa_metric",v.metric);
   url.searchParams.set("pa_min",String(v.minimum));
+  url.searchParams.set("pa_loss",v.lossEnabled?"1":"0");
   window.history.replaceState(window.history.state,"",url.pathname+url.search+url.hash);
  }catch(e){}
 }
@@ -153,6 +166,7 @@ function restoreView(){
   var q=new URL(window.location.href).searchParams;
   applySavedView({asset:q.get("pa_asset"),view:q.get("pa_view"),
     metric:q.get("pa_metric"),minimum:q.get("pa_min")});
+  if(q.has("pa_loss"))state.lossEnabled=q.get("pa_loss")==="1";
  }catch(e){}
  id("datasetView").value=state.view;
  id("minSample").value=String(state.minimum);
@@ -185,6 +199,7 @@ function lookup(asset,mins,band){var dataset=state.view==="latest"?state.latestR
 function determineValue(r){if(state.metric==="pnl")return number(r.average_profit_loss_cents_per_contract);if(state.metric==="roi")return number(r.hypothetical_roi_percent);return number(r.win_rate_percent)}
 function describeValue(r){var v=determineValue(r);return state.metric==="pnl"?format(v,"¢"):state.metric==="roi"?format(v,"%"):v.toFixed(1)+"%"}
 function render(){
+  renderLossComparison();
   var a=ASSETS[state.asset],dataset=state.view==="latest"?state.latestRecords:state.records,records=dataset.filter(function(r){return r.asset===state.asset}),st=(state.view==="latest"?state.latestMeta:state.meta)[state.asset]||{},has=records.length>0;
   id("datasetInfo").textContent=state.view==="latest"?(st.run_id?"Latest completed collection · Run "+st.run_id+" · "+(st.days_sampled||0)+" UTC day(s)":"No latest collection saved for this category yet."):"All saved historical observations for this category (deduplicated by market, side and entry time).";
   id("marketLabel").textContent=a.label;
@@ -249,6 +264,45 @@ function loadExecutionSummary(){
       return '<tr><td>'+htmlSafe(r.asset)+'</td><td>'+htmlSafe(r.minutes_before_close)+'m</td><td>'+htmlSafe((offset>0?'+':'')+offset)+'¢</td><td>'+htmlSafe(r.proxy_fill_rate_percent)+'%</td><td>'+htmlSafe((net>0?'+':'')+net.toFixed(3))+'¢</td></tr>';
     }).join("")+'</tbody></table></div>';
   }).catch(function(){dest.textContent="No execution study has been published yet. Complete a fresh research collection first."});
+}
+function lossScope(){
+ return state.lossStudy&&state.lossStudy[state.view]&&state.lossStudy[state.view][state.asset];
+}
+function renderLossComparison(){
+ var times=ASSETS[state.asset].times;
+ if(!times.includes(state.lossMinute))state.lossMinute=times[0];
+ id("lossEnabled").checked=state.lossEnabled;
+ id("lossTime").innerHTML=times.map(function(m){return '<option value="'+m+'">'+m+' minutes</option>'}).join("");
+ id("lossTime").value=String(state.lossMinute);
+ var scope=lossScope(),dest=id("lossComparison");
+ if(!scope){
+  id("lossCoverage").textContent=state.lossError?"Loss-prevention data could not be loaded. Use Refresh to try again.":"No price-path study published for this category and dataset yet.";
+  dest.textContent="Run a fresh collection to save the minute-by-minute bid paths needed for this comparison. Older entry-only samples cannot establish an exit threshold.";
+  return;
+ }
+ var available=number(scope.path_observations),saved=number(scope.saved_observations),compared=number(scope.comparison_observations);
+ id("lossCoverage").textContent=(state.view==="latest"?"Latest collection":"Historical data")+": "+available.toLocaleString()+" of "+saved.toLocaleString()+" entry observations have complete price paths; "+compared.toLocaleString()+" eligible comparison observations. Once split, earlier training dates are excluded. "+(state.lossEnabled?"Supported downside exits enabled.":"Holding baseline selected.");
+ var records=(scope.records||[]).filter(function(r){return Number(r.minutes_before_close)===state.lossMinute});
+ if(!records.length){dest.textContent=available?"No eligible comparison at this entry time. These dates may be reserved for training or have incomplete paths.":"No usable price paths yet. Run a fresh collection for this category; existing entry-only data remains available above.";return;}
+ dest.innerHTML='<div style="overflow-x:auto"><table class="heatmap" style="min-width:700px"><thead><tr><th>Original cost</th><th>Downside sale price</th><th>Hold net</th><th>Selected net</th><th>Difference</th><th>Evidence</th></tr></thead><tbody>'+records.map(function(r){
+  var rule=(scope.rules||[]).find(function(v){return v.family===r.family&&Number(v.minutes_before_close)===state.lossMinute&&v.price_band_cents===r.price_band_cents})||{};
+  var threshold=rule.supported?'Sell at / below '+rule.threshold_cents+'¢':'Hold · no supported threshold';
+  var selected=state.lossEnabled?number(r.average_profit_loss_cents_per_contract):number(r.hold_net_cents);
+  var delta=state.lossEnabled?number(r.improvement_cents):0;
+  var reason=rule.reason||"Insufficient evidence";
+  if(rule.candidate_cents&&!rule.supported)reason+=' Candidate: '+rule.candidate_cents+'¢ (not applied).';
+  if(rule.training_last_date)reason+=' Trained through '+rule.training_last_date+'; validation from '+rule.validation_first_date+'.';
+  var notes='n='+number(r.sampled_markets)+' · '+number(r.sampled_days)+' days · '+(state.lossEnabled?number(r.early_exits):0)+' early exits · '+(state.lossEnabled?number(r.missed_recoveries):0)+' missed recoveries. '+reason;
+  return '<tr><td>'+htmlSafe(r.price_band_cents)+'¢<br/><small>'+htmlSafe(r.family)+'</small></td><td>'+htmlSafe(threshold)+'</td><td>'+htmlSafe(format(number(r.hold_net_cents),"¢"))+'</td><td>'+htmlSafe(format(selected,"¢"))+'</td><td>'+htmlSafe(format(delta,"¢"))+'</td><td style="white-space:normal;min-width:220px">'+htmlSafe(notes)+'</td></tr>';
+ }).join("")+'</tbody></table></div>';
+}
+function loadLossStudy(){
+ var query="?v="+Date.now();state.lossError=false;
+ return readJSON("/api/loss-prevention"+query)
+  .catch(function(){return readJSON("./loss-prevention.json"+query)})
+  .catch(function(){return readJSON(REPO+"backtests/LOSS_PREVENTION.json"+query)})
+  .then(function(data){if(data.version!==1)throw Error("Unsupported loss study");state.lossStudy=data;renderLossComparison()})
+  .catch(function(){state.lossStudy=null;state.lossError=true;renderLossComparison()});
 }
 function readJSON(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw Error("HTTP "+r.status);return r.json()})}
 function load(){
@@ -389,11 +443,14 @@ document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click"
 document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;saveView();id("detail").classList.remove("visible");render()})});
 id("datasetView").addEventListener("change",function(){state.view=this.value;saveView();id("detail").classList.remove("visible");render()});
 id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);saveView();id("detail").classList.remove("visible");render()});
-id("refresh").addEventListener("click",function(){load();loadExecutionSummary()});
+id("lossEnabled").addEventListener("change",function(){state.lossEnabled=this.checked;saveView();renderLossComparison()});
+id("lossTime").addEventListener("change",function(){state.lossMinute=Number(this.value);saveView();renderLossComparison()});
+id("refresh").addEventListener("click",function(){load();loadExecutionSummary();loadLossStudy()});
 restoreView();
 initCollection();
 checkBackend();
 load();
 loadExecutionSummary();
+loadLossStudy();
 })();
 </script></body></html>

@@ -253,6 +253,8 @@ def build():
                          "average_profit_loss_cents_per_contract","hypothetical_roi_percent","sampled_days"])
         writer.writerows(rows_for_csv)
     build_execution_report()
+    from loss_prevention import build_loss_report
+    build_loss_report()
     print("Updated entry-time by price-band reports and CSV.")
 
 if __name__=="__main__":

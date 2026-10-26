@@ -4,6 +4,7 @@ import argparse,csv,datetime as dt,json,time,urllib.parse,urllib.request,urllib.
 from pathlib import Path
 from collections import defaultdict
 from execution_model import ATTEMPT_COLUMNS, simulate
+from loss_prevention import pack_path
 
 BASE="https://external-api.kalshi.com/trade-api/v2"
 # Hourly Weather Index (multi-station) and legacy single-station hourly contracts.
@@ -301,7 +302,7 @@ def run(asset,days_ago,cap):
             if len(sample)>=cap:break
         if not added:break
         depth+=1
-    observations=[];failed=[];attempts=[]
+    observations=[];failed=[];attempts=[];quote_paths={}
     execution_indices=execution_sample_indices(len(sample))
     execution_elapsed=0.0
     execution_checked=0
@@ -312,6 +313,7 @@ def run(asset,days_ago,cap):
         try:
             close=stamp(market.get("close_time"))
             if close is None:raise ValueError("Market missing close_time")
+            quote_paths[market["ticker"]]=pack_path(bars,close)
             kind,city=weather_metadata(market["series_ticker"])
             # Full historical candle collection is unaffected by expensive
             # secondary trade-history analysis. Sample evenly and enforce a
@@ -389,6 +391,7 @@ def run(asset,days_ago,cap):
     if stage_path:
         target=Path(stage_path)/asset
         target.mkdir(parents=True,exist_ok=True)
+        (target/(str(day)+".paths.json")).write_text(json.dumps(quote_paths,separators=(",",":")),encoding="utf-8")
         with (target/(str(day)+".csv")).open("w",newline="") as handle:
             writer=csv.writer(handle);writer.writerow(COLUMNS);writer.writerows(observations)
         with (target/(str(day)+".execution.csv")).open("w",newline="") as handle:
@@ -398,6 +401,11 @@ def run(asset,days_ago,cap):
             "sampled_observations":len(observations),
             "execution_attempts":len(attempts),
             "available_markets":len(allm)}),encoding="utf-8")
+
+    path_file=folder/(str(day)+".paths.json")
+    previous_paths=json.loads(path_file.read_text()) if path_file.exists() else {}
+    previous_paths.update(quote_paths)
+    path_file.write_text(json.dumps(previous_paths,separators=(",",":")),encoding="utf-8")
 
     def merge_day(path,columns,new_rows,key_columns):
         # A repeat sample of an old date must not delete previously saved markets.
