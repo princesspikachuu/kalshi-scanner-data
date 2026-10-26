@@ -24,8 +24,8 @@ function validSettings(p) {
   if (!p || typeof p !== "object" || Array.isArray(p)) return "Invalid collection settings.";
   if (!["weather","btc","eth","crypto","sports","weather_daily","financial_daily"].includes(p.asset)) return "Choose hourly/daily weather, Bitcoin, Ethereum, pooled crypto, sports, or daily financial indices.";
   if (!exactInteger(p.max_markets,1,300)) return "Markets per day must be 1–300.";
-  if (!exactInteger(p.days_ago,1,30) || !exactInteger(p.days_to_collect,1,7) ||
-      p.days_ago+p.days_to_collect-1>30) return "Choose 1–7 complete UTC days within the last 30 days.";
+  if (!exactInteger(p.days_ago,1,3650) || !exactInteger(p.days_to_collect,1,7) ||
+      p.days_ago+p.days_to_collect-1>3650) return "Choose 1–7 complete UTC days within the last 3,650 days (10 years).";
   if (p.max_markets*p.days_to_collect > MAX_BATCH_MARKETS)
     return "One run is limited to 2,100 sampled markets total (300 per day for up to 7 days).";
   return "";
