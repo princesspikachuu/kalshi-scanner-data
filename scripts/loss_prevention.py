@@ -174,6 +174,8 @@ def analyze(rows, paths, asset, latest_keys=None):
             records.append({'asset': asset, 'family': family, 'minutes_before_close': minute, 'price_band_cents': band,
                 'sampled_markets': n, 'sampled_days': len({x['row']['date'] for x, _, _ in items}),
                 'wins': sum(outcome[0] > 0 for _, outcome, _ in items),
+                'hold_wins': sum(x['hold'] > 0 for x, _, _ in items),
+                'sampled_dates': sorted({x['row']['date'] for x, _, _ in items}),
                 'win_rate_percent': round(100 * sum(outcome[0] > 0 for _, outcome, _ in items) / n, 4),
                 'average_purchase_price_cents': round(sum(x['entry'] for x, _, _ in items) / n, 4),
                 'average_profit_loss_cents_per_contract': round(strategy / n, 4),

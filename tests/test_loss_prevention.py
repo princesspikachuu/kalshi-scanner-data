@@ -77,6 +77,8 @@ class LossPreventionTests(unittest.TestCase):
         self.assertEqual(study['comparison_observations'],20)
         self.assertEqual(latest['comparison_observations'],10)
         self.assertEqual(study['records'][0]['missed_recoveries'],2)
+        self.assertEqual(study['records'][0]['hold_wins'],2)
+        self.assertEqual(study['records'][0]['sampled_dates'],['2026-10-06','2026-10-07'])
         self.assertEqual(study['first_date'],'2026-10-06')
 
     def test_later_recoveries_can_reject_profitable_training_candidate(self):
