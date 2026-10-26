@@ -1,5 +1,5 @@
 {
-  "published_at": "2026-10-26T05:06:34.333324+00:00",
+  "published_at": "2026-10-26T05:23:22.528321+00:00",
   "dataset_rows": 135,
   "assets": {
     "weather": {
@@ -186,13 +186,15 @@
         "sampling_truncated": false,
         "observations": 394,
         "total_observations": 10186,
-        "execution_attempts": 147,
-        "execution_through_proxies": 21,
-        "execution_markets_checked": 6,
-        "execution_markets_skipped": 10,
-        "execution_rate_limited": true,
+        "execution_attempts": 455,
+        "execution_through_proxies": 42,
+        "execution_markets_checked": 18,
+        "execution_markets_skipped": 42,
+        "execution_rate_limited": false,
         "execution_subsample_limit": 60,
         "execution_time_budget_seconds": 45,
+        "execution_elapsed_seconds": 29.85,
+        "collection_elapsed_seconds": 45.66,
         "days_sampled": 14,
         "sampled_by_series": {
           "KXATPMATCH": 28,
@@ -219,7 +221,7 @@
         "unavailable_series": [],
         "historical_endpoint": false,
         "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
-        "updated_at": "2026-10-26T02:29:12.711285+00:00"
+        "updated_at": "2026-10-26T05:23:21.070845+00:00"
       }
     },
     "weather_daily": {

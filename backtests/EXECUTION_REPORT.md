@@ -41,7 +41,9 @@ Insufficient execution evidence to rank bid offsets.
 
 ## Sports (game/match winners)
 
-Insufficient execution evidence to rank bid offsets.
+| Time left | Baseline price band | Bid adjustment | Attempts | Events | Days | Trade-through proxies | Proxy rate | Net per attempt (proxy) |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 15m | 90-100¢ | +0¢ | 67 | 67 | 7 | 13 | 19.4% | +0.627¢ |
 
 ## Daily weather
 
