@@ -1,5 +1,7 @@
 # Kalshi Pocket Analytics — maker-only historical research
 
+See [the working app plan](APP_PLAN.md) for the automation roadmap, proposed stack, and required hold-versus-early-sale analysis.
+
 The analysis is organized by **contract type × minutes remaining × maker purchase-price range**:
 
 - **Hourly weather:** both hourly Weather Index (multi-station) and hourly single-station temperature contracts, pooled across cities (sample permitting).
