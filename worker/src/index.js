@@ -94,8 +94,7 @@ async function routes(request,env,url) {
   }
   if(request.method==="GET" && /^\/api\/status\/(btc|eth|weather|crypto|sports|weather_daily|financial_daily)$/.test(url.pathname)) {
     const name=url.pathname.split("/").pop();
-    const folder={btc:"btc15m",eth:"eth15m",crypto:"crypto15m",sports:"sports_game",weather_daily:"weather_daily",financial_daily:"financial_daily",weather:"weather_hourly"}[name];
-    return repoData("backtests/"+folder+"/status.json");
+    return repoData("docs/status-"+name+".json");
   }
   if(url.pathname==="/api/health" && request.method==="GET"){
     return respond({backend:"online",enabled:Boolean(env.GITHUB_ACTIONS_TOKEN&&env.COLLECTION_RATE_LIMIT),require_auth:false,

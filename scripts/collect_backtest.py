@@ -68,16 +68,40 @@ def weather_metadata(series):
     if series in DAILY_WEATHER_SERIES:return DAILY_WEATHER_SERIES[series]
     if series in DAILY_FINANCIAL_SERIES:return ("daily_index",DAILY_FINANCIAL_SERIES[series])
     return ("unknown","")
+# Pace all requests, including optional evidence, below the public read ceiling.
+_next_request = 0.0
+REQUEST_INTERVAL = 0.25
+REQUEST_TIMEOUT = 15
+REQUEST_BUDGET = 40
+
+def paced_open(request, timeout=REQUEST_TIMEOUT, deadline=None):
+    global _next_request
+    delay=max(0, _next_request-time.monotonic())
+    if deadline is not None and time.monotonic()+delay >= deadline:
+        raise TimeoutError("API request budget exhausted")
+    if delay:time.sleep(delay)
+    _next_request=time.monotonic()+REQUEST_INTERVAL
+    if deadline is not None:timeout=min(timeout,max(.01,deadline-time.monotonic()))
+    return urllib.request.urlopen(request,timeout=timeout)
+
 def req(path,params):
     url=BASE+path+"?"+urllib.parse.urlencode(params)
-    for attempt in range(4):
+    deadline=time.monotonic()+REQUEST_BUDGET
+    for attempt in range(3):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"KalshiPocketAnalytics/1.1","Accept":"application/json"}),timeout=40) as f:return json.load(f)
-        except urllib.error.HTTPError as e:
-            if e.code not in (429,500,502,503,504):raise
-            print("HTTP",e.code,"retry",attempt+1,flush=True)
-        time.sleep(3*2**attempt)
-    raise RuntimeError("Historical API request failed: "+url)
+            with paced_open(urllib.request.Request(url,headers={"User-Agent":"KalshiPocketAnalytics/1.2","Accept":"application/json"}),deadline=deadline) as f:
+                return json.load(f)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429,500,502,503,504):raise
+            last_error=exc
+            print("HTTP",exc.code,"attempt",attempt+1,flush=True)
+        except (urllib.error.URLError,TimeoutError) as exc:
+            last_error=exc
+        if attempt == 2:break
+        delay=2*2**attempt
+        if time.monotonic()+delay >= deadline:break
+        time.sleep(delay)
+    raise RuntimeError("Historical API request failed: "+url) from last_error
 def stamp(s):
     try:return int(dt.datetime.fromisoformat(s.replace("Z","+00:00")).timestamp())
     except (AttributeError,ValueError):return None
@@ -112,6 +136,35 @@ def candles(m,archived,start,end):
     if archived:path="/historical/markets/"+m["ticker"]+"/candlesticks"
     else:path="/series/"+m["series_ticker"]+"/markets/"+m["ticker"]+"/candlesticks"
     return req(path,{"start_ts":start,"end_ts":end,"period_interval":1}).get("candlesticks",[])
+def candle_batches(sample, asset, archived):
+    """Batch nearby recent markets; never accept silently missing batch entries."""
+    ordered=sorted(sample,key=lambda m:stamp(m.get("close_time")) or 0)
+    for offset in range(0,len(ordered),20):
+        group=ordered[offset:offset+20]
+        closes=[stamp(m.get("close_time")) for m in group]
+        if any(c is None for c in closes):raise ValueError("Market missing close_time")
+        start=min(closes)-MAX_LOOKBACK_SECONDS[asset]
+        end=max(closes)+60
+        # Stay below the endpoint's 10,000-candle response cap, even for
+        # six-hour sports windows spread across a whole UTC day.
+        safe=not archived and len(group)*((end-start)//60+2)<9500
+        data={}
+        if safe:
+            try:
+                payload=req("/markets/candlesticks",{
+                    "market_tickers":",".join(m["ticker"] for m in group),
+                    "start_ts":start,"end_ts":end,"period_interval":1})
+                data={r["market_ticker"]:r["candlesticks"] for r in payload.get("markets",[])}
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (400,404,422):raise
+                print("Batch endpoint unavailable; using individual candles",flush=True)
+        for market,close in zip(group,closes):
+            bars=data.get(market["ticker"])
+            # Empty batches may indicate candle migration; consult the usual
+            # per-market endpoint instead of silently dropping observations.
+            if not bars:bars=candles(market,archived,close-MAX_LOOKBACK_SECONDS[asset],close+60)
+            yield market,bars
+
 # Execution-evidence requests are strictly optional and must never stall the
 # ordinary full-size backtest. One research day can contain up to 300 markets.
 EXECUTION_MARKETS_PER_DAY = 60
@@ -127,7 +180,7 @@ def execution_sample_indices(total, limit=EXECUTION_MARKETS_PER_DAY):
     count=min(total,limit)
     return {i*total//count for i in range(count)}
 
-def quick_trade_history(market, archived, start, end):
+def quick_trade_history(market, archived, start, end, deadline=None):
     """Fail fast for optional execution evidence; NEVER treat truncated data as no fills."""
     out=[];cursor=""
     endpoint="/historical/trades" if archived else "/markets/trades"
@@ -138,7 +191,7 @@ def quick_trade_history(market, archived, start, end):
         request=urllib.request.Request(url,headers={
             "User-Agent":"KalshiPocketAnalytics/1.1","Accept":"application/json"})
         try:
-            with urllib.request.urlopen(request,timeout=7) as handle:
+            with paced_open(request,timeout=7,deadline=deadline) as handle:
                 payload=json.load(handle)
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
@@ -155,6 +208,7 @@ def quick_trade_history(market, archived, start, end):
     return None
 
 def run(asset,days_ago,cap):
+    collection_started=time.monotonic()
     day=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=days_ago)).date()
     start=int(dt.datetime.combine(day,dt.time.min,dt.timezone.utc).timestamp());end=start+86400
     cutoff=req("/historical/cutoff",{})
@@ -219,23 +273,22 @@ def run(asset,days_ago,cap):
         depth+=1
     observations=[];failed=[];attempts=[]
     execution_indices=execution_sample_indices(len(sample))
-    execution_started=time.monotonic()
+    execution_elapsed=0.0
     execution_checked=0
     execution_skipped=0
     execution_rate_limited=False
     trade_cutoff=stamp(cutoff.get("trades_created_ts"))
-    for market_index,market in enumerate(sample):
+    for market_index,(market,bars) in enumerate(candle_batches(sample,asset,archive)):
         try:
             close=stamp(market.get("close_time"))
             if close is None:raise ValueError("Market missing close_time")
-            bars=candles(market,archive,close-MAX_LOOKBACK_SECONDS[asset],close+60)
             kind,city=weather_metadata(market["series_ticker"])
             # Full historical candle collection is unaffected by expensive
             # secondary trade-history analysis. Sample evenly and enforce a
             # strict per-day time budget, including API errors or rate limits.
             trades=None
             if not execution_rate_limited and market_index in execution_indices and (
-                    time.monotonic()-execution_started < EXECUTION_SECONDS_PER_DAY):
+                    execution_elapsed < EXECUTION_SECONDS_PER_DAY):
                 # Don't query trades for markets with no usable post-only quote.
                 has_candidate=False
                 for mins in MINUTES[asset]:
@@ -248,14 +301,18 @@ def run(asset,days_ago,cap):
                             has_candidate=True
                             break
                 if has_candidate:
+                    evidence_started=time.monotonic()
                     try:
                         trades=quick_trade_history(market,
                             archive if trade_cutoff is None else close+60<=trade_cutoff,
-                            close-MAX_LOOKBACK_SECONDS[asset]-120,close+60)
+                            close-MAX_LOOKBACK_SECONDS[asset]-120,close+60,
+                            deadline=evidence_started+EXECUTION_SECONDS_PER_DAY-execution_elapsed)
                     except OptionalTradeRateLimit:
                         execution_rate_limited=True
                         trades=None
                         print("Kalshi HTTP 429: pausing optional execution analysis for this UTC day.",flush=True)
+                    finally:
+                        execution_elapsed+=time.monotonic()-evidence_started
                     if trades is None:execution_skipped+=1
                     else:execution_checked+=1
             if market_index%25==0:
@@ -371,6 +428,8 @@ def run(asset,days_ago,cap):
         "execution_rate_limited":execution_rate_limited,
         "execution_subsample_limit":EXECUTION_MARKETS_PER_DAY,
         "execution_time_budget_seconds":EXECUTION_SECONDS_PER_DAY,
+        "execution_elapsed_seconds":round(execution_elapsed,2),
+        "collection_elapsed_seconds":round(time.monotonic()-collection_started,2),
         "days_sampled":len(set(row["date"] for row in allrows)),
         "sampled_by_series":dict(sorted((series,sum(m["series_ticker"]==series for m in sample))
                                  for series in SERIES[asset])),

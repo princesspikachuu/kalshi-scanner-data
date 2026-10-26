@@ -33,7 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate execution model before collecting
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python3 -m unittest discover -s tests -v
+          node tests/test_dashboard_views.mjs
       - name: Collect historical quotes and outcomes
         env:
           ASSET: ${{ inputs.asset }}

@@ -93,7 +93,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 </section>
 
 <section class="panel" aria-labelledby="marketHeading">
-<div class="controls"><div><label for="datasetView">Results dataset</label><select id="datasetView"><option value="historical">All historical data</option><option value="latest">Latest collection</option></select></div><div id="datasetInfo" class="muted small">Historical results include all saved unique observations.</div></div>
+<div class="controls"><div><label for="datasetView">Results dataset</label><select id="datasetView"><option value="latest">Latest collection</option><option value="historical">All historical data</option></select></div><div id="datasetInfo" class="muted small">Historical results include all saved unique observations.</div></div>
 <div class="heading"><div><div class="eyebrow" id="marketLabel">All hourly weather contracts</div><h2 id="marketHeading">Average profit &amp; loss</h2><p class="muted small">Time until settlement × entry price (maker bid)</p></div><div class="muted small" id="updated">Loading saved results…</div></div>
 <div class="stats"><div class="stat"><label>Markets sampled</label><strong id="marketCount">—</strong></div><div class="stat"><label>Days in sample</label><strong id="dayCount">—</strong></div><div class="stat"><label>Price observations</label><strong id="obsCount">—</strong></div><div class="stat"><label>Date range</label><strong id="coverage" style="font-size:13px">—</strong></div></div>
 <div class="controls"><div><label for="minSample">Hide cells with fewer than</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
@@ -260,7 +260,7 @@ function load(){
     return Promise.all(Object.keys(ASSETS).map(function(asset){
       return readJSON("/api/status/"+asset+query)
        .catch(function(){return readJSON("./status-"+asset+".json"+query)})
-       .catch(function(){return readJSON(REPO+"backtests/"+ASSETS[asset].status+"/status.json"+query)})
+       .catch(function(){return readJSON(REPO+"docs/status-"+asset+".json"+query)})
        .then(function(v){state.meta[asset]=v}).catch(function(){});
     }));
   }).then(function(){return Promise.all([
