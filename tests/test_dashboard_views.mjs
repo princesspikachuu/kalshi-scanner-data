@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const html=fs.readFileSync('docs/index.html','utf8');
 let script=html.split('<script>')[1].split('</script>')[0];
 script=script.slice(0,script.lastIndexOf('document.querySelectorAll(".tab")'));
-script+='globalThis.dashboard={state,render,lookup,validCollection,collectionDate,renderLossControls,applySavedView,showDetail,csv};})();';
+script+='globalThis.dashboard={state,render,lookup,validCollection,collectionDate,renderLossControls,applySavedView,showDetail,csv,loadLossStudy};})();';
 const elements=new Map();
 function element(id){
  if(!elements.has(id))elements.set(id,{value:({collectAsset:'crypto',collectMarkets:'300',collectDays:'7',collectOffset:'1'})[id]||'',classList:{toggle(){},remove(){},add(){}},appendChild(){},setAttribute(){},addEventListener(){}});
@@ -31,93 +31,65 @@ assert.equal(element('marketCount').textContent,latest.markets_sampled_total.toL
 assert.equal(element('coverage').textContent,latest.first_date+' → '+latest.last_date);
 assert.equal(lookup('crypto',15,'50-60').sampled_markets,20);
 
-// Loading a study must never replace the original sample or the Off values.
+// Conditional risk must never replace either original table sample or returns.
 const {applySavedView,showDetail,csv}=context.dashboard;
 const original={asset:'crypto',minutes_before_close:15,price_band_cents:'90-100',sampled_markets:100,sampled_days:10,average_purchase_price_cents:95,average_profit_loss_cents_per_contract:-10,hypothetical_roi_percent:-10.5263,wins:85,win_rate_percent:85};
 state.records.push(original);
-const study={records:[{asset:'crypto',family:'crypto15m',minutes_before_close:15,price_band_cents:'90-100',sampled_markets:20,sampled_days:2,sampled_dates:['2026-10-06','2026-10-07'],average_purchase_price_cents:95,hold_net_cents:-51,average_profit_loss_cents_per_contract:-16,improvement_cents:35,wins:8,hold_wins:9,early_exits:8,missed_recoveries:1,supported_thresholds:[80]}],rules:[{family:'crypto15m',minutes_before_close:15,price_band_cents:'90-100',supported:true,threshold_cents:80,reason:'Validated'}],saved_observations:100,path_observations:70,comparison_observations:20,markets_sampled_total:20,days_sampled:2,first_date:'2026-10-06',last_date:'2026-10-07'};
-state.lossStudy={entry_fee_cents:1,exit_fee_cents:2,historical:{crypto:study},latest:{crypto:{records:[],rules:[],saved_observations:5,path_observations:0}}};
+const riskRecord={asset:'crypto',family:'KXBTC15M',minutes_before_close:15,price_band_cents:'90-100',decision_minutes_remaining:5,eligible_events:40,observed_events:22,saved_checkpoint_events:0,bins:[{bid_low_cents:50,bid_high_cents:60,events:22,losses:12,loss_rate_percent:54.5,loss_lower_percent:34,loss_upper_percent:74,sale_advantage_cents:7.5,zero_bid_events:0}],boundary:{status:'estimated',ranges:[{low_cents:50,high_cents:70,events:44,clear_at_95_percent:false}]}};
+state.lossStudy={version:2,historical:{crypto:{records:[riskRecord],event_entry_groups:100,covered_event_entry_groups:40}}};
 state.view='historical';state.lossEnabled=false;render();
+assert.equal(lookup('crypto',15,'90-100'),original);
+state.lossEnabled=true;state.lossDecision='auto';render();
 let cell=lookup('crypto',15,'90-100');
-assert.equal(cell,original);
-assert.equal(cell.average_profit_loss_cents_per_contract,-10);
-assert.equal(cell.sampled_markets,100);
-assert.equal(element('marketCount').textContent,cumulative.markets_sampled_total.toLocaleString());
-assert.equal(element('coverage').textContent,cumulative.first_date+' → '+cumulative.last_date);
-state.lossEnabled=true;render();
-cell=lookup('crypto',15,'90-100');
-assert.equal(cell.average_profit_loss_cents_per_contract,-3); // -10 + 20*35/100
-assert.equal(cell.sampled_markets,100);
-assert.equal(cell.sampled_days,10);
-assert.equal(cell.exit_coverage,20);
-assert.equal(cell.improvement_cents,7);
-assert.equal(cell.early_exits,8);
-assert.equal(cell.win_rate_percent,84); // original 85 wins, one foregone recovery
-assert.equal(cell.matched_hold_cents,-50); // entry stress cancels in paired delta
-assert.equal(cell.matched_exit_cents,-15);
-assert.equal(element('marketCount').textContent,cumulative.markets_sampled_total.toLocaleString());
-assert.deepEqual(Array.from(cell.thresholds),[80]);
-showDetail(cell,15,'90-100');
-assert.match(element('detail').innerHTML,/Full-sample hold P\/L/);
-assert.match(element('detail').innerHTML,/20 of 100/);
-assert.match(element('detail').innerHTML,/absolute sale bid, not a price drop/);
-assert.match(element('detail').innerHTML,/\+7.00¢/);
-// Differences from multiple families are weighted over the full cell, not
-// substituted with the smaller validation subset's average.
-study.records.push({...study.records[0],family:'station',sampled_markets:10,hold_net_cents:-7,average_profit_loss_cents_per_contract:-5,early_exits:1,missed_recoveries:0,supported_thresholds:[75]});
-cell=lookup('crypto',15,'90-100');
-assert.ok(Math.abs(cell.average_profit_loss_cents_per_contract-(-2.8))<1e-10);
-assert.equal(cell.hold_net_cents,-10);
-assert.equal(cell.exit_coverage,30);
-assert.equal(cell.sampled_markets,100);
-assert.ok(Math.abs(cell.hypothetical_roi_percent-(-2.8/95*100))<1e-10);
-// Preserve an adverse measured change too; never inflate results to look better.
-study.records.pop();
-study.records[0].average_profit_loss_cents_per_contract=-56;
-cell=lookup('crypto',15,'90-100');
-assert.equal(cell.average_profit_loss_cents_per_contract,-11);
-assert.equal(cell.improvement_cents,-1);
-// Stale/mismatched studies cannot apply a larger subset to a smaller cell.
-study.records[0].sampled_markets=200;
-cell=lookup('crypto',15,'90-100');
 assert.equal(cell.average_profit_loss_cents_per_contract,-10);
 assert.equal(cell.hypothetical_roi_percent,original.hypothetical_roi_percent);
-assert.equal(cell.stale_study,true);
-state.view='latest';render();
+assert.equal(cell.sampled_markets,100);
+assert.equal(cell.risk_records[0],riskRecord);
+assert.equal(cell.risk_decision,5);
+showDetail(cell,15,'90-100');
+assert.match(element('detail').innerHTML,/50–70¢/);
+assert.match(element('detail').innerHTML,/54.5%/);
+assert.match(element('detail').innerHTML,/uncertain/);
+assert.match(element('detail').innerHTML,/12 \/ 22 lost/);
+assert.doesNotMatch(element('detail').innerHTML,/Sell at|continue holding|no supported threshold/);
+state.lossDecision='30';render();
+cell=lookup('crypto',15,'90-100');
+assert.equal(cell.risk_records.length,0);
+showDetail(cell,15,'90-100');
+assert.match(element('detail').innerHTML,/missing evidence, not a recommendation to hold/);
+state.view='latest';state.lossDecision='auto';render();
 cell=lookup('crypto',15,'50-60');
 assert.equal(cell.sampled_markets,20);
 assert.equal(cell.average_profit_loss_cents_per_contract,1);
-assert.equal(cell.exit_coverage,0);
-state.lossEnabled=false;render();
-assert.equal(lookup('crypto',15,'50-60').sampled_markets,20);
-applySavedView({lossEnabled:true});assert.equal(state.lossEnabled,true);
-assert.doesNotMatch(html,/id="lossComparison"|id="lossTime"/);
+assert.equal(element('marketCount').textContent,latest.markets_sampled_total.toLocaleString());
+assert.match(element('lossCoverage').textContent,/Estimates use all saved history, including in Latest/);
+applySavedView({lossEnabled:true,lossDecision:'5'});assert.equal(state.lossEnabled,true);assert.equal(state.lossDecision,'5');
+applySavedView({lossDecision:'999'});assert.equal(state.lossDecision,'5');
 
-// Regression against every published cell, including the sports cell whose
-// 584 observations previously shrank to a 29-observation validation subset.
 state.records=csv(fs.readFileSync('backtests/AVERAGES_BY_TIME_AND_PRICE.csv','utf8'));
 state.latestRecords=csv(fs.readFileSync('backtests/LATEST_BY_CATEGORY.csv','utf8'));
 state.lossStudy=JSON.parse(fs.readFileSync('backtests/LOSS_PREVENTION.json','utf8'));
+// Older committed reports are ignored until a new study is built by CI.
 for(const view of ['historical','latest']){
  state.view=view;
  for(const baseline of view==='latest'?state.latestRecords:state.records){
-  state.asset=baseline.asset;
-  state.lossEnabled=false;
+  state.asset=baseline.asset;state.lossEnabled=false;
   assert.equal(lookup(state.asset,Number(baseline.minutes_before_close),baseline.price_band_cents),baseline);
   state.lossEnabled=true;
-  const adjusted=lookup(state.asset,Number(baseline.minutes_before_close),baseline.price_band_cents);
-  assert.equal(adjusted.sampled_markets,Number(baseline.sampled_markets));
-  assert.equal(adjusted.sampled_days,baseline.sampled_days);
-  assert.equal(adjusted.hold_net_cents,Number(baseline.average_profit_loss_cents_per_contract));
-  if(adjusted.early_exits===0){
-   assert.equal(adjusted.average_profit_loss_cents_per_contract,Number(baseline.average_profit_loss_cents_per_contract));
-   assert.equal(adjusted.hypothetical_roi_percent,Number(baseline.hypothetical_roi_percent));
+  const annotated=lookup(state.asset,Number(baseline.minutes_before_close),baseline.price_band_cents);
+  for(const field of ['sampled_markets','sampled_days','average_profit_loss_cents_per_contract','hypothetical_roi_percent','win_rate_percent']){
+   assert.equal(annotated[field],baseline[field]);
   }
  }
 }
-state.asset='sports';state.view='historical';state.lossEnabled=true;
-const repaired=lookup('sports',120,'80-90');
-console.log('Published sports regression:',JSON.stringify({n:repaired?.sampled_markets,hold:repaired?.hold_net_cents,selected:repaired?.average_profit_loss_cents_per_contract,exitCoverage:repaired?.exit_coverage}));
+// A legacy remote schema must fall back to the newly built same-origin asset.
+let lossRequests=[];
+context.fetch=async url=>{lossRequests.push(url);return new Response(JSON.stringify(lossRequests.length===1?{version:1}: {version:2,historical:{}}))};
+await context.dashboard.loadLossStudy();
+assert.equal(lossRequests.length,2);
+assert.match(lossRequests[1],/^\.\/loss-prevention.json/);
+assert.equal(state.lossStudy.version,2);
+console.log('Conditional risk, checkpoint choice and unchanged historical/latest returns verified.');
 
 const workerCode=fs.readFileSync('worker/src/index.js','utf8');
 const worker=(await import('data:text/javascript;base64,'+Buffer.from(workerCode).toString('base64'))).default;
