@@ -372,9 +372,12 @@ responses; research cannot set auth cookies. Existing live Worker/table untouche
 Local: **115 API/research tests passed**, **51 PG tests skipped** without a local
 disposable database; 7 policy and 17 gateway/client tests passed. Added 6 contract/
 auth/cursor/full-sample tests, 4 real-PG history/membership/bigint cases and 3 gateway
-cases. Compile/dependency/whitespace checks passed. CI verification pending this
-implementation commit; inspect the associated workflow/jobs before claiming PG
-success. Do not rerun the previously review-blocked local Blueprint schema request;
+cases. Compile/dependency/whitespace checks passed. **CI run 40510266525 passed** on implementation commit
+`53b95f6c5d5a38e2090b0b55f30e30b2fb0aeb44`: all 166 API/research tests (including
+51 actual PostgreSQL cases), 7 policy and 17 gateway/client tests passed with no
+skips. Total **190 automated tests plus Blueprint validation passed**. Logs confirm
+all four new PG history cases (including numeric bigint ordering across a digit
+boundary) and schema-only validation; no deployment/provisioning job ran. Do not rerun the previously review-blocked local Blueprint schema request;
 unchanged CI validates it read-only. No hosted requests, credentials, Google setup,
 provisioning, infrastructure mutation, deployment or trading occurred.
 
@@ -384,7 +387,8 @@ reads, not a cross-request transaction snapshot; a late commit of an older alloc
 ID may require a fresh traversal. Key rotation invalidates cursors. Hosted acceptance
 and representative performance are unverified. Exact API/SQL/gateway limits and
 resume wiring are documented in services/api/README.md and research/apps READMEs.
-This code session has no collection daemon; finish CI/checkpoint before resuming UI.
+This session has finished writing code; no collection daemon or background worker
+remains active. Implementation and verified CI are durably checkpointed before UI work.
 
 ## Next independent milestones (complete in order, adjust to evidence)
 
