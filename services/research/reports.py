@@ -225,9 +225,19 @@ class ReportStore:
         return self._save(stream_key,asset,prepared)
 
     def _save(self,stream_key,asset,prepared,*,minimum_revision=None):
-        payload,rows=json.loads(prepared.payload_json),json.loads(prepared.observations_json)
+        payload=json.loads(prepared.payload_json)
+        # Preview cells retain full source cohorts; raw datasets already retain
+        # every observation input. Avoid O(days squared) observation duplication.
+        preview=payload.get('publication',{}).get('complete') is False
+        rows=[] if preview else json.loads(prepared.observations_json)
         with self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91028))',(stream_key,))
+            if stream_key.startswith('campaign-') and 'publication' in payload:
+                latest=c.execute('SELECT id,report FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1',(stream_key,)).fetchone()
+                if latest:
+                    previous=latest['report'].get('publication',{'complete':True,'revision':0})
+                    incoming=payload['publication']
+                    if (previous['complete'] and not incoming['complete']) or previous['revision']>incoming['revision']:return latest['id']
             if minimum_revision is not None:
                 latest=c.execute('SELECT id,report FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1',(stream_key,)).fetchone()
                 if latest and latest['report'].get('selection',{}).get('revision',0)>minimum_revision:return latest['id']
@@ -245,7 +255,7 @@ class ReportStore:
                     FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(rows[offset:offset+PUBLICATION_BATCH_ROWS])))
             return result
 
-    def publish_campaign(self,stream_key,asset,dataset_ids):
+    def publish_campaign(self,stream_key,asset,dataset_ids,*,publication=None):
         text_key(stream_key,128)
         ids=sorted(dataset_ids)
         if not ids or len(ids)>3661 or len(set(ids))!=len(ids) or any(type(i) is not int or i<1 for i in ids):raise ValueError('Invalid campaign membership')
@@ -258,4 +268,8 @@ class ReportStore:
                     row=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
                 yield row
         prepared=prepare_report_stream(asset,inputs(),latest_ids=ids)
+        if publication is not None:
+            payload=json.loads(prepared.payload_json);payload['publication']=publication
+            encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
+            prepared=PreparedReport(encoded,report_fingerprint(encoded,prepared.observations_json),prepared.observations_json)
         return self._save(stream_key,asset,prepared)

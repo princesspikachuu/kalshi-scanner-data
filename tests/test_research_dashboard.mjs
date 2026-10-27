@@ -65,10 +65,10 @@ test('table DOM renders text safely and cell selection retains full-cohort cover
  assert.equal(button.children.at(-1).tagName,'small');await button.fire('click');
  assert.equal(chosen.hold.sampled_markets,10);assert.equal(chosen.loss_prevention.exit_coverage,3);
 });
-test('signed-in workspace loads server history/report and restores category/display choices',async()=>{
+test('signed-in workspace displays progressive reports and restores category/display choices',async()=>{
  const {doc,nodes}=documentFixture(),previous={document:globalThis.document,window:globalThis.window,localStorage:globalThis.localStorage,fetch:globalThis.fetch};
  let saved=JSON.stringify({asset:'eth',metric:'roi',minimum:'1',loss:true});const events={},requests=[];
- const campaign={id,asset:'eth',status:'succeeded',mode:'backfill',start_at:'2026-10-25T00:00:00Z',end_at:'2026-10-27T00:00:00Z',result_id:fixture().id,completed_sections:2,total_sections:2};
+ const campaign={id,asset:'eth',status:'running',mode:'backfill',start_at:'2026-10-25T00:00:00Z',end_at:'2026-10-27T00:00:00Z',result_id:fixture().id,completed_sections:0,total_sections:2};
  try{
   globalThis.document=doc;globalThis.window={addEventListener:(name,fn)=>events[name]=fn,location:{replace:url=>requests.push(url)}};
   globalThis.localStorage={getItem:()=>saved,setItem:(key,value)=>saved=value};
@@ -79,14 +79,14 @@ test('signed-in workspace loads server history/report and restores category/disp
    if(url.includes('/refresh/'))return Response.json({contract:'collection-v1',refresh:{enabled:false,latest_campaign_id:null}});
    if(url.includes('campaigns?asset='))return Response.json({contract:'collection-v1',items:[campaign],next_before:null});
    if(url.includes('/campaigns/'+id))return Response.json({contract:'collection-v1',campaign,sections:[],next_after:null});
-   if(url.includes('/research/results/'))return Response.json({contract:'research-history-v1',view:'historical',result:fixture()});
+   if(url.includes('/research/results/'))return Response.json({contract:'research-history-v1',view:'historical',result:{...fixture(),collection_complete:false,reported_sections:1,total_sections:2}});
    throw Error('Unexpected request');
   };
   await import('../apps/web/collection.mjs?workspace-test');await new Promise(resolve=>setImmediate(resolve));
   assert.equal(nodes.workspace.hidden,false);assert.equal(nodes.signOut.hidden,false);assert.equal(nodes.asset.value,'eth');
   assert.equal(nodes.metric.value,'roi');assert.equal(nodes.loss.checked,true);assert.equal(nodes.history.children.length,1);
-  assert.equal(nodes.reportContent.hidden,false);assert.equal(nodes.candidates.textContent,'10');assert.equal(nodes.completion.value,2);assert.equal(nodes.workerTitle.textContent,'Worker online · collection enabled');
-  assert.match(nodes.table.textContent,/-23.53%/);
+  assert.equal(nodes.reportContent.hidden,false);assert.equal(nodes.candidates.textContent,'10');assert.equal(nodes.completion.value,0);assert.equal(nodes.workerTitle.textContent,'Worker online · collection enabled');
+  assert.match(nodes.table.textContent,/-23.53%/);assert.match(nodes.scopeNote.textContent,/1 of 2 sections available/);assert.match(nodes.reportStamp.textContent,/In progress/);
   nodes.metric.value='win';await nodes.metric.fire('change');assert.equal(JSON.parse(saved).metric,'win');
   assert.ok(!saved.includes('owner@example.test'));assert.ok(!saved.includes('__Host-pocket'));
   assert.ok(requests.every(url=>!url.includes('/auth/google')));

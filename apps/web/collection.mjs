@@ -35,11 +35,11 @@ function clearReport(){report=null;reportKey=null;reportContext=null;reportReque
 function showReport(data,context){
  report=data;reportContext=context;sourcesLoaded=null;sourceNext=null;windowNext=null;$('provenance').open=false;
  $('sourceList').replaceChildren();$('windowList').replaceChildren();$('sourcesMore').hidden=true;$('windowsMore').hidden=true;
- $('reportStamp').textContent=($('reportScope').value==='category'?'All saved history':'This load')+' · Saved '+new Date(data.published_at).toLocaleString();
+ $('reportStamp').textContent=($('reportScope').value==='category'?'All saved history':'This load')+(data.collection_complete===false?' · In progress':'')+' · Saved '+new Date(data.published_at).toLocaleString();
  $('candidates').textContent=data.summary.candidate_count===null?'Unknown':data.summary.candidate_count.toLocaleString();
  $('observations').textContent=data.summary.observation_count.toLocaleString();
  $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';
- $('scopeNote').textContent=$('reportScope').value==='category'?'Completed collections combined, with the newest source version selected once for each covered close time.':'All sections in this collection are combined.';
+ $('scopeNote').textContent=$('reportScope').value==='category'?'Saved candle-complete sections combined, with the newest source version selected once for each covered close time.':data.collection_complete===false?`${data.reported_sections} of ${data.total_sections} sections available. Remaining sections and trade details continue collecting; the table updates automatically.`:'All sections in this collection are combined.';
  $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':'No eligible observations. No result has been invented.';
  $('research').hidden=false;$('reportContent').hidden=false;$('exportCsv').hidden=false;drawReport();
 }
@@ -48,7 +48,7 @@ async function loadCategory(version){
  if(!report){$('research').hidden=false;$('reportContent').hidden=true;$('reportStatus').textContent='Loading precomputed category history…'}
  try{
   const data=await research.category($('asset').value);if(version!==revision||ticket!==reportRequest||$('reportScope').value!=='category')return;
-  if(!data){clearReport();$('research').hidden=false;$('reportStatus').textContent='No completed category report yet. A collection must finish before its data joins all saved history.';return}
+  if(!data){clearReport();$('research').hidden=false;$('reportStatus').textContent='No saved category report yet. Completed candle sections will appear as collection progresses.';return}
   if(reportContext?.stream==='category-'+$('asset').value&&reportContext.id===data.id)return;
   showReport(data,{stream:'category-'+$('asset').value,id:data.id});
  }catch(error){if(version===revision&&ticket===reportRequest){$('reportStatus').textContent=error.message;failure(error)}}
@@ -128,7 +128,7 @@ function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
  $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last issue: '+c.last_work_error.replaceAll('_',' '):''}`;
  $('completion').max=c.total_sections;$('completion').value=c.completed_sections;if($('reportScope').value==='load')void loadReport(c,revision);
- $('counts').textContent=`${c.completed_sections} of ${c.total_sections} sections collected · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
+ $('counts').textContent=`${c.completed_sections} of ${c.total_sections} sections fully collected${c.reported_sections?' · '+c.reported_sections+' sections available in the table':''} · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
  $('pause').hidden=!['queued','running'].includes(c.status);$('resume').hidden=!['failed','cancelled'].includes(c.status);
  if(!append)$('sections').replaceChildren();

@@ -48,7 +48,7 @@ def select_windows(rows):
     return result
 
 
-def prepare_category(asset,datasets,manifest,revision):
+def prepare_category(asset,datasets,manifest,revision,*,publication_complete=True):
     if asset not in SERIES or type(revision) is not int or revision<1:raise ValueError('Invalid category revision')
     windows=select_windows(manifest)
     if windows!=manifest:raise ValueError('Category manifest must be canonical')
@@ -66,6 +66,7 @@ def prepare_category(asset,datasets,manifest,revision):
     prepared=prepare_report_stream(asset,checked(),latest_ids=None,candidate_filter=include)
     payload=json.loads(prepared.payload_json)
     payload['selection']={'version':VERSION,'windows':manifest,'revision':revision}
+    if not publication_complete:payload['publication']=dict(complete=False,revision=revision)
     encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
     if len(encoded.encode())+len(prepared.observations_json.encode())>MAX_REPORT_BYTES:raise ValueError('Category result exceeds bounded report size')
     return PreparedReport(encoded,report_fingerprint(encoded,prepared.observations_json),prepared.observations_json)
@@ -83,15 +84,20 @@ class CategoryReports:
     def _snapshot(self,c,asset):
         # One MVCC statement freezes both version revision and source windows.
         row=c.execute('''WITH sources AS MATERIALIZED (
-            SELECT d.dataset_id,d.start_at,d.end_at,cr.result_id
-            FROM research_campaign r JOIN research_campaign_result cr ON cr.campaign_id=r.id
-            JOIN research_campaign_day d ON d.campaign_id=r.id
-            WHERE r.asset=%s AND d.dataset_id IS NOT NULL)
+            SELECT m.dataset_id,d.start_at,d.end_at,latest.id AS result_id,
+                COALESCE((latest.report->'publication'->>'complete')::boolean,true) AS complete
+            FROM research_campaign r JOIN LATERAL (SELECT id,report FROM research_result
+                WHERE stream_key='campaign-'||replace(r.id::text,'-','') ORDER BY id DESC LIMIT 1) latest ON true
+            JOIN research_result_dataset m ON m.result_id=latest.id
+            JOIN research_dataset ds ON ds.id=m.dataset_id
+            JOIN research_campaign_day d ON d.campaign_id=r.id AND d.day=ds.day
+            WHERE r.asset=%s)
             SELECT (SELECT max(result_id) FROM sources) AS revision,
+                (SELECT bool_and(complete) FROM sources) AS complete,
                 (SELECT jsonb_agg(w) FROM (SELECT DISTINCT dataset_id,start_at,end_at
                     FROM sources ORDER BY dataset_id,start_at,end_at LIMIT 50001) w) AS windows''',(asset,)).fetchone()
         if not row['revision'] or not row['windows']:raise EvidenceConflict('No completed category coverage')
-        return dict(revision=row['revision'],windows=select_windows(row['windows']))
+        return dict(revision=row['revision'],windows=select_windows(row['windows']),complete=row['complete'])
 
     def step(self,job):
         with self.pool.connection() as c:
@@ -110,7 +116,7 @@ class CategoryReports:
                     data=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
                 yield data
         self.queue.heartbeat(job['id'],job['lease_token'],600)
-        prepared=prepare_category(job['asset'],inputs(),snapshot['windows'],snapshot['revision'])
+        prepared=prepare_category(job['asset'],inputs(),snapshot['windows'],snapshot['revision'],publication_complete=snapshot.get('complete',True))
         # _save serializes each stream and refuses an older frozen revision.
         ReportStore(self.pool)._save('category-'+job['asset'],job['asset'],prepared,
                                     minimum_revision=snapshot['revision'])

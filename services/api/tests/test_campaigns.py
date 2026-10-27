@@ -157,6 +157,40 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),15)
         self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
 
+    def test_candle_reports_arrive_before_trade_enrichment_and_grow_across_days(self):
+        original=self.evidence.fetch;trade_pages=0
+        def streaming(scope,cursor,timeout):
+            nonlocal trade_pages
+            if scope.resource=='trades':
+                trade_pages+=1
+                return ProviderPage(dict(trades=[],cursor='trade-page-'+str(trade_pages)))
+            return original(scope,cursor,timeout)
+        self.evidence.fetch=streaming;identifier=self.create()
+        for _ in range(120):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            state=self.store.get(identifier)
+            if state['reported_sections']==2:break
+        else:self.fail('Candle-complete sections were not published while enrichment continued')
+        self.assertFalse(state['report_complete']);self.assertLess(state['completed_sections'],2)
+        self.assertIn(state['status'],('queued','running'))
+        with self.db.pool.connection() as c:
+            report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['result_id'],)).fetchone()['report']
+            observations=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(state['result_id'],)).fetchone()['n']
+        self.assertEqual(report['historical']['candidate_count'],2)
+        self.assertEqual(report['historical']['observation_count'],10)
+        self.assertEqual(sum(x['hold']['sampled_markets'] for x in report['historical']['cells']),10)
+        self.assertEqual(observations,0)  # Raw immutable inputs retain every row; no quadratic preview copies.
+        before=state['result_id'];self.evidence.fetch=original
+        self.worker=self.make_worker();self.drive(identifier,limit=250)
+        final=self.store.get(identifier);self.assertTrue(final['report_complete'])
+        self.assertNotEqual(final['result_id'],before)
+        with self.db.pool.connection() as c:
+            full=c.execute('SELECT report FROM research_result WHERE id=%s',(final['result_id'],)).fetchone()['report']
+            n=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(final['result_id'],)).fetchone()['n']
+            old=c.execute('SELECT report FROM research_result WHERE id=%s',(before,)).fetchone()['report']
+        self.assertEqual(full['historical']['cells'],report['historical']['cells'])
+        self.assertEqual(n,10);self.assertEqual(old,report)
+
     def test_campaign_history_keyset_is_category_scoped_and_survives_new_inserts(self):
         ids=[self.create(key='history-'+str(i)) for i in range(4)]
         other=self.store.create('eth','2026-10-25','2026-10-26','history-other',now=NOW)

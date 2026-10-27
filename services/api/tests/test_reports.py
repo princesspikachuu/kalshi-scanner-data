@@ -179,6 +179,18 @@ class ReportPostgresTests(unittest.TestCase):
         self.assertEqual(member,dict(dataset_id=self.dataset_id,is_latest=True))
         self.assertEqual(self.counts()[0:2],(1,1))
 
+    def test_progress_snapshots_cannot_replace_newer_or_completed_reports(self):
+        partial=lambda revision:dict(complete=False,revision=revision,reported_sections=1,total_sections=2)
+        first=self.reports.publish_campaign('campaign-progress','btc',[self.dataset_id],publication=partial(1))
+        newer=self.reports.publish_campaign('campaign-progress','btc',[self.dataset_id],publication=partial(3))
+        self.assertNotEqual(first,newer)
+        self.assertEqual(self.reports.publish_campaign('campaign-progress','btc',[self.dataset_id],publication=partial(1)),newer)
+        self.assertEqual(self.counts()[2],0)
+        complete=self.reports.publish_campaign('campaign-progress','btc',[self.dataset_id],
+            publication=dict(complete=True,revision=4,reported_sections=1,total_sections=1))
+        self.assertEqual(self.counts()[2],1)
+        self.assertEqual(self.reports.publish_campaign('campaign-progress','btc',[self.dataset_id],publication=partial(5)),complete)
+
     def test_multiple_publication_batches_commit_all_observations(self):
         import services.research.reports as model
         prepared=prepare_report('btc',[dataset()],latest_ids=[1])

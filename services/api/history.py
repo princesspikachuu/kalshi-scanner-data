@@ -152,6 +152,9 @@ class Detail(Metadata):
     execution_included:Literal[False]
     baseline_fees_cents:Literal[0]
     exit_cost_stress_cents:Literal[2]
+    collection_complete:bool=Field(default=True,strict=True)
+    reported_sections:int|None=Field(default=None,ge=0,le=3661)
+    total_sections:int|None=Field(default=None,ge=1,le=3661)
     selection_version:Literal['category-window-selection-v1']|None=None
     selection_revision:ID|None=None
     dataset_count:Annotated[int,Field(strict=True,ge=1,le=3661)]|None=None

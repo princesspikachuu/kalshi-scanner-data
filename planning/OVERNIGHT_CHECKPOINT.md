@@ -1531,3 +1531,44 @@ HTTP403 automated gateway smoke and large-report live RSS acceptance remain open
 Owner-only future blockers (new credentials/Google consent/paid capacity/operator
 DDL) should be skipped until needed; the user authorized current collection and
 existing-service deployments. Code/checkpoint progress is committed incrementally.
+
+
+## Progressive research milestone prepared
+
+User expects seven days near the old five-minute run and usable data during a
+long collection. Comparison found the old collector bounded execution diagnostics
+to60markets/day and2tradepages; new immutable collector fetches ALL requested trade
+pages from both routes and gated reports on the whole campaign. Return/loss tables
+use candles, not those trade diagnostics. No claim that the current exhaustive
+workload matches the old five-minute timing; no observations/tradepages dropped.
+
+Isolated pocket-progressive from actual remote1153ed6. Prioritize candles, produce
+verified candle-only immutable daily raw versions, and move to next day's candles
+before returning to unfinished trade enrichment. Operational parent progress maps
+candle-ready day/source IDs, preserving existing full-section dataset associations
+and eventual full enrichment. At section boundaries enqueue a durable progressive
+report snapshot with frozen source IDs/revision. Bootstrap existing active jobs so
+the current year load's already collected sections become visible without restart
+or duplicate collection. Source hash/membership/coverage verification remains.
+
+Save report cells and exact source membership as immutable versions; skip repeated
+observation-row copies ONLY in explicitly marked progressive reports (all raw
+inputs and full-sample metric computation retained). Final complete report still
+stores every observation. This avoids quadratic DB growth while reports update.
+Stream lock prevents stale partial snapshots replacing newer/final reports.
+Cumulative snapshots now use latest published campaign source membership, including
+candle-ready progress, with monotonic result-ID revisions and existing overlap rules.
+
+API returns publication completeness/section coverage and selected preview ID;
+UI automatically reloads report when ID changes and marks In progress / XofY
+sections available. Full-sample refers to available source sections, explicitly
+not the still-uncollected date range. CSV includes completeness/section fields.
+No schema, role, secret or paid resource change; backend query reads saved data.
+
+Local242API/research (163pass,79actualPG skipped),32JS,7policy; compile/Blueprint/
+diff checks pass after fixture correction. Added realPG tests for reports before
+trade completion, multi-day expansion, crash/restart/final identical full-sample
+cells, no quadratic preview observation copies and stale/final publication guards.
+Run actualPG CI, resolve regressions, deploy tested API+worker then gateway on dev
+branch only. Verify actual existing year/hourly job tables/sources while running;
+no need for owner action or new credentials. Record exact receipts and limitations.

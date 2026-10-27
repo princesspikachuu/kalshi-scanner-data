@@ -4,6 +4,7 @@ No service, scheduler or network request starts on import. Publication means RAW
 coverage, not quote eligibility, research completion or a trading recommendation.
 """
 from datetime import date,datetime,time,timedelta,timezone
+from dataclasses import replace
 from uuid import UUID,uuid4,uuid5
 from concurrent.futures import ThreadPoolExecutor
 
@@ -120,6 +121,13 @@ class CampaignStore:
                 GROUP BY r.id,j.status,j.error_code''',(UUID(str(identifier)),)).fetchone()
             if row:
                 row['id']=str(row['id'])
+                result=c.execute('''SELECT id::text AS id,report->'publication' AS publication FROM research_result
+                    WHERE stream_key=%s ORDER BY id DESC LIMIT 1''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
+                row['reported_sections']=0;row['report_complete']=False
+                if result:
+                    row['result_id']=row['result_id'] or result['id']
+                    publication=result['publication'] or dict(complete=True,reported_sections=row['completed_sections'])
+                    row['reported_sections']=publication['reported_sections'];row['report_complete']=publication['complete']
                 detail=c.execute('''SELECT count(*)::integer AS work_items,
                     count(*) FILTER(WHERE status='succeeded')::integer AS completed_work_items,
                     coalesce(sum((progress->>'completed_pages')::bigint),0)::bigint AS saved_pages,
@@ -138,7 +146,7 @@ class CampaignStore:
             row=c.execute('''SELECT min(extract(epoch FROM
                 (CASE WHEN status='running' THEN lease_expires_at ELSE available_at END)-clock_timestamp())) AS seconds
                 FROM research_job WHERE status IN ('queued','running') AND attempts<max_attempts
-                AND parameters->>'collector' IN ('campaign-v1','category-report-v1')''').fetchone()
+                AND parameters->>'collector' IN ('campaign-v1','category-report-v1','campaign-preview-v1')''').fetchone()
         return 5 if row['seconds'] is None else max(.1,min(5,float(row['seconds'])))
 
     def worker_status(self):
@@ -203,7 +211,7 @@ class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1):
         if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
-        self.parallelism=parallelism
+        self.parallelism=parallelism;self._bootstrapped=False
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
@@ -250,7 +258,7 @@ class CampaignWorker:
                 WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
                 ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
                  (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
-                ORDER BY j.available_at,j.id LIMIT 1""",args).fetchone()
+                ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT 1""",args).fetchone()
         if row is None:return 5
         job=self.queue.claim(job_id=row['id'])
         if job is None:return 5
@@ -275,7 +283,7 @@ class CampaignWorker:
                     WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
                     j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
                     AND NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent')
-                    ORDER BY j.available_at,j.id LIMIT %s''',(*args,self.parallelism-1)).fetchall()
+                    ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,self.parallelism-1)).fetchall()
             for row in nearby:
                 child=self.queue.claim(job_id=row['id'])
                 if child is not None:jobs.append(child)
@@ -304,12 +312,15 @@ class CampaignWorker:
         with self.pool.connection() as c:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
             if campaign is None:raise EvidenceConflict('Unknown collection campaign')
-            day=c.execute('SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL ORDER BY day LIMIT 1',(identifier,)).fetchone()
+            day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
+                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,day LIMIT 1''',
+                (identifier,Jsonb(parent['progress'].get('candle_previews',{})))).fetchone()
         if day is None:
             try:
                 with self.pool.connection() as c:
                     ids=[r['dataset_id'] for r in c.execute('SELECT dataset_id FROM research_campaign_day WHERE campaign_id=%s ORDER BY dataset_id',(identifier,)).fetchall()]
-                result=ReportStore(self.pool).publish_campaign(f'campaign-{identifier.hex}',campaign['asset'],ids)
+                result=ReportStore(self.pool).publish_campaign(f'campaign-{identifier.hex}',campaign['asset'],ids,
+                    publication=dict(complete=True,revision=2*len(ids),reported_sections=len(ids),total_sections=len(ids)))
                 with self.pool.connection() as c:
                     self.queue._owned(c,parent['id'],parent['lease_token'])
                     c.execute('INSERT INTO research_campaign_result VALUES(%s,%s) ON CONFLICT DO NOTHING',(identifier,result))
@@ -330,7 +341,11 @@ class CampaignWorker:
                         if reused:
                             self.queue._owned(c,parent['id'],parent['lease_token'])
                             c.execute('UPDATE research_campaign_day SET dataset_id=%s WHERE campaign_id=%s AND day=%s',(reused['dataset_id'],identifier,day['day']))
-                    if reused:self.queue.yield_job(parent['id'],parent['lease_token']);return 0
+                    if reused:
+                        with self.pool.connection() as c:
+                            from .progressive import ProgressiveReports
+                            ProgressiveReports.enqueue(c,identifier,campaign['asset'])
+                        self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 scopes=scopes_for_days(campaign['config']['series'],[day['day'].isoformat()],identifier.hex)
                 self._jobs(campaign,day,'inventory',scopes,parent)
                 wait=self._one(campaign,day,'inventory',self.inventory_worker,deadline)
@@ -348,6 +363,8 @@ class CampaignWorker:
                 if not day['evidence_planned']:
                     # Recover a crash between manifest persistence and job planning.
                     self._jobs(campaign,day,'evidence',self._plan(campaign,day).scopes,parent)
+                if self._candle_preview(parent,campaign,day):
+                    self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline)
                 if wait is not None:self.queue.yield_job(parent['id'],parent['lease_token'],wait);return wait
                 plan=self._plan(campaign,day)
@@ -359,11 +376,39 @@ class CampaignWorker:
                 with self.pool.connection() as c:
                     self.queue._owned(c,parent['id'],parent['lease_token'])
                     c.execute('UPDATE research_campaign_day SET dataset_id=%s WHERE campaign_id=%s AND day=%s',(dataset,identifier,day['day']))
+                    from .progressive import ProgressiveReports
+                    ProgressiveReports.enqueue(c,identifier,campaign['asset'])
             self.queue.yield_job(parent['id'],parent['lease_token']);return 0
         except EvidenceConflict:
             self.queue.fail(parent['id'],parent['lease_token'],'campaign_evidence_blocked',retry=False);return 0
 
+    def _candle_preview(self,parent,campaign,day):
+        key=day['day'].isoformat()
+        if key in parent['progress'].get('candle_previews',{}):return False
+        with self.pool.connection() as c:
+            state=c.execute("""SELECT count(*) AS n,count(*) FILTER(WHERE j.status='succeeded') AS done
+                FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
+                WHERE w.campaign_id=%s AND w.day=%s AND w.phase='evidence'
+                    AND j.parameters->'scope'->>'resource'='candles'""",(campaign['id'],day['day'])).fetchone()
+        if not state['n'] or state['n']!=state['done']:return False
+        plan=self._plan(campaign,day)
+        candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
+        attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence') if j['parameters']['scope']['resource']=='candles']
+        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)))
+        dataset=self.datasets.publish('campaign-candles-'+campaign['id'].hex,prepared)
+        with self.pool.connection() as c:
+            owned=self.queue._owned(c,parent['id'],parent['lease_token'])
+            progress=owned['progress'];progress.setdefault('candle_previews',{})[key]=dataset
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(progress),parent['id']))
+            from .progressive import ProgressiveReports
+            ProgressiveReports.enqueue(c,campaign['id'],campaign['asset'])
+        return True
+
     def run_once(self,*,deadline):
+        from .progressive import ProgressiveReports
+        if not self._bootstrapped:
+            ProgressiveReports(self.pool).bootstrap();self._bootstrapped=True
+        if ProgressiveReports(self.pool).run_once():return True
         from .cumulative import CategoryReports
         if CategoryReports(self.pool).run_once():return True
         parent=self.queue.claim(seconds=600,collector='campaign-v1')
