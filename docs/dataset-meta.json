@@ -1,5 +1,5 @@
 {
-  "published_at": "2026-10-27T02:02:48.174490+00:00",
+  "published_at": "2026-10-27T02:46:34.603528+00:00",
   "dataset_rows": 135,
   "assets": {
     "weather": {
@@ -172,38 +172,38 @@
     },
     "sports": {
       "asset": "sports",
-      "days_sampled": 48,
-      "markets_sampled_total": 5171,
-      "total_observations": 32186,
-      "first_date": "2026-09-02",
+      "days_sampled": 55,
+      "markets_sampled_total": 6034,
+      "total_observations": 37664,
+      "first_date": "2026-08-26",
       "last_date": "2026-10-24",
       "hourly_types": [],
       "latest_run_status": {
         "asset": "sports",
-        "date": "2026-09-02",
-        "markets_available": 120,
-        "markets_sampled": 120,
+        "date": "2026-08-26",
+        "markets_available": 196,
+        "markets_sampled": 196,
         "sampling_truncated": false,
-        "observations": 807,
-        "total_observations": 32186,
-        "execution_attempts": 375,
-        "execution_through_proxies": 30,
-        "execution_markets_checked": 15,
-        "execution_markets_skipped": 45,
+        "observations": 1227,
+        "total_observations": 37664,
+        "execution_attempts": 422,
+        "execution_through_proxies": 67,
+        "execution_markets_checked": 18,
+        "execution_markets_skipped": 29,
         "execution_rate_limited": false,
         "execution_subsample_limit": 60,
         "execution_time_budget_seconds": 45,
-        "execution_elapsed_seconds": 33.74,
-        "collection_elapsed_seconds": 55.58,
-        "days_sampled": 48,
+        "execution_elapsed_seconds": 45.08,
+        "collection_elapsed_seconds": 149.02,
+        "days_sampled": 55,
         "sampled_by_series": {
-          "KXATPMATCH": 38,
+          "KXATPMATCH": 82,
           "KXMLBGAME": 42,
           "KXNBAGAME": 0,
           "KXNCAAFGAME": 0,
           "KXNFLGAME": 0,
           "KXNHLGAME": 0,
-          "KXWTAMATCH": 40
+          "KXWTAMATCH": 72
         },
         "hourly_types": [
           "game_winner"
@@ -214,11 +214,11 @@
           "WTA Tennis"
         ],
         "requested_markets": 300,
-        "markets_shortfall": 180,
+        "markets_shortfall": 104,
         "unavailable_series": [],
-        "historical_endpoint": false,
+        "historical_endpoint": true,
         "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
-        "updated_at": "2026-10-27T02:02:44.336822+00:00"
+        "updated_at": "2026-10-27T02:46:29.475170+00:00"
       }
     },
     "weather_daily": {
