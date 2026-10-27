@@ -1,0 +1,1 @@
+date,asset,series,ticker,event_ticker,side,minutes_before_close,best_bid_cents,best_ask_cents,baseline_band,bid_offset_cents,proposed_bid_cents,quote_age_seconds,entry_ts,expires_ts,evidence,opposite_taker_trades,through_contracts,at_price_contracts,won,net_cents_per_attempt_proxy
