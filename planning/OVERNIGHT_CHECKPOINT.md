@@ -1855,3 +1855,20 @@ actualPG cases; old four-way barrier fixture had3candles plus1trade, intentional
 no longer mixed by candlelane. Expand fixture to4candlemarkets, retaining real
 4-thread barrier and full20-observation assertions. Do not weaken concurrency or
 full-sample checks. Failed revision undeployed; instrumented7fd37db keepsworking.
+
+c634522 CI40604629603/job122540939410 PASSED297tests including83actualPG,
+34JS/7policy; Blueprintpassed. Worker dep-dbgjhd8n74is73ds1bu0 LIVE23:51:20.774182Z,
+newinstancepm4p9 ready23:51:24. API remains compatiblea3a39e2; no API change needed.
+Gateway40604891001 stagingjob122541815811 published ce2eb020-30ab-46b8-892e-0ec33e8c061f;
+production122541817363 SKIPPED, knownautomated403smokeonly. Signed-in UI verified
+newest-first copy,configuredcities label,datesprocessed counters,full396/1275cohort,
+20cells andsame03Pacificdailysetting. ExistingyearBTCpages1381->1413 observed.
+
+Measured new cold-cache instance first30s:2normalizations total8.937s/max4.774s,
+4archivecachehits. This differs from earliersections, so not a controlledspeedratio.
+Further safe refinement: overlap up to4 ALREADY-CACHED recent batch projections'
+archivePUT/readback/checkpoint paths. The initial batch fetch stays single/budgeted;
+only cache-present distinctclaimed jobs enter this path, avoiding sharedbatch races.
+AddedactualPG four-way archivebarrier over5marketbatch, proves exactly1batchHTTP
+and full25observations; preserve separate4archivecandleconcurrency/cachelosstest.
+Run refinedCI before worker update; no extra request allowance/resources needed.

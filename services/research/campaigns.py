@@ -347,6 +347,17 @@ class CampaignWorker:
         # Batch-capable recent candles use the single HTTP path above. Other
         # evidence (including archived candles) overlaps I/O for at most 4 jobs.
         recent_candle=lambda j:(j['parameters']['scope']['resource'],j['parameters']['scope']['source'])==('candles','recent')
+        if (phase=='evidence' and self.parallelism>1 and recent_candle(job) and hasattr(worker,'prepare_batch')
+                and hasattr(worker.provider,'cached') and worker.provider.cached(worker.scope_loader(job),'') is not None):
+            # The batch HTTP request and its immutable receipt already exist.
+            # Overlap only cached projections: no concurrent batch mutation or
+            # unbudgeted provider call, while PUT/readback/checkpoints still run.
+            for neighbor in nearby:
+                if len(jobs)>=self.parallelism:break
+                scope=worker.scope_loader(neighbor)
+                if worker.provider.cached(scope,'') is None:continue
+                child=self.queue.claim(job_id=neighbor['id'])
+                if child is not None:jobs.append(child)
         if phase=='evidence' and self.parallelism>1 and not recent_candle(job):
             with self.pool.connection() as c:
                 nearby=c.execute('''SELECT j.id FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id

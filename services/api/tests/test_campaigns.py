@@ -158,6 +158,42 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),20)
         self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
 
+    def test_cached_batch_projections_overlap_verified_archive_writes_without_extra_http(self):
+        import gzip,httpx
+        from threading import Barrier,Lock
+        from services.research.evidence import KalshiEvidence
+        from test_kalshi import reply
+        self.worker.parallelism=4;original=self.inventory.fetch;calls=[];gate=Barrier(4);lock=Lock();writes=0
+        def inventory(scope,cursor,timeout):
+            page=original(scope,cursor,timeout)
+            page.payload['markets']=[{**m,'ticker':m['ticker']+'-'+str(i),'event_ticker':m['event_ticker']+'-'+str(i)} for m in page.payload['markets'] for i in range(5)]
+            return page
+        self.inventory.fetch=inventory
+        def http(request):
+            calls.append(request)
+            if request.url.path.endswith('/trades'):return reply(payload=dict(trades=[],cursor=''))
+            end=int(request.url.params['end_ts']);bars=[dict(end_period_ts=end-m*60,yes_bid=dict(close='0.88')) for m in (15,10,5,3,1)]
+            if request.url.path.endswith('/markets/candlesticks'):
+                return reply(payload=dict(markets=[dict(market_ticker=t,candlesticks=bars) for t in request.url.params['market_tickers'].split(',')]))
+            return reply(payload=dict(ticker=request.url.path.split('/')[-2],candlesticks=bars))
+        provider=KalshiEvidence(archives=self.archives,transport=httpx.MockTransport(http));self.addCleanup(provider.close)
+        self.worker.evidence_worker=EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=1)
+        original_put=self.archives.objects.put_if_absent
+        def put(key,body,content_type):
+            nonlocal writes
+            scope=json.loads(gzip.decompress(body)).get('scope',{})
+            if (scope.get('resource'),scope.get('source'))==('candles','recent'):
+                with lock:writes+=1;ordinal=writes
+                if 2<=ordinal<=5:gate.wait(timeout=5)
+            return original_put(key,body,content_type)
+        self.archives.objects.put_if_absent=put
+        identifier=self.create(start='2026-10-25',end='2026-10-25');self.drive(identifier)
+        self.assertEqual(writes,5)
+        self.assertEqual(sum(r.url.path.endswith('/markets/candlesticks') for r in calls),1)
+        with self.db.pool.connection() as c:
+            report=c.execute('SELECT report FROM research_result WHERE id=%s',(self.store.get(identifier)['result_id'],)).fetchone()['report']
+        self.assertEqual(report['historical']['candidate_count'],5);self.assertEqual(report['historical']['observation_count'],25)
+
     @patch('services.research.datasets.COMPACT_THRESHOLD',0)
     def test_candle_reports_arrive_before_trade_enrichment_and_grow_across_days(self):
         original=self.evidence.fetch;trade_pages=0
