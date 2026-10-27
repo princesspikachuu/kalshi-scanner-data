@@ -421,18 +421,27 @@ Local: 122 API/research cases, 7 owner-policy and 19 gateway/client cases passed
 and diff checks pass. Seven new PG campaign tests cover multi-day completion,
 combined counts, historical-index reuse, cursor recovery/pause/fencing, retry/
 cooldown, exact section reuse/recheck, scheduler concurrency, 24-hour exclusion,
-idempotency across midnight and empty cohorts. CI verification is pending the
-implementation commit; inspect jobs/logs and fix failures before claiming PG success.
+idempotency across midnight and empty cohorts. **CI run 40515434701 passed** on implementation
+`d7ed9beaa8c1c88d404ff7f39de5a15507d4cdef`: all 180 API/research cases (including
+58 actual PostgreSQL tests), 7 owner-policy and 19 gateway/client tests passed with
+no skips. Total **206 automated tests plus Blueprint validation passed**. Inspected
+all seven new PG campaign results and logs; no deployment/provisioning job ran.
+The golden streamed-report fingerprint matches the unmodified e63e093 model.
 
 Limits/remaining: dense ranges can exceed explicit report entry/path/output bounds;
 then raw sections stay saved and the combined report fails explicitly, never samples.
 Only settled markets enter research; older late settlements require backfill recheck.
 Current page is collection/progress, not the complete research table/history shell.
+The finished result_id is readable through the authenticated research API under
+stream campaign-{UUID without hyphens}. Next UI work should render saved cells
+from that exact report and dataset membership; do not recompute in GET or browser.
 The worker loop requires injected configured adapters and must eventually run as a
 server process. Hosted resources, runtime budget, least-privilege/retention/secrets,
 Google OAuth and real acceptance remain pending owner steps. Full details and exact
 runner/API wiring are in services/research/README.md and services/api/README.md.
 No merge/deployment/provisioning/live infrastructure alteration or trading occurred.
+This build session has finished writing; no background worker is left running.
+Auto settings remain OFF in the schema by default; no hosted setting was changed.
 
 ## Next independent milestones (complete in order, adjust to evidence)
 
