@@ -983,3 +983,80 @@ cutover uses the actual connected host without retrieving operator credentials.
 Pending-password storage (each service's private PENDING_RUNTIME_PASSWORD) ensures
 recoverability before activation; clear to empty with the final runtime URL merge.
 No plaintext password, SCRAM verifier, private host or DSN belongs in this checkpoint.
+
+## Staging database credential isolation verified (October 27, 2026)
+
+Latest implementation ae1736663a8053f78726e50975f375d604210625 CI 40561689699
+PASSED, job 122392096620: 212 API/research including all 67 actual PostgreSQL
+cases, 7 policy, 19 gateway/client = 238 tests with no skips, plus Blueprint
+schema/guard validation. Local: 145 API/research passed, 67 PG skipped without
+local disposable DB; policy/gateway/compile/dependency/diff checks passed. The
+follow-up tested receipt contains only host/port/database, never passwords/users.
+
+Owner's explicit approval covered generating two independent high-entropy staging
+DB passwords, private Render storage and limited-user cutover. Passwords were
+generated in ephemeral process memory and sent privately through Render tools;
+never printed, written to local files or committed. Each pending password was
+saved on its own existing service before activation, ensuring recoverability.
+libpq produced SCRAM-SHA-256 verifiers locally; only verifiers entered ALTER ROLE.
+No Render/Cloudflare account credential or new OAuth client was created.
+
+Activation deploy dep-dbgeve142hec738tdskg LIVE from ae17366. Receipt at
+18:39:54.463190767 UTC: runtime-role-activation-v1, activated=true, roles=2,
+passwords_returned=false, runtime_isolated=false (activation alone is NOT cutover).
+The receipt's actual connected target was verified against the existing private
+DB before building separate TLS-required runtime URLs. No operator URL/password
+was retrieved. Do not rerun activation or regenerate these active credentials.
+
+API cutover deploy dep-dbgf07gm7kps7388ooe0 LIVE at 18:41:57.017183 UTC from
+ae17366. Replaced only DATABASE_URL with its independent pocket_api_runtime
+connection, RUNTIME_DB_PROFILE=api, REQUIRE_API_RUNTIME_DB=true; cleared private
+PENDING_RUNTIME_PASSWORD to empty. Existing preDeploy command remains named
+manage migrate, but the explicit profile selects read-only verification only.
+At 18:41:24.759938650 UTC, hosted staging-database-audit-v2 returned profile=api,
+privilege_boundary_ready=true, direct_login/expected_role=true, migration_count=9,
+migrations_match=true, history found=12. Every elevated/membership/schemaCREATE/
+TEMP/DBownership/historyownership/historymutation flag was false. Strict startup
+then passed before opening the API pool. Independent readiness returned 200/no-store;
+direct auth/me without proxy remained 403/no-store. This is not a browser login test.
+
+Worker cutover deploy dep-dbgf13avcj2c738hdkng from ae17366 replaces DATABASE_URL
+with its independent pocket_research_runtime TLS connection and sets
+RUNTIME_DB_PROFILE=research. Merged COLLECTION_ENABLED=false, STAGING_ACCEPTANCE=off,
+STAGING_OPERATOR_ACTION=off, and cleared STAGING_RUNTIME_VERIFIERS and
+PENDING_RUNTIME_PASSWORD to empty. At 18:42:59.765554048 UTC, hosted read-only
+preDeploy audit returned profile=research, privilege_boundary_ready=true, matching
+nine migrations/twelve history tables, direct expected-role login, and all unsafe
+flags false. No owner alias was introduced; the known operator DATABASE_URL has
+been replaced on both services. Actual final worker LIVE status is recorded below.
+
+Both long-lived runtime connections now use separate limited users and do not
+migrate. Future migration commands require a separate explicit operator context
+using the managed DB's private operator credential, never an app env alias. Source
+Blueprint has no fromDatabase operator references; sync:false runtime URLs and
+explicit verify-runtime commands preserve this boundary on future reviewed sync.
+Actual hosted legacy command names are safe because RUNTIME_DB_PROFILE is set.
+Blueprint sync remains paused; never sync an older revision or roll back to an
+operator-backed deployment. No automatic deployment, collection or paid upgrade.
+
+Exact resume: inspect actual remote head/CI and service deploys, preserving dirty
+saved worktrees. Do NOT recreate roles, repeat activation or rotate credentials.
+Keep operator/acceptance flags off and collection false. Owner should recheck
+Google login, refresh persistence and logout on the existing staging gateway after
+this API cutover (prior acceptance was before cutover). Next independent build
+work is representative synthetic full-cohort performance/memory acceptance for
+the selected small stack, then the unfinished research/history UI. Real collection
+needs separate authorization for a tiny bounded run; no market requests were made
+here. Do not solve client-specific gateway smoke 403 by weakening access controls.
+Existing loss-prevention table/full-sample metrics, main/live Worker and trading
+remain untouched. Existing R2 immutable acceptance marker remains the only probe.
+
+Final worker verification: dep-dbgf13avcj2c738hdkng LIVE at
+18:43:20.889830 UTC. Logs show only normal research.runtime startup after the
+successful read-only research-profile audit; no operator/diagnostic action or
+collection startup. Post-cutover API readiness again returned 200/no-store.
+Temporary secret values were cleared from ephemeral orchestration memory after
+both Render runtime configurations were saved. All credentials remain private;
+none were written to workspace files or public repo. No other writer/worker is
+active in this session; local pocket-credentials remains dirty only because these
+changes/checkpoints were saved through GitHub tools. Preserve it on continuation.

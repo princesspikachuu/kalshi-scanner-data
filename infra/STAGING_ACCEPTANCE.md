@@ -175,3 +175,10 @@ regenerate passwords or rerun activation. Verify health and owner login after AP
 cutover; still require representative performance and separately authorized tiny
 collection before enabling collection. New runtime URLs should use private Render
 host and sslmode=require; public DB access remains disabled.
+
+Hosted result: activation receipt succeeded on October 27, followed by successful
+strict API and research direct-login audits (both privilege_boundary_ready=true,
+9 matching migrations, 12 protected history tables, every unsafe flag false).
+Runtime DATABASE_URLs replaced, temporary values cleared. See newest checkpoint
+for actual deployment IDs/final status. This cutover does not enable collection or
+complete browser/performance acceptance. Never replay the one-time activation.
