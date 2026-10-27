@@ -134,6 +134,10 @@ class ResearchQueue:
             return c.execute('SELECT page_key,object_key,checkpoint,completed_at FROM collection_page WHERE job_id=%s ORDER BY completed_at,page_key',
                              (UUID(str(job_id)),)).fetchall()
 
+    def get(self, job_id):
+        with self.pool.connection() as c:
+            return c.execute('SELECT * FROM research_job WHERE id=%s', (UUID(str(job_id)),)).fetchone()
+
     def page_evidence(self, job_id):
         """Read committed pages with receipts; no lease or mutable job writes.
 

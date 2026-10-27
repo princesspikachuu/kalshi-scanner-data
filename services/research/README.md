@@ -387,3 +387,75 @@ Current official schemas checked October 27, 2026:
 - https://docs.kalshi.com/api-reference/historical/get-historical-market-candlesticks
 - https://docs.kalshi.com/api-reference/market/get-trades
 - https://docs.kalshi.com/api-reference/historical/get-historical-trades
+
+## Verified immutable dataset publication and precomputed coverage
+
+`datasets.py` implements a raw-evidence dataset boundary. `prepare_dataset(plan,
+attempts, archives, inventory_loader)` re-reads the candidate manifest and every
+transitive inventory page, rebuilds normalized membership and compares its exact
+fingerprint. `inventory_loader(id)` returns `(queue.get(id), queue.page_evidence(id))`.
+It reconstructs the canonical all-candidate evidence plan, then verifies selected
+completed jobs, page chains, archive receipts and scope/checkpoint/response identity.
+Missing/failed/partial scopes block publication; multiple complete jobs require
+explicit membership selection. Generation/refresh versions are never mixed.
+
+Publication policy `raw-evidence-dataset-v1` requires every planned request scope to
+reach a committed terminal state. Explicit unavailable/empty scopes are retained
+as coverage facts, not treated as quotes or no-fill estimates. This policy permits
+a coverage dataset with missing quotes; it is NOT an eligibility gate for a full
+ROI backtest. Research metrics must apply their own exact quote/path requirements
+and retain the original cohort/missing-coverage denominators. No ROI, return, sell
+threshold, acceptance rate or actual fill metric is produced here.
+
+Candle period keys and trade IDs deduplicate across source/window overlaps. Known
+current/historical candle OHLC aliases and decimal formatting are compared in
+explicit dollar units; original representations remain in archives. Quantity aliases
+normalize as counts. Compatible additional fields merge; disagreements on shared
+facts block the entire dataset, including null/non-null quote disagreements.
+Every confirming job/scope/page/object/row reference is retained. Raw row limits
+include duplicates and fail rather than truncate. Prepared payloads are capped at
+64 MiB; this is a bounded in-memory implementation, not a measured large-scale one.
+
+`DatasetStore.publish(stream_key, prepared)` verifies prepared payload/summary/
+artifact integrity, then atomically inserts the artifact registry, immutable run,
+precomputed coverage summary and all transitive artifact references. Bulk registry
+and membership writes avoid a SQL round trip per object. A transaction-scoped
+per-stream advisory lock plus unique fingerprint makes concurrent retries
+idempotent. A refresh appends a new version; retrying an older version returns its
+original ID and cannot move latest backwards. No live database or runtime worker
+is configured by this class. Migration 0006 is explicit, never applied on startup.
+
+The registry includes the normalized manifest, all input inventory pages (including
+empty source pages) and evidence pages. GC remains unimplemented and must also retain
+unpublished active jobs' transitive references; published artifact membership alone
+is not permission to delete anything else. SQL triggers reject UPDATE/DELETE on
+published datasets, summaries, artifacts and membership rows. They are not protection
+against a privileged operator disabling triggers or truncating tables; least-privilege
+runtime roles and hosted retention policy remain staging setup work.
+
+`history(stream_key, before=..., limit=...)` reads only immutable metadata and
+precomputed `evidence-coverage-v1` summaries, using the `(stream_key,id DESC)` index
+and keyset pagination. It does not load raw payloads or recalculate data. Counts
+separate full candidate membership, candle records/candidate coverage, trade
+records/candidate coverage and each terminal source state. No implicit cumulative
+view or cross-run aggregation is performed. An authenticated API wrapper and
+separate return/loss-risk summary version remain subsequent milestones.
+
+Reviewed current main `26c65c2325d3c5f18e3c8e9ef8142fc938f8bbdf` loss_prevention,
+loss_risk and table behavior before implementing this boundary. Current table
+retains the full hold cohort and marks original loss rates strictly above 50% as
+Trade not recommended. No live model/table files were copied, merged or changed.
+The old draft base must not silently replace those later live fixes.
+
+Eight pure ingestion and seven real-PostgreSQL publication tests cover transitive
+integrity, complete membership, conflict rejection, reference retention, absent
+trade evidence, immutable history, concurrent retries, atomic rollback, artifact
+conflicts, stream isolation and keyset history. Read-only schema validation is
+separate from provisioning; the unchanged validator downloads only the public
+Render schema. A local automatic review blocked that network-check polling during
+this milestone; offline code checks continued and CI results are recorded in the
+checkpoint. No deployment was attempted.
+
+PostgreSQL references checked October 27, 2026:
+- https://www.postgresql.org/docs/17/explicit-locking.html
+- https://www.postgresql.org/docs/17/sql-createtrigger.html

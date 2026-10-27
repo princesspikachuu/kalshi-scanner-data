@@ -93,6 +93,13 @@ def build_scopes(batch,archives,*,lookback_seconds,resources=('candles','trades'
     if len(batch.candidates)*math.ceil(lookback_seconds/21600)*len(resources)*2 > 100000:
         raise ValueError('Evidence plan too large; select explicit batch partitions')
     receipt = archives.upload('research',dict(format='candidate-manifest-v1',fingerprint=batch.fingerprint,batch=json.loads(json.dumps(asdict(batch)))))
+    return plan_from_receipt(batch,receipt,lookback_seconds,resources)
+
+
+def plan_from_receipt(batch,receipt,lookback_seconds,resources):
+    """Pure canonical plan reconstruction for publication validation."""
+    if type(lookback_seconds) is not int or not 60 <= lookback_seconds <= 86400:
+        raise ValueError('Invalid evidence lookback')
     scopes = []
     for candidate in batch.candidates:
         if candidate.result not in ('yes','no') or not candidate.evidence:

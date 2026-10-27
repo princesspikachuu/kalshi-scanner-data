@@ -253,36 +253,73 @@ Total **128 automated tests plus Blueprint validation**. Job logs confirm no
 provisioning/deployment ran. This session has finished writing code; no background
 worker remains running.
 
+## Eighth milestone: verified raw dataset publication and coverage summaries
+
+Started from remote `ce579d637cd58493c3fbb64bfb3df981011bfae8`;
+**CI 40486778336 passed**. Prior checkpoint reported no worker active. Used fresh
+`pocket-datasets` worktree; did not overwrite older saved dirty worktrees.
+
+Read current main `26c65c2325d3c5f18e3c8e9ef8142fc938f8bbdf` loss_prevention.py,
+loss_risk.py, tests and table behavior. No merge/copy of live files. Original
+full-cohort returns and strictly >50% Trade not recommended remain unchanged.
+
+Added `datasets.py`, migration 0006, `ResearchQueue.get()` and pure canonical-plan
+reconstruction in evidence.py. Ingestion re-verifies every transitive inventory
+and evidence archive, reconstructs exact candidate/plan membership, merges candle
+period/trade-ID overlaps while preserving all refs, and blocks conflicts/gaps.
+Prepared payload/summary/artifact membership are fingerprint-bound. Artifact
+registry, immutable dataset, precomputed coverage summary and transitive refs
+publish in one transaction. Per-stream advisory locking + fingerprint idempotency
+prevents duplicate versions; old retries cannot regress latest. Bulk writes avoid
+per-artifact SQL round trips. Indexed keyset history reads summaries without raw
+payloads. SQL triggers reject UPDATE/DELETE; no GC or privileged-role setup exists.
+
+This publishes RAW COVERAGE VERSIONS, not ROI/observations/loss policies. Terminal
+unavailable/empty source states remain explicit; candidate/candle denominators
+stay separate from trade evidence. A complete raw response is not quote/path
+coverage or a maker fill. README gives exact wiring, alias/conflict policy,
+coverage eligibility, bounded memory limits and retention/privilege limitations.
+
+Local tests: 81 API/research tests passed; 41 PG cases skipped without disposable
+local PostgreSQL (one newly added PG case was separately discovered). Seven policy
+and 14 gateway/client tests passed; compile/dependency/diff checks passed. Eight
+new pure and seven new real-PG cases. Full **143-test CI result awaits this commit**;
+inspect before claiming actual-PG success. Existing Blueprint validator's public
+schema GET was flagged by automatic review while polling the local combined check;
+inspected source proves it sends no account credentials or deployment payload.
+Did not retry that blocked request. Local network schema validation is skipped;
+infra files unchanged. Existing CI uses the unchanged read-only schema validator.
+No provisioning/deployment/live infrastructure mutation or trading was attempted.
+No hosted collection, credentials, owner email or Google setup was introduced.
+No worker remains active after this run.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest head/CI and fix failures first. Queue/archive/R2, inventory,
-   normalization and raw candle/trade evidence planning/workers are implemented.
-   Do not redo them. Read research README contracts and current schemas.
-2. Durable versioned dataset/run membership and precomputed research summaries.
-   Start with verified evidence ingestion: re-read archive receipts/envelopes,
-   merge/reject conflicting candle-period/trade-ID duplicates across windows and
-   sources, record empty/unavailable/failed/gap policy explicitly. Preserve full
-   candidate/candle sample metrics separately from optional execution evidence.
-   Read current MAIN loss-prevention logic/tests first: this draft's old base
-   predates later live fixes. Do not merge or overwrite live files to do that.
-   Register manifests/transitive provenance and atomically publish only complete
-   eligible versions. Retain old runs; never mix latest with cumulative. All tests
-   may use fixtures and disposable PG; no hosted account setup is needed.
-3. Authenticated read-only historical run/date queries with indexed SQL/keyset
-   pagination and tests; serve precomputed results. Keep owner mutations session+
-   CSRF protected and update gateway allowlists deliberately. No hosting required.
-4. React/TypeScript research shell/history browser after stable API contract.
-   Preserve familiar current table and exact loss-prevention/full-sample behavior.
-   Measure representative local performance, without claiming a speedup from
-   structure or tiny synthetic samples. Hosted acceptance remains owner-only.
+1. Inspect newest remote head/CI and fix failures first. Queue, archives, planners,
+   normalized membership, raw evidence, immutable raw datasets and precomputed
+   coverage history are implemented. Do not redo them or overwrite newer changes.
+2. Add versioned full-sample research observations/return/loss-risk summaries from
+   verified raw datasets. Read current MAIN code/tests (not the draft's older
+   model) and preserve exact full-cohort denominators, latest-vs-cumulative
+   membership, threshold-only cell display and >50% Trade not recommended rule.
+   Missing quotes/paths/trades must remain explicit and never shrink the hold
+   baseline or become presumed safe holding/fills. Optional execution is separate.
+   Current dataset summaries are coverage counts only; do not label them ROI.
+3. Authenticated read-only run/date and precomputed-summary API with indexed SQL,
+   keyset cursors and tests. Keep mutations session+CSRF protected; deliberately
+   update gateway allowlists/response validation. No deployment needed. The store
+   already has a summary-only history query; it is not an exposed API route.
+4. Research shell/history browser after stable API contract, keeping familiar
+   live table behavior. Measure representative local performance, without
+   claiming speedups from structure/tiny fixtures. Hosted acceptance is owner-only.
 
-Save independent code/checkpoint milestones to draft PR #9; inspect CI and diff.
-Main has later live table fixes/automated data updates. Reconcile only for a future
-explicitly authorized integration; do not merge, deploy, provision or trade now.
+Save independent code/checkpoint milestones to draft PR #9 and inspect CI/diff.
+Main can receive later live fixes/data updates. Reconcile only for future explicit
+integration authorization; do not merge, deploy, provision or trade in this build.
 
 ## Owner-only items to leave pending
 
 Google Web OAuth client/public client ID, hosted resource/budget authorization,
-secure runtime secrets, R2 bucket/access configuration and retention policy, real
-R2 read/write and staging sign-in acceptance. Further pure-code milestones need
-no owner action. Do not add hosted credentials or the owner email to this repo.
+secure runtime secrets, R2 bucket/access configuration/retention and least-privilege
+runtime roles, real R2 read/write and staging sign-in acceptance. Pure-code work
+needs no owner action. Keep owner email and credentials out of the public repo.
