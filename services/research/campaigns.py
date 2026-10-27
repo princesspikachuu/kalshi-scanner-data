@@ -269,6 +269,8 @@ class CampaignWorker:
                 with self.pool.connection() as c:
                     self.queue._owned(c,parent['id'],parent['lease_token'])
                     c.execute('INSERT INTO research_campaign_result VALUES(%s,%s) ON CONFLICT DO NOTHING',(identifier,result))
+                    from .cumulative import CategoryReports
+                    CategoryReports.enqueue(c,campaign['asset'],identifier)
                 self.queue.finish(parent['id'],parent['lease_token'])
             except ValueError:
                 self.queue.fail(parent['id'],parent['lease_token'],'campaign_result_blocked',retry=False)
@@ -318,6 +320,8 @@ class CampaignWorker:
             self.queue.fail(parent['id'],parent['lease_token'],'campaign_evidence_blocked',retry=False);return 0
 
     def run_once(self,*,deadline):
+        from .cumulative import CategoryReports
+        if CategoryReports(self.pool).run_once():return True
         parent=self.queue.claim(seconds=600,collector='campaign-v1')
         if parent is None:return False
         self.step(parent,deadline=deadline)

@@ -1232,3 +1232,52 @@ real one-day BTC collection. Do not leave blocked account/credential work pendin
 as a reason to stop independent app work. Save receipts before next milestone.
 Then implement precomputed category-wide deduplicated history/this-load views,
 coverage/source inspection and representative performance acceptance incrementally.
+
+## Collection online; cumulative report engine prepared
+
+92ec64d CI40568930140 PASSED: 217 API/research including 70 real-PG cases,
+7 policy, 28 gateway/dashboard =252 tests without skips, plus Blueprint validation.
+Worker deploy dep-dbgfm8mi0phs73c9ljh0 LIVE19:28:40.940628 UTC; API deploy
+dep-dbgfm9nf3r2c73eg7600 LIVE19:28:46.646215 UTC. Both at92ec64d with existing
+private profiles; worker COLLECTION_ENABLED=true. No new grants/migrations/secrets.
+Staging gateway workflow40569704728 from92ec64d published version
+16543600-bbdb-45dc-aa76-ac1d27502529; production skipped. Workflow overall still
+fails only known automated assets HTTP403 smoke; browser works. No bypass/weakening.
+
+Browser verified Worker online / collection enabled. Owner has already queued a
+year-long BTC campaign (2025-10-27 through current2026-10-27 cutoff). Observed
+12/366 sections collected,38 committed pages,14/14 current child tasks finished.
+Do NOT create a duplicate acceptance campaign; use this real running work. No
+pause/resume or automatic-refresh setting was changed by agent. Work continues
+server-side while other app parts are built. These are observed progress counts,
+not a claim of completed data/report or provider coverage for the whole year.
+
+Fresh pocket-cumulative worktree starts from saved92ec64d; preserves prior dirty
+saved pocket-active. Next independent engine adds CategoryReports using existing
+queue/result/history tables. Each completed campaign atomically enqueues a local
+category-report job with its result association. Worker builds category reports
+between collection steps; no HTTP/archive calls or request-time recalculation.
+Frozen job-progress snapshot survives crash/reclaim. Greatest immutable dataset
+version ID wins overlapping half-open close-time coverage; partial rolling windows
+overlay only their own interval, an explicitly complete empty newer interval removes
+stale membership inside it, and outside history/gaps remain intact. Reused identical
+windows deduplicate. Original raw datasets/fingerprints and previous reports never
+change. A sweep-line selects disjoint intervals; only surviving source versions
+are loaded one at a time, with explicit segment/input/output caps and no sampling.
+
+Report builder accepts an internal candidate selector while verifying original raw
+integrity; default hold/model path remains unchanged. Category policy/ROI is rebuilt
+on the complete canonical selected cohort, never averages of earlier report cells.
+Published selection includes frozen intervals/revision for audit; category latest
+membership stays explicitly unknown because the selected campaign view is separate.
+Stream lock rejects older frozen revisions finishing after newer category reports.
+No schema/role changes or new resource. Large over-cap history fails visibly for
+explicit future partitioning instead of silently dropping data.
+
+Pure cases cover partial/empty replacements, close-time boundaries, disjoint gaps,
+exact replay, missing inputs and intact full-cohort denominators. Real-PG tests add
+recheck deduplication/retained old reports and stale frozen retry suppression. Local
+224 API/research:152 pass,72PG skipped without local disposable DB. CI must prove
+all actualPG cases before deploying this engine. Next connect dashboard This load /
+All saved history choices, source membership/coverage and measured performance.
+Keep current running collection online; deploys resume fenced saved pages.

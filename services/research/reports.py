@@ -47,7 +47,7 @@ def observations(asset,datasets):
     return _observations(asset,sorted(datasets,key=lambda d:d['id']))
 
 
-def _observations(asset,datasets):
+def _observations(asset,datasets,*,candidate_filter=None):
     if asset not in MINUTES: raise ValueError('Unsupported research category')
     rows,paths,origin,seen,missing=[],{}, {},set(),[]
     candidate_count=0;bar_count=0
@@ -57,13 +57,15 @@ def _observations(asset,datasets):
             raise EvidenceConflict('Published raw dataset integrity mismatch')
         if payload['candidates'] and 'candles' not in payload['summary']['resources']:
             raise EvidenceConflict('Candle membership is required for return summaries')
+        candidates=[candidate for candidate in payload['candidates'] if candidate_filter is None or candidate_filter(dataset['id'],candidate)]
+        tickers={candidate['ticker'] for candidate in candidates}
         bars=defaultdict(list)
         for record in payload['records']:
-            if record['resource']=='candles':
+            if record['resource']=='candles' and (candidate_filter is None or record['ticker'] in tickers):
                 bar_count+=1
                 if bar_count>500000:raise ValueError('Report path limit exceeded; split the range')
                 bars[record['ticker']].append(record['record'])
-        for candidate in payload['candidates']:
+        for candidate in candidates:
             ticker,day=candidate['ticker'],payload['day']
             key=(day,ticker)
             if key in seen: raise EvidenceConflict('Select one raw version per market/day; refreshes cannot be pooled')
@@ -141,7 +143,7 @@ def prepare_report(asset,datasets,*,latest_ids):
     return prepare_report_stream(asset,iter(sorted(datasets,key=lambda d:d['id'])),latest_ids=latest_ids)
 
 
-def prepare_report_stream(asset,datasets,*,latest_ids):
+def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     """Load one immutable raw dataset at a time, retaining bounded derived inputs.
 
     Caller supplies ascending unique IDs; model/rounding/full-cohort arithmetic is
@@ -153,9 +155,9 @@ def prepare_report_stream(asset,datasets,*,latest_ids):
         for d in datasets:
             if type(d['id']) is not int or d['id']<=previous or len(metadata)>=3661:raise ValueError('Select ascending unique dataset IDs, at most 3661')
             previous=d['id']
-            metadata.append(dict(id=d['id'],fingerprint=d['fingerprint'],day=d['payload']['day'],candidate_count=len(d['payload']['candidates'])))
+            metadata.append(dict(id=d['id'],fingerprint=d['fingerprint'],day=d['payload']['day'],candidate_count=sum(1 for candidate in d['payload']['candidates'] if candidate_filter is None or candidate_filter(d['id'],candidate))))
             yield d
-    rows,paths,origin,coverage=_observations(asset,inputs())
+    rows,paths,origin,coverage=_observations(asset,inputs(),candidate_filter=candidate_filter)
     datasets=metadata;ids=[d['id'] for d in datasets]
     if not ids:raise ValueError('Select dataset versions')
     latest_list=None if latest_ids is None else list(latest_ids)
@@ -206,10 +208,13 @@ class ReportStore:
         prepared=prepare_report(asset,datasets,latest_ids=latest_ids)
         return self._save(stream_key,asset,prepared)
 
-    def _save(self,stream_key,asset,prepared):
+    def _save(self,stream_key,asset,prepared,*,minimum_revision=None):
         payload,rows=json.loads(prepared.payload_json),json.loads(prepared.observations_json)
         with self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91028))',(stream_key,))
+            if minimum_revision is not None:
+                latest=c.execute('SELECT id,report FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1',(stream_key,)).fetchone()
+                if latest and latest['report'].get('selection',{}).get('revision',0)>minimum_revision:return latest['id']
             found=c.execute('SELECT id FROM research_result WHERE stream_key=%s AND fingerprint=%s',(stream_key,prepared.fingerprint)).fetchone()
             if found: return found['id']
             result=c.execute('INSERT INTO research_result(stream_key,model_version,fingerprint,asset,report) VALUES(%s,%s,%s,%s,%s) RETURNING id',

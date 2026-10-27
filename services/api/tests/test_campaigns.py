@@ -129,6 +129,39 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertLessEqual(progress['completed_work_items'],progress['work_items'])
         self.assertIsNone(progress['last_work_error'])
 
+    def test_category_publication_deduplicates_rechecks_and_preserves_old_reports(self):
+        from services.research.cumulative import CategoryReports
+        first=self.create(key='category-first');self.drive(first)
+        category=CategoryReports(self.db.pool);self.assertTrue(category.run_once())
+        with self.db.pool.connection() as c:
+            old=c.execute("SELECT id,report,fingerprint FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(old['report']['historical']['candidate_count'],2)
+        second=self.store.create('btc','2026-10-25','2026-10-25','category-recheck',now=NOW,refresh_existing=True)
+        self.drive(second);self.assertTrue(category.run_once())
+        with self.db.pool.connection() as c:
+            new=c.execute("SELECT id,report FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()
+            retained=c.execute('SELECT fingerprint FROM research_result WHERE id=%s',(old['id'],)).fetchone()
+        self.assertGreater(new['id'],old['id']);self.assertEqual(new['report']['historical']['candidate_count'],2)
+        self.assertEqual(retained['fingerprint'],old['fingerprint'])
+        self.assertEqual(len(new['report']['datasets']),2)
+
+    def test_frozen_category_retry_cannot_replace_a_newer_publication(self):
+        from services.research.cumulative import CategoryReports
+        first=self.create(key='stale-first');self.drive(first)
+        category=CategoryReports(self.db.pool)
+        job=self.queue.claim(seconds=600,collector='category-report-v1')
+        with patch('services.research.cumulative.prepare_category',side_effect=RuntimeError('interrupted')):
+            with self.assertRaises(RuntimeError):category.step(job)
+        second=self.store.create('btc','2026-10-25','2026-10-25','stale-recheck',now=NOW,refresh_existing=True)
+        self.drive(second);self.assertTrue(category.run_once())
+        with self.db.pool.connection() as c:
+            newest=c.execute("SELECT id FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()['id']
+            c.execute("UPDATE research_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
+        self.assertTrue(category.run_once())
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute("SELECT id FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()['id'],newest)
+        self.assertEqual(self.queue.get(job['id'])['status'],'succeeded')
+
     def test_multiple_days_finish_full_report_and_reuse_historical_index_once(self):
         identifier=self.create();self.drive(identifier)
         row=self.store.get(identifier);self.assertEqual((row['status'],row['completed_sections'],row['total_sections']),('succeeded',2,2))
