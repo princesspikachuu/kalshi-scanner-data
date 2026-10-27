@@ -16,17 +16,17 @@
   },
   "sports": {
     "asset": "sports",
-    "first_date": "2026-08-19",
-    "last_date": "2026-08-25",
+    "first_date": "2026-08-12",
+    "last_date": "2026-08-18",
     "days_sampled": 7,
     "markets_sampled_total": 646,
-    "total_observations": 4211,
-    "run_id": "40442233275",
+    "total_observations": 4348,
+    "run_id": "40446485027",
     "run_attempt": "1",
-    "collected_at": "2026-10-27T03:12:23.867059+00:00",
+    "collected_at": "2026-10-27T03:57:43.023964+00:00",
     "requested_markets_per_day": 300,
     "requested_days": 7,
-    "requested_days_ago": 63,
+    "requested_days_ago": 70,
     "daily_market_limit": 300
   },
   "weather": {
