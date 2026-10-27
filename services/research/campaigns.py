@@ -121,8 +121,8 @@ class CampaignStore:
                 GROUP BY r.id,j.status,j.error_code''',(UUID(str(identifier)),)).fetchone()
             if row:
                 row['id']=str(row['id'])
-                result=c.execute('''SELECT id::text AS id,report->'publication' AS publication FROM research_result
-                    WHERE stream_key=%s ORDER BY id DESC LIMIT 1''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
+                result=c.execute('''SELECT rr.id::text AS id,rr.report->'publication' AS publication FROM research_result rr
+                    WHERE rr.stream_key=%s ORDER BY rr.id DESC LIMIT 1''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
                 row['reported_sections']=0;row['report_complete']=False
                 if result:
                     row['result_id']=row['result_id'] or result['id']

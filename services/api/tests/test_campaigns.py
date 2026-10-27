@@ -182,12 +182,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(observations,0)  # Raw immutable inputs retain every row; no quadratic preview copies.
         before=state['result_id'];self.evidence.fetch=original
         self.worker=self.make_worker()
-        import services.research.campaigns as model
-        build=model.prepare_dataset
-        def explain_fixture(*args,**kwargs):
-            try:return build(*args,**kwargs)
-            except EvidenceConflict as error:raise AssertionError('Fixture enrichment failed: '+str(error)) from error
-        with patch.object(model,'prepare_dataset',side_effect=explain_fixture):self.drive(identifier,limit=250)
+        self.drive(identifier,limit=250)
         final=self.store.get(identifier)
         with self.db.pool.connection() as c:
             versions=c.execute("SELECT id,report->'publication' AS publication FROM research_result WHERE stream_key=%s ORDER BY id",('campaign-'+identifier.replace('-',''),)).fetchall()

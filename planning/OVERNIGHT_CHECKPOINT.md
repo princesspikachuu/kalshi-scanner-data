@@ -1584,3 +1584,10 @@ report still carried partial publication metadata. No enrichment integrity error
 Strengthened final-publication precedence so partial revision ordering can never
 block a verified completed report; kept version diagnostics in the fixture.
 Failed revisions remain undeployed; current worker continues11dfd44.
+
+Root cause verified by b0e5357 CI40590834188: final immutable report14 was
+correct/complete, but new CampaignStore.get selected preview8 because ORDER BY
+id resolved the id::text output alias (lexicographic). Qualified rr.id fixes numeric
+ordering without changing exact string IDs returned to the browser. Removed
+temporary fixture wrapper; preserved final/full-sample/version assertions.
+The final-precedence guard remains valid defense against stale preview revisions.
