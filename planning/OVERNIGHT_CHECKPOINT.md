@@ -1591,3 +1591,67 @@ id resolved the id::text output alias (lexicographic). Qualified rr.id fixes num
 ordering without changing exact string IDs returned to the browser. Removed
 temporary fixture wrapper; preserved final/full-sample/version assertions.
 The final-precedence guard remains valid defense against stale preview revisions.
+
+
+## VERIFIED progressive reports deployed — October 27, 2026, 3:04 p.m. PDT
+
+Code eeea30d99f912fc0e58b2ba085d57d486074ac99 passed CI40591056949,
+job122495102736:242 API/research including79 actual PostgreSQL,32JS,7policy =
+281 tests, no skips/failures; Blueprint validation passed. Earlier failed drafts
+were never deployed. Numeric rr.id ordering fixed final report selection; final
+precedence, frozen snapshots and unchanged final metric cells are tested.
+
+Staging API dep-dbght6942hec73d3solg LIVE22:00:00.089926Z; worker
+ dep-dbghu1jl550s738enn7g LIVE22:02:10.353976Z, both fromeeea30d.
+API was upgraded first, then UI, then worker. Both existing runtime privilege /
+checksum audits remained ready (9migrations/12historytables, no DDL/elevatedrole).
+Worker startup confirms5 public reads/sec,burst5,batching/concurrency4. No new
+resource, plan, environment secret or credential; no main merge/trading/contact.
+Auto-deployoff and Blueprint paused remain. Current services/workspace unchanged.
+
+Gateway workflow40591266556 stagingjob122495856327 publish stepSUCCEEDED,
+Cloudflare versiona1e2a899-8d28-4ece-9594-6b0b999ea2b5. Productionjob122495858225
+SKIPPED. Overall workflow failed ONLY known automated asset HTTP403 check;
+actual signed-in browser works, with no access-control weakening/workaround.
+
+Actual browser acceptance on EXISTING running year BTC campaign:
+- 48/366 fully enriched sections;156markets,453entryobservations,19savedcells.
+- Report2 shows This load / In progress, 48of366 sections available; collection
+  continues, pages716->752 and tasks692->728/914 during verification.
+- Both hold and loss toggle preserve displayed celln (e.g37), threshold-only
+  Sell<=36c label and original-loss Trade not recommended behavior.
+- Source inspector loaded real versions, coverage counts/fingerprints and a
+  More source versions control; no fixtures or simulated rows were published.
+- All saved history shows the same available156/453 cohort and In progress,
+  demonstrating partial campaign sources enter cumulative reports without double
+  counting. Restored Thisload and original loss-off display preferences.
+- Downloaded real report2 CSV:38data rows (19cells x hold/loss),453 original
+  observations per policy, collection_complete=false,reported_sections48,total366.
+  Verified those counts in the downloaded file. No owner email/credentials exposed.
+- Screenshot proof pocket-progressive-report-1793138644224.jpg saved in scratch.
+
+The interface is now usable while the date-range collection continues. Automatic
+new-section expansion and candle-before-trade/final transition are proven by
+realPG tests; hosted bootstrap has published existing completed sections, but a
+new live candle-only day/second live report expansion was not yet observed at this
+checkpoint. Do not claim the whole year finished, every section has quotes, or the
+old seven-day/five-minute speed target is met. Larger old-range trade enrichment
+is deliberately exhaustive; main table calculations no longer need to wait for it.
+
+Resume: inspect actual remote head, exact code CI and live deployments. Keep
+original year and hourly jobs, no duplicate request/reset/replayed credentials.
+Observe next candle-ready snapshot and automatic report-ID/count growth; inspect
+full-data enrichment continuing behind it. Measure provider/DB/R2 timings on a
+comparable seven-day cohort before claiming a speed ratio; app5RPS is not a Kalshi
+account entitlement. Next independent improvement: reduce per-page DB overhead /
+measure throughput, make whole-section versus candle-ready progress clearer,
+and partition oversized precomputed histories without sampling policy cohorts.
+Watch small-plan RSS and database/archive growth. Preview observation copies are
+omitted by design because every immutable raw input remains; final observations
+remain complete. Historical report revisions/source provenance remain immutable.
+
+Known limits remain: HTTP403 automated gateway smoke, occasional client timeouts,
+250kentry/1Mbar/96MiB result caps and unverified live large-report RSS. apps/README
+contains older historical setup notes; newest checkpoint/actual services govern.
+Owner-only future blockers (new credentials/Google setup/paid expansion/operator
+DDL) are not needed for this enabled milestone; skip them until actually required.
