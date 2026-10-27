@@ -641,3 +641,8 @@ Confirm existing Google client's Authorized JavaScript origin matches staging, t
 perform actual Google popup/cookie/logout acceptance. Do not create a duplicate
 OAuth client. Continue with runtime-role hardening/R2 acceptance and representative
 performance before separately enabling collection. All Render paid sizes unchanged.
+
+Gateway preparation saved at c15813d5143fdcc0fedbb926c6bd73f0a507d177. CI run
+40541181548 PASSED, including gateway guards, API/real-Postgres tests and Blueprint
+validation. A browser recovery attempt also timed out at focus emulation; manual
+dispatch remains blocked in this environment. No Cloudflare deployment was started.
