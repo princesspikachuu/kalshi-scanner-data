@@ -468,7 +468,7 @@ stream_key, asset, dataset_ids, latest_ids=...)` loads only selected published
 versions, verifies fingerprints and computes outside the write transaction. It
 then atomically inserts the report, exact dataset/latest membership and immutable
 observations. Per-stream locking/fingerprint uniqueness make retries idempotent.
-Migration 0007 adds append-only tables and a `(stream_key,id DESC)` history index.
+Migrations 0007/0008 add append-only tables/publication seals and a `(stream_key,id DESC)` history index.
 No API, scheduler, hosting or live-data ingestion is enabled by publication code.
 
 Current-main pure model functions are pinned under `models/conditional_v2.py`.
@@ -513,9 +513,19 @@ reject UPDATE/DELETE. Selected raw input text and output are each bounded at
 64 MiB; larger studies require explicit partitioning/aggregation. This remains a
 bounded in-memory implementation; representative performance is unmeasured.
 
-Ten new pure report tests plus eighteen pinned upstream regressions and five real-PG
+Ten new pure report tests plus eighteen pinned upstream regressions and six real-PG
 publication cases cover full denominators, exact 50%, source identity, missing/
 stale quotes, older latest isolation, actual-bid deltas, immutable observations,
 concurrent retry, exact source membership and mid-publication rollback. The
 read-only API and research/history shell remain subsequent milestones. Tests
 use fixtures/disposable PG only; no Kalshi/R2 requests or hosted mutations occur.
+
+
+Publication seals use PostgreSQL xid8 transaction identity: child summary,
+provenance membership and observation rows can be inserted only in the same
+transaction that inserted the parent version. After commit, even extra INSERTs
+are rejected; existing UPDATE/DELETE protections remain. This also seals the
+prior raw-dataset child tables, closing their late-append gap without changing
+past migration checksums. Privileged DDL/trigger bypass remains outside this
+application-level guarantee. PostgreSQL reference:
+https://www.postgresql.org/docs/17/functions-info.html#FUNCTIONS-TXID-SNAPSHOT

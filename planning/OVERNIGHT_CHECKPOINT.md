@@ -309,7 +309,7 @@ SOURCE.json upstream hashes/commit; no live script, dashboard or Worker changed.
 Pinned upstream regression tests run with future API CI. No imports execute live
 script builders or write files. No merge/deployment/provisioning/trading occurred.
 
-Added reports.py and migration 0007: explicit immutable raw dataset membership,
+Added reports.py and migrations 0007/0008: explicit immutable raw dataset membership,
 source-verified observations, full-hold baseline and paired conditional-exit
 summaries, exact historical/latest membership, precomputed table cells/coverage,
 and atomic append-only report/observation/membership storage. Stream locks and
@@ -324,14 +324,17 @@ not recommended; exactly 50% does not. Threshold-only labels, actual sale bid,
 missed recoveries, event/time separation and 2-cent exit stress match pinned main.
 Ordinary baseline is before fees. No execution acceptance/fill claims are made.
 
-Local: 109 API/research tests passed; 46 PG cases skip without disposable local PG
+Local: 109 API/research tests passed; 47 PG cases skip without disposable local PG
 (the last PG rollback case was separately discovered). Seven policy and 14 gateway
 cases passed. Compile, dependency and whitespace checks passed. Added 10 pure
-report, 18 pinned model regression and 5 actual-PG cases. **176-test CI result awaits
+report, 18 pinned model regression and 6 actual-PG cases. **177-test CI result awaits
 this commit**: inspect before claiming actual PG success. First CI run
 40501966528 found a missing dataclasses.replace import in the new rollback test;
 that test-only import is corrected in a follow-up commit. Remaining tests passed;
-full rerun still required before claiming this milestone passed. Local network Blueprint
+rerun 40502245909 passed all 176 tests plus Blueprint validation. Final review
+added publication seals (migration 0008) and a late-child-insert regression: child
+rows must share the parent publication xid, preventing later INSERTs as well as
+UPDATE/DELETE. Final 177-test rerun is pending for this additive change. Local network Blueprint
 validation was intentionally not rerun; unchanged CI performs its schema-only GET.
 No owner email/credentials, hosted provider/object-store reads, Google account setup,
 live infra changes or running worker. No speedup/real-hosted acceptance claim.

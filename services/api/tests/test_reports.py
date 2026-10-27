@@ -198,3 +198,15 @@ class ReportPostgresTests(unittest.TestCase):
             with self.assertRaises(psycopg.Error):
                 self.reports.publish('btc-results','btc',[self.dataset_id],latest_ids=[self.dataset_id])
         self.assertEqual(self.counts(),(0,0,0))
+
+    def test_committed_versions_reject_late_child_insertions(self):
+        result=self.reports.publish('btc-results','btc',[self.dataset_id],latest_ids=[self.dataset_id])
+        attempts=[
+            ("INSERT INTO research_observation VALUES(%s,'2026-10-25','late-new-ticker',1,'{}'::jsonb)",(result,)),
+            ('INSERT INTO research_result_dataset VALUES(%s,%s,false)',(result,self.dataset_id)),
+            ("INSERT INTO research_summary VALUES(%s,'late','{}'::jsonb)",(self.dataset_id,)),
+            ("INSERT INTO research_dataset_artifact VALUES(%s,'late-missing-object')",(self.dataset_id,))]
+        for sql,args in attempts:
+            with self.assertRaisesRegex(psycopg.Error,'sealed'):
+                with self.store.pool.connection() as c:c.execute(sql,args)
+        self.assertEqual(self.counts(),(1,1,1))
