@@ -106,3 +106,6 @@ Wrangler file has public and preview URLs disabled and no routes. This milestone
 does not require changing the live research Worker, giving the browser a backend
 secret, or turning on any automatic deployment. The draft CI tests the proxy and
 browser client before any hosting changes.
+
+The next owner-side connection step is documented in `infra/GOOGLE_SETUP.md`,
+including the planned staging hostname and the public OAuth client ID needed.
