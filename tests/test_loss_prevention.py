@@ -91,6 +91,29 @@ class LossPreventionTests(unittest.TestCase):
         self.assertEqual(study['records'][0]['improvement_cents'],0)
         self.assertEqual(study['records'][0]['early_exits'],0)
 
+    def test_uncertain_best_candidate_does_not_fall_back_to_five_cent_salvage(self):
+        import loss_prevention as model
+        rows,paths=self.examples()
+        items=[scenario(r,paths[(r['date'],r['ticker'])]) for r in rows]
+        def statistics(sample,threshold):
+            gain,lower={5:(1,.5),10:(5,-2),15:(2,1)}.get(threshold,(0,-1))
+            return {'markets':50,'events':20,'triggers':20,'gain':gain,'lower_bound':lower}
+        with patch.object(model,'independent_stats',side_effect=statistics):
+            rule,_,_=choose_rule(items)
+        self.assertEqual(rule['candidate_cents'],10)
+        self.assertFalse(rule['supported'])
+        self.assertIsNone(rule['threshold_cents'])
+        self.assertIn('no fallback',rule['reason'])
+
+    def test_equal_expected_outcomes_prefer_the_earlier_higher_sale_price(self):
+        import loss_prevention as model
+        rows,paths=self.examples()
+        items=[scenario(r,paths[(r['date'],r['ticker'])]) for r in rows]
+        with patch.object(model,'independent_stats',return_value={'markets':50,'events':20,'triggers':20,'gain':1,'lower_bound':.5}):
+            rule,_,_=choose_rule(items)
+        self.assertTrue(rule['supported'])
+        self.assertEqual(rule['threshold_cents'],90)
+
     def test_old_entry_only_data_is_not_claimed_as_path_coverage(self):
         study,_=analyze([row()],{},'btc')
         self.assertEqual(study['saved_observations'],1)
