@@ -206,27 +206,10 @@ def analyze(rows, paths, asset, latest_keys=None):
 
 
 def build_loss_report():
-    from build_report import ASSETS, read_rows
-    target = Path('backtests/LOSS_PREVENTION.json')
-    previous = json.loads(target.read_text()) if target.exists() else {}
-    result = {'version': 1, 'policy_version': 2, 'historical': {}, 'latest': previous.get('latest', {}) if previous.get('policy_version') == 2 else {},
-        'entry_fee_cents': ENTRY_FEE_CENTS, 'exit_fee_cents': EXIT_FEE_CENTS,
-        'threshold_step_cents': 5, 'published_at': dt.datetime.now(dt.timezone.utc).isoformat(),
-        'method': 'One-contract minute-close bid simulation; entry fill assumed; no depth, queue, latency or slippage replay. Fee stress is 1 cent entry and 2 cents per early sale, not verified market fees. Triggers are evaluated after entry, strictly before close. Missing paths excluded. The highest expected-improvement candidate is chosen on earlier dates, then must pass training confidence and later validation; weak candidates are not replaced by smaller salvage thresholds. Equal-gain candidates prefer the higher sale price; training rows excluded from comparison once split. Exploratory validation is not proof of a live edge.'}
-    stage = Path(os.environ.get('POCKET_COLLECTION_STAGE', '.run-collection'))
-    for asset, _, folder, _, _ in ASSETS:
-        rows = read_rows(folder)
-        latest_rows = read_rows(stage / asset)
-        latest_keys = {(r['date'], r['ticker'], int(r['minutes_before_close'])) for r in canonical(latest_rows)} if (stage / asset).exists() else None
-        historical, latest = analyze(rows, read_paths(folder), asset, latest_keys)
-        result['historical'][asset] = historical
-        if latest is not None:
-            result['latest'][asset] = latest
-        else:
-            result['latest'].setdefault(asset, {'records': [], 'rules': [], 'path_observations': 0,
-                'note': 'A fresh collection is needed to rebuild this exact-run study under the corrected threshold-selection policy.'})
-    target.write_text(json.dumps(result, separators=(',', ':'), allow_nan=False) + '\n')
-    print('Published loss-prevention comparison; only collected quote paths are eligible.')
+    # Retain legacy replay helpers for reproducibility, but no longer publish
+    # the constant-stop optimizer as the boundary where loss becomes likely.
+    from loss_risk import build_risk_report
+    build_risk_report()
 
 if __name__ == '__main__':
     build_loss_report()
