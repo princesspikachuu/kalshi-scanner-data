@@ -205,8 +205,11 @@ README records integration, gap semantics and bounded in-memory scan limitations
 
 Local: 64 API/research, 7 owner-policy and 14 gateway/client tests passed; 30 PG
 cases skipped without a disposable local database. Blueprint, compile, dependency
-and diff checks passed. Added 12 pure and 2 real-PG cases. Full 115-test result
-awaits this commit's remote CI; inspect it before claiming actual-PG success.
+and diff checks passed. Added 12 pure and 2 real-PG cases. **CI run 40479071814 passed** on implementation commit
+`f07425b35698f5e4269e56b4324ca6b983becf52`: 94 API/research tests, including all
+30 actual PostgreSQL cases, 7 owner-policy and 14 gateway/client tests passed.
+No skips in CI: **115 automated tests plus Blueprint validation passed**. Job logs
+confirm no deployment/provisioning ran. This session has finished writing code.
 No hosted requests/resources/credentials/owner email, deployment, live infra
 mutation, Google setup or trading. No worker remains active after this run.
 
