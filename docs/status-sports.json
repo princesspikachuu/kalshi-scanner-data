@@ -8,30 +8,30 @@
   "hourly_types": [],
   "latest_run_status": {
     "asset": "sports",
-    "date": "2026-09-30",
-    "markets_available": 68,
-    "markets_sampled": 68,
+    "date": "2026-09-23",
+    "markets_available": 96,
+    "markets_sampled": 96,
     "sampling_truncated": false,
-    "observations": 436,
+    "observations": 614,
     "total_observations": 24016,
-    "execution_attempts": 362,
-    "execution_through_proxies": 63,
-    "execution_markets_checked": 16,
-    "execution_markets_skipped": 44,
+    "execution_attempts": 560,
+    "execution_through_proxies": 71,
+    "execution_markets_checked": 25,
+    "execution_markets_skipped": 30,
     "execution_rate_limited": false,
     "execution_subsample_limit": 60,
     "execution_time_budget_seconds": 45,
-    "execution_elapsed_seconds": 33.89,
-    "collection_elapsed_seconds": 51.54,
+    "execution_elapsed_seconds": 45.09,
+    "collection_elapsed_seconds": 71.51,
     "days_sampled": 35,
     "sampled_by_series": {
-      "KXATPMATCH": 18,
-      "KXMLBGAME": 8,
+      "KXATPMATCH": 24,
+      "KXMLBGAME": 34,
       "KXNBAGAME": 0,
       "KXNCAAFGAME": 0,
       "KXNFLGAME": 0,
-      "KXNHLGAME": 10,
-      "KXWTAMATCH": 32
+      "KXNHLGAME": 20,
+      "KXWTAMATCH": 18
     },
     "hourly_types": [
       "game_winner"
@@ -43,10 +43,10 @@
       "WTA Tennis"
     ],
     "requested_markets": 300,
-    "markets_shortfall": 232,
+    "markets_shortfall": 204,
     "unavailable_series": [],
     "historical_endpoint": false,
     "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
-    "updated_at": "2026-10-27T00:15:27.780433+00:00"
+    "updated_at": "2026-10-27T00:36:44.358460+00:00"
   }
 }
