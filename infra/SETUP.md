@@ -1,4 +1,13 @@
-# Infrastructure and access — preparation only
+# Infrastructure and access
+
+Current October 27, 2026: separate Render API, disabled research worker and private
+PostgreSQL plus Cloudflare staging gateway are deployed. Google login/refresh/logout
+were verified by the owner. R2 tiny immutable-marker acceptance passed. Runtime DB
+credentials still have operator ownership; collection remains disabled, with a new
+worker startup guard that refuses operator credentials. See STAGING_ACCEPTANCE.md
+and the latest planning/OVERNIGHT_CHECKPOINT.md for exact pending steps. Older
+pre-provisioning notes below are historical and do not supersede that status.
+
 
 ## Current connection evidence
 

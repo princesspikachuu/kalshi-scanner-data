@@ -1,5 +1,13 @@
 # Staging acceptance and runtime database isolation
 
+Verified on October 27, 2026: real R2 conditional-write/readback/reuse acceptance
+passed with an 88-byte retained marker; hosted DB audit verified nine matching
+migrations and correctly rejected operator credentials as a runtime boundary.
+224 tests passed in CI 40553521523. Proposed runtime-role SQL is still unapplied;
+credential/migration separation remains pending. See the latest checkpoint for
+exact deploy IDs and final diagnostic-off verification.
+
+
 Collection stays disabled throughout. Enabled worker startup now refuses collection
 unless the read-only audit verifies a direct non-owner login without elevated
 privileges, memberships, schema/temp creation or history-mutation privileges.

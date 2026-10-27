@@ -801,3 +801,45 @@ First diagnostic CI run 40552870658 exposed test-fixture read-budget state retai
 from another suite, not a grant denial. Added explicit disposable test cleanup for
 that row and a real direct-login audit test; operator remains rejected. No hosted
 role or collection changes made while validating.
+
+## Verified hosted diagnostics and final disablement (October 27, 2026)
+
+Implementation ebdde7b331008863f46f902bce77816284ae2c23 CI 40553521523
+PASSED: 198 API/research tests including all 62 actual PostgreSQL cases, 7 policy
+and 19 gateway/client cases = 224 tests without skips, plus Blueprint validation.
+Local run: 136 API/research passed, 62 PG skipped without disposable DB; 7 policy
+and 19 gateway passed, compile/dependency/diff checks passed. Earlier CI failures
+were fixture-budget cleanup and test URI formatting; both corrected before deploy.
+
+Used the existing worker's private environment; update_environment_variables merged
+only COLLECTION_ENABLED=false and the temporary diagnostic flag, preserving all
+credentials/group bindings. Render automatically deployed the tested branch head;
+no duplicate manual deploy was triggered. Existing API/live Worker unchanged.
+
+- Database audit deployment dep-dbge6mmc6qcc738gim8g LIVE. JSON receipt at
+  17:47:26 UTC: migrations_match=true, migration_count=9, history tables found=12.
+  privilege_boundary_ready=false as EXPECTED: operator owns DB/history and has
+  CREATEDB/CREATEROLE/schema CREATE/TEMP/history mutation privileges. No memberships,
+  superuser, replication or bypass-RLS. This verifies the boundary is still pending,
+  not that hardening was applied. The enabled worker now refuses these credentials.
+- R2 acceptance deployment dep-dbge7i0473hc73d7esng LIVE. JSON receipt at
+  17:48:53 UTC: staging-r2-acceptance-v1, verified=true, created=true, 88 bytes.
+  Exact marker key raw/v1/staging_acceptance/da/da11d92acfcd7e9ac37871a61b6645e4ea1aa890425696e9dda11339c330dcf2.json.gz
+  SHA256 da11d92acfcd7e9ac37871a61b6645e4ea1aa890425696e9dda11339c330dcf2.
+  Two conditional PUTs/two bounded GETs passed; reuse refused overwrite and returned
+  identical bytes. The one tiny non-market object is intentionally retained. No
+  archive deletion, market collection, DB write or new credential was performed.
+- Reset STAGING_ACCEPTANCE=off and COLLECTION_ENABLED=false by merge; reset deploy
+  dep-dbge858u01pc738na4pg started from the SAME tested ebdde7b runtime commit.
+  Verified LIVE at 17:50:20 UTC. Final reset logs show only normal runtime startup;
+  merged configuration is diagnostic off and collection false. API/worker plans
+  remain 0.5c-512mb and both autoDeployTrigger values remain off.
+
+Remaining owner-only boundary: securely establish separate LOGIN credentials and
+runtime URLs for the proposed NOLOGIN roles, and remove operator credentials from
+long-lived API/worker environments. Operator migrations need an isolated explicit
+execution path; current preDeploy/runtime DATABASE_URL sharing is NOT isolation.
+The role SQL has not run on hosted DB and no passwords were generated. Do not
+claim production-ready/collection-ready or toggle collection until this separation
+is implemented and direct-login audit passes. No paid upgrades/new resources,
+main merge, live UI/table changes, trading or automatic-deploy enablement.
