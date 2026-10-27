@@ -81,28 +81,52 @@ independent milestone after reading the current remote checkpoint. Local worktre
 its saved content is already remote. Do not treat those files as unpublished new
 changes or reset an unrelated dirty worktree.
 
+## Third milestone: unconfigured R2 SDK adapter
+
+Resumed from remote head `01b1a4e7e79cd10ce641c4d4cde3441f8563fb4b` in a fresh
+clean clone. The latest existing CI run **40454107348 passed**. The checkpoint
+reported no active worker; no newer remote work was present before this milestone.
+
+Added `services/research/r2.py`, twelve real botocore stub tests and pinned SDK
+requirements. Conditional create-only PUT, explicit runtime credentials, fixed R2
+endpoint, Content-MD5, bounded timeouts/retries, streaming size limits, stream
+cleanup and SHA-256 read verification are implemented. The archive codec now
+exports shared key validation. Current official Cloudflare/AWS references and
+limitations are recorded in the research README. No hosted requests occurred.
+
+Local verification: 32 API/research tests passed, 16 PostgreSQL tests skipped
+because no disposable local PostgreSQL was configured; 7 owner-policy and 14
+browser/gateway tests passed. Blueprint validation and diff whitespace checks
+passed. The new 12 SDK cases are included in those counts. Full PostgreSQL
+verification remains CI's responsibility. Inspect the workflow on this milestone's
+commit before treating the full 69-test CI suite as passed.
+
+This milestone changes only research code/tests, SDK dependencies, documentation
+and this checkpoint. Existing live collector, loss prevention, table/full-sample
+metrics, Worker and hosting configuration are untouched. No merge, deployment,
+provisioning, credentials, Google account setup or trading occurred.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Queue and archive milestones both passed CI. Inspect the newest remote head
-   before starting; do not redo either milestone.
-2. Archive codec/interface are implemented; add a real R2 adapter only after
-   checking current official SDK behavior. Keep it unconfigured/undeployed; use
-   SDK stub tests rather than any account credentials.
-3. Incremental coverage planner and resumable worker adapter using the queue.
+1. Inspect newest remote head and its CI first. The queue, archive codec and R2
+   adapter are implemented: do not redo them. If CI fails, fix that before new work.
+   This run finishes after saving and inspecting its CI; no worker stays running.
+2. Incremental coverage planner and resumable worker adapter using the queue.
    Distinguish fetched page from complete series/date coverage, bounded shared
    provider rate budgets, retries/deadlines, empty vs unavailable vs failed data.
    Test interrupted/restarted collection reuses pages and gaps are not hidden.
    Review existing collector before rewriting; preserve settled-only and price
    provenance rules. Use official current Kalshi docs for provider behavior.
-4. Versioned dataset/run membership and precomputed research summary storage.
+   Develop with a fake provider/object adapter; no new account connection needed.
+3. Versioned dataset/run membership and precomputed research summary storage.
    Atomically publish complete datasets, retain previous runs, never mix latest
    with cumulative or replace full-sample counts with an observed subset.
-5. Authenticated read-only historical run/date queries with keyset pagination,
+4. Authenticated read-only historical run/date queries with keyset pagination,
    indexed SQL and tests. Keep any owner mutations session+CSRF protected. Update
    gateway allowlist/response validation deliberately when adding API routes.
-6. React/TypeScript research shell and historical browser may follow a stable
+5. React/TypeScript research shell and historical browser may follow a stable
    API contract. Reuse familiar current table behavior. No live hosting required.
-7. Measure representative local performance and record reproducible timings.
+6. Measure representative local performance and record reproducible timings.
    Do not promise a speedup from code structure alone or synthetic tiny samples.
 
 Prefer a complete tested milestone per continuation. Save code/checkpoint in the
@@ -112,5 +136,7 @@ CI; report verified outcomes, pending work and owner-only blockers honestly.
 ## Owner-only items to leave pending
 
 Google Web OAuth client/public client ID, hosted resource/budget authorization,
-secure runtime secrets, R2 bucket/access configuration, and real staging sign-in
-acceptance. No need to wake owner or repeatedly ask for these during this build.
+secure runtime secrets, R2 bucket/access configuration and retention policy, real
+R2 read/write acceptance, and real staging sign-in acceptance. No need to wake
+owner or repeatedly ask for these during this build. The adapter's SDK tests do
+not establish hosted R2 access, durability policy or network timing.

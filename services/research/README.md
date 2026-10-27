@@ -77,5 +77,46 @@ readback is an integrity check, not a substitute for a cloud retention policy.
 Decompression caps output at 32 MiB and compressed objects at 8 MiB. Invalid UTF-8,
 truncated/corrupt gzip, duplicate keys, nonfinite numbers, non-string object keys
 and excessive nesting are rejected. Split larger provider responses into pages.
-The tests use an in-memory object adapter. No R2 bucket, SDK client or credentials
+The tests use an in-memory object adapter. The R2 SDK adapter below is available but unconfigured. No R2 bucket or credentials
 are configured, and raw objects are not being uploaded anywhere yet.
+
+
+## R2 S3 adapter (unconfigured)
+
+`r2.py` implements the archive object contract with pinned boto3/botocore.
+Construct `R2Objects.connect(account_id=..., bucket=..., access_key_id=...,
+secret_access_key=...)` only from a future worker's secure runtime configuration,
+then pass it to `ArchiveStore`. No import-time client or environment lookup occurs.
+Never commit account credentials, put them in browser config or log SDK exceptions.
+No worker entrypoint or hosted resource is enabled by this milestone.
+
+Writes validate content-addressed keys and bytes, send Content-MD5 for transport
+integrity and `IfNoneMatch='*'` for atomic create-only writes. Only the specific
+412 PreconditionFailed response means an existing object; access failures,
+conflicts, timeouts and service errors propagate. A lost upload acknowledgement
+may have committed: retry the same conditional key, never overwrite or infer
+success from absence. ArchiveStore still requires exact readback before receipts.
+
+Reads validate keys and declared lengths, request at most the remaining byte
+budget plus one sentinel byte, reject oversized/truncated/corrupt content and
+close response streams on every path. SHA-256 in the key is the integrity proof;
+ETags are not treated as checksums. SDK checksum defaults are set to when-required
+for R2 compatibility; application SHA-256 and upload Content-MD5 remain in use.
+No multipart upload, delete, bucket creation, ACL or presigned URL is exposed.
+
+The client fixes the account R2 endpoint, TLS, region auto and path addressing;
+connect/read timeouts are 5/10 seconds with at most 3 SDK attempts. These are socket
+limits, not a total job deadline or provider-wide rate budget. The future worker
+must fit archive I/O and retries inside its lease/heartbeat and job deadline.
+
+Twelve SDK-stub tests cover create/reuse, conditional header serialization,
+readback, corruption, bounded streaming and failures. They use fake credentials
+and do not prove hosted R2 permissions, retention or real network behavior. Owner
+setup and an explicitly authorized staging acceptance test remain pending.
+
+Official references checked October 26, 2026:
+- https://developers.cloudflare.com/r2/api/s3/extensions/ (atomic conditional PUT)
+- https://developers.cloudflare.com/r2/api/s3/api/ (supported S3 headers)
+- https://developers.cloudflare.com/r2/examples/aws/boto3/ (endpoint and region)
+- https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/put_object.html
+- https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/get_object.html

@@ -122,10 +122,15 @@ def prepare(provider, value):
     return PreparedArchive(f'raw/v1/{provider}/{digest[:2]}/{digest}.json.gz', digest, body, len(raw), provider)
 
 
-def verify(key, body, expected_length=None):
+def validate_key(key):
     match = _KEY.fullmatch(key) if isinstance(key, str) else None
     if not match or key.split('/')[3] != match[1][:2]:
         raise ArchiveInvalid('Invalid object key')
+
+
+def verify(key, body, expected_length=None):
+    validate_key(key)
+    match = _KEY.fullmatch(key)
     if not isinstance(body, bytes) or len(body) > MAX_COMPRESSED:
         raise ArchiveInvalid('Invalid compressed archive size')
     if expected_length is not None and (type(expected_length) is not int or len(body) != expected_length):
