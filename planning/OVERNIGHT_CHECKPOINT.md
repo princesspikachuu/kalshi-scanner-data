@@ -148,38 +148,65 @@ This run has finished writing code; no worker remains active. README records int
 orphans, shared-budget scope and provider snapshot limitations. No deployment,
 provisioning, infrastructure mutation, owner email/credentials or trading occurred.
 
+## Fifth milestone: bounded read-only Kalshi inventory transport
+
+Started from actual remote `a9cf2b1d0320559e9a855f1f0b2a621c6d1bfac1`;
+**CI 40465419537 passed**. Previous checkpoint reported no worker active. Used
+fresh `pocket-http` worktree; did not overwrite earlier saved dirty worktrees.
+
+Added `services/research/kalshi.py` with an owned, credential-free HTTPX client:
+fixed public HTTPS GET listing routes, no redirects/environment auth/proxies or
+forwarded cookies, one read per worker step, zero internal retries, 8 MiB raw-body
+cap, identity encoding, strict JSON/page validation, safe failure codes and stream
+cleanup. Original prices and extra fields survive unchanged. Listing 404/errors
+never become synthetic empty/unavailable success. No Kalshi call was made.
+
+Retry-After handles seconds/HTTP dates; full shared provider cooldown can exceed
+the queue retry limit without allowing early requests. The existing budget and
+ProviderFailure contract gained a separately bounded cooldown (queue retries stay
+<=3600 seconds). Rate limits and temporary service failures share the cooldown.
+Added 14 HTTP-stub cases plus two actual-PG queue/adapter integration cases for
+long rate-limit/reclaim/cursor reuse and invalid-page/404 failure without progress.
+
+Local: 52 API/research, 7 owner-policy, 14 gateway/client tests passed; 28 PG cases
+skipped without a disposable local database. Blueprint, compile, dependency and
+diff checks passed. Full 101-test result awaits this milestone's actual remote
+CI; inspect that before claiming PostgreSQL success. README records exact wiring,
+strict response assumptions, cooperative deadline limitations and shared-budget
+scope. No runner, schedule, deployment, resource, hosted migration, owner email,
+credentials, Google setup, infrastructure mutation or trading was introduced.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest head and CI. Queue/archive/R2 and inventory planner/worker are
-   implemented; do not redo them. Fix any CI failures before adding features.
-   No background worker remains running when this run finishes.
-2. Add a read-only Kalshi HTTP provider adapter (one bounded request per worker
-   step) with stub tests, strict schema/error handling, Retry-After mapping and
-   no credentials or live collection required. Verify official current API docs.
-   The injected provider contract is in `InventoryWorker` and the research README.
-   Keep historical-series index reuse and both-source inventory planning.
-3. Normalize inventory to settled yes/no candidates by exact UTC close day;
-   deduplicate cross-source tickers without losing immutable provenance. Add
-   resumable candle/trade evidence collection with <=1-day strategy horizons.
-   Never call inventory empty/complete a full-sample return result. Preserve
-   original settled-only, bid/ask price-unit and maker-fill provenance rules.
+1. Inspect newest head and CI. Queue/archive/R2, planner/worker, shared budget and
+   HTTP inventory adapter exist; do not redo them. Fix any CI failures first.
+   This run finishes after checkpoint/CI inspection; no background process remains.
+2. Normalize archived inventory into settled yes/no candidates by exact half-open
+   UTC close day. Read/verify immutable objects and scope/checkpoint identity;
+   deduplicate cross-source tickers with immutable provenance, reject conflicting
+   outcomes rather than silently favoring a source. Preserve inventory gap states
+   and original raw price strings. Review current collector rules before changing.
+3. Add resumable candle/trade evidence scopes and bounded read adapters with
+   <=1-day strategy horizons. Keep bid/ask price units, settled-only filtering and
+   maker-fill provenance rules. Inventory complete/empty is never full-sample ROI.
 4. Versioned dataset/run membership and precomputed research summary storage.
    Atomically publish complete datasets, retain previous runs, never mix latest
    with cumulative or replace full-sample counts with an observed subset.
-5. Authenticated read-only historical run/date queries with keyset pagination,
-   indexed SQL and tests. Keep owner mutations session+CSRF protected. Deliberately
-   update gateway allowlists when adding API routes.
-6. React/TypeScript shell/history browser after a stable API contract. Preserve
-   familiar table behavior. No hosting required. Measure representative local
-   performance later; no speedup claims from tiny synthetic samples.
+5. Authenticated read-only historical run/date queries with indexed SQL/keyset
+   pagination and tests. Owner mutations remain session+CSRF protected. Update
+   gateway allowlists deliberately when routes are added.
+6. React/TypeScript shell/history browser after stable API contract. Preserve
+   familiar table behavior. Measure representative local performance later;
+   make no speedup claim from structure or tiny synthetic samples.
 
-Save code/checkpoint in the remote draft branch; inspect PR diff and CI. Main has
-later live table fixes and automated data updates: recheck/reconcile before any
-future authorized integration. Do not merge or deploy during this build.
+Save code/checkpoint to the remote draft branch; inspect PR diff and CI. Main has
+later live table fixes and automated data updates: reconcile only before a future
+authorized integration. Do not merge or deploy during this build. Test fixtures
+are not evidence of real Kalshi/R2 compatibility, retention or throughput.
 
 ## Owner-only items to leave pending
 
 Google Web OAuth client/public client ID, hosted resource/budget authorization,
 secure runtime secrets, R2 bucket/access configuration and retention policy, real
-R2 read/write and staging sign-in acceptance. No owner involvement is needed for
-the next pure-code milestones. No hosted credentials or owner email belong here.
+R2 read/write and staging sign-in acceptance. Further pure-code milestones need
+no owner action. Do not add hosted credentials or the owner email to this repo.

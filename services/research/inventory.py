@@ -1,7 +1,7 @@
 """Incremental inventory planning and one-page worker steps; no hosted runner.
 
 Inventory completion proves traversal only, never quote coverage or dataset
-publication. A real provider/transport must be injected explicitly in a later step.
+publication. A provider/transport must be injected explicitly; nothing starts on import.
 """
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time as day_time, timezone
@@ -147,12 +147,15 @@ class ProviderPage:
 
 
 class ProviderFailure(Exception):
-    def __init__(self, code, retry=True, delay=30):
+    def __init__(self, code, retry=True, delay=30, cooldown=None):
         if code not in ('provider_timeout', 'provider_rate_limit', 'provider_unavailable', 'provider_invalid'):
             raise ValueError('Invalid provider failure code')
         if type(retry) is not bool or type(delay) is not int or not 1 <= delay <= 3600:
             raise ValueError('Invalid provider retry')
-        self.code, self.retry, self.delay = code, retry, delay
+        cooldown = delay if cooldown is None else cooldown
+        if type(cooldown) is not int or not delay <= cooldown <= 2**40:
+            raise ValueError('Invalid shared provider cooldown')
+        self.code, self.retry, self.delay, self.cooldown = code, retry, delay, cooldown
         super().__init__(code)
 
 
@@ -215,7 +218,7 @@ class InventoryWorker:
             if next_state.state != 'partial': self.queue.finish(job_id, token)
             return {'state': next_state.state, 'retry_after': 0}
         except ProviderFailure as error:
-            if error.code == 'provider_rate_limit': self.budget.defer(error.delay)
+            if error.code in ('provider_rate_limit', 'provider_unavailable'): self.budget.defer(error.cooldown)
             self.queue.fail(job_id, token, error.code, retry=error.retry, delay_seconds=error.delay)
             return {'state': 'failed', 'retry_after': error.delay if error.retry else 0}
         # All unexpected I/O/integrity errors propagate: no false success or unsafe

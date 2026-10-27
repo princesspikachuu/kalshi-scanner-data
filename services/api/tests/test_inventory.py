@@ -240,3 +240,44 @@ class InventoryPostgresTests(unittest.TestCase):
             self.assertEqual(worker.step(job,deadline=60)['state'], 'failed')
         self.assertEqual(len(self.archives.objects.data), 1)
         self.assertEqual(self.queue.pages(job['id']), [])
+
+    def test_http_adapter_rate_limit_and_reclaim_resume_the_same_cursor(self):
+        import httpx
+        from services.research.kalshi import KalshiInventory
+        from test_kalshi import MARKET, reply
+        calls = []
+        responses = [reply(payload={'markets':[MARKET], 'cursor':'two'}),
+                     reply(429,headers={'retry-after':'7200'}),
+                     reply(payload={'markets':[], 'cursor':''})]
+        def handler(request):
+            calls.append(request)
+            return responses.pop(0)
+        with KalshiInventory(transport=httpx.MockTransport(handler)) as provider:
+            job = self.claim(); worker = self.worker(provider)
+            self.assertEqual(self.step(worker,job)['state'], 'partial')
+            self.assertEqual(self.step(worker,job)['state'], 'failed')
+            self.assertEqual(len(self.queue.pages(job['id'])),1)
+            self.assertEqual(self.row(job)['status'],'queued')
+            self.assertGreaterEqual(ReadBudget(self.store.pool).take(10),7199)
+            # Advance durable test clocks without a sleep or a live provider call.
+            with self.store.pool.connection() as c:
+                c.execute("UPDATE research_job SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second'")
+            job = self.queue.claim()
+            self.assertEqual(self.step(worker,job)['state'],'complete')
+        self.assertEqual([r.url.params.get('cursor','') for r in calls],['','two','two'])
+        self.assertEqual(len(self.queue.pages(job['id'])),2)
+        self.assertEqual(self.row(job)['status'],'succeeded')
+
+    def test_http_invalid_page_and_listing_404_do_not_checkpoint_empty_success(self):
+        import httpx
+        from services.research.kalshi import KalshiInventory
+        from test_kalshi import reply
+        for status, payload in [(200,{'markets':[]}), (404,{'message':'not found'})]:
+            self.setUp()
+            with KalshiInventory(transport=httpx.MockTransport(lambda _: reply(status,payload=payload))) as provider:
+                job = self.claim()
+                self.assertEqual(self.step(self.worker(provider),job)['state'],'failed')
+            self.assertEqual(self.queue.pages(job['id']),[])
+            self.assertEqual(self.row(job)['status'],'failed')
+            self.assertEqual(self.row(job)['error_code'],'provider_invalid')

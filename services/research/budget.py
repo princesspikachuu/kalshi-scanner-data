@@ -36,7 +36,7 @@ class ReadBudget:
             return math.ceil(wait)
 
     def defer(self, seconds):
-        if type(seconds) is not int or not 1 <= seconds <= 3600:
+        if type(seconds) is not int or not 1 <= seconds <= 2**40:
             raise ValueError('Invalid provider cooldown')
         with self.pool.connection() as c:
             row = c.execute('''UPDATE research_read_budget SET blocked_until=GREATEST(blocked_until,

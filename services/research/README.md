@@ -160,7 +160,7 @@ To integrate without starting a daemon:
    `fetch(scope, cursor, timeout_seconds) -> ProviderPage`. That provider must do
    exactly one bounded read, no internal retries, and translate only known safe
    errors to `ProviderFailure`. `scope.request(cursor)` supplies the read-only
-   relative listing path/arguments. No production HTTP transport exists yet.
+   relative listing path/arguments. The optional `KalshiInventory` transport below is available but not started.
 5. Repeat steps returning partial; schedule throttled steps after retry_after and
    heartbeat while waiting. There is no blocking sleep or DB transaction around
    remote I/O. Requeued jobs require a fresh claim/token. The shared token bucket
@@ -192,3 +192,62 @@ Official Kalshi docs checked October 26, 2026:
 - https://docs.kalshi.com/getting_started/historical_data
 - https://docs.kalshi.com/getting_started/pagination
 - https://docs.kalshi.com/getting_started/rate_limits
+
+
+## Public Kalshi inventory HTTP adapter (not running)
+
+`kalshi.py` supplies `KalshiInventory`, injectable as the inventory worker provider.
+Create it explicitly in a context manager and pass it to `InventoryWorker`; imports
+create no client, runner, schedule or requests. No hosted collection has run.
+Only the fixed HTTPS Kalshi host and GET `/markets` or `/historical/markets` paths
+are exposed. Query scopes, historical index reuse, unfiltered raw inventory and
+separate recent/historical evidence remain unchanged. Public market data needs no
+account credentials; there are no account, portfolio or order methods.
+
+The adapter owns its HTTPX client and builds requests without merging client
+cookies. It disables environment credentials/proxies and redirects, sends no auth,
+uses zero transport retries, and makes exactly one request per worker invocation.
+Socket timeouts are 0..10 seconds from the worker's remaining deadline. Additional
+monotonic checks surround headers, raw transport chunks and parsing. These checks
+are cooperative: HTTPX timeouts bound network inactivity, not a hard total runtime
+or DNS duration. A future runner still needs lease/heartbeat/shutdown handling.
+
+Responses are capped at 8 MiB while streaming; oversized lengths are rejected
+before reading, and truncated lengths fail. The client requests identity encoding
+and rejects compressed bodies rather than allowing hidden decompression growth.
+Wrong content types, duplicate keys, invalid UTF-8/surrogates, nonfinite numbers,
+excess nesting, invalid pagination shapes and malformed market identities/close
+times fail the entire page. No rows are silently dropped. Price strings and new
+provider fields are retained without conversion. Market result/strategy/price
+semantics remain for settled-candidate normalization; listing validity is not
+quote coverage. A server that ignores identity encoding or exceeds the fixed page
+size budget will fail explicitly; compatibility has not been tested live.
+
+429s produce a safe rate-limit code. 408/500/502/503/504 and transport failures
+produce retryable safe codes. Redirects, auth errors, unexpected statuses and
+listing 404s are terminal invalid responses, never synthetic empty/unavailable
+pages. Error bodies and Location/diagnostic text are not read, returned or saved.
+Response streams close on success, errors, oversized reads and deadlines. Do not
+enable raw HTTP logging: even public URLs contain opaque pagination cursors.
+
+Retry-After supports integer seconds and HTTP dates; absent/malformed headers use
+30 seconds and past/zero values use at least one second. Shared database cooldown
+preserves longer server delays independently of the queue's 3600-second retry
+limit, so reclaiming a job early still cannot fetch before the shared budget
+allows it. `ProviderFailure.cooldown` and `ReadBudget.defer` now support positive
+integer cooldowns up to 2**40 seconds (a finite database-safe ceiling); queue retry
+limits remain unchanged. Service-unavailable responses also apply this shared
+cooldown. Configure all workers to use the same provider/account budget name.
+The old live collector and other applications are not governed by this budget.
+
+Fourteen HTTP-stub tests and two additional actual-PostgreSQL pipeline cases cover
+fixed routes/cookies, failure mapping, stream limits/cleanup, schema rejection,
+long cooldowns and cursor-preserving retry/resume through the real queue. No real
+Kalshi requests, credentials, R2 writes, hosted migrations or trading occurred.
+
+Official references checked October 27, 2026:
+- https://docs.kalshi.com/api-reference/market/get-markets
+- https://docs.kalshi.com/api-reference/historical/get-historical-markets
+- https://www.python-httpx.org/advanced/timeouts/
+- https://www.python-httpx.org/quickstart/#streaming-responses
+- https://www.python-httpx.org/environment_variables/
