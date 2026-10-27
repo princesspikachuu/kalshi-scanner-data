@@ -6,6 +6,10 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal
 import json
 import math
+import base64
+import gzip
+import hashlib
+import zlib
 
 from psycopg.types.json import Jsonb
 
@@ -15,6 +19,45 @@ from .normalize import _closed, normalize_inventory
 from .queue import EvidenceConflict, text_key
 
 FORMAT = 'raw-evidence-dataset-v1'
+STORAGE = 'raw-evidence-gzip-v1'
+MAX_DATASET_BYTES = 64*1024*1024
+COMPACT_THRESHOLD = 256*1024
+
+
+def storage_payload(encoded, fingerprint):
+    # PostgreSQL JSONB expands deeply nested records before TOAST compression.
+    # Compress canonical bytes in the worker instead; retain every original byte.
+    raw=encoded.encode()
+    if hashlib.sha256(raw).hexdigest()!=fingerprint:
+        raw=json.dumps(json.loads(encoded),sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+        if hashlib.sha256(raw).hexdigest()!=fingerprint:raise EvidenceConflict('Invalid dataset fingerprint')
+    if len(raw)>MAX_DATASET_BYTES:raise ValueError('Dataset too large')
+    if len(raw)<COMPACT_THRESHOLD:return json.loads(encoded)
+    return dict(storage=STORAGE,uncompressed_bytes=len(raw),sha256=fingerprint,
+                data=base64.b64encode(gzip.compress(raw,compresslevel=1,mtime=0)).decode())
+
+
+def decoded_dataset(dataset):
+    payload=dataset['payload']
+    if payload.get('storage')!=STORAGE:return dataset
+    size=payload.get('uncompressed_bytes')
+    if (type(size) is not int or not 0<size<=MAX_DATASET_BYTES
+            or payload.get('sha256')!=dataset['fingerprint']):
+        raise EvidenceConflict('Invalid compressed dataset metadata')
+    try:
+        encoded=payload['data']
+        if not isinstance(encoded,str) or len(encoded)>2*MAX_DATASET_BYTES:raise ValueError()
+        compressed=base64.b64decode(encoded,validate=True)
+        decoder=zlib.decompressobj(16+zlib.MAX_WBITS)
+        raw=decoder.decompress(compressed,size+1)
+        if len(raw)!=size or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:raise ValueError()
+        if hashlib.sha256(raw).hexdigest()!=dataset['fingerprint']:raise ValueError()
+        result=json.loads(raw)
+        if not isinstance(result,dict) or result.get('format')!=FORMAT or digest(result)!=dataset['fingerprint']:raise ValueError()
+    except (ValueError,KeyError,TypeError,zlib.error,UnicodeError):
+        raise EvidenceConflict('Compressed dataset integrity mismatch') from None
+    return {**dataset,'payload':result}
+
 
 
 class CoverageIncomplete(ValueError):
@@ -203,7 +246,7 @@ class DatasetStore:
             if {a['object_key']:a for a in saved}!={a['object_key']:a for a in artifacts}:
                 raise EvidenceConflict('Artifact registry conflict')
             row = c.execute('''INSERT INTO research_dataset(stream_key,fingerprint,day,payload)
-                VALUES(%s,%s,%s,%s) RETURNING id''',(stream_key,prepared.fingerprint,payload['day'],Jsonb(payload))).fetchone()
+                VALUES(%s,%s,%s,%s) RETURNING id''',(stream_key,prepared.fingerprint,payload['day'],Jsonb(storage_payload(prepared.payload_json,prepared.fingerprint)))).fetchone()
             dataset_id = row['id']
             c.execute('INSERT INTO research_summary(dataset_id,version,summary) VALUES(%s,%s,%s)',(dataset_id,summary['version'],Jsonb(summary)))
             c.execute('INSERT INTO research_dataset_artifact(dataset_id,object_key) SELECT %s,unnest(%s::text[])',(dataset_id,keys))

@@ -46,11 +46,13 @@ function collectionBody(data){
   if(keys!=='contract,worker'||!['online','waiting'].includes(data.worker.state)||data.worker.heartbeat_ttl_seconds!==90||
      (data.worker.last_seen!==null&&(typeof data.worker.last_seen!=='string'||!Number.isFinite(Date.parse(data.worker.last_seen)))))throw Error('invalid worker status');
  }else if('items' in data){
-  if(keys!=='contract,items,next_before'||!Array.isArray(data.items)||data.items.length>50||
+  if(!['contract,items,next_before','contract,group,items,next_before,total'].includes(keys)||
+     ('group' in data&&(!['unfinished','finished'].includes(data.group)||!Number.isSafeInteger(data.total)||data.total<0))||
+     !Array.isArray(data.items)||data.items.length>50||
      data.items.some(c=>!/^[-a-f0-9]{36}$/.test(c.id)||!['queued','running','succeeded','cancelled','failed'].includes(c.status))||
      (data.next_before!==null&&!/^[-a-f0-9]{36}$/.test(data.next_before)))throw Error('invalid campaign list');
  }else if(data.refresh){
-  if(keys!=='contract,refresh'||typeof data.refresh.enabled!=='boolean'||data.refresh.interval_seconds!==3600)throw Error('invalid refresh');
+  if(keys!=='contract,refresh'||typeof data.refresh.enabled!=='boolean'||![3600,86400].includes(data.refresh.interval_seconds))throw Error('invalid refresh');
  }else{
   if(!['campaign,contract','campaign,contract,next_after,sections'].includes(keys)||typeof data.campaign?.id!=='string'||
      !['queued','running','succeeded','cancelled','failed'].includes(data.campaign.status))throw Error('invalid campaign');
@@ -76,7 +78,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const campaignGet=new RegExp('^/api/collection/campaigns/'+uuid+'$').test(url.pathname);
  const workerStatus=url.pathname==='/api/collection/status';
  const collection=workerStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
-  new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume)$').test(url.pathname)||
+  new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
  const method=collection?((campaignGet||campaignList||workerStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
@@ -86,8 +88,9 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   const entries=[...url.searchParams];
   if(campaignList){
    if(url.search.length>180||new Set(entries.map(([k])=>k)).size!==entries.length||
-      entries.some(([k])=>!['asset','before','limit'].includes(k))||
-      !new RegExp('^'+category+'$').test(url.searchParams.get('asset')||'')||
+      entries.some(([k])=>!['asset','before','limit','group'].includes(k))||
+      (url.searchParams.has('group')&&!['unfinished','finished'].includes(url.searchParams.get('group')))||
+      !new RegExp('^(?:'+category+'|all)$').test(url.searchParams.get('asset')||'')||
       (url.searchParams.has('before')&&!new RegExp('^'+uuid+'$').test(url.searchParams.get('before')))||
       (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit'))))return problem(400,'Invalid collection query');
   }else if(url.search.length>64||entries.length>(campaignGet?1:0)||entries.some(([k,v])=>k!=='after'||!/^\d{4}-\d{2}-\d{2}$/.test(v)))return problem(400,'Invalid collection query');

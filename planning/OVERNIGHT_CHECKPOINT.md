@@ -1655,3 +1655,59 @@ Known limits remain: HTTP403 automated gateway smoke, occasional client timeouts
 contains older historical setup notes; newest checkpoint/actual services govern.
 Owner-only future blockers (new credentials/Google setup/paid expansion/operator
 DDL) are not needed for this enabled milestone; skip them until actually required.
+
+## Speed / all-category queue / daily reconciliation milestone prepared
+
+Resumed actual remote e001eaa in clean pocket-progressive-resume; prior code CI
+40591056949 succeeded. No other remote writer observed. Owner requests now include
+all-category unfinished oldest-first queue, newest-finished list, independent
+expansion/counts, removal, and once-daily preceding-24h reconciliation at a fixed time.
+
+Verified live PostgreSQL logs: dataset INSERT backend killed by signal9 at
+22:05:25,22:15:37,22:25:39UTC, followed by whole-database recovery and worker lease
+retries. This is a concrete stall; memory exhaustion is the inferred cause, not
+proved by coarse metrics (256MiB DB limit). Private DB blocks connector SQL;
+leave its allowlist empty. Do not increase request concurrency into this failure.
+
+New dataset writes >=256KiB compress canonical JSON with deterministic gzip level1
+in worker before sending a small JSONB storage envelope to Postgres, avoiding its
+nested JSON parse expansion. Every original record/provenance byte and semantic
+fingerprint remains, bounded64MiB decompression verifies hash/size/gzip EOF, rejects
+trailing members/bombs/corruption. Existing legacy versions remain readable and
+immutable. Campaign/category readers use original uncompressed-size limits; same
+full-cohort report builder and metrics. No schema/grant/secret/resource change.
+
+Queue pages can span all categories, return group totals; unfinished includes
+queued/running/paused/failed oldest-created first, finished uses actual finish time
+newest-first. UI labels categories, independent5-row expand controls, finished
+view capped100; all unfinished pages available. Removal cancels/fences pending
+parent/children and hides operational queue entry; published history retained.
+Resume can restore hidden entries by original ID. No hosted user job removed in tests.
+
+Daily scheduler stores operational schedule configuration in a succeeded
+refresh-schedule-v1 job (existing research_job permissions), leaves legacy physical
+interval sentinel untouched, and uses local Pacific wall time plus durable next_due.
+Default03:00 America/Los_Angeles is an explicit assumption, configurable per category
+in UI. Enabled hourly preferences initialize next daily boundary without another
+immediate run; ongoing rolling work finishes. Exact preceding86400s; no overlap,
+missed ticks coalesce, DST tested. Disabled categories remain disabled. No external
+cron or ChatGPT automation needed; existing worker owns scheduling.
+
+Actual signed-in hourly-weather report162:54/366 sections,535pages,448/448 tasks,
+0candidate markets/0entry observations, available dates2025-10-27..2025-12-19.
+Source inspector confirms0candidates/candles/trades in displayed newest25sources,
+not a display-minimum filter. Series match existing legacy collector. This proves
+empty saved membership, not why upstream returned none for these dates; do not
+claim weather historical coverage verified. UI now distinguishes zero candidate
+markets from markets without eligible entry quotes.
+
+Local248 API/research tests:168passed,80actualPGskipped without localDB;34JS,
+7policy,compile,Blueprint,diffchecks pass. Added lossless storage/report equivalence,
+corruption/bomb cases, all-category pagination/removal/lease fencing, dailyDST,
+interactive expand100cap/removal/time controls. Existing actualPG progressive test
+forces compressed storage through campaign/category/restart/final report paths.
+CI and deployment receipts pending: inspect actual branch lease, save code/checkpoint,
+run realPG CI, resolve failures, then deploy existing API first, gateway, worker.
+Observe recovery/page/report growth and daily next_due; never reset active collections.
+No throughput ratio/old7days5min promise yet. Keep full samples/trades, small plans,
+main unmerged, production Worker unchanged, no trading/contact/owner credentials.

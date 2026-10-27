@@ -111,9 +111,9 @@ class CategoryReports:
         def inputs():
             for identifier in ids:
                 with self.pool.connection() as c:
-                    row=c.execute('SELECT octet_length(payload::text) AS bytes FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                    row=c.execute("SELECT COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                     if not row or row['bytes']>64*1024*1024:raise EvidenceConflict('Category input missing or too large')
-                    data=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                    data=c.execute("SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                 yield data
         self.queue.heartbeat(job['id'],job['lease_token'],600)
         prepared=prepare_category(job['asset'],inputs(),snapshot['windows'],snapshot['revision'],publication_complete=snapshot.get('complete',True))

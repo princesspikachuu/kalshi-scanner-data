@@ -211,3 +211,16 @@ test('coverage window reads use the same bounded authenticated research gateway'
  assert.equal(response.status,200);assert.deepEqual(await response.json(),payload);
  assert.equal((await proxyAuth(request('/api/research/results/1/coverage?stream=category-btc&view=latest'),env,{fetcher:()=>assert.fail('must not fetch')})).status,400);
 });
+
+test('all-category queue pages and removal remain authenticated bounded gateway routes',async()=>{
+ const id='11111111-1111-4111-8111-111111111111';
+ for(const group of ['unfinished','finished']){
+  const body={contract:'collection-v1',items:[{id,status:'queued'}],next_before:null,total:1,group};
+  const r=await proxyAuth(request('/api/collection/campaigns?asset=all&group='+group+'&limit=5'),env,{fetcher:async()=>json(body)});
+  assert.equal(r.status,200);assert.deepEqual(await r.json(),body);
+ }
+ assert.equal((await proxyAuth(request('/api/collection/campaigns?asset=all&group=oops'),env,{fetcher:()=>assert.fail('must not fetch')})).status,400);
+ const removed={contract:'collection-v1',campaign:{id,status:'cancelled'}};
+ const r=await proxyAuth(request('/api/collection/campaigns/'+id+'/remove',{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json','x-csrf-token':csrf},body:'{}'}),env,{fetcher:async()=>json(removed)});
+ assert.equal(r.status,200);
+});

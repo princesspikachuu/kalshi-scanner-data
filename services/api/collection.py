@@ -23,6 +23,7 @@ class RangeBody(Closed):
 
 class RefreshBody(Closed):
     enabled:bool=Field(strict=True)
+    local_time:StrictStr|None=Field(default=None,pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 class Campaign(Closed):
@@ -58,7 +59,9 @@ class Refresh(Closed):
     asset:Asset
     enabled:bool
     next_due:datetime|None
-    interval_seconds:Literal[3600]
+    interval_seconds:Literal[86400]
+    local_time:str="03:00"
+    timezone:Literal["America/Los_Angeles"]="America/Los_Angeles"
     latest_campaign_id:str|None
 
 
@@ -88,20 +91,23 @@ def install_collection(app,auth,mutate,store):
     def campaigns(request:Request):
         auth(request)
         pairs=list(request.query_params.multi_items());q=dict(pairs)
-        if len(q)!=len(pairs) or set(q)-{'asset','before','limit'}:
+        if len(q)!=len(pairs) or set(q)-{'asset','before','limit','group'}:
             raise HTTPException(422,'Invalid collection page')
         try:
             asset=q.get('asset','')
-            if asset not in ('btc','eth','crypto','weather','weather_daily','sports'):raise ValueError()
+            if asset not in ('btc','eth','crypto','weather','weather_daily','sports','all'):raise ValueError()
             before=str(UUID(q['before'])) if 'before' in q else None
             raw=q.get('limit','25')
             if not raw.isascii() or not raw.isdecimal() or not 1<=int(raw)<=50 or str(int(raw))!=raw:raise ValueError()
             limit=int(raw)
-            rows=store.list(asset,before=before,limit=limit+1)
+            group=q.get('group')
+            if group not in (None,'unfinished','finished'):raise ValueError()
+            rows=store.list(asset,before=before,limit=limit+1,**({'group':group} if group else {}))
         except ValueError:raise HTTPException(422,'Invalid collection page') from None
         items=[Campaign.model_validate(row).model_dump(mode='json') for row in rows[:limit]]
         return dict(contract='collection-v1',items=items,
-                    next_before=items[-1]['id'] if len(rows)>limit else None)
+                    next_before=items[-1]['id'] if len(rows)>limit else None,
+                    **({'total':store.count(asset,group),'group':group} if group else {}))
 
     @app.get('/collection/campaigns/{identifier}')
     def get(identifier:UUID,request:Request):
@@ -118,7 +124,7 @@ def install_collection(app,auth,mutate,store):
             next_after=str(rows[49]['day']) if len(rows)>50 else None)
 
     @app.post('/collection/campaigns/{identifier}/{action}')
-    def control(identifier:UUID,action:Literal['pause','resume'],request:Request):
+    def control(identifier:UUID,action:Literal['pause','resume','remove'],request:Request):
         mutate(request);no_query(request)
         if not store.control(identifier,action):raise HTTPException(404,'Collection not found')
         return dict(contract='collection-v1',campaign=summary(identifier))
@@ -131,4 +137,4 @@ def install_collection(app,auth,mutate,store):
     @app.post('/collection/refresh/{asset}')
     def set_refresh(asset:Asset,body:RefreshBody,request:Request):
         mutate(request);no_query(request)
-        return dict(contract='collection-v1',refresh=Refresh.model_validate(store.set_refresh(asset,body.enabled)).model_dump(mode='json'))
+        return dict(contract='collection-v1',refresh=Refresh.model_validate(store.set_refresh(asset,body.enabled,**({'local_time':body.local_time} if body.local_time is not None else {}))).model_dump(mode='json'))

@@ -14,15 +14,16 @@ class FakeCampaigns:
     def get(self,identifier):
         if str(identifier)!=ID:return None
         return dict(id=ID,asset='btc',mode='backfill',start_at=NOW,end_at=NOW,created_at=NOW,status='queued',error_code=None,result_id=None,total_sections=60,completed_sections=0)
-    def list(self,asset,*,before=None,limit=26):
+    def list(self,asset,*,before=None,limit=26,group=None):
         self.calls.append(('list',asset,before,limit));return [self.get(ID)]*limit if before is None else []
+    def count(self,asset,group):return 23
     def worker_status(self):return dict(state='online',last_seen=NOW,heartbeat_ttl_seconds=90)
     def create(self,*args,**kwargs):self.calls.append(('create',args));return ID
     def control(self,*args):self.calls.append(('control',args));return str(args[0])==ID
     def days(self,identifier,after=None,limit=51):
         self.calls.append(('days',after))
         return [dict(day='2026-10-25',start_at=NOW,end_at=NOW,dataset_id=None,stage='pending')]*limit if after is None else []
-    def refresh(self,asset):return dict(asset=asset,enabled=False,next_due=None,interval_seconds=3600,latest_campaign_id=None)
+    def refresh(self,asset):return dict(asset=asset,enabled=False,next_due=None,interval_seconds=86400,latest_campaign_id=None)
     def set_refresh(self,asset,enabled):self.calls.append(('refresh',enabled));return {**self.refresh(asset),'enabled':enabled}
 
 
@@ -81,6 +82,15 @@ class CollectionRoutes(unittest.TestCase):
         self.client.cookies.clear()
         self.assertEqual(self.client.get('/collection/campaigns?asset=btc').status_code,401)
 
+
+    def test_grouped_all_category_queue_and_remove_are_bounded_and_authenticated(self):
+        for group in ('unfinished','finished'):
+            r=self.client.get('/collection/campaigns?asset=all&group='+group+'&limit=5')
+            self.assertEqual(r.status_code,200);self.assertEqual(r.json()['total'],23)
+            self.assertEqual(r.json()['group'],group)
+        self.assertEqual(self.client.get('/collection/campaigns?asset=all&group=bad').status_code,422)
+        self.assertEqual(self.client.post(f'/collection/campaigns/{ID}/remove',json={}).status_code,200)
+        self.assertEqual(self.client.post(f'/collection/campaigns/{ID}/remove',json={},headers={'x-csrf-token':'bad'}).status_code,403)
 
     def test_worker_status_requires_session_and_accepts_no_query(self):
         r=self.client.get('/collection/status');self.assertEqual(r.status_code,200)

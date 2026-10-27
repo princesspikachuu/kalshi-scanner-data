@@ -8,7 +8,7 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .datasets import FORMAT
+from .datasets import FORMAT,decoded_dataset
 from .inventory import digest
 from .models.conditional_v2 import SOURCE_COMMIT, analyze_risk, policy_cells
 from .normalize import _closed
@@ -56,7 +56,7 @@ def _observations(asset,datasets,*,candidate_filter=None):
     rows,paths,origin,seen,missing=[],{}, {},set(),[]
     candidate_count=0;bar_count=0
     for dataset in datasets:
-        payload=dataset['payload']
+        payload=decoded_dataset(dataset)['payload']
         if payload.get('format')!=FORMAT or digest(payload)!=dataset['fingerprint']:
             raise EvidenceConflict('Published raw dataset integrity mismatch')
         if payload['candidates'] and 'candles' not in payload['summary']['resources']:
@@ -169,6 +169,7 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
         for d in datasets:
             if type(d['id']) is not int or d['id']<=previous or len(metadata)>=3661:raise ValueError('Select ascending unique dataset IDs, at most 3661')
             previous=d['id']
+            d=decoded_dataset(d)
             metadata.append(dict(id=d['id'],fingerprint=d['fingerprint'],day=d['payload']['day'],candidate_count=sum(1 for candidate in d['payload']['candidates'] if candidate_filter is None or candidate_filter(d['id'],candidate))))
             yield d
     rows,paths,origin,coverage=_observations(asset,inputs(),candidate_filter=candidate_filter)
@@ -216,10 +217,10 @@ class ReportStore:
         ids=list(dataset_ids)
         if not ids or len(ids)>1000 or len(set(ids))!=len(ids) or any(type(i) is not int or i<1 for i in ids): raise ValueError('Invalid dataset membership')
         with self.pool.connection() as c:
-            size=c.execute('SELECT count(*) AS n,COALESCE(sum(octet_length(payload::text)),0) AS bytes FROM research_dataset WHERE id=ANY(%s::bigint[])',(ids,)).fetchone()
+            size=c.execute("SELECT count(*) AS n,COALESCE(sum(COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text))),0) AS bytes FROM research_dataset WHERE id=ANY(%s::bigint[])",(ids,)).fetchone()
             if size['n']!=len(ids): raise EvidenceConflict('Missing selected dataset version')
             if size['bytes']>64*1024*1024: raise ValueError('Selected raw inputs exceed bounded report memory budget')
-            datasets=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=ANY(%s::bigint[]) ORDER BY id',(ids,)).fetchall()
+            datasets=c.execute("SELECT id,fingerprint,payload FROM research_dataset WHERE id=ANY(%s::bigint[]) ORDER BY id",(ids,)).fetchall()
         if len(datasets)!=len(ids): raise EvidenceConflict('Missing selected dataset version')
         prepared=prepare_report(asset,datasets,latest_ids=latest_ids)
         return self._save(stream_key,asset,prepared)
@@ -263,10 +264,10 @@ class ReportStore:
         def inputs():
             for identifier in ids:
                 with self.pool.connection() as c:
-                    size=c.execute('SELECT octet_length(payload::text) AS bytes FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                    size=c.execute("SELECT COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                     if not size:raise EvidenceConflict('Missing campaign dataset')
                     if size['bytes']>64*1024*1024:raise ValueError('Raw dataset exceeds bounded report input')
-                    row=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                    row=c.execute("SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                 yield row
         prepared=prepare_report_stream(asset,inputs(),latest_ids=ids)
         if publication is not None:

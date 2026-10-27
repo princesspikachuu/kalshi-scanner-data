@@ -157,6 +157,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),15)
         self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
 
+    @patch('services.research.datasets.COMPACT_THRESHOLD',0)
     def test_candle_reports_arrive_before_trade_enrichment_and_grow_across_days(self):
         original=self.evidence.fetch;trade_pages=0
         def streaming(scope,cursor,timeout):
@@ -176,6 +177,9 @@ class CampaignPostgresTests(unittest.TestCase):
         with self.db.pool.connection() as c:
             report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['result_id'],)).fetchone()['report']
             observations=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(state['result_id'],)).fetchone()['n']
+        with self.db.pool.connection() as c:
+            formats=c.execute("SELECT DISTINCT payload->>'storage' AS storage FROM research_dataset").fetchall()
+        self.assertEqual(formats,[dict(storage='raw-evidence-gzip-v1')])
         self.assertEqual(report['historical']['candidate_count'],2)
         self.assertEqual(report['historical']['observation_count'],10)
         self.assertEqual(sum(x['hold']['sampled_markets'] for x in report['historical']['cells']),10)
@@ -207,6 +211,33 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(first[0]['total_sections'],2);self.assertEqual(first[0]['completed_sections'],0)
         self.assertEqual(self.store.list('btc',before=other),[])
         self.assertEqual(self.store.list('weather'),[])
+
+    def test_all_category_queue_order_removal_fencing_and_finish_order(self):
+        first=self.create(key='queue-first')
+        eth=self.store.create('eth','2026-10-25','2026-10-26','queue-eth',now=NOW)
+        last=self.create(key='queue-last')
+        rows=self.store.list('all',group='unfinished',limit=2)
+        self.assertEqual([r['id'] for r in rows],[first,eth])
+        self.assertEqual([r['id'] for r in self.store.list('all',group='unfinished',before=eth)],[last])
+        self.assertEqual(self.store.count('all','unfinished'),3)
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(first,)).fetchone()['job_id']
+        claimed=self.worker.queue.claim(job_id=parent)
+        self.store.control(first,'remove')
+        self.assertEqual(self.store.get(first)['status'],'cancelled')
+        from services.research.queue import LeaseLost
+        with self.assertRaises(LeaseLost):self.worker.queue.heartbeat(parent,claimed['lease_token'])
+        self.assertEqual(self.store.count('all','unfinished'),2)
+        self.assertEqual(self.store.count('btc','unfinished'),1)
+        self.store.control(first,'resume')
+        self.assertEqual(self.store.count('all','unfinished'),3)
+        # Finish creation order in reverse: finish ordering must use completion.
+        with self.db.pool.connection() as c:
+            for n,identifier in enumerate([last,first]):
+                c.execute("UPDATE research_job SET status='succeeded',finished_at=%s WHERE id=(SELECT job_id FROM research_campaign WHERE id=%s)",(NOW+timedelta(seconds=n),identifier))
+        self.assertEqual([r['id'] for r in self.store.list('all',group='finished')],[first,last])
+        self.assertEqual([r['id'] for r in self.store.list('all',group='finished',before=first)],[last])
+        self.assertEqual(self.store.count('all','finished'),2)
 
     def test_saved_page_progress_uses_distinct_child_jobs_and_does_not_read_raw_objects(self):
         identifier=self.create();self.worker.run_once(deadline=time.monotonic()+30)
@@ -317,6 +348,8 @@ class CampaignPostgresTests(unittest.TestCase):
         with self.db.pool.connection() as c:
             p=c.execute('SELECT report FROM research_result WHERE id=%s',(int(self.store.get(identifier)['result_id']),)).fetchone()['report']
         self.assertEqual(p['historical']['candidate_count'],1)
+        self.assertEqual(self.store.schedule_due(now=NOW+timedelta(hours=3)),[])
+        self.assertEqual(len(self.store.schedule_due(now=NOW+timedelta(days=1))),1)
         self.store.set_refresh('btc',False)
         self.assertEqual(self.store.schedule_due(now=NOW+timedelta(days=2)),[])
 

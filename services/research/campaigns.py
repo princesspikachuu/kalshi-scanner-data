@@ -6,6 +6,7 @@ coverage, not quote eligibility, research completion or a trading recommendation
 from datetime import date,datetime,time,timedelta,timezone
 from dataclasses import replace
 from uuid import UUID,uuid4,uuid5
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Jsonb
@@ -34,6 +35,19 @@ def sections(start,end):
         result.append(dict(day=start.date().isoformat(),start_at=start,end_at=stop))
         start=stop
     return result
+
+
+def daily_due(now,local_time):
+    if (not isinstance(local_time,str) or len(local_time)!=5 or local_time[2]!=':'
+            or not local_time.replace(':','').isascii() or not local_time.replace(':','').isdigit()):
+        raise ValueError('Select HH:MM Pacific time')
+    hour,minute=map(int,local_time.split(':'))
+    if hour>23 or minute>59:raise ValueError('Select HH:MM Pacific time')
+    local=utc(now).astimezone(ZoneInfo('America/Los_Angeles'))
+    candidate=local.replace(hour=hour,minute=minute,second=0,microsecond=0,fold=0)
+    if candidate.astimezone(UTC)<=now:candidate+=timedelta(days=1)
+    # Nonexistent spring-forward times normalize to the following valid instant.
+    return candidate.astimezone(UTC)
 
 
 def configuration(asset):
@@ -76,39 +90,68 @@ class CampaignStore:
             (identifier,Jsonb([dict(day=d['day'],start_at=d['start_at'].isoformat(),end_at=d['end_at'].isoformat()) for d in days])))
         return str(identifier)
 
-    def set_refresh(self,asset,enabled):
+    def _refresh_time(self,c,asset):
+        row=c.execute("SELECT progress->>'local_time' AS local_time FROM research_job WHERE idempotency_key=%s",('refresh-schedule/'+asset,)).fetchone()
+        return row['local_time'] if row else None
+
+    def _save_refresh_time(self,c,asset,local_time):
+        c.execute('''INSERT INTO research_job(id,asset,parameters,idempotency_key,status,finished_at,progress)
+            VALUES(%s,%s,%s,%s,'succeeded',clock_timestamp(),%s)
+            ON CONFLICT(idempotency_key) DO UPDATE SET progress=EXCLUDED.progress''',
+            (uuid4(),asset,Jsonb(dict(collector='refresh-schedule-v1')),'refresh-schedule/'+asset,Jsonb(dict(local_time=local_time))))
+
+    def set_refresh(self,asset,enabled,*,local_time=None):
         configuration(asset)
         if type(enabled) is not bool:raise ValueError('Invalid refresh preference')
+        if local_time is not None:daily_due(datetime.now(UTC),local_time)
         with self.pool.connection() as c:
-            c.execute('''INSERT INTO research_refresh(asset,enabled) VALUES(%s,%s)
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91030))',(asset,))
+            c.execute('SELECT asset FROM research_refresh WHERE asset=%s FOR UPDATE',(asset,))
+            current=self._refresh_time(c,asset)
+            selected=local_time or current or '03:00'
+            due=daily_due(datetime.now(UTC),selected)
+            self._save_refresh_time(c,asset,selected)
+            c.execute('''INSERT INTO research_refresh(asset,enabled,next_due) VALUES(%s,%s,%s)
                 ON CONFLICT(asset) DO UPDATE SET enabled=EXCLUDED.enabled,
-                next_due=CASE WHEN NOT research_refresh.enabled AND EXCLUDED.enabled THEN clock_timestamp() ELSE research_refresh.next_due END''',(asset,enabled))
+                next_due=CASE WHEN NOT research_refresh.enabled OR %s THEN EXCLUDED.next_due ELSE research_refresh.next_due END''',
+                (asset,enabled,due,local_time is not None or current is None))
         return self.refresh(asset)
 
     def refresh(self,asset):
         configuration(asset)
         with self.pool.connection() as c:
-            row=c.execute('SELECT asset,enabled,next_due,interval_seconds FROM research_refresh WHERE asset=%s',(asset,)).fetchone() or dict(asset=asset,enabled=False,next_due=None,interval_seconds=3600)
+            row=c.execute('SELECT asset,enabled,next_due FROM research_refresh WHERE asset=%s',(asset,)).fetchone() or dict(asset=asset,enabled=False,next_due=None)
+            row.update(interval_seconds=86400,local_time=self._refresh_time(c,asset) or '03:00',timezone='America/Los_Angeles')
             latest=c.execute("SELECT id::text AS id FROM research_campaign WHERE asset=%s AND mode='rolling' ORDER BY created_at DESC,id DESC LIMIT 1",(asset,)).fetchone()
             row['latest_campaign_id']=latest['id'] if latest else None
             return row
 
     def schedule_due(self,*,now=None):
-        """Called by the eventual worker, not an external cron or request GET.
+        """One exact preceding-24h reconciliation per local calendar day.
 
-        No overlap/backlog per category. Disabled by default. Missed clock ticks
-        coalesce into one fresh exact 86400-second window, not stale catch-up runs.
+        Missed runs coalesce. DST follows Pacific wall time; overlapping work must
+        finish first. The legacy interval column is not used by this scheduler.
         """
         now=utc(now or datetime.now(UTC)).replace(microsecond=0);created=[]
         with self.pool.connection() as c:
-            due=c.execute('SELECT * FROM research_refresh WHERE enabled AND next_due<=%s ORDER BY asset FOR UPDATE SKIP LOCKED',(now,)).fetchall()
+            due=c.execute("""SELECT * FROM research_refresh WHERE enabled AND (next_due<=%s OR NOT EXISTS(
+                SELECT 1 FROM research_job WHERE idempotency_key='refresh-schedule/'||research_refresh.asset))
+                ORDER BY asset FOR UPDATE SKIP LOCKED""",(now,)).fetchall()
             for row in due:
+                local_time=self._refresh_time(c,row['asset'])
+                if local_time is None:
+                    # Existing hourly preferences migrate without creating an extra run.
+                    local_time='03:00';self._save_refresh_time(c,row['asset'],local_time)
+                    c.execute('UPDATE research_refresh SET next_due=%s WHERE asset=%s',(daily_due(now,local_time),row['asset']))
+                    continue
+                if row['next_due']>now:continue
                 active=c.execute("""SELECT 1 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
                     WHERE r.asset=%s AND r.mode='rolling' AND j.status IN ('queued','running') LIMIT 1""",(row['asset'],)).fetchone()
                 if active:continue
-                key=f"auto/{row['asset']}/{int(now.timestamp())//3600}"
-                created.append(self._create(c,row['asset'],now-timedelta(hours=24),now,key,'rolling',dict(bucket=int(now.timestamp())//3600)))
-                c.execute('UPDATE research_refresh SET next_due=%s WHERE asset=%s',(now+timedelta(hours=1),row['asset']))
+                bucket=now.astimezone(ZoneInfo('America/Los_Angeles')).date().isoformat()
+                key=f"auto-daily/{row['asset']}/{bucket}"
+                created.append(self._create(c,row['asset'],now-timedelta(hours=24),now,key,'rolling',dict(day=bucket)))
+                c.execute('UPDATE research_refresh SET next_due=%s WHERE asset=%s',(daily_due(now,local_time),row['asset']))
         return created
 
     def get(self,identifier):
@@ -160,17 +203,25 @@ class CampaignStore:
         return dict(state='online' if row and row['online'] else 'waiting',
                     last_seen=row['last_seen'] if row else None,heartbeat_ttl_seconds=90)
 
-    def list(self,asset,*,before=None,limit=26):
+    def list(self,asset,*,before=None,limit=26,group=None):
         """Newest-first bounded campaign metadata; no archive/observation reads."""
-        configuration(asset)
+        if asset!='all':configuration(asset)
         if type(limit) is not int or not 1<=limit<=51:raise ValueError('Invalid campaign limit')
         if before is not None:before=UUID(str(before))
+        if group not in (None,'unfinished','finished'):raise ValueError('Invalid collection group')
+        direction='ASC' if group=='unfinished' else 'DESC'
+        comparison='>' if group=='unfinished' else '<'
+        ordering='j.finished_at' if group=='finished' else 'r.created_at'
+        boundary='bj.finished_at' if group=='finished' else 'b.created_at'
+        predicate="AND j.status='succeeded'" if group=='finished' else "AND j.status<>'succeeded' AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)" if group=='unfinished' else ''
         with self.pool.connection() as c:
-            rows=c.execute('''WITH chosen AS MATERIALIZED (
-                SELECT r.* FROM research_campaign r WHERE r.asset=%s
-                AND (%s::uuid IS NULL OR (r.created_at,r.id)<(
-                    SELECT created_at,id FROM research_campaign WHERE id=%s AND asset=%s))
-                ORDER BY r.created_at DESC,r.id DESC LIMIT %s)
+            rows=c.execute(f'''WITH chosen AS MATERIALIZED (
+                SELECT r.*, {ordering} AS sort_at FROM research_campaign r JOIN research_job j ON j.id=r.job_id
+                WHERE (%s='all' OR r.asset=%s) {predicate}
+                AND (%s::uuid IS NULL OR ({ordering},r.id){comparison}(
+                    SELECT {boundary},b.id FROM research_campaign b JOIN research_job bj ON bj.id=b.job_id
+                    WHERE b.id=%s AND (%s='all' OR b.asset=%s)))
+                ORDER BY {ordering} {direction},r.id {direction} LIMIT %s)
                 SELECT r.id::text AS id,r.asset,r.mode,r.start_at,r.end_at,r.created_at,
                     j.status,j.error_code,cr.result_id::text AS result_id,
                     d.total_sections,d.completed_sections
@@ -179,8 +230,16 @@ class CampaignStore:
                 CROSS JOIN LATERAL (SELECT count(*)::integer AS total_sections,
                     count(dataset_id)::integer AS completed_sections
                     FROM research_campaign_day WHERE campaign_id=r.id) d
-                ORDER BY r.created_at DESC,r.id DESC''',(asset,before,before,asset,limit)).fetchall()
+                ORDER BY r.sort_at {direction},r.id {direction}''',(asset,asset,before,before,asset,asset,limit)).fetchall()
             return rows
+
+    def count(self,asset,group):
+        if asset!='all':configuration(asset)
+        if group not in ('unfinished','finished'):raise ValueError('Invalid collection group')
+        with self.pool.connection() as c:
+            return c.execute('''SELECT count(*) AS n FROM research_campaign r JOIN research_job j ON j.id=r.job_id
+                WHERE (%s='all' OR r.asset=%s) AND (j.status='succeeded')=%s
+                AND (%s OR NOT coalesce((j.progress->>'removed_from_queue')::boolean,false))''',(asset,asset,group=='finished',group=='finished')).fetchone()['n']
 
     def days(self,identifier,*,after=None,limit=50):
         if type(limit) is not int or not 1<=limit<=100:raise ValueError('Invalid section limit')
@@ -192,14 +251,18 @@ class CampaignStore:
                 ORDER BY day LIMIT %s''',(UUID(str(identifier)),after,after,limit)).fetchall()
 
     def control(self,identifier,action):
-        if action not in ('pause','resume'):raise ValueError('Invalid collection control')
+        if action not in ('pause','resume','remove'):raise ValueError('Invalid collection control')
         with self.pool.connection() as c:
             row=c.execute('SELECT j.* FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s FOR UPDATE OF j',(UUID(str(identifier)),)).fetchone()
             if row is None:return False
-            if action=='pause' and row['status'] in ('queued','running'):
+            if action in ('pause','remove') and row['status'] in ('queued','running'):
                 ids=c.execute('SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchall()
                 c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('queued','running')""",([row['id']]+[r['job_id'] for r in ids],))
+            if action=='remove' and row['status']!='succeeded':
+                c.execute("UPDATE research_job SET progress=progress||%s WHERE id=%s",(Jsonb({'removed_from_queue':True}),row['id']))
+            if action=='resume':
+                c.execute("UPDATE research_job SET progress=progress-'removed_from_queue' WHERE id=%s",(row['id'],))
             if action=='resume' and row['status'] in ('cancelled','failed'):
                 ids=c.execute('SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchall()
                 c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,error_code=NULL,attempts=0,available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL

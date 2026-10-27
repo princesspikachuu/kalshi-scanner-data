@@ -131,3 +131,38 @@ test('transport errors do not expose browser or connection diagnostics',async()=
  await assert.rejects(createCollectionClient({fetcher}).status(),e=>!e.message.includes('sentinel')&&/Saved progress is safe/.test(e.message));
  await assert.rejects(createResearchClient({fetcher}).category('btc'),e=>!e.message.includes('sentinel')&&/unavailable/i.test(e.message));
 });
+
+test('all-category queue expands independently, labels categories, removes safely and caps recent finishes',async()=>{
+ const {doc,nodes}=documentFixture(),previous={document:globalThis.document,window:globalThis.window,localStorage:globalThis.localStorage,fetch:globalThis.fetch};const events={};
+ const make=(i,status)=>({id:`11111111-1111-4111-8111-${String(i).padStart(12,'0')}`,asset:i%2?'btc':'weather',status,mode:'backfill',start_at:'2026-01-01',end_at:'2026-02-01',result_id:null,total_sections:32,completed_sections:status==='succeeded'?32:1});
+ let pending=Array.from({length:7},(_,i)=>make(i+1,'queued')),finished=Array.from({length:105},(_,i)=>make(i+101,'succeeded'));const calls=[];
+ try{
+  globalThis.document=doc;globalThis.window={addEventListener:(n,f)=>events[n]=f};globalThis.localStorage={getItem:()=>null,setItem(){}};
+  globalThis.fetch=async(url,options)=>{
+   calls.push({url,options});
+   if(url==='/api/auth/me')return Response.json({authenticated:true,email:'owner@example.test'});
+   if(url.includes('/status'))return Response.json({contract:'collection-v1',worker:{state:'online'}});
+   if(url.includes('/refresh/'))return Response.json({contract:'collection-v1',refresh:{enabled:true,local_time:'03:00',interval_seconds:86400,next_due:'2026-10-28T10:00:00Z'}});
+   if(url.includes('campaigns?')){
+    const q=new URL(url,'https://app.test').searchParams;assert.equal(q.get('asset'),'all');
+    const rows=q.get('group')==='unfinished'?pending:finished,start=q.has('before')?rows.findIndex(c=>c.id===q.get('before'))+1:0;
+    const items=rows.slice(start,start+Number(q.get('limit')));
+    return Response.json({contract:'collection-v1',items,total:rows.length,next_before:start+items.length<rows.length?items.at(-1).id:null});
+   }
+   if(url.endsWith('/remove')){const identifier=url.split('/').at(-2);pending=pending.filter(c=>c.id!==identifier);return Response.json({contract:'collection-v1',campaign:{id:identifier,status:'cancelled'}})}
+   const campaign=[...pending,...finished].find(c=>url.includes(c.id));
+   if(campaign)return Response.json({contract:'collection-v1',campaign,sections:[]});
+   throw Error('Unexpected request '+url);
+  };
+  await import('../apps/web/collection.mjs?all-queue');await new Promise(r=>setImmediate(r));
+  assert.match(nodes.historyStatus.textContent,/Showing 5\/7 in queue/);assert.match(nodes.history.textContent,/Hourly weather/);assert.match(nodes.history.textContent,/Bitcoin/);
+  await nodes.historyMore.fire('click');assert.equal(nodes.history.children.length,7);assert.equal(nodes.historyMore.hidden,true);
+  assert.equal(nodes.finished.children.length,5);
+  for(let i=0;i<19;i++)await nodes.finishedMore.fire('click');
+  assert.equal(nodes.finished.children.length,100);assert.equal(nodes.finishedMore.hidden,true);assert.match(nodes.finishedStatus.textContent,/100\/105/);
+  await nodes.history.children[0].children[1].fire('click');assert.equal(pending.length,6);assert.match(nodes.historyStatus.textContent,/5\/6/);
+  assert.match(nodes.refreshStatus.textContent,/Daily reconciliation at 03:00 Pacific/);
+  nodes.refreshTime.value='04:30';await nodes.saveRefreshTime.fire('click');
+  assert.ok(calls.some(c=>c.options.body&&JSON.parse(c.options.body).local_time==='04:30'));
+ }finally{events.pagehide?.();Object.assign(globalThis,previous)}
+});

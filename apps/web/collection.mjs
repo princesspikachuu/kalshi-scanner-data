@@ -40,7 +40,7 @@ function showReport(data,context){
  $('observations').textContent=data.summary.observation_count.toLocaleString();
  $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';
  $('scopeNote').textContent=$('reportScope').value==='category'?'Saved candle-complete sections combined, with the newest source version selected once for each covered close time.':data.collection_complete===false?`${data.reported_sections} of ${data.total_sections} sections available. Remaining sections and trade details continue collecting; the table updates automatically.`:'All sections in this collection are combined.';
- $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':'No eligible observations. No result has been invented.';
+ $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':data.summary.candidate_count===0?`No settled candidate markets in the ${data.reported_sections??'saved'} available sections (${data.summary.first_date} – ${data.summary.last_date}).${data.collection_complete===false?' Remaining dates are still collecting.':''}`:'Markets were found, but no quotes met the entry rules in the available sections. Check source coverage for missing candles.';
  $('research').hidden=false;$('reportContent').hidden=false;$('exportCsv').hidden=false;drawReport();
 }
 async function loadCategory(version){
@@ -98,29 +98,41 @@ async function loadReport(campaign,version){
   showReport(data,{stream:research.campaignStream(campaign.id),id:campaign.result_id});
  }catch(error){if(version===revision){reportKey=null;$('reportStatus').textContent=error.message;failure(error)}}
 }
-async function loadHistory(version,append=false){
- $('historyStatus').textContent='Loading saved collections…';
+const queuePages={unfinished:{next:null,total:0},finished:{next:null,total:0}};
+async function loadHistory(version,append=false,group=null){
+ if(group===null){const pages=await Promise.all(['unfinished','finished'].map(g=>loadHistory(version,append,g)));return pages.flat()}
+ const state=queuePages[group],unfinished=group==='unfinished';
+ const target=$(unfinished?'history':'finished'),status=$(unfinished?'historyStatus':'finishedStatus'),more=$(unfinished?'historyMore':'finishedMore');
+ status.textContent='Loading saved collections…';
  try{
-  const data=await client.list($('asset').value,append?historyNext:null);if(version!==revision)return [];
-  if(!append)$('history').replaceChildren();
+  const remaining=unfinished?5:Math.min(5,100-target.children.length);
+  if(append&&remaining<=0)return [];
+  const data=await client.list('all',append?state.next:null,group,append?remaining:5);if(version!==revision)return [];
+  if(!append)target.replaceChildren();
+  const existing=new Set([...target.children].map(b=>b.dataset.campaign));
   for(const c of data.items){
+   if(existing.has(c.id))continue;existing.add(c.id);
    const button=document.createElement('button');button.type='button';button.dataset.campaign=c.id;button.setAttribute('aria-pressed',String(c.id===selected));
-   const title=document.createElement('strong');title.textContent=c.start_at.slice(0,10)+' – '+c.end_at.slice(0,10);
+   const title=document.createElement('strong');title.textContent=({btc:'Bitcoin',eth:'Ethereum',crypto:'All crypto',weather:'Hourly weather',weather_daily:'Daily weather',sports:'Sports'}[c.asset]||c.asset)+' · '+c.start_at.slice(0,10)+' – '+c.end_at.slice(0,10);
    const subtitle=document.createElement('small');subtitle.textContent=`${c.mode==='rolling'?'24-hour update':'Date range'} · ${c.status==='cancelled'?'paused':c.status} · ${c.completed_sections}/${c.total_sections} sections${c.result_id?' · report saved':''}`;
-   button.append(title,subtitle);button.addEventListener('click',()=>selectCampaign(c.id));$('history').append(button);
+   button.append(title,subtitle);button.addEventListener('click',async()=>{if($('asset').value!==c.asset){$('asset').value=c.asset;prefs[c.asset]=c.id;await category()}else await selectCampaign(c.id)});
+   if(unfinished){const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='Remove from queue';remove.setAttribute('aria-label','Remove '+title.textContent+' from queue');remove.addEventListener('click',async()=>{remove.disabled=true;try{await client.control(c.id,'remove');await category();$('notice').textContent='Removed from queue. Saved data and history are retained.'}catch(error){failure(error);remove.disabled=false}});const entry=document.createElement('div');entry.className='queue-entry';entry.dataset.campaign=c.id;entry.append(button,remove);target.append(entry)}else target.append(button)
   }
-  historyNext=data.next_before;$('historyMore').hidden=!historyNext;
-  $('historyStatus').textContent=$('history').children.length?'Newest collections first.':'No collections saved for this category yet. Save a date range to begin.';
+  state.next=data.next_before;state.total=data.total??target.children.length;
+  more.hidden=!state.next||(!unfinished&&target.children.length>=100);
+  status.textContent=unfinished?`Showing ${target.children.length}/${state.total} in queue · oldest first. Includes paused and failed collections.`:`Showing ${target.children.length}/${state.total} finished · newest finishes first. Up to 100 recent finishes.`;
   return data.items;
- }catch(error){if(version===revision){$('historyStatus').textContent='Could not load saved collections. Use Refresh saved work to retry.';failure(error)}return []}
+ }catch(error){if(version===revision){status.textContent='Could not load saved collections. Use Refresh saved work to retry.';failure(error)}return []}
 }
+function markSelected(){for(const target of ['history','finished'])for(const item of $(target).children){const button=item.className==='queue-entry'?item.children[0]:item;button.setAttribute('aria-pressed',String(button.dataset.campaign===selected))}}
+
 async function selectCampaign(id){
  $('reportScope').value='load';prefs.reportScope='load';
  clearTimeout(timer);const version=++revision;selected=id;prefs[$('asset').value]=id;save();clearReport();
- for(const button of $('history').children)button.setAttribute('aria-pressed',String(button.dataset.campaign===id));
+ markSelected();
  await poll(version);
 }
-$('historyMore').addEventListener('click',async()=>{$('historyMore').disabled=true;try{await loadHistory(revision,true)}finally{$('historyMore').disabled=false}});
+for(const [id,group] of [['historyMore','unfinished'],['finishedMore','finished']])$(id).addEventListener('click',async()=>{$(id).disabled=true;try{await loadHistory(revision,true,group)}finally{$(id).disabled=false}});
 $('reload').addEventListener('click',()=>category());
 $('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{await auth.signOut();window.location.replace('/')}catch(error){failure(error);$('signOut').disabled=false}});
 
@@ -147,9 +159,9 @@ async function poll(version){
 async function category(){
  clearTimeout(timer);const version=++revision;selected=prefs[$('asset').value]||null;clearReport();historyNext=null;key=prefs.pending?.asset===$('asset').value?prefs.pending.key:null;$('progress').hidden=true;save();
  try{const [data,items]=await Promise.all([client.refresh($('asset').value),loadHistory(version)]);if(version!==revision)return;
-  if(!selected)selected=items[0]?.id||data.refresh.latest_campaign_id;
-  for(const button of $('history').children)button.setAttribute('aria-pressed',String(button.dataset.campaign===selected));
-  $('automatic').checked=data.refresh.enabled;$('refreshStatus').textContent=data.refresh.enabled?'Hourly refresh enabled. Switching it off prevents future refreshes; a current run can finish.':'Automatic refresh is off.';
+  if(!selected)selected=items.find(c=>c.asset===$('asset').value)?.id||data.refresh.latest_campaign_id;
+  markSelected();
+  showRefresh(data.refresh);
   await poll(version);if($('reportScope').value==='category')await loadCategory(version);
  }catch(error){if(version===revision)failure(error)}
 }
@@ -171,9 +183,17 @@ $('showAutomatic').addEventListener('click',async()=>{
   else{selected=null;clearReport();$('progress').hidden=true;$('notice').textContent='No automatic update has started yet. It will start when the worker and automatic refresh are enabled.'}
  }catch(error){if(version===revision)failure(error)}
 });
+function showRefresh(refresh){
+ $('automatic').checked=refresh.enabled;$('refreshTime').value=refresh.local_time||'03:00';
+ $('refreshStatus').textContent=refresh.enabled?`Daily reconciliation at ${refresh.local_time||'03:00'} Pacific · preceding 24 hours${refresh.next_due?' · next '+new Date(refresh.next_due).toLocaleString():''}. A current run can finish.`:'Daily reconciliation is off. A current run can finish.';
+}
+$('saveRefreshTime').addEventListener('click',async()=>{
+ const button=$('saveRefreshTime');button.disabled=true;
+ try{const data=await client.setRefresh($('asset').value,$('automatic').checked,$('refreshTime').value);showRefresh(data.refresh)}catch(error){failure(error)}finally{button.disabled=false}
+});
 $('automatic').addEventListener('change',async()=>{
  const enabled=$('automatic').checked;$('automatic').disabled=true;
- try{await client.setRefresh($('asset').value,enabled);$('refreshStatus').textContent=enabled?'Hourly refresh enabled; the worker will collect a fresh 24-hour window.':'Automatic refresh is off. A current run can finish.'}
+ try{const data=await client.setRefresh($('asset').value,enabled);showRefresh(data.refresh)}
  catch(error){$('automatic').checked=!enabled;failure(error)}finally{$('automatic').disabled=false}
 });
 for(const action of ['pause','resume'])$(action).addEventListener('click',async()=>{
