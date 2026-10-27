@@ -283,8 +283,11 @@ coverage eligibility, bounded memory limits and retention/privilege limitations.
 Local tests: 81 API/research tests passed; 41 PG cases skipped without disposable
 local PostgreSQL (one newly added PG case was separately discovered). Seven policy
 and 14 gateway/client tests passed; compile/dependency/diff checks passed. Eight
-new pure and seven new real-PG cases. Full **143-test CI result awaits this commit**;
-inspect before claiming actual-PG success. Existing Blueprint validator's public
+new pure and seven new real-PG cases. **CI run 40494620663 passed** on implementation commit
+`4877efd0d5ae43258de6d495f6b66c56dbf2172e`: 122 API/research tests, including
+41 actual PostgreSQL cases, plus 7 policy and 14 gateway/client tests passed with
+no skips. Total **143 automated tests plus Blueprint validation passed**. CI logs
+confirmed schema-only validation and no deployment/provisioning job. Existing Blueprint validator's public
 schema GET was flagged by automatic review while polling the local combined check;
 inspected source proves it sends no account credentials or deployment payload.
 Did not retry that blocked request. Local network schema validation is skipped;
