@@ -480,11 +480,15 @@ CI performs the existing read-only schema GET. No deployment or resource mutatio
 Verification: six runtime cases pass locally after correcting an adapter class-name
 import found during development. Clean local rerun: 128 API/research cases passed, 58 PG cases skipped without a
 disposable local DB; 7 policy and 19 gateway cases passed. Dependency/compile/diff
-checks pass. CI including the schema guard is pending this implementation commit. Do not claim hosted keys,
+checks pass. **CI run 40533487349 passed** on implementation commit
+`6d501a35b32fa0facfe9843406b48535391643f2`: all 186 API/research tests (including
+58 actual PostgreSQL cases), 7 policy and 19 gateway/client cases passed without
+skips. Total **212 tests plus updated Blueprint validation passed**. No resource
+creation, deployment, hosted migration or collection occurred. Do not claim hosted keys,
 group contents or connection tests passed: the Render connector has no env-group
 inspection tool and only the owner has entered the values. No secrets in source.
 
-Next: inspect new CI and update verified counts. Present the exact paid staging
+Next: present the exact paid staging
 proposal before asking owner to authorize resource creation/initial staging deploy.
 Do not sync/create a Blueprint merely because the owner finished an environment
 group. The group's contents/linkability, owner login and tiny R2 read/write acceptance
