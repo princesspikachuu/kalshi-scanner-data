@@ -598,3 +598,46 @@ it recurs, harden DB runtime privileges, then separately configure/test the stag
 Cloudflare gateway and real owner Google login. Tiny R2 integrity acceptance and
 representative memory/throughput benchmarks remain pending. Keep collection off
 until connection/privilege checks and explicit enablement; no automatic upgrade.
+
+
+## Staging gateway manual deployment preparation
+
+Resumed from actual remote bc897a7, preserving older dirty worktrees in a fresh
+pocket-gateway worktree. Independently verified API /health/ready HTTP 200 with
+status ready, and /auth/me without proxy secret HTTP 403 Request rejected. Render
+API logs show Uvicorn listening and live state. No credentials were used for these
+requests and no collection was enabled.
+
+Prepared the existing deploy-pocket-app.yml workflow on this DEVELOPMENT branch:
+production job now gated to main; new staging job runs only on workflow_dispatch
+and exact build/google-auth-foundation ref. This uses the already-existing workflow
+entry on main so no merge/new default-branch workflow is required. Push/PR do not
+deploy staging. Staging deploy uses existing repository Cloudflare secrets and only
+infra/wrangler.staging.json, pinned Wrangler 4.153.0 (npm registry verified), no
+production GitHub Actions token, no secret creation/overwrite. Config explicitly
+names the staging Worker, enables its workers.dev hostname, disables previews,
+fixes public app/API origins and preserves Dashboard bindings with keep_vars.
+Nothing was dispatched/published during this save; live Worker remains unchanged.
+
+Added scripts/check_staging_gateway.mjs to guard exact target/asset/origin fields
+and dispatch branch gates; CI runs it and now watches deployment changes. Added
+credential-free scripts/check_staging_http.py for readiness, direct API denial,
+CSP/no-store assets, unavailable trading route and unauthenticated session boundary.
+503 is an unresolved connection, not verified login; scripts omit bodies/cookies.
+All 19 gateway/client tests and offline configuration guard passed, Python compiled,
+and git diff --check passed. No API/model/collector/full-cohort logic changed.
+
+Browser timed out opening the GitHub dispatch page; connector has no dispatch tool.
+No local Cloudflare or Render credentials were present and no extra account/token
+was requested. Do not work around the unavailable browser by enabling push deploys.
+
+Exact resume: inspect new head/CI, then dispatch existing Deploy Pocket Analytics
+dynamic Worker workflow with branch build/google-auth-foundation. On this branch
+ONLY staging job should run. Confirm new Worker URL and HTTP checks; never dispatch
+main for this action. Owner securely copies existing Render API_PROXY_SECRET into
+Cloudflare staging Worker's Secret of the same name, directly console-to-console.
+No secret in chat/git/workflow inputs. apps/README.md has exact fields and checks.
+Confirm existing Google client's Authorized JavaScript origin matches staging, then
+perform actual Google popup/cookie/logout acceptance. Do not create a duplicate
+OAuth client. Continue with runtime-role hardening/R2 acceptance and representative
+performance before separately enabling collection. All Render paid sizes unchanged.

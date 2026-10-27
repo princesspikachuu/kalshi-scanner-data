@@ -1,5 +1,11 @@
 # Google sign-in setup — owner console step
 
+Current setup status: the owner supplied the public Web client ID and Render
+API is deployed. Do not create duplicate credentials. Confirm the existing
+client has the exact staging JavaScript origin below. Staging gateway deploy
+and secure proxy-secret transfer steps are in apps/README.md; real sign-in
+acceptance is still pending. Older preparation notes follow.
+
 The API, Cloudflare gateway and sign-in preview are prepared in the development
 draft. No OAuth client, hosted service or staging deployment has been created.
 The Google Cloud console was unavailable in this session's browser, so complete

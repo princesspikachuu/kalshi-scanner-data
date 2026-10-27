@@ -1,3 +1,51 @@
+# Staging gateway connection
+
+Current October 27, 2026: the separate Render API/worker/database are running;
+collection remains disabled. The staging gateway deployment path is prepared but
+not yet dispatched. Earlier preparation notes below describe the original state.
+
+## Manual development-branch launch
+
+Use the existing **Deploy Pocket Analytics dynamic Worker** workflow in GitHub
+Actions. Choose **Run workflow**, branch **build/google-auth-foundation**, then run.
+Do not choose main for this staging action. The development version gates its
+existing production job to main and adds a separate staging job only for an
+explicit workflow_dispatch on the development branch. A branch push or PR cannot
+deploy staging. Main's existing workflow and live Worker are unchanged.
+
+The staging job runs gateway tests and destination checks, then uses the existing
+repository Cloudflare credentials to deploy only **pocket-analytics-staging** with
+infra/wrangler.staging.json (Wrangler 4.153.0). No new GitHub token or trading
+secret is copied to it. Public workers.dev access is enabled only for this staging
+Worker; preview URLs stay off. Public APP_ORIGIN and API_ORIGIN are in source;
+API_PROXY_SECRET must remain a private Cloudflare secret. keep_vars preserves
+Dashboard bindings across later manual deployments. No paid Cloudflare upgrade.
+
+After initial deployment, the owner must securely copy API_PROXY_SECRET from the
+Render **pocket-api-staging** Environment settings to Cloudflare **Workers & Pages
+→ pocket-analytics-staging → Settings → Variables and Secrets**, type **Secret**,
+with the same name. Copy directly between private consoles; do not paste it in
+chat, GitHub, frontend code or workflow inputs. Do not change the existing Render
+value or use the R2 secret. Until configured, API routes fail closed with 503.
+This transfer has not been completed or independently verified.
+
+Run `python scripts/check_staging_http.py` after deployment. It checks readiness,
+direct-backend denial, staging CSP/no-store headers, blocked trading routes and
+unauthenticated session handling. It deliberately never prints response bodies,
+cookies or tokens. A 503 is reported as unresolved connection configuration or
+availability, not proof of correct credentials. A 401 means the request requires
+login, not proof that Google sign-in succeeds. The real owner Google popup,
+wrong-account rejection and logout round trip still need browser acceptance.
+
+Verify Google Authorized JavaScript origins includes exactly:
+https://pocket-analytics-staging.ezrealrose831.workers.dev
+The existing public client ID is already configured privately on Render. No
+Google client secret is needed. Keep COLLECTION_ENABLED false throughout setup.
+
+See planning/OVERNIGHT_CHECKPOINT.md for deployed resource IDs and current CI.
+
+---
+
 # Undeployed app connection preview
 
 `gateway/index.mjs` is the future staging Cloudflare Worker. It is separate from

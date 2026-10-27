@@ -10,6 +10,9 @@ on:
       - 'infra/**'
       - 'tests/test_auth_policy.py'
       - '.github/workflows/test-api.yml'
+      - '.github/workflows/deploy-pocket-app.yml'
+      - 'scripts/check_staging_gateway.mjs'
+      - 'scripts/check_staging_http.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -42,7 +45,9 @@ jobs:
         with:
           node-version: '24'
       - name: Test staging gateway and browser auth client
-        run: node --test tests/test_login_bridge.mjs
+        run: |
+          node --test tests/test_login_bridge.mjs
+          node scripts/check_staging_gateway.mjs
       - name: Install pinned development dependencies
         run: pip install -r services/api/requirements-dev.txt
       - name: Test owner policy, API and actual PostgreSQL

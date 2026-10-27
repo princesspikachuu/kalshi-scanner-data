@@ -76,7 +76,8 @@ test('login assets carry CSP, popup support and cannot expose arbitrary files',a
  assert.equal(response.headers.get('cross-origin-opener-policy'),'same-origin-allow-popups');
  assert.equal((await gateway.fetch(request('/infra/api.env.example'),{...env,ASSETS:assets})).status,404);
  const config=JSON.parse(fs.readFileSync('infra/wrangler.staging.json','utf8'));
- assert.equal(config.workers_dev,false);assert.equal(config.preview_urls,false);
+ assert.equal(config.workers_dev,true);assert.equal(config.preview_urls,false);
+ assert.equal(config.keep_vars,true);
  assert.notEqual(config.name,JSON.parse(fs.readFileSync('wrangler.jsonc','utf8')).name);
 });
 test('browser client sends credentials only in a same-origin JSON POST',async()=>{
