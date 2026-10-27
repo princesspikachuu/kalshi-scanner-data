@@ -1475,3 +1475,59 @@ and consumed one retry; changed it to a healthy deferred step (no false error,
 no cooldown or consumed attempt). Genuine429/5xx behavior unchanged. AddedactualPG
 case verifying no checkpoint/failure and a refunded healthy lease; CI pending.
 Do not claim fixed end-to-end ETA or upstreambatchacceptance from UI counts alone.
+
+
+## VERIFIED collection speed deployment — October 27, 2026, 2:37 p.m. PDT
+
+Final worker code: 11dfd442011cd15ca4509961b744cce0ceb45b28.
+CI 40588014557, job 122484549308, PASSED: 240 API/research tests,
+including 77 actual PostgreSQL cases, plus 32 JavaScript and 7 policy tests:
+279 total, no skips/failures. Blueprint validation also passed. Earlier speed
+commits b368f32 and 2a1269a passed their respective CI before deployment.
+
+Final Render worker deploy dep-dbghiigu01pc73ea9qvg became LIVE at
+2026-10-27T21:37:00.905585Z (2:37 p.m. PDT). Runtime logs explicitly confirm:
+"Collection pacing: 5 public reads/sec, burst 5; recent candle batching enabled;
+evidence concurrency 4". Runtime privilege verification again passed nine exact
+migrations and twelve history tables without owner/elevated/history-mutation
+privileges. No DDL, secret, role, Google setup, or paid-plan change was required.
+
+Hosted configuration changed ONLY KALSHI_READ_RATE and KALSHI_READ_CAPACITY to5,
+with replace=false. Existing worker service is srv-dbgcsb6c6qcc73f1j6lg, workspace
+tea-dbfv1fl9el5s73bcuefg, plan0.5c-512mb. Source Blueprint reflects5; auto-deploy
+remains off and Blueprint sync paused. No API/gateway deployment or main merge.
+API and gateway keep their previously verified revisions. No trading/contacting.
+
+Actual signed-in browser observations on the SAME historical collection:
+- Before upgrade, about21:29UTC: 46/366 sections,429 pages,405/560 tasks.
+- During/after speed deployments:460,486,519 and finally545 saved pages;
+  final observation521/560 tasks, still46/366 whole daily sections.
+- Worker remained online, hourly refresh enabled, original collection queued/
+  running rather than replaced. No duplicate request, data reset or pause.
+- UI still displays a last provider_unavailable issue from a saved child attempt;
+  progress continues. Do not claim every upstream/network issue is resolved.
+
+These observations prove resumed work, not a controlled sustained-speed benchmark
+or completion ETA. Day counts move only when all requested daily evidence finishes.
+Recent batch acceptance against the real upstream is not independently exposed by
+these UI counters;100 markets/one request is verified with stub HTTP and full
+pipeline/restart tests. Listings and trade pages already request1000 records.
+Archived candle endpoint remains per market; its speedup uses concurrent I/O.
+Expected unsupported/missing/truncated batch fallback now yields healthy work
+without an error, shared cooldown, or consuming an attempt. Real429/5xx continue
+shared cooldown/backoff. All requested trades, candidates and metrics remain.
+
+Exact resume: inspect actual remote head and this final code CI/deploy receipt.
+Keep original year/hourly jobs running in place. Compare page/task throughput
+across comparable evidence phases after deploy overlap settles; inspect any new
+provider failures and worker memory. Verify a completed daily source and then the
+full saved report/source coverage/CSV with the owner when available. No new
+credentials are needed. Do not reset read budgets/cooldowns to force speed, infer
+an authenticated Kalshi allowance, or increase paid resources without a concrete
+need. Further candidates: reduce per-page database overhead, add explicit worker
+throughput telemetry and better partial-day/ETA UI, then partition oversized
+precomputed histories without changing full-sample policy training. Existing
+HTTP403 automated gateway smoke and large-report live RSS acceptance remain open.
+Owner-only future blockers (new credentials/Google consent/paid capacity/operator
+DDL) should be skipped until needed; the user authorized current collection and
+existing-service deployments. Code/checkpoint progress is committed incrementally.
