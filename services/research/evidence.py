@@ -6,7 +6,7 @@ import math
 import json
 import re
 
-from .inventory import InventoryWorker, ProviderPage, ProviderFailure, digest, valid_cursor
+from .inventory import InventoryWorker, ProviderPage, ProviderFailure, ProviderDeferred, digest, valid_cursor
 from .kalshi import KalshiInventory, invalid, parse_json
 from .normalize import CandidateBatch, VERSION, _closed
 from .queue import EvidenceConflict, text_key
@@ -275,7 +275,7 @@ class KalshiEvidence(KalshiInventory):
         if not cursor and any(s.key==scope.key for s in self.batch):
             self._batch_fetch(timeout_seconds)
             cached=self.cached(scope,cursor)
-            if cached is None:raise ProviderFailure('provider_unavailable',delay=1)
+            if cached is None:raise ProviderDeferred()
             return cached
         path,args = scope.request(cursor)
         def parser(body):

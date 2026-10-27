@@ -6,7 +6,7 @@ import httpx
 
 from services.research.archive import ArchiveStore
 from services.research.evidence import KalshiEvidence,build_scopes,ManifestCache
-from services.research.inventory import ProviderFailure
+from services.research.inventory import ProviderFailure,ProviderDeferred
 from test_evidence import BATCH,CANDIDATE,candle
 from test_normalize import MemoryObjects
 from test_kalshi import reply
@@ -42,7 +42,7 @@ class CandleBatchTests(unittest.TestCase):
             calls.append(r)
             return reply(payload={'markets':[]} if len(calls)==1 else dict(ticker=s.ticker,candlesticks=[candle(s)]))
         p=self.provider(handler);p.plan_batch(self.scopes[:2])
-        with self.assertRaises(ProviderFailure):p.fetch(s,'',10)
+        with self.assertRaises(ProviderDeferred):p.fetch(s,'',10)
         self.assertIsNone(p.cached(s,''));p.plan_batch(self.scopes[:2])
         self.assertEqual(p.fetch(s,'',10).payload['candlesticks'],[candle(s)])
         self.assertEqual(calls[-1].url.path,'/trade-api/v2'+s.request('')[0])
@@ -50,7 +50,7 @@ class CandleBatchTests(unittest.TestCase):
         scopes=self.scopes[:2]
         p=self.provider(lambda _:reply(payload={'markets':[dict(market_ticker=s.ticker,candlesticks=[candle(s)]) for s in scopes], 'adjusted_end_ts':scopes[0].end_ts-60}))
         p.plan_batch(scopes)
-        with self.assertRaises(ProviderFailure):p.fetch(scopes[0],'',10)
+        with self.assertRaises(ProviderDeferred):p.fetch(scopes[0],'',10)
         self.assertTrue(all(p.cached(s,'') is None for s in scopes))
     def test_foreign_or_duplicate_market_fails_whole_batch_before_caching(self):
         for ticker in ('FOREIGN',self.scopes[0].ticker):
@@ -71,7 +71,7 @@ class CandleBatchTests(unittest.TestCase):
                 calls.append(request)
                 return reply(status=status) if len(calls)==1 else reply(payload=dict(ticker=scope.ticker,candlesticks=[]))
             p=self.provider(handler);p.plan_batch(self.scopes[:2])
-            with self.assertRaises(ProviderFailure):p.fetch(scope,'',10)
+            with self.assertRaises(ProviderDeferred):p.fetch(scope,'',10)
             self.assertFalse(p.responses);p.plan_batch(self.scopes[:2])
             self.assertEqual(p.fetch(scope,'',10).payload,dict(ticker=scope.ticker,candlesticks=[]))
             self.assertEqual(calls[-1].url.path,'/trade-api/v2'+scope.request('')[0])

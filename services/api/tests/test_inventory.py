@@ -194,6 +194,18 @@ class InventoryPostgresTests(unittest.TestCase):
             c.execute("UPDATE research_read_budget SET updated_at=clock_timestamp()-interval '20000 seconds' WHERE name='slow-test'")
         self.assertEqual(budget.take(20), 0)
 
+    def test_batch_fallback_yields_without_false_failure_or_consuming_attempt(self):
+        from services.research.inventory import ProviderDeferred
+        class DeferredProvider:
+            def fetch(self,*args):raise ProviderDeferred()
+        job=self.claim();worker=self.worker(DeferredProvider())
+        result=worker.step(job,deadline=time.monotonic()+30)
+        self.assertEqual(result,dict(state='partial',retry_after=0))
+        self.assertEqual(self.queue.pages(job['id']),[])
+        self.queue.yield_job(job['id'],job['lease_token'])
+        saved=self.queue.get(job['id']);self.assertEqual(saved['status'],'queued')
+        self.assertEqual(saved['attempts'],0);self.assertIsNone(saved['error_code'])
+
     def test_runtime_pacing_change_preserves_cooldown_and_does_not_mint_tokens(self):
         budget=ReadBudget(self.store.pool,'runtime-change');budget.configure(1,1)
         budget.take(1);budget.defer(60)

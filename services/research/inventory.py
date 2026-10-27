@@ -146,6 +146,10 @@ class ProviderPage:
     availability: str = 'available'
 
 
+class ProviderDeferred(Exception):
+    """A batch was attempted; retry individually without recording provider failure."""
+
+
 class ProviderFailure(Exception):
     def __init__(self, code, retry=True, delay=30, cooldown=None):
         if code not in ('provider_timeout', 'provider_rate_limit', 'provider_unavailable', 'provider_invalid'):
@@ -225,6 +229,8 @@ class InventoryWorker:
             getattr(self.provider,'acknowledge',lambda *_:None)(scope)
             if next_state.state != 'partial': self.queue.finish(job_id, token)
             return {'state': next_state.state, 'retry_after': 0}
+        except ProviderDeferred:
+            return {'state':'partial','retry_after':0}
         except ProviderFailure as error:
             if error.code in ('provider_rate_limit', 'provider_unavailable'): self.budget.defer(error.cooldown)
             self.queue.fail(job_id, token, error.code, retry=error.retry, delay_seconds=error.delay)

@@ -1465,3 +1465,13 @@ privilege audit passed again. Follow-up hardening: batchHTTP400/404/422 must fal
 back to existing single-market requests (older/archived tickers may be rejected
 by the recent batch route); 429/5xx still use sharedbackoff. Added directtests
 for each rejection; await follow-upCI before final workerrevisiondeployment.
+
+
+2a1269a CI40587608924/job122483131112 passed278tests (239API/research,
+76actualPG,32JS,7policy). Triggered follow-upworker dep-dbghhaec6qcc73bvahmg.
+Browser afterfirstupgrade:486pages/462tasks,still46/366sections; originalrun
+continues. Found expected batch-to-single fallback was labeled provider_unavailable
+and consumed one retry; changed it to a healthy deferred step (no false error,
+no cooldown or consumed attempt). Genuine429/5xx behavior unchanged. AddedactualPG
+case verifying no checkpoint/failure and a refunded healthy lease; CI pending.
+Do not claim fixed end-to-end ETA or upstreambatchacceptance from UI counts alone.
