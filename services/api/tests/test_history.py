@@ -172,7 +172,7 @@ class HistoryPostgresTests(unittest.TestCase):
             day=c.execute('SELECT day::text AS day FROM research_dataset WHERE id=%s',(self.ids[0],)).fetchone()['day']
         self.assertEqual(r.json()['result']['cells'],p['historical']['cells'])
         members=self.client.get(url+'/datasets?stream=results').json()
-        self.assertEqual(members['items'],[dict(id=str(self.ids[0]),fingerprint=p['datasets'][0]['fingerprint'],day=day,is_latest=True)])
+        self.assertEqual(members['items'],[dict(id=str(self.ids[0]),fingerprint=p['datasets'][0]['fingerprint'],day=day,is_latest=True,summary=json.loads(Fixture(price='0.88').prepare().summary_json))])
         for suffix in ('?stream=other&view=latest','/datasets?stream=other'):
             self.assertEqual(self.client.get(url+suffix).status_code,404)
         unknown=self.reports.publish('results','btc',[self.ids[0]],latest_ids=None)

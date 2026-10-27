@@ -1315,3 +1315,10 @@ measure representative performance/memory, inspect running collection for explic
 provider/coverage issues, and continue independent improvements. Owner's blanket
 deploy/collection authorization remains active; no repeated approval is required
 for these existing app services. Skip account/credential blockers if encountered.
+
+Research-view CI40571459104 exposed one existing real-PG test asserting the old
+exact source-member shape without the newly added coverage summary. All other
+API/PG/browser tests passed, including new limited-role coverage/window reads.
+Updated that expected contract to include the fixture's exact summary, preserving
+strict field checking rather than dropping the assertion. No failed build deployed.
+The currently active worker/source report engine and year-long collection continue.
