@@ -86,6 +86,7 @@ class CampaignPostgresTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.db.close()
     def setUp(self):
+        self.pacing=patch('services.research.report_jobs.INTERVAL_SECONDS',0);self.pacing.start();self.addCleanup(self.pacing.stop)
         with self.db.pool.connection() as c:
             c.execute('TRUNCATE research_refresh,research_job,research_dataset,research_result,research_artifact,research_read_budget CASCADE')
         self.store=CampaignStore(self.db.pool);self.queue=ResearchQueue(self.db.pool)
@@ -198,6 +199,75 @@ class CampaignPostgresTests(unittest.TestCase):
             old=c.execute('SELECT report FROM research_result WHERE id=%s',(before,)).fetchone()['report']
         self.assertEqual(full['historical']['cells'],report['historical']['cells'])
         self.assertEqual(n,10);self.assertEqual(old,report)
+
+    def test_newest_dates_and_candles_first_preserve_the_complete_cohort_with_caches(self):
+        self.archives=ArchiveStore(MemoryObjects(),cache_bytes=1000000);self.worker=self.make_worker()
+        resources=[];original=self.evidence.fetch
+        def traced(scope,cursor,timeout):
+            resources.append(scope.resource);return original(scope,cursor,timeout)
+        self.evidence.fetch=traced;identifier=self.create()
+        for _ in range(60):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                parent=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()
+            if parent['progress'].get('candle_previews'):break
+        else:self.fail('No candle preview')
+        self.assertEqual(next(day for source,day,cursor in self.inventory.calls if source=='recent'),'2026-10-26')
+        self.assertEqual(list(parent['progress']['candle_previews']),['2026-10-26'])
+        self.assertTrue(resources);self.assertEqual(set(resources),{'candles'})
+        self.worker=self.make_worker();self.drive(identifier)
+        with self.db.pool.connection() as c:
+            report=c.execute('SELECT report FROM research_result WHERE id=%s',(self.store.get(identifier)['result_id'],)).fetchone()['report']
+        self.assertEqual(report['historical']['candidate_count'],2);self.assertEqual(report['historical']['observation_count'],10)
+        self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
+
+    def test_preview_backlog_coalesces_but_frozen_retries_and_pacing_remain_durable(self):
+        from services.research.progressive import ProgressiveReports
+        from psycopg.types.json import Jsonb
+        identifier=self.create()
+        for _ in range(60):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+            if progress.get('candle_previews'):break
+        else:self.fail('No preview membership')
+        params=dict(collector='campaign-preview-v1',campaign_id=identifier,revision=1)
+        covered=self.queue.enqueue('btc',params,'covered-duplicate')
+        frozen=self.queue.enqueue('btc',params,'frozen-retry')
+        snapshot=dict(ids=list(progress['candle_previews'].values()),publication=dict(complete=False,revision=1,reported_sections=1,total_sections=2))
+        with self.db.pool.connection() as c:c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(dict(snapshot=snapshot)),frozen['id']))
+        previews=ProgressiveReports(self.db.pool);self.assertTrue(previews.run_once())
+        self.assertEqual(self.queue.get(covered['id'])['status'],'succeeded')
+        self.assertEqual(self.queue.get(frozen['id'])['status'],'queued')
+        self.assertTrue(previews.run_once());self.assertEqual(self.queue.get(frozen['id'])['progress']['snapshot'],snapshot)
+        late=self.queue.enqueue('btc',{**params,'revision':2},'paced-new-revision')
+        job=self.queue.claim(job_id=late['id'])
+        with patch('services.research.report_jobs.INTERVAL_SECONDS',30):previews.step(job)
+        saved=self.queue.get(late['id']);self.assertEqual(saved['status'],'queued')
+        self.assertNotIn('snapshot',saved['progress']);self.assertEqual(saved['attempts'],0)
+        self.assertGreater((saved['available_at']-datetime.now(UTC)).total_seconds(),25)
+
+    def test_global_candle_lane_leads_but_enrichment_gets_a_reserved_turn(self):
+        original=self.evidence.fetch;page=0
+        def streaming(scope,cursor,timeout):
+            nonlocal page
+            if scope.resource=='trades':
+                page+=1;return ProviderPage(dict(trades=[],cursor='trade-'+str(page)))
+            return original(scope,cursor,timeout)
+        self.evidence.fetch=streaming;older=self.create()
+        for _ in range(120):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(older,)).fetchone()['progress']
+            if len(progress.get('candle_previews',{}))==2:break
+        else:self.fail('Candle lane did not progress')
+        fresh=self.create(key='priority-new')
+        self.worker._turn=0;claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['parameters']['campaign_id'],fresh)
+        self.queue.yield_job(claimed['id'],claimed['lease_token'])
+        self.worker._turn=8;claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['parameters']['campaign_id'],older)
+        self.queue.yield_job(claimed['id'],claimed['lease_token'])
 
     def test_campaign_history_keyset_is_category_scoped_and_survives_new_inserts(self):
         ids=[self.create(key='history-'+str(i)) for i in range(4)]

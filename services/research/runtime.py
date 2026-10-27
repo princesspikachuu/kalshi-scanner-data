@@ -124,7 +124,7 @@ def run(settings,stop):
         objects=R2Objects.connect(account_id=settings.account_id,bucket=settings.bucket,
             access_key_id=settings.access_key_id,secret_access_key=settings.secret_access_key)
         stack.callback(objects.client.close)
-        archives=ArchiveStore(objects);queue=ResearchQueue(pool);budget=ReadBudget(pool)
+        archives=ArchiveStore(objects,cache_bytes=16*1024*1024);queue=ResearchQueue(pool);budget=ReadBudget(pool)
         budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)
         inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence(archives=archives))
         worker=CampaignWorker(pool,archives,

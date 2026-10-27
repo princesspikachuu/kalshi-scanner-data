@@ -12,10 +12,11 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Jsonb
+from .availability import eligible_series
 from .datasets import DatasetStore,prepare_dataset
 from .evidence import build_scopes,plan_from_receipt
 from .inventory import digest,scopes_for_days
-from .normalize import Candidate,Input,Evidence,WindowBatch,normalize_inventory
+from .normalize import Candidate,Input,Evidence,WindowBatch,normalize_inventory,batch_from_dict
 from .queue import ResearchQueue,EvidenceConflict,LeaseLost
 from .reports import MINUTES,SERIES,ReportStore
 
@@ -276,7 +277,7 @@ class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1):
         if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
-        self.parallelism=parallelism;self._bootstrapped=False
+        self.parallelism=parallelism;self._bootstrapped=False;self._turn=0
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
@@ -310,17 +311,20 @@ class CampaignWorker:
         for page in pages:grouped[page['job_id']].append(page)
         return [(j,grouped[j['id']]) for j in jobs]
 
-    def _one(self,campaign,day,phase,worker,deadline):
-        args=(campaign['id'],day['day'],phase)
+    def _one(self,campaign,day,phase,worker,deadline,*,resource=None,eligible=None):
+        args=(campaign['id'],day['day'],phase,resource,resource,eligible,eligible)
         with self.pool.connection() as c:
             failed=c.execute("""SELECT 1 FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
-                WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND j.status IN ('failed','cancelled') LIMIT 1""",args).fetchone()
+                WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND j.status IN ('failed','cancelled') LIMIT 1""",args).fetchone()
             if failed:raise EvidenceConflict('Child collection stopped')
             pending=c.execute("""SELECT 1 FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
-                WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND j.status<>'succeeded' LIMIT 1""",args).fetchone()
+                WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND j.status<>'succeeded' LIMIT 1""",args).fetchone()
             if not pending:return None
             row=c.execute("""SELECT j.id FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
-                WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
+                WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND
                 ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
                  (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
                 ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT 1""",args).fetchone()
@@ -331,7 +335,8 @@ class CampaignWorker:
                 job['parameters']['scope']['resource']=='candles' and job['parameters']['scope']['source']=='recent'):
             with self.pool.connection() as c:
                 nearby=c.execute('''SELECT j.* FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
-                    WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
+                    WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND
                     j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
                     AND j.parameters->'scope'->>'resource'='candles'
                     AND j.parameters->'scope'->>'source'='recent'
@@ -345,7 +350,8 @@ class CampaignWorker:
         if phase=='evidence' and self.parallelism>1 and not recent_candle(job):
             with self.pool.connection() as c:
                 nearby=c.execute('''SELECT j.id FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
-                    WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
+                    WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND
                     j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
                     AND NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent')
                     ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,self.parallelism-1)).fetchall()
@@ -367,8 +373,7 @@ class CampaignWorker:
     def _plan(self,campaign,day):
         manifest=self.archives.read(day['manifest']);raw=manifest['batch']
         if digest(raw)!=manifest['fingerprint']:raise EvidenceConflict('Manifest mismatch')
-        batch=WindowBatch(**{**raw,'series':tuple(raw['series']),'inputs':tuple(Input(**r) for r in raw['inputs']),
-            'candidates':tuple(Candidate(**{**r,'evidence':tuple(Evidence(**e) for e in r['evidence'])}) for r in raw['candidates'])})
+        batch=batch_from_dict(raw)
         return plan_from_receipt(batch,day['manifest'],campaign['config']['lookback_seconds'],campaign['config']['resources'])
 
     @timed('campaign.step')
@@ -379,7 +384,7 @@ class CampaignWorker:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
             if campaign is None:raise EvidenceConflict('Unknown collection campaign')
             day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
-                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,day LIMIT 1''',
+                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,day DESC LIMIT 1''',
                 (identifier,Jsonb(parent['progress'].get('candle_previews',{})))).fetchone()
         if day is None:
             try:
@@ -391,7 +396,7 @@ class CampaignWorker:
                     self.queue._owned(c,parent['id'],parent['lease_token'])
                     c.execute('INSERT INTO research_campaign_result VALUES(%s,%s) ON CONFLICT DO NOTHING',(identifier,result))
                     from .cumulative import CategoryReports
-                    CategoryReports.enqueue(c,campaign['asset'],identifier)
+                    CategoryReports.enqueue(c,campaign['asset'],identifier,source_revision=result)
                 self.queue.finish(parent['id'],parent['lease_token'])
             except ValueError:
                 self.queue.fail(parent['id'],parent['lease_token'],'campaign_result_blocked',retry=False)
@@ -412,13 +417,14 @@ class CampaignWorker:
                             from .progressive import ProgressiveReports
                             ProgressiveReports.enqueue(c,identifier,campaign['asset'])
                         self.queue.yield_job(parent['id'],parent['lease_token']);return 0
-                scopes=scopes_for_days(campaign['config']['series'],[day['day'].isoformat()],identifier.hex)
+                eligible,_=eligible_series(campaign['config']['series'],day['end_at'])
+                scopes=scopes_for_days(eligible,[day['day'].isoformat()],identifier.hex) if eligible else []
                 self._jobs(campaign,day,'inventory',scopes,parent)
-                wait=self._one(campaign,day,'inventory',self.inventory_worker,deadline)
+                wait=self._one(campaign,day,'inventory',self.inventory_worker,deadline,eligible=eligible)
                 if wait is not None:self.queue.yield_job(parent['id'],parent['lease_token'],wait);return wait
                 attempts=self._attempts(campaign,day,'inventory')
                 batch=normalize_inventory(campaign['config']['series'],day['day'].isoformat(),identifier.hex,attempts,self.archives,
-                    window=(day['start_at'].isoformat(),day['end_at'].isoformat()))
+                    window=(day['start_at'].isoformat(),day['end_at'].isoformat()),prelaunch=True)
                 if not batch.ready:raise EvidenceConflict('Inventory incomplete')
                 plan=build_scopes(batch,self.archives,lookback_seconds=campaign['config']['lookback_seconds'],resources=campaign['config']['resources'])
                 with self.pool.connection() as c:
@@ -431,7 +437,7 @@ class CampaignWorker:
                     self._jobs(campaign,day,'evidence',self._plan(campaign,day).scopes,parent)
                 if self._candle_preview(parent,campaign,day):
                     self.queue.yield_job(parent['id'],parent['lease_token']);return 0
-                wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline)
+                wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline,resource=None if day['day'].isoformat() in parent['progress'].get('candle_previews',{}) else 'candles')
                 if wait is not None:self.queue.yield_job(parent['id'],parent['lease_token'],wait);return wait
                 plan=self._plan(campaign,day)
                 attempts=self._attempts(campaign,day,'evidence')
@@ -470,6 +476,23 @@ class CampaignWorker:
             ProgressiveReports.enqueue(c,campaign['id'],campaign['asset'])
         return True
 
+    def _claim_parent(self):
+        # Logical lanes share the same bounded worker/memory budget. Candle work
+        # leads across campaigns; one turn in nine lets enrichment keep advancing.
+        self._turn+=1;enrichment_turn=self._turn%9==0
+        with self.pool.connection() as c:
+            row=c.execute('''WITH ready AS (
+                SELECT j.id,j.available_at,j.created_at,EXISTS(
+                    SELECT 1 FROM research_campaign_day d WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
+                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)) AS candle_work
+                FROM research_job j JOIN research_campaign r ON r.job_id=j.id
+                WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts AND
+                    ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
+                    (j.status='running' AND j.lease_expires_at<=clock_timestamp())))
+                SELECT id FROM ready ORDER BY CASE WHEN candle_work<>%s THEN 0 ELSE 1 END,available_at,created_at,id LIMIT 1''',
+                (enrichment_turn,)).fetchone()
+        return self.queue.claim(seconds=600,job_id=row['id']) if row else None
+
     def run_once(self,*,deadline):
         from .progressive import ProgressiveReports
         if not self._bootstrapped:
@@ -477,7 +500,7 @@ class CampaignWorker:
         if ProgressiveReports(self.pool).run_once():return True
         from .cumulative import CategoryReports
         if CategoryReports(self.pool).run_once():return True
-        parent=self.queue.claim(seconds=600,collector='campaign-v1')
+        parent=self._claim_parent()
         if parent is None:return False
         self.step(parent,deadline=deadline)
         return True

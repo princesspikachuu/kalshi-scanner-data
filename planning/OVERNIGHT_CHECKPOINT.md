@@ -1810,3 +1810,42 @@ start bound. All8 recent list queries max_close_ts=2025-12-22 returned0; histori
 routes4empty,4have2026settledrows andmorepages. Existing report0candidate count
 is not56days of populated data. Implement explicit proof-bearing exclusions only
 for verified series; keep unknown series queried and preserve immutable oldversions.
+
+## Throughput optimizations prepared after measured bottleneck
+
+Instrumentation7fd37db CI40603383429/job122536782025 passed291tests incl80actualPG.
+Worker dep-dbgjc8hsrm7s73emgsj0 LIVE23:40:00.39913Z; runtimeauditready, noconfig
+orpaidchange. First30s:39providerreads total4.328s,39PUTs13.297s,39readbacks7.864s.
+Next30s:105archiveGETs13.859s,decode5.704s,inventorynormalize20.731s, datasetprepare
+20.907s versus datasettransaction0.059s. Stage spans nest/overlap: do not sum
+these as exclusive wall time. This directly motivates verified caching rather
+than increasing upstreamcap. Oldpublication databasekills absent since22:46.
+
+Prepared all six: newest date first within each campaign (old versions unchanged);
+verified conservative prelaunch per-series exclusions bound to reviewed official
+filing URL/date/SHA256, carried explicitly in manifest and dataset, revalidated on
+publication, NEVER fake provider pages. Unknown legacyLAX series remains queried.
+Proof catalog maps7knownhourlyseries. Subclass preserves all legacy fingerprints.
+
+Existingworker uses bounded16MiB verified compressed archiveLRU,8MiB compressed
+inventory projections (identity/outcome only, original roworder/provenance retained),
+2MiB normalizedbatchmemo and existing8MiB manifestcache. Shared mutable dicts are
+never cached; bodies/projections/batches verify immutable inputs and exactjob/page/
+receipt memberships. Restart/eviction fall back to originals; uploadPUT+readback
+still always required before checkpoint. Full archived fields never discarded.
+
+Report jobs coalesce queued/unfrozen covered revisions, pace partial snapshots
+atmostonce/30sec perstream, and retain frozen retry memberships and old reports.
+Final campaign reports and urgent completed-category notifications bypass pacing.
+Concurrent newer revisions remain due; stale publication guards unchanged. Candle
+scopes do not share a concurrent group with trades. Across ready campaigns candle
+work leads; every ninth parent turn is reserved for enrichment so it advances.
+Logical lanes share bounded workerRAM, no second process/paidservice provisioned.
+
+UI now says datewindowsprocessed/included instead of claiming populatedsections;
+hourlycategory accurately labels configuredcities. No cohort/metric/loss behavior
+change. Added pureproof/cache/mutation/fingerprint and actualPG newest-first,
+restart/fullcohort,coalescing/frozenretry/pacing and lane fairness tests. Local
+verification before actualPG CI:255tests173passed/82PGskipped before final fairness
+case,34JS,7policy,Blueprint allpassed. Run latestPG CI and resolve real regressions
+before mainoptimized rollout; preserve active8campaigns and daily03Pacificsetting.

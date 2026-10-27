@@ -1,5 +1,6 @@
 """Bounded immutable JSON archives, independent of any hosted bucket or credential."""
 from .telemetry import timed,timing,count
+from .cache import ByteCache
 
 from dataclasses import dataclass
 import gzip
@@ -144,8 +145,11 @@ def verify(key, body, expected_length=None):
 
 
 class ArchiveStore:
-    def __init__(self, objects: ObjectStore):
+    def __init__(self, objects: ObjectStore, *, cache_bytes=0):
         self.objects = objects
+        self.cache=ByteCache(cache_bytes)
+        self.inventory_pages=ByteCache(min(cache_bytes,8*1024*1024))
+        self.normalized_cache=ByteCache(min(cache_bytes,2*1024*1024))
 
     @timed('archive.upload')
     def upload(self, provider, payload):
@@ -159,6 +163,7 @@ class ArchiveStore:
         verify(archive.key, body, len(archive.body))
         if body != archive.body:
             raise ArchiveInvalid('Archive evidence mismatch')
+        self.cache.put(archive.key,body)
         return archive.receipt()
 
     @timed('archive.read')
@@ -175,7 +180,12 @@ class ArchiveStore:
         length = receipt.get('byte_length')
         if type(length) is not int or not 0 <= length <= MAX_COMPRESSED:
             raise ArchiveInvalid('Invalid archive receipt size')
-        with timing('archive.get'):
-            body = self.objects.get(key, MAX_COMPRESSED)
+        body=self.cache.get(key)
+        if body is None:
+            count('archive.cache_miss',1)
+            with timing('archive.get'):
+                body = self.objects.get(key, MAX_COMPRESSED)
+        else:count('archive.cache_hit',1)
         verify(key, body, length)
+        self.cache.put(key,body)
         return decode(body)

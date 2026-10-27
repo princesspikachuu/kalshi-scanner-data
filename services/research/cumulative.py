@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 from .inventory import digest
+from . import report_jobs
 from .normalize import _closed
 from .queue import ResearchQueue,EvidenceConflict
 from .reports import ReportStore,PreparedReport,prepare_report_stream,SERIES,MAX_REPORT_BYTES,report_fingerprint
@@ -79,10 +80,10 @@ class CategoryReports:
     def __init__(self,pool):self.pool=pool;self.queue=ResearchQueue(pool)
 
     @staticmethod
-    def enqueue(c,asset,campaign_id):
+    def enqueue(c,asset,campaign_id,*,source_revision=None,urgent=True):
         c.execute('''INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)
             VALUES(%s,%s,%s,%s,5) ON CONFLICT(idempotency_key) DO NOTHING''',
-            (uuid4(),'category/'+str(campaign_id),asset,Jsonb({'collector':'category-report-v1'})))
+            (uuid4(),'category/'+str(campaign_id),asset,Jsonb({'collector':'category-report-v1','urgent':urgent,**({'source_revision':source_revision} if source_revision is not None else {})})))
 
     def _snapshot(self,c,asset):
         # One MVCC statement freezes both version revision and source windows.
@@ -103,6 +104,7 @@ class CategoryReports:
         return dict(revision=row['revision'],windows=select_windows(row['windows']),complete=row['complete'])
 
     def step(self,job):
+        if report_jobs.defer_unfrozen(self.queue,job,'category-'+job['asset'],'category_snapshot',urgent=job['parameters'].get('urgent',True)):return
         with self.pool.connection() as c:
             owned=self.queue._owned(c,job['id'],job['lease_token'])
             snapshot=owned['progress'].get('category_snapshot')
@@ -123,6 +125,9 @@ class CategoryReports:
         # _save serializes each stream and refuses an older frozen revision.
         ReportStore(self.pool)._save('category-'+job['asset'],job['asset'],prepared,
                                     minimum_revision=snapshot['revision'])
+        with self.pool.connection() as c:
+            self.queue._owned(c,job['id'],job['lease_token'])
+            report_jobs.coalesce(c,job,snapshot['revision'])
         self.queue.finish(job['id'],job['lease_token'])
 
     def run_once(self):

@@ -5,6 +5,10 @@ No sampling, observations, ROI, publication, network fetch or trading occurs her
 from .telemetry import timed,timing,count
 
 from dataclasses import asdict, dataclass
+import json
+import gzip
+from .archive import decode
+from .availability import StartBound,eligible_series
 from datetime import date, datetime, time, timedelta, timezone
 
 from .inventory import digest, inspect_pages, scope_for_job, scopes_for_days, valid_cursor
@@ -72,6 +76,20 @@ class WindowBatch(CandidateBatch):
     window_end: str = ''
 
 
+@dataclass(frozen=True)
+class ExcludedWindowBatch(WindowBatch):
+    exclusions:tuple[StartBound,...]=()
+
+
+def batch_from_dict(raw):
+    values={**raw,'series':tuple(raw['series']),'inputs':tuple(Input(**r) for r in raw['inputs']),
+        'candidates':tuple(Candidate(**{**r,'evidence':tuple(Evidence(**e) for e in r['evidence'])}) for r in raw['candidates'])}
+    kind=WindowBatch if 'window_start' in raw else CandidateBatch
+    if 'exclusions' in raw:
+        kind=ExcludedWindowBatch;values['exclusions']=tuple(StartBound(**r) for r in raw['exclusions'])
+    return kind(**values)
+
+
 class NormalizationLimit(ValueError):
     pass
 
@@ -90,6 +108,11 @@ def _payload(scope, page, archives):
     receipt = page['receipt']
     if receipt.get('provider') != 'kalshi' or receipt.get('object_key') != page['object_key']:
         raise EvidenceConflict('Archive reference does not match committed page')
+    cache=getattr(archives,'inventory_pages',None)
+    key=digest(dict(scope=asdict(scope),checkpoint=page['checkpoint'],receipt=receipt))
+    cached=cache.get(key) if cache is not None else None
+    if cached is not None:
+        count('inventory.page_cache_hit',1);return decode(cached)
     envelope = archives.read(receipt)  # checksum, byte length, bounded gzip/JSON
     if (not isinstance(envelope, dict) or envelope.get('scope') != asdict(scope)
             or envelope.get('checkpoint') != page['checkpoint']):
@@ -100,11 +123,16 @@ def _payload(scope, page, archives):
     cursor = valid_cursor('' if response['cursor'] is None else response['cursor'])
     if len(response['markets']) != cp['items'] or cursor != cp['cursor_out'] or cp['availability'] != 'available':
         raise EvidenceConflict('Archive response does not match checkpoint progress')
-    return response['markets']
+    rows=response['markets']
+    if cache is not None and cache.maximum:
+        if any(not isinstance(row,dict) for row in rows):raise EvidenceConflict('Invalid archived market row')
+        projected=[{k:row[k] for k in ('ticker','event_ticker','close_time','result','series_ticker') if k in row} for row in rows]
+        cache.put(key,gzip.compress(json.dumps(projected,separators=(',',':')).encode(),compresslevel=1,mtime=0))
+    return rows
 
 
 @timed('inventory.normalize')
-def normalize_inventory(series, day, generation, attempts, archives, *, max_rows=250000, max_pages=10000, window=None):
+def _normalize_inventory(series, day, generation, attempts, archives, *, max_rows=250000, max_pages=10000, window=None,prelaunch=False):
     """attempts = iterable of (job, queue.page_evidence(job_id)).
 
     Exactly one succeeded terminal job is selected per requested scope; multiple
@@ -116,7 +144,11 @@ def normalize_inventory(series, day, generation, attempts, archives, *, max_rows
         raise ValueError('Invalid normalization limits')
     if not series or len(series) > 100: raise ValueError('Expected 1..100 series')
     series = tuple(sorted(set(series)))
-    scopes = scopes_for_days(series, [day], generation)
+    eligible=series;exclusions=()
+    if prelaunch:
+        if window is None:raise ValueError('Explicit close window required for prelaunch exclusions')
+        eligible,exclusions=eligible_series(series,_closed(window[1]))
+    scopes = scopes_for_days(eligible, [day], generation) if eligible else []
     wanted = {s.key: s for s in scopes}
     groups = {key: {} for key in wanted}
     for n, (job, pages) in enumerate(attempts):
@@ -158,6 +190,7 @@ def normalize_inventory(series, day, generation, attempts, archives, *, max_rows
         if not start<=left<right<=end:raise ValueError('Close window must be within the UTC day')
         start,end=left,right;batch_type=WindowBatch
         extra=dict(window_start=start.isoformat(),window_end=end.isoformat())
+    if exclusions:batch_type=ExcludedWindowBatch;extra['exclusions']=exclusions
     base = dict(day=day, generation=generation, series=series, inputs=tuple(inputs),**extra)
     batch = batch_type(**base)
     if not batch.ready: return batch
@@ -196,3 +229,21 @@ def normalize_inventory(series, day, generation, attempts, archives, *, max_rows
         normalized.append(Candidate(ticker,event,scoped_series,closed.isoformat().replace('+00:00','Z'),
                                     result,tuple(sorted(refs))))
     return batch_type(**base, candidates=tuple(normalized), rows_scanned=rows_scanned)
+
+
+def normalize_inventory(series,day,generation,attempts,archives,*,max_rows=250000,max_pages=10000,window=None,prelaunch=False):
+    attempts=list(attempts)
+    cache=getattr(archives,'normalized_cache',None);key=None
+    if cache is not None and cache.maximum:
+        try:
+            membership=sorted([dict(id=str(j['id']),status=j['status'],parameters=j['parameters'],
+                pages=sorted([dict(page_key=p['page_key'],object_key=p['object_key'],checkpoint=p['checkpoint'],receipt=p['receipt']) for p in pages],key=lambda p:p['page_key'])) for j,pages in attempts],key=lambda j:j['id'])
+            key=digest(dict(series=sorted(series),day=day,generation=generation,membership=membership,
+                max_rows=max_rows,max_pages=max_pages,window=window,prelaunch=bool(prelaunch and window and eligible_series(series,_closed(window[1]))[1])))
+            saved=cache.get(key)
+            if saved is not None:
+                count('inventory.cache_hit',1);return batch_from_dict(json.loads(saved))
+        except (TypeError,KeyError,ValueError):key=None
+    result=_normalize_inventory(series,day,generation,attempts,archives,max_rows=max_rows,max_pages=max_pages,window=window,prelaunch=prelaunch)
+    if key is not None and result.ready:cache.put(key,json.dumps(asdict(result),sort_keys=True,separators=(',',':')).encode())
+    return result

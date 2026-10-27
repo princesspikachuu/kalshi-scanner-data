@@ -146,7 +146,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
         inputs.append((job,pages))
         for page in pages: retain(page['receipt'])
     window=(raw['window_start'],raw['window_end']) if 'window_start' in raw else None
-    rebuilt = normalize_inventory(raw['series'],raw['day'],raw['generation'],inputs,archives,window=window)
+    rebuilt = normalize_inventory(raw['series'],raw['day'],raw['generation'],inputs,archives,window=window,prelaunch=bool(raw.get('exclusions')))
     if not rebuilt.ready or rebuilt.fingerprint!=manifest.get('fingerprint') or rebuilt.fingerprint!=plan.batch_fingerprint:
         raise EvidenceConflict('Normalized membership no longer matches selected inputs')
     resources = tuple(sorted({s.resource for s in plan.scopes}))
@@ -220,6 +220,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
     artifact_list = sorted(artifacts.values(),key=lambda a:a['object_key'])
     payload = dict(format=FORMAT,artifacts=artifact_list,manifest=manifest_receipt,batch_fingerprint=rebuilt.fingerprint,day=rebuilt.day,
         candidates=json.loads(json.dumps(asdict(rebuilt)))['candidates'],scopes=[asdict(s) for s in plan.scopes],coverage=coverage,records=records,summary=summary)
+    if raw.get('exclusions'):payload['exclusions']=raw['exclusions']
     if window is not None:payload['close_window']=dict(start=rebuilt.window_start,end=rebuilt.window_end)
     encoded = json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
     if len(encoded.encode())>64*1024*1024: raise ValueError('Dataset too large; explicit partitioning required')

@@ -86,7 +86,7 @@ test('signed-in workspace displays progressive reports and restores category/dis
   assert.equal(nodes.workspace.hidden,false);assert.equal(nodes.signOut.hidden,false);assert.equal(nodes.asset.value,'eth');
   assert.equal(nodes.metric.value,'roi');assert.equal(nodes.loss.checked,true);assert.equal(nodes.history.children.length,1);
   assert.equal(nodes.reportContent.hidden,false);assert.equal(nodes.candidates.textContent,'10');assert.equal(nodes.completion.value,0);assert.equal(nodes.workerTitle.textContent,'Worker online · collection enabled');
-  assert.match(nodes.table.textContent,/-23.53%/);assert.match(nodes.scopeNote.textContent,/1 of 2 sections available/);assert.match(nodes.reportStamp.textContent,/In progress/);
+  assert.match(nodes.table.textContent,/-23.53%/);assert.match(nodes.scopeNote.textContent,/1 of 2 date windows included/);assert.match(nodes.reportStamp.textContent,/In progress/);
   nodes.metric.value='win';await nodes.metric.fire('change');assert.equal(JSON.parse(saved).metric,'win');
   assert.ok(!saved.includes('owner@example.test'));assert.ok(!saved.includes('__Host-pocket'));
   assert.ok(requests.every(url=>!url.includes('/auth/google')));
@@ -155,7 +155,7 @@ test('all-category queue expands independently, labels categories, removes safel
    throw Error('Unexpected request '+url);
   };
   await import('../apps/web/collection.mjs?all-queue');await new Promise(r=>setImmediate(r));
-  assert.match(nodes.historyStatus.textContent,/Showing 5\/7 in queue/);assert.match(nodes.history.textContent,/Hourly weather/);assert.match(nodes.history.textContent,/Bitcoin/);
+  assert.match(nodes.historyStatus.textContent,/Showing 5\/7 in queue/);assert.match(nodes.history.textContent,/Hourly temperature/);assert.match(nodes.history.textContent,/Bitcoin/);
   await nodes.historyMore.fire('click');assert.equal(nodes.history.children.length,7);assert.equal(nodes.historyMore.hidden,true);
   assert.equal(nodes.finished.children.length,5);
   for(let i=0;i<19;i++)await nodes.finishedMore.fire('click');

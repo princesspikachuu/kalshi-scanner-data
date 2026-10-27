@@ -3,6 +3,7 @@ from uuid import UUID,uuid4
 from psycopg.types.json import Jsonb
 from .queue import ResearchQueue
 from .reports import ReportStore
+from . import report_jobs
 
 
 class ProgressiveReports:
@@ -18,7 +19,7 @@ class ProgressiveReports:
         if not revision:return
         c.execute('''INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)
             VALUES(%s,%s,%s,%s,5) ON CONFLICT(idempotency_key) DO NOTHING''',
-            (uuid4(),f'progress/{identifier}/{revision}',asset,Jsonb(dict(collector='campaign-preview-v1',campaign_id=str(identifier)))))
+            (uuid4(),f'progress/{identifier}/{revision}',asset,Jsonb(dict(collector='campaign-preview-v1',campaign_id=str(identifier),revision=revision))))
 
     def bootstrap(self):
         with self.pool.connection() as c:
@@ -28,6 +29,7 @@ class ProgressiveReports:
 
     def step(self,job):
         identifier=UUID(job['parameters']['campaign_id'])
+        if report_jobs.defer_unfrozen(self.queue,job,'campaign-'+identifier.hex,'snapshot'):return
         with self.pool.connection() as c:
             complete=c.execute('SELECT 1 FROM research_campaign_result WHERE campaign_id=%s',(identifier,)).fetchone()
         if complete:
@@ -49,7 +51,8 @@ class ProgressiveReports:
         with self.pool.connection() as c:
             self.queue._owned(c,job['id'],job['lease_token'])
             from .cumulative import CategoryReports
-            CategoryReports.enqueue(c,job['asset'],'progress/'+str(result))
+            CategoryReports.enqueue(c,job['asset'],'progress/'+str(result),source_revision=result,urgent=False)
+            report_jobs.coalesce(c,job,snapshot['publication']['revision'],campaign=True)
         self.queue.finish(job['id'],job['lease_token'])
 
     def run_once(self):
