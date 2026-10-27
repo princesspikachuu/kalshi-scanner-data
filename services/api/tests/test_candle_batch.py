@@ -64,6 +64,18 @@ class CandleBatchTests(unittest.TestCase):
         p=self.provider(lambda _:self.fail('No network during planning'))
         p.plan_batch([self.scopes[0],far]);self.assertFalse(p.batch)
         p.plan_batch([replace(s,source='historical') for s in self.scopes]);self.assertFalse(p.batch)
+    def test_rejected_batch_falls_back_to_existing_per_market_route(self):
+        for status in (400,404,422):
+            calls=[];scope=self.scopes[0]
+            def handler(request):
+                calls.append(request)
+                return reply(status=status) if len(calls)==1 else reply(payload=dict(ticker=scope.ticker,candlesticks=[]))
+            p=self.provider(handler);p.plan_batch(self.scopes[:2])
+            with self.assertRaises(ProviderFailure):p.fetch(scope,'',10)
+            self.assertFalse(p.responses);p.plan_batch(self.scopes[:2])
+            self.assertEqual(p.fetch(scope,'',10).payload,dict(ticker=scope.ticker,candlesticks=[]))
+            self.assertEqual(calls[-1].url.path,'/trade-api/v2'+scope.request('')[0])
+
     def test_batch_rate_limit_is_not_hidden_or_fanned_out(self):
         p=self.provider(lambda _:reply(status=429,headers={'Retry-After':'17'}));p.plan_batch(self.scopes[:2])
         with self.assertRaises(ProviderFailure) as caught:p.fetch(self.scopes[0],'',10)

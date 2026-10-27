@@ -1456,3 +1456,12 @@ Measure before/after page/task throughput on the same job and record limitations
 section counter advances only after a full day. Actual upstream batch acceptance,
 provider429 frequency and small-plan memory are still to verify. Larger history
 partitioning, collection latency/progress UI and populated reports remain pending.
+
+
+b368f32 CI40587065371/job122481251777 passed277tests including76actualPG.
+Patched ONLY the two public pacing keys to5 via replace=false on existingworker;
+this triggered dep-dbghfhuk1f9s738q026g fromb368f32 (no duplicate trigger). Runtime
+privilege audit passed again. Follow-up hardening: batchHTTP400/404/422 must fall
+back to existing single-market requests (older/archived tickers may be rejected
+by the recent batch route); 429/5xx still use sharedbackoff. Added directtests
+for each rejection; await follow-upCI before final workerrevisiondeployment.

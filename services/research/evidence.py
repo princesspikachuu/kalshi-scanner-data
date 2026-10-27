@@ -239,7 +239,7 @@ class KalshiEvidence(KalshiInventory):
         scopes=self.batch;self.batch=();self.responses={}
         args=dict(market_tickers=','.join(s.ticker for s in scopes),
             start_ts=min(s.start_ts for s in scopes),end_ts=max(s.end_ts for s in scopes),period_interval=1)
-        response=self._read('/markets/candlesticks',args,timeout_seconds,parse_json,allow_missing=True)
+        response=self._read('/markets/candlesticks',args,timeout_seconds,parse_json,allow_missing=True,missing_statuses=(400,404,422))
         payload=response.payload
         if response.availability=='unavailable':
             for scope in scopes:self._single_next(scope)

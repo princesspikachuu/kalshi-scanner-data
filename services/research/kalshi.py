@@ -111,7 +111,7 @@ class KalshiInventory:
         path, args = scope.request(cursor)
         return self._read(path, args, timeout_seconds, parse_inventory)
 
-    def _read(self, path, args, timeout_seconds, parser, *, allow_missing=False):
+    def _read(self, path, args, timeout_seconds, parser, *, allow_missing=False, missing_statuses=(404,)):
         allowed = (path in ('/markets','/historical/markets','/markets/trades','/historical/trades','/markets/candlesticks')
             or re.fullmatch(r'/historical/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path)
             or re.fullmatch(r'/series/[A-Z0-9_-]{1,64}/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path))
@@ -137,8 +137,8 @@ class KalshiInventory:
                 cooldown = retry_after(response.headers.get('retry-after'), self.wall_clock())
                 # Honor server-requested service backoff across workers as well.
                 raise ProviderFailure('provider_unavailable', delay=min(3600,cooldown), cooldown=cooldown)
-            if response.status_code == 404 and allow_missing:
-                return ProviderPage({'http_status':404}, 'unavailable')
+            if allow_missing and response.status_code in missing_statuses:
+                return ProviderPage({'http_status':response.status_code}, 'unavailable')
             if response.status_code != 200:
                 # A listing 404 is not proof of an unavailable/empty series.
                 # Redirects/auth failures and unsupported statuses are terminal.
