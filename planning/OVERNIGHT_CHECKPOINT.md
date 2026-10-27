@@ -958,15 +958,28 @@ future Blueprint sync remains paused, sync:false does not overwrite existing URL
 Future migrations must use an isolated explicit operator context, not app runtime.
 
 Exact resume after passing CI: create independent high-entropy passwords privately,
-use libpq to calculate SCRAM verifiers, persist each pending runtime connection on
-its own existing Render service before activation, with private host/TLS required.
+use libpq to calculate SCRAM verifiers, persist each pending runtime password on
+its own existing Render service before activation. The activation receipt returns
+only the actual host/port/database from its DB connection; use these verified
+nonsecret fields to build private runtime URLs with sslmode=require.
 Merge temporary verifier JSON/operator flag only on the still-disabled worker;
 inspect nonsecret activation receipt. Then replace API DATABASE_URL and enable its
 strict API/profile gates, inspect read-only preDeploy audit and health. Replace
-worker DATABASE_URL/profile, clear temporary verifiers/pending fields and restore
+worker DATABASE_URL/profile, clear temporary verifiers/pending-password fields and restore
 flags off; inspect research profile audit and live disabled startup. Do not print
 secrets or raw env responses; do not reopen public DB or rerun role preparation.
 If activation receipt is uncertain, inspect it before any retry/credential generation.
 Finish with verified deploy IDs/results, CI and limitations in a new checkpoint.
 Owner must retest real browser login after cutover; representative performance,
 complete history/research shell and separately authorized tiny collection remain.
+
+Implementation ff13f87 CI 40561269120 PASSED: 212 API/research including all 67
+actual PostgreSQL cases, 7 policy, 19 gateway = 238 tests without skips, plus
+Blueprint validation. A default-off worker deployment dep-dbgeu26i0phs73ekqj4g
+was triggered from this tested head; no credentials or activation flag was set.
+Render env-update response contains only deployment metadata, not existing URLs.
+Small follow-up adds the nonsecret connection target to the activation receipt so
+cutover uses the actual connected host without retrieving operator credentials.
+Pending-password storage (each service's private PENDING_RUNTIME_PASSWORD) ensures
+recoverability before activation; clear to empty with the final runtime URL merge.
+No plaintext password, SCRAM verifier, private host or DSN belongs in this checkpoint.

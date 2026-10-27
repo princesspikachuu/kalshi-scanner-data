@@ -152,7 +152,8 @@ libpq SCRAM-SHA-256/4096 verifiers. Raw passwords never enter SQL or app logs.
 Activation checks staging/test DB, operator ownership, migration checksums, prepared
 NOLOGIN role attributes/no memberships/object ownership under the migration lock;
 both LOGIN/password changes commit atomically. A replay after success fails closed.
-Only a nonsecret activation receipt is logged. Store pending runtime URLs privately
+Only a nonsecret activation receipt (including host/port/database, never user/password)
+is logged. Store pending runtime passwords privately
 in each service before activation so interruption never loses the credentials.
 Never print env update responses, passwords, verifiers or connection strings.
 
@@ -166,7 +167,7 @@ unsafe privileges or changed/missing migration fails deployment before pool star
 Future schema migrations require a separate explicit operator session; retrieve the
 managed DB operator credential only there, never in long-lived app configuration.
 
-After activation/cutover, clear temporary verifier and pending-URL values, restore
+After activation/cutover, clear temporary verifier and pending-password values, restore
 operator/acceptance flags off and confirm live deploys/read-only profile receipts.
 Do not restore operator DATABASE_URL just to make a failed runtime deploy pass.
 If activation result is uncertain, inspect role status/receipts first; do not

@@ -172,6 +172,9 @@ class RuntimePrivilegesTests(unittest.TestCase):
         try:
             receipt=activate_runtime_roles(URL,verifiers)
             self.assertTrue(receipt['activated']);self.assertFalse(receipt['passwords_returned'])
+            self.assertEqual(set(receipt['connection_target']),{'host','port','database'})
+            self.assertEqual(receipt['connection_target']['database'],'pocket_test')
+            for password in passwords.values():self.assertNotIn(password,str(receipt))
             for profile,role in zip(('api','research'),RUNTIME_ROLES):
                 direct=urlsplit(URL)._replace(netloc=role+':'+passwords[role]+'@'+urlsplit(URL).netloc.rsplit('@',1)[-1]).geturl()
                 self.assertTrue(deployment_check(direct,profile)['privilege_boundary_ready'])

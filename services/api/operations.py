@@ -81,5 +81,6 @@ def activate_runtime_roles(url,verifiers):
         for role in RUNTIME_ROLES:
             # Only libpq-produced verifiers enter SQL, never the original passwords.
             c.execute(sql.SQL('ALTER ROLE {} LOGIN PASSWORD {}').format(sql.Identifier(role),sql.Literal(verifiers[role])))
+        target=dict(host=c.info.host,port=c.info.port,database=c.info.dbname)
     return dict(contract='runtime-role-activation-v1',activated=True,roles=2,
-                passwords_returned=False,runtime_isolated=False)
+                connection_target=target,passwords_returned=False,runtime_isolated=False)
