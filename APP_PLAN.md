@@ -2,6 +2,8 @@
 
 Status: working product plan. Planned features below are not claims about the current dashboard's capabilities.
 
+Draft expansion: [remaining app build plan](planning/BUILD_PLAN.md), including SQL/data design, continuous engine, paper/live phases, screens, failure behavior, acceptance gates and the first backlog. This planning branch is not a deployment.
+
 ## Product goal
 
 Run trading strategies automatically, with historical research supporting strategy selection and evaluation. The intended workflow is research → strategy testing → paper trading → live automation → performance review. The engine must keep operating when the phone app or browser is closed.
