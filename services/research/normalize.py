@@ -2,6 +2,8 @@
 
 No sampling, observations, ROI, publication, network fetch or trading occurs here.
 """
+from .telemetry import timed,timing,count
+
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -101,6 +103,7 @@ def _payload(scope, page, archives):
     return response['markets']
 
 
+@timed('inventory.normalize')
 def normalize_inventory(series, day, generation, attempts, archives, *, max_rows=250000, max_pages=10000, window=None):
     """attempts = iterable of (job, queue.page_evidence(job_id)).
 

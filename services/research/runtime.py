@@ -134,8 +134,12 @@ def run(settings,stop):
         heartbeat=WorkerHeartbeat(pool)
         print('Collection enabled; worker ready',flush=True)
         print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; recent candle batching enabled; evidence concurrency 4',flush=True)
+        from .telemetry import configure
+        meter=configure(lambda data:print(json.dumps(data,sort_keys=True,separators=(',',':')),flush=True))
         campaigns=CampaignStore(pool)
-        serve(campaigns,worker,stop,on_tick=heartbeat.beat,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        try:serve(campaigns,worker,stop,on_tick=heartbeat.beat,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        finally:
+            meter.flush(force=True);configure()
 
 
 def main(argv=None):

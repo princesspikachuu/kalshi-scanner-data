@@ -1782,3 +1782,31 @@ Future work remains full-sample large-history partitioning beyond250kentry/1Mbar
 needed for this deployed milestone. Skip future newcredentials/Googleaccount/paid
 expansion/operatorDDL until actually necessary. Keep development draft/unmerged,
 original production Worker unchanged, no trading or contacting others.
+
+## Throughput work resumed: instrumentation first
+
+Actual remote eba0e62, prior code CI40596795263 green, no other writer observed.
+Fresh pocket-throughput worktree. Owner authorized all six improvements: verified
+prelaunch skips,newest-first data,stop publication stalls,coalesced reports,reuse
+verified inventory,and keep trade enrichment from blocking candles. No paid upgrade.
+At23:32UTC Render returned NO further PGsignal9 since22:47UTC (~45min); previous
+compression mitigation now has a longer stable interval, not a speed benchmark.
+
+Added opt-in bounded30sec aggregate stage timings: providerHTTP, archiveencode/
+PUT/readback/GET/decode, inventorynormalize, datasetprepare/transaction/publication,
+reportbuild/save,categorybuild,queueheartbeat/checkpoint,budgettake,campaignstep.
+Only constant stage names and numeric counts/durations/byte totals appear; no
+URLs,tickers,sourcepayloads,credentials,owneridentity or exception messages. Sink
+failure cannot affect collection. Disabled on import/tests; enabled existingworker
+runtime. Move compression outside dataset publication transaction to avoid holding
+DB lock/connection during encoding. Local250tests:170pass,80PGskip; priorJS/policy
+unchanged. Publish/CI/deploy worker to obtain timings while next changes develop.
+
+Historical weather diagnosis since last checkpoint: official initial-listing PDFs
+LOCALTEMPERATURE March5,2026; NYCWINDEX/CHIMETROWINDEX/LAWINDEX September9,2026;
+MIAWINDEX August12,2026. Actual series metadata links verified for NYCH,CHIH,DCH,
+NYCHS,CHIHS,LAXHS,MIAH. LegacyKXTEMPLAH metadata returned404: do not invent its
+start bound. All8 recent list queries max_close_ts=2025-12-22 returned0; historical
+routes4empty,4have2026settledrows andmorepages. Existing report0candidate count
+is not56days of populated data. Implement explicit proof-bearing exclusions only
+for verified series; keep unknown series queried and preserve immutable oldversions.

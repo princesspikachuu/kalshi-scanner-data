@@ -1,4 +1,6 @@
 """Bounded immutable JSON archives, independent of any hosted bucket or credential."""
+from .telemetry import timed,timing,count
+
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -58,6 +60,7 @@ def _no_constant(value):
     raise ArchiveInvalid('Nonfinite JSON number')
 
 
+@timed('archive.decode')
 def decode(body, max_decoded=MAX_DECODED):
     if not isinstance(body, bytes) or len(body) > MAX_COMPRESSED:
         raise ArchiveInvalid('Invalid compressed archive size')
@@ -94,6 +97,7 @@ class PreparedArchive:
                 'metadata': {'format': 'json-gzip-v1', 'decoded_bytes': self.decoded_bytes}}
 
 
+@timed('archive.encode')
 def prepare(provider, value):
     if not isinstance(provider, str) or not re.fullmatch('[a-z][a-z0-9_-]{0,63}', provider):
         raise ArchiveInvalid('Invalid provider')
@@ -143,17 +147,21 @@ class ArchiveStore:
     def __init__(self, objects: ObjectStore):
         self.objects = objects
 
+    @timed('archive.upload')
     def upload(self, provider, payload):
         archive = prepare(provider, payload)
-        self.objects.put_if_absent(archive.key, archive.body, 'application/gzip')
+        with timing('archive.put'):
+            self.objects.put_if_absent(archive.key, archive.body, 'application/gzip')
         # Read after write also verifies an object that already existed. Only issue
         # a DB checkpoint receipt after exact bytes are durably retrievable.
-        body = self.objects.get(archive.key, MAX_COMPRESSED)
+        with timing('archive.verify_read'):
+            body = self.objects.get(archive.key, MAX_COMPRESSED)
         verify(archive.key, body, len(archive.body))
         if body != archive.body:
             raise ArchiveInvalid('Archive evidence mismatch')
         return archive.receipt()
 
+    @timed('archive.read')
     def read(self, receipt):
         key = receipt['object_key']
         # Reject invalid keys before touching the object store.
@@ -167,6 +175,7 @@ class ArchiveStore:
         length = receipt.get('byte_length')
         if type(length) is not int or not 0 <= length <= MAX_COMPRESSED:
             raise ArchiveInvalid('Invalid archive receipt size')
-        body = self.objects.get(key, MAX_COMPRESSED)
+        with timing('archive.get'):
+            body = self.objects.get(key, MAX_COMPRESSED)
         verify(key, body, length)
         return decode(body)

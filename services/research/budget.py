@@ -1,5 +1,7 @@
 """Cross-process conservative token budget; no sleeps while holding DB locks."""
 import math
+from .telemetry import timed,timing,count
+
 from .queue import EvidenceConflict, text_key
 
 
@@ -23,6 +25,7 @@ class ReadBudget:
                 c.execute('''UPDATE research_read_budget SET refill_per_second=%s,capacity=%s,
                     tokens=LEAST(tokens,%s) WHERE name=%s''',(refill_per_second,capacity,capacity,self.name))
 
+    @timed('budget.take')
     def take(self, cost):
         """Return 0 if reserved, otherwise seconds until caller may try again."""
         if type(cost) is not int or cost < 1:

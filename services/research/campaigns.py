@@ -3,6 +3,8 @@
 No service, scheduler or network request starts on import. Publication means RAW
 coverage, not quote eligibility, research completion or a trading recommendation.
 """
+from .telemetry import timed,timing,count
+
 from datetime import date,datetime,time,timedelta,timezone
 from dataclasses import replace
 from uuid import UUID,uuid4,uuid5
@@ -369,6 +371,7 @@ class CampaignWorker:
             'candidates':tuple(Candidate(**{**r,'evidence':tuple(Evidence(**e) for e in r['evidence'])}) for r in raw['candidates'])})
         return plan_from_receipt(batch,day['manifest'],campaign['config']['lookback_seconds'],campaign['config']['resources'])
 
+    @timed('campaign.step')
     def step(self,parent,*,deadline):
         identifier=UUID(parent['parameters']['campaign_id'])
         self.queue.heartbeat(parent['id'],parent['lease_token'],600)

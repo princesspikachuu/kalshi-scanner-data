@@ -1,4 +1,6 @@
 """Bounded public market inventory reads. No account credentials or trade routes."""
+from .telemetry import timed,timing,count
+
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
@@ -111,6 +113,7 @@ class KalshiInventory:
         path, args = scope.request(cursor)
         return self._read(path, args, timeout_seconds, parse_inventory)
 
+    @timed('provider.http')
     def _read(self, path, args, timeout_seconds, parser, *, allow_missing=False, missing_statuses=(404,)):
         allowed = (path in ('/markets','/historical/markets','/markets/trades','/historical/trades','/markets/candlesticks')
             or re.fullmatch(r'/historical/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path)

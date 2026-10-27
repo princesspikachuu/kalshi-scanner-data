@@ -4,6 +4,8 @@ Partial rolling windows overlay only their own half-open UTC coverage. An empty
 newer window supersedes older candidates inside that window; outside history stays.
 No provider calls, dataset edits, sampling, or request-time report computation.
 """
+from .telemetry import timed,timing,count
+
 from collections import defaultdict
 from datetime import datetime,timezone
 import heapq
@@ -48,6 +50,7 @@ def select_windows(rows):
     return result
 
 
+@timed('category.build')
 def prepare_category(asset,datasets,manifest,revision,*,publication_complete=True):
     if asset not in SERIES or type(revision) is not int or revision<1:raise ValueError('Invalid category revision')
     windows=select_windows(manifest)

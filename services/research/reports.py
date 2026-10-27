@@ -1,4 +1,6 @@
 """Versioned full-hold-cohort research summaries; no trades or hosting actions."""
+from .telemetry import timed,timing,count
+
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
@@ -157,6 +159,7 @@ def prepare_report(asset,datasets,*,latest_ids):
     return prepare_report_stream(asset,iter(sorted(datasets,key=lambda d:d['id'])),latest_ids=latest_ids)
 
 
+@timed('report.build')
 def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     """Load one immutable raw dataset at a time, retaining bounded derived inputs.
 
@@ -225,6 +228,7 @@ class ReportStore:
         prepared=prepare_report(asset,datasets,latest_ids=latest_ids)
         return self._save(stream_key,asset,prepared)
 
+    @timed('report.save')
     def _save(self,stream_key,asset,prepared,*,minimum_revision=None):
         payload=json.loads(prepared.payload_json)
         # Preview cells retain full source cohorts; raw datasets already retain

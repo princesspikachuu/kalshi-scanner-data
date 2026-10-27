@@ -6,6 +6,8 @@ Keep remote fetch/upload work OUTSIDE these short database transactions.
 """
 import json
 import re
+from .telemetry import timed,timing,count
+
 from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
@@ -90,12 +92,14 @@ class ResearchQueue:
             raise LeaseLost('Collection lease expired, replaced or cancelled')
         return row
 
+    @timed('queue.heartbeat')
     def heartbeat(self, job_id, token, seconds=120):
         seconds = lease_seconds(seconds)
         with self.pool.connection() as c:
             self._owned(c, job_id, token)
             c.execute("UPDATE research_job SET lease_expires_at=clock_timestamp()+%s*interval '1 second' WHERE id=%s", (seconds, job_id))
 
+    @timed('queue.checkpoint')
     def checkpoint(self, job_id, token, page_key, archive, checkpoint):
         """Call only after immutable object upload + checksum verification succeeded.
 

@@ -2,6 +2,8 @@
 
 No observations, ROI, loss policy, provider requests or trading are computed here.
 """
+from .telemetry import timed,timing,count
+
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 import json
@@ -117,6 +119,7 @@ def _canonical(resource,row):
     return result
 
 
+@timed('dataset.prepare')
 def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
     """inventory_loader(id) -> (DB job, committed pages with receipts).
 
@@ -227,13 +230,17 @@ class DatasetStore:
     """Publish outside hosted infrastructure; pool must be explicitly supplied."""
     def __init__(self,pool): self.pool = pool
 
+    @timed('dataset.publish')
     def publish(self,stream_key,prepared):
         text_key(stream_key,128)
         payload,summary,artifacts = map(json.loads,(prepared.payload_json,prepared.summary_json,prepared.artifacts_json))
         if (payload.get('format')!=FORMAT or digest(payload)!=prepared.fingerprint or payload['summary']!=summary
                 or payload.get('artifacts')!=artifacts or summary.get('version')!='evidence-coverage-v1'):
             raise EvidenceConflict('Prepared dataset integrity mismatch')
-        with self.pool.connection() as c:
+        stored=storage_payload(prepared.payload_json,prepared.fingerprint)
+        count('dataset.raw_bytes',len(prepared.payload_json.encode()))
+        count('dataset.stored_bytes',len(json.dumps(stored).encode()))
+        with timing('dataset.transaction'),self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91027))',(stream_key,))
             existing = c.execute('SELECT id FROM research_dataset WHERE stream_key=%s AND fingerprint=%s',(stream_key,prepared.fingerprint)).fetchone()
             if existing: return existing['id']
@@ -246,7 +253,7 @@ class DatasetStore:
             if {a['object_key']:a for a in saved}!={a['object_key']:a for a in artifacts}:
                 raise EvidenceConflict('Artifact registry conflict')
             row = c.execute('''INSERT INTO research_dataset(stream_key,fingerprint,day,payload)
-                VALUES(%s,%s,%s,%s) RETURNING id''',(stream_key,prepared.fingerprint,payload['day'],Jsonb(storage_payload(prepared.payload_json,prepared.fingerprint)))).fetchone()
+                VALUES(%s,%s,%s,%s) RETURNING id''',(stream_key,prepared.fingerprint,payload['day'],Jsonb(stored))).fetchone()
             dataset_id = row['id']
             c.execute('INSERT INTO research_summary(dataset_id,version,summary) VALUES(%s,%s,%s)',(dataset_id,summary['version'],Jsonb(summary)))
             c.execute('INSERT INTO research_dataset_artifact(dataset_id,object_key) SELECT %s,unnest(%s::text[])',(dataset_id,keys))
