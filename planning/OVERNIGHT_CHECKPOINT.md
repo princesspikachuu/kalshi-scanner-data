@@ -884,3 +884,46 @@ any future sync; leave sync paused. API credential cutover must enable its new g
 Local validation: 142 API/research cases passed, 65 actual-PG cases skipped without
 a disposable DB; 7 policy and 19 gateway cases passed. Compile/dependency/diff
 checks passed. Hosted role preparation remains unapplied until actual-PG CI passes.
+
+## Non-login roles prepared on staging (October 27, 2026)
+
+Implementation 96f59f3428359daa438e89d6dd154d95e1179eea CI 40555906525
+PASSED: 207 API/research including 65 actual-PG cases, 7 policy, 19 gateway =
+233 tests without skips, plus Blueprint validation. No app/model/table changes.
+
+After confirming unchanged tested head, merged only temporary worker operator flag
+and explicit collection=false/diagnostics=off into existing environment. Deployment
+dep-dbgee6rl550s73bnfgog LIVE from 96f59f3. At 18:03:16 UTC JSON receipt:
+contract runtime-role-preparation-v1, prepared=true, login_enabled=false,
+passwords_created=false, runtime_isolated=false. This confirms the transaction
+created pocket_api_runtime and pocket_research_runtime NOLOGIN roles, applied the
+reviewed explicit grants and PUBLIC schema CREATE/TEMP revocations, and verified
+no privileged role attributes, memberships or object ownership for those roles.
+No passwords were generated and existing service DATABASE_URLs were not changed.
+No collected data/history was modified, no collection/R2 acceptance was started.
+
+Reset STAGING_OPERATOR_ACTION=off, STAGING_ACCEPTANCE=off and COLLECTION_ENABLED=false.
+Reset deploy dep-dbgeetqjnfac73a2iv40 started from the same tested runtime commit.
+Verified reset LIVE at 18:05:14 UTC; logs show normal startup with operator/
+diagnostic flags off and collection false. Independent API readiness returned
+HTTP 200; no new API error logs were returned for the post-preparation interval.
+API itself remains on existing 4fdc898 runtime until coordinated credential cutover;
+its new strict startup gate is tested in source but is not yet enabled/hosted there.
+
+Exact next step needs owner-controlled private credential entry, which this run
+skips under the standing no-new-credentials boundary. Do NOT re-run role preparation
+or silently replace these now-existing role names. Securely establish independent
+LOGIN passwords for the two prepared roles. Preserve the generated DB operator
+credential only in a separate explicit migration context, remove migration
+preDeploy commands from API/worker before replacing their runtime DATABASE_URLs,
+remove all operator credential variables from those runtime environments, set
+REQUIRE_API_RUNTIME_DB=true, and deploy the tested API/disabled worker. Check
+profile-specific direct-login audit and real login/logout again. Reconcile the
+paused Blueprint so a future manual sync cannot restore operator URLs/preDeploy
+migrations. No current Blueprint sync should be performed. Keep collection off.
+
+Continuation boundary: ask owner whether the earlier no-new-credentials restriction
+may be lifted specifically to create independent private API/research DB passwords
+and store the corresponding runtime connections ONLY in Render. Do not generate
+those credentials or perform the credential cutover without resolving that boundary.
+This is an existing user instruction, not a requirement inferred from a skill.

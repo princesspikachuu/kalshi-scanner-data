@@ -3,8 +3,9 @@
 Verified on October 27, 2026: real R2 conditional-write/readback/reuse acceptance
 passed with an 88-byte retained marker; hosted DB audit verified nine matching
 migrations and correctly rejected operator credentials as a runtime boundary.
-224 tests passed in CI 40553521523. Proposed runtime-role SQL is still unapplied;
-credential/migration separation remains pending. See the latest checkpoint for
+224 tests passed in CI 40553521523. Runtime-role SQL was subsequently applied as NOLOGIN role preparation by
+96f59f3 (receipt verified); passwords and runtime credential/migration separation
+remain pending. Do not re-run the fresh-role transaction. See the latest checkpoint for
 exact deploy IDs and final diagnostic-off verification.
 
 
@@ -54,7 +55,7 @@ python -m services.research.acceptance r2 --write-r2-probe
 Do not copy hosted credentials locally to run these. Error output intentionally
 omits SDK/PG diagnostics that might include private URLs or credentials.
 
-## Database permission plan — prepared, not automatically applied
+## Database permissions — non-login role preparation applied
 
 infra/runtime-roles.sql is a separate explicit operator transaction, NOT a numbered
 migration, startup hook or deploy command. It creates two fresh NOLOGIN roles:
@@ -81,7 +82,9 @@ Do not leave the operator URL available to runtime or rely on SET ROLE: an opera
 session can reset/escalate back. Current Blueprint preDeploy/runtime share DATABASE_URL,
 so removing the operator from runtime also requires splitting migration execution
 from service startup before changing URLs. No password is generated or committed
-by this permission-plan milestone, and the plan has NOT been applied to staging.
+by this permission-plan milestone. The grants are now applied to the NOLOGIN
+roles, but the running processes still use the operator credential; actual
+runtime isolation remains pending.
 
 Real disposable-PG tests exercise auth, campaign controls, queue claims, budget
 configuration and dataset/report publication under the proposed grants. They deny
