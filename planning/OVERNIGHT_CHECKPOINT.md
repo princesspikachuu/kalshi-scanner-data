@@ -719,3 +719,30 @@ least-privilege DB/R2 acceptance before explicitly enabling collection. Credenti
 owner email and callback URLs/tokens are excluded from public source. Render sizes,
 collection-off, automatic-deploy-off and live Cloudflare app remain unchanged.
 CI 40544709439 passed on 6401c6f; only documentation updated in this checkpoint.
+
+
+## External audience consent reached; final session result unknown
+
+Owner reports adding the account as a test user. A fresh staging challenge and
+Google popup no longer returned org_internal; Google displayed consent for only
+name/profile picture/email. Owner explicitly authorized that disclosure to this
+staging app after automatic browser review required action-time confirmation.
+Clicked Continue once. The original app initially showed its existing login UI;
+subsequent rendered-state verification timed out after 300 seconds. Immediately
+attempted a fresh staging tab per browserAuth recovery guidance; it also timed out
+after 300 seconds. Authentication outcome is UNKNOWN, not verified success/failure.
+No repeated consent/sign-in attempt, credential inspection or bypass was performed.
+Render request-log query for auth/google, auth/me and auth/logout returned no logs;
+this is not evidence of either authentication result. Application access logs are
+intentionally disabled. CI 40546898797 passed on 6af6725.
+
+Resume: when browser control recovers, first load the canonical staging root in a
+fresh tab and inspect current-user UI. Do not repeat sign-in blindly; an owner
+session may already exist. If signed in, verify persistence on reload and perform
+one normal logout, then verify current-user is unauthenticated. If signed out,
+inspect visible non-secret error state; a new sign-in must use a fresh challenge.
+The owner consent authorization above covers the same name/profile/email sharing
+with this staging app, but browser security/access rules still apply to new steps.
+Never store callback URLs, tokens, cookies, private email or proxy values in git.
+Collection remains disabled; hosted roles/R2 integrity/performance acceptance remain
+pending, with no changes to paid plans, automatic deploy settings or the live app.
