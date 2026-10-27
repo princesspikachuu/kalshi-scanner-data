@@ -35,7 +35,7 @@ Determine the downside sale-price threshold for each original purchase-price cat
 
 For each purchase-price category, show the recommended downside sale-price threshold (or no supported threshold), expected net proceeds from selling versus holding at that decision point, net profit/loss and ROI after modeled costs, improvement or deterioration versus holding, sample size and date coverage, frequency and timing of exits, realized loss reductions, later recoveries missed by exiting, and losing-period/drawdown measures. Include all qualifying trades and price paths, not just positions that eventually lost. Show uncertainty and performance on later or otherwise held-out data that was not used to choose the threshold.
 
-Rank rules on consistent net outcomes, not win rate alone. The interface must distinguish historical simulations, estimated fills, forward paper trading, and actual execution.
+Select the highest expected-net-improvement research candidate before confidence/validation gating. If that candidate lacks evidence, report no reliable threshold instead of falling back to a smaller low-variance salvage threshold. Prefer the higher sale price on an exact expected-outcome tie. Show the approximate percentage of entry price lost at the candidate; a small salvage benefit must not be presented as preventing most of a loss. Rank rules on consistent net outcomes, not win rate alone. The interface must distinguish historical simulations, estimated fills, forward paper trading, and actual execution.
 
 ### Acceptance criteria
 

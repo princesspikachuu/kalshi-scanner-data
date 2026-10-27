@@ -109,13 +109,22 @@ def choose_rule(items):
     candidates = []
     for threshold in items[0]['exits']:
         stats = independent_stats(train, threshold)
-        if stats['markets'] >= 30 and stats['events'] >= 10 and stats['triggers'] >= 10 and stats['lower_bound'] > 0:
-            candidates.append((stats['gain'], -threshold, threshold))
+        if stats['markets'] >= 30 and stats['events'] >= 10 and stats['triggers'] >= 10:
+            candidates.append((stats['gain'], threshold, stats))
     if not candidates:
-        info['reason'] = 'No downside threshold has enough positive training evidence.'
+        info['reason'] = 'Insufficient training observations to compare downside thresholds.'
         return info, train, test
-    # Choose only on training. Never try another candidate on validation failure.
-    threshold = max(candidates)[2]
+    # Optimize expected improvement BEFORE applying confidence checks. Do not
+    # fall back to tiny, low-variance salvage when the best candidate is uncertain.
+    # On exactly equal gains, prefer the higher (earlier) downside threshold.
+    gain, threshold, training_stats = max(candidates, key=lambda v:(v[0],v[1]))
+    entry_mean=sum(x['entry'] for x in train)/len(train)
+    info.update({'candidate_cents': threshold, 'training_gain_cents': round(gain,4),
+                 'mean_entry_cents': round(entry_mean,4),
+                 'price_loss_at_threshold_percent': round(100*(entry_mean-threshold)/entry_mean,2)})
+    if gain <= 0 or training_stats['lower_bound'] <= 0:
+        info['reason'] = 'Best expected-outcome candidate lacks reliable training evidence; no fallback to a smaller salvage threshold.'
+        return info, train, test
     stats = independent_stats(test, threshold)
     info.update({'candidate_cents': threshold, 'validation_gain_cents': round(stats['gain'], 4),
                  'validation_triggers': stats['triggers'], 'validation_events': stats['events']})
@@ -200,10 +209,10 @@ def build_loss_report():
     from build_report import ASSETS, read_rows
     target = Path('backtests/LOSS_PREVENTION.json')
     previous = json.loads(target.read_text()) if target.exists() else {}
-    result = {'version': 1, 'historical': {}, 'latest': previous.get('latest', {}),
+    result = {'version': 1, 'policy_version': 2, 'historical': {}, 'latest': previous.get('latest', {}) if previous.get('policy_version') == 2 else {},
         'entry_fee_cents': ENTRY_FEE_CENTS, 'exit_fee_cents': EXIT_FEE_CENTS,
         'threshold_step_cents': 5, 'published_at': dt.datetime.now(dt.timezone.utc).isoformat(),
-        'method': 'One-contract minute-close bid simulation; entry fill assumed; no depth, queue, latency or slippage replay. Fee stress is 1 cent entry and 2 cents per early sale, not verified market fees. Triggers are evaluated after entry, strictly before close. Missing paths excluded. Thresholds selected on earlier dates and evaluated only on later dates; training rows excluded from comparison once split. Exploratory validation is not proof of a live edge.'}
+        'method': 'One-contract minute-close bid simulation; entry fill assumed; no depth, queue, latency or slippage replay. Fee stress is 1 cent entry and 2 cents per early sale, not verified market fees. Triggers are evaluated after entry, strictly before close. Missing paths excluded. The highest expected-improvement candidate is chosen on earlier dates, then must pass training confidence and later validation; weak candidates are not replaced by smaller salvage thresholds. Equal-gain candidates prefer the higher sale price; training rows excluded from comparison once split. Exploratory validation is not proof of a live edge.'}
     stage = Path(os.environ.get('POCKET_COLLECTION_STAGE', '.run-collection'))
     for asset, _, folder, _, _ in ASSETS:
         rows = read_rows(folder)
@@ -214,7 +223,8 @@ def build_loss_report():
         if latest is not None:
             result['latest'][asset] = latest
         else:
-            result['latest'].setdefault(asset, {'records': [], 'rules': [], 'path_observations': 0})
+            result['latest'].setdefault(asset, {'records': [], 'rules': [], 'path_observations': 0,
+                'note': 'A fresh collection is needed to rebuild this exact-run study under the corrected threshold-selection policy.'})
     target.write_text(json.dumps(result, separators=(',', ':'), allow_nan=False) + '\n')
     print('Published loss-prevention comparison; only collected quote paths are eligible.')
 
