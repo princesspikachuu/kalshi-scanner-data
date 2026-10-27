@@ -97,9 +97,11 @@ limitations are recorded in the research README. No hosted requests occurred.
 Local verification: 32 API/research tests passed, 16 PostgreSQL tests skipped
 because no disposable local PostgreSQL was configured; 7 owner-policy and 14
 browser/gateway tests passed. Blueprint validation and diff whitespace checks
-passed. The new 12 SDK cases are included in those counts. Full PostgreSQL
-verification remains CI's responsibility. Inspect the workflow on this milestone's
-commit before treating the full 69-test CI suite as passed.
+passed. The new 12 SDK cases are included in those counts. **CI run 40459061835 passed** on implementation commit
+`6af4f5efc284e72ceac32ad31d75db962ab162e1`: 48 API/research tests (including all
+16 actual PostgreSQL cases), 7 owner-policy tests and 14 gateway/client tests.
+No skips in CI: **69 automated tests plus Blueprint validation passed**. Logs
+confirmed no deployment job ran. Local dependency consistency check also passed.
 
 This milestone changes only research code/tests, SDK dependencies, documentation
 and this checkpoint. Existing live collector, loss prevention, table/full-sample
