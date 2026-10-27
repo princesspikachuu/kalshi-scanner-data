@@ -10,6 +10,7 @@ projects:
           - type: web
             name: pocket-api-staging
             runtime: python
+            branch: build/google-auth-foundation
             region: oregon
             plan: 0.5c-512mb
             numInstances: 1
@@ -33,12 +34,41 @@ projects:
                 sync: false
               - key: OWNER_GOOGLE_EMAIL
                 sync: false
+          - type: worker
+            name: pocket-research-staging
+            runtime: python
+            branch: build/google-auth-foundation
+            region: oregon
+            plan: 1c-2g
+            numInstances: 1
+            autoDeployTrigger: 'off'
+            maxShutdownDelaySeconds: 120
+            buildCommand: pip install -r services/api/requirements.txt
+            preDeployCommand: python -m services.api.manage migrate
+            startCommand: python -m services.research.runtime
+            envVars:
+              - fromGroup: pocket-r2-staging
+              - key: PYTHON_VERSION
+                value: 3.12.12
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: pocket-db-staging
+                  property: connectionString
+              - key: COLLECTION_ENABLED
+                value: 'false'
+              - key: KALSHI_READ_RATE
+                value: '1'
+              - key: KALSHI_READ_CAPACITY
+                value: '1'
+              - key: KALSHI_ENDPOINT_COST
+                value: '1'
         databases:
           - name: pocket-db-staging
             databaseName: pocket_staging
             user: pocket_staging
-            plan: 0.1c-256mb
+            plan: 0.5c-1g
             region: oregon
             postgresMajorVersion: '17'
             diskSizeGB: 5
+            storageAutoscalingEnabled: false
             ipAllowList: []

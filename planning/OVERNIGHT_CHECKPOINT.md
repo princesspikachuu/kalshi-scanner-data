@@ -443,6 +443,54 @@ No merge/deployment/provisioning/live infrastructure alteration or trading occur
 This build session has finished writing; no background worker is left running.
 Auto settings remain OFF in the schema by default; no hosted setting was changed.
 
+## Twelfth milestone: owner-created secret group and concrete staging wiring
+
+Owner provided a public Google Web client ID privately, enabled R2, and reports
+creating the private archive bucket/credentials plus an unlinked Render environment
+group named pocket-r2-staging. No secret values were retrieved. Render repository
+build access was explained but still needs confirmation if the repo is not visible.
+Resumed from actual remote `5eb069c`; CI 40515944133 passed. Used fresh pocket-runtime
+worktree and preserved the older dirty kalshi-data-pipeline worktree.
+
+Added services/research/runtime.py: exact R2 environment names, private DB config,
+explicit read budgets, no ambient credentials/alternate exchange host, secret-safe
+errors/repr and an offline --check-config mode. COLLECTION_ENABLED defaults false;
+disabled mode opens no DB/R2/HTTP clients and does not schedule work. Enabled mode
+wires the verified archive, shared budget, targeted page workers, campaign scheduler
+and publication loop. SIGTERM/SIGINT stop accepting work and close clients/pool.
+No process was started here. Six new unit cases verify gating, safe configuration,
+resource cleanup, signal restoration and actual adapter-constructor wiring via mocks.
+
+Updated the UNLINKED Blueprint with one research worker, referencing only the
+owner-created R2 group, explicit development branch and internal database connection.
+API gets no R2 group. Auto deploys/previews remain off, collection remains false,
+DB public access stays disabled and disk autoscaling is off. Proposed plans: API
+0.5c-512mb, research worker 1c-2g, DB 0.5c-1g with 5 GB storage, all Oregon. This is
+a costed sizing proposal, not measured capacity or a claim all dense ranges fit.
+CI schema guard now enforces collection-off and credential-group separation.
+
+infra/STAGING_LAUNCH.md records the exact branch/file/commands, secret prompt fields,
+private-network/deploy sequencing, startup checks, outstanding privileges and real
+connection acceptance, and a current official-source budget: about $52.50/month
+Render compute+5GB disk, plus taxes/workspace/usage as applicable and Cloudflare/R2
+overages. No trading service. Markdown docs were unreadable by the web fetch tool;
+read the official HTML alternatives. Local network schema validation was not retried;
+CI performs the existing read-only schema GET. No deployment or resource mutation.
+
+Verification: six runtime cases pass locally after correcting an adapter class-name
+import found during development. Clean local rerun: 128 API/research cases passed, 58 PG cases skipped without a
+disposable local DB; 7 policy and 19 gateway cases passed. Dependency/compile/diff
+checks pass. CI including the schema guard is pending this implementation commit. Do not claim hosted keys,
+group contents or connection tests passed: the Render connector has no env-group
+inspection tool and only the owner has entered the values. No secrets in source.
+
+Next: inspect new CI and update verified counts. Present the exact paid staging
+proposal before asking owner to authorize resource creation/initial staging deploy.
+Do not sync/create a Blueprint merely because the owner finished an environment
+group. The group's contents/linkability, owner login and tiny R2 read/write acceptance
+still need verification after authorized staging creation. Harden DB runtime roles
+before enabling collection. Full table/history shell and performance work remain.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
 1. Inspect latest head/CI and fix any failure first. The user-requested date-range
@@ -473,7 +521,8 @@ merge, deploy, provision or trade during this build.
 
 ## Owner-only items to leave pending
 
-Google Web OAuth client/public client ID, hosted resource/budget authorization,
+Public Google client ID received and R2 group creation reported by owner. Still pending:
+hosted resource/budget authorization,
 secure runtime secrets, R2 bucket/access configuration/retention and least-privilege
 runtime roles, real R2 read/write and staging sign-in acceptance. Pure-code work
 needs no owner action. Keep owner email and credentials out of the public repo.
