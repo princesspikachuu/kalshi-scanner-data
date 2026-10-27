@@ -78,7 +78,7 @@ def scope_for_job(job):
     return Scope(**p['scope'])
 
 
-def page_key(scope, sequence): return f'inventory/{scope.key}/{sequence:06d}'
+def page_key(scope, sequence): return f'{getattr(scope, "page_namespace", "inventory")}/{scope.key}/{sequence:06d}'
 
 
 @dataclass(frozen=True)
@@ -159,22 +159,39 @@ class ProviderFailure(Exception):
         super().__init__(code)
 
 
+def inventory_page(scope, payload, availability):
+    if availability == 'unavailable':
+        if payload != {}: raise ProviderFailure('provider_invalid', retry=False)
+        return [], ''
+    if not isinstance(payload, dict) or not isinstance(payload.get('markets'), list) or 'cursor' not in payload:
+        raise ProviderFailure('provider_invalid', retry=False)
+    rows = payload['markets']
+    raw_cursor = '' if payload['cursor'] is None else payload['cursor']
+    try: cursor = valid_cursor(raw_cursor)
+    except ValueError: raise ProviderFailure('provider_invalid', retry=False) from None
+    if len(rows) > 1000 or any(not isinstance(row, dict) for row in rows):
+        raise ProviderFailure('provider_invalid', retry=False)
+    return rows, cursor
+
+
 class InventoryWorker:
     """Call step for an already-claimed job, repeatedly while pending/throttled.
     provider.fetch(scope, cursor, timeout_seconds) performs exactly ONE read;
     no internal retries, sleeps or trading. The shared budget charges every read.
     archives is an ArchiveStore; queue is ResearchQueue; clock is monotonic.
     """
-    def __init__(self, queue, archives, provider, budget, *, endpoint_cost, max_pages=10000, clock=time.monotonic):
+    def __init__(self, queue, archives, provider, budget, *, endpoint_cost, max_pages=10000, clock=time.monotonic,
+                 scope_loader=scope_for_job, page_parser=inventory_page):
         if type(endpoint_cost) is not int or endpoint_cost < 1 or type(max_pages) is not int or not 1 <= max_pages <= 10000:
             raise ValueError('Invalid worker limits')
         self.queue, self.archives, self.provider, self.budget = queue, archives, provider, budget
         self.cost, self.max_pages, self.clock = endpoint_cost, max_pages, clock
+        self.scope_loader, self.page_parser = scope_loader, page_parser
 
     def step(self, job, *, deadline):
         if type(deadline) not in (int, float) or not math.isfinite(deadline):
             raise ValueError('Invalid monotonic deadline')
-        scope = scope_for_job(job)
+        scope = self.scope_loader(job)
         job_id, token = job['id'], job['lease_token']
         self.queue.heartbeat(job_id, token)
         state = inspect_pages(scope, self.queue.pages(job_id))
@@ -193,18 +210,7 @@ class InventoryWorker:
             if not isinstance(response, ProviderPage) or response.availability not in ('available', 'unavailable'):
                 raise ProviderFailure('provider_invalid', retry=False)
             payload = response.payload
-            if response.availability == 'unavailable':
-                if payload != {}: raise ProviderFailure('provider_invalid', retry=False)
-                rows, cursor = [], ''
-            else:
-                if not isinstance(payload, dict) or not isinstance(payload.get('markets'), list) or 'cursor' not in payload:
-                    raise ProviderFailure('provider_invalid', retry=False)
-                rows = payload['markets']
-                raw_cursor = '' if payload['cursor'] is None else payload['cursor']
-                try: cursor = valid_cursor(raw_cursor)
-                except ValueError: raise ProviderFailure('provider_invalid', retry=False) from None
-                if len(rows) > 1000 or any(not isinstance(row, dict) for row in rows):
-                    raise ProviderFailure('provider_invalid', retry=False)
+            rows, cursor = self.page_parser(scope, payload, response.availability)
             cp = {'scope': scope.key, 'sequence': state.pages, 'cursor_in': state.next_cursor,
                   'cursor_out': cursor, 'items': len(rows), 'availability': response.availability}
             page = {'page_key': page_key(scope, state.pages), 'checkpoint': cp}

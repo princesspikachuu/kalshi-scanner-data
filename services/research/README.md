@@ -314,3 +314,76 @@ No live provider/object-store traffic is required. Reviewed existing
 `scripts/collect_backtest.py` and current official market schemas on October 27,
 2026: https://docs.kalshi.com/api-reference/market/get-markets and
 https://docs.kalshi.com/api-reference/historical/get-historical-market.
+
+## Resumable candle/trade evidence (not running)
+
+`evidence.py` plans raw evidence for a ready normalized candidate batch. Call
+`build_scopes(batch, archive_store, lookback_seconds=..., resources=...)`. It
+archives a JSON-native versioned manifest with the complete candidate membership,
+input provenance and fingerprint, then returns an `EvidencePlan`. Retain its
+manifest receipt even for a ready empty batch. Planning performs no provider
+reads or enqueue operations. Every candidate is planned; safety limits fail
+rather than silently sampling. Optional trade resources do not alter membership.
+
+Lookback is 60..86400 seconds before close, divided into windows of at most six
+hours. Unix bounds use the ceiling of close time; retain exact candidate close
+time when later selecting valid entry quotes or excluding after-close trades.
+One-minute candles use bounded time windows; trades use cursor pages of at most
+1000 rows. Recent and historical sources are separate scopes, allowing explicit
+migration/fallback evidence without inferring routing from close dates or hiding
+an unavailable source. Candle and trade cutoffs can differ. All requests are
+charged separately to the shared budget. There is no hidden retry/fallback call.
+
+Enqueue each scope's `parameters()` with a stable idempotency key based on its
+key. Claim normally and call `EvidenceWorker.step` with a fixed monotonic deadline,
+shared read budget and explicit endpoint token cost. The worker reuses the tested
+inventory lease/checkpoint engine with an evidence-specific scope loader/parser
+and `evidence/` page namespace. Default inventory behavior remains unchanged.
+Before fetching, it reads/verifies the manifest and checks exact candidate
+membership and settled identity. This binds the normalized output; it does not
+re-read every original inventory object on every evidence step. Publication must
+independently validate the chosen complete input/evidence membership.
+
+`KalshiEvidence` shares the bounded, fixed-host credential-free HTTP transport.
+It exposes only recent/historical public candle and trade GET routes. Listing 404s
+remain errors; evidence-route 404s are recorded as explicit unavailable pages with
+only HTTP status metadata, never synthetic empty data. Other HTTP errors remain
+safe retries/failures. No actual provider requests or hosted object writes have run.
+
+Candle responses must match the requested ticker/window. Both current recent
+`close_dollars` and documented historical `close` price fields retain their
+original decimal strings. Numeric cents are not guessed or converted to dollars.
+Null/absent quote fields remain raw incomplete quote evidence. Trades retain price
+and quantity strings, taker direction and block status; identities, windows and
+known price/quantity fields are checked without filtering or fabricating fills.
+At-price trades and public trades are still not proof our hypothetical maker order
+filled; the existing conservative execution model is unchanged.
+
+Restart reuses committed cursors; stale/cancelled attempts cannot checkpoint.
+404/unavailable, empty, partial and failed jobs remain distinct. Finishing a
+candle window proves only a successful raw response, not complete minute-by-minute
+quote coverage. Adjacent windows have inclusive boundary overlap. Later ingestion
+must merge candle period keys/trade IDs across windows AND sources, retain every
+provenance reference and reject conflicting duplicates before publication.
+Trade coverage must never replace the full candle sample denominator.
+
+Manifest references are durable in scope/job parameters but have no separate DB
+artifact registry yet. No cleanup exists: future retention/GC must retain these
+manifest objects and every transitive inventory/evidence reference, not just rows
+in raw_archive. Large membership manifests can exceed archive size limits and
+must then be explicitly partitioned, never truncated. A plan ceiling of 100,000
+scopes prevents accidental unbounded job creation. No runner, UI, observations,
+returns, dataset publication or precomputed summary is added in this milestone.
+
+Nine pure HTTP/planner tests and four additional actual-PG pipeline cases cover
+both resources/sources, immutable membership, one-day bounds/windowing, decimal
+units, null quotes, unavailable evidence, trade restart, stale leases, shared
+cooldowns, corrupted manifests and cancellation. Existing inventory tests also
+exercise the shared worker/transport after extraction. Performance and real
+provider compatibility remain unmeasured.
+
+Current official schemas checked October 27, 2026:
+- https://docs.kalshi.com/api-reference/market/get-market-candlesticks
+- https://docs.kalshi.com/api-reference/historical/get-historical-market-candlesticks
+- https://docs.kalshi.com/api-reference/market/get-trades
+- https://docs.kalshi.com/api-reference/historical/get-historical-trades

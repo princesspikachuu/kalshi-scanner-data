@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
 import math
+import re
 import time
 
 import httpx
@@ -46,7 +47,7 @@ def pairs(items):
 def constant(_): raise ValueError('Nonfinite JSON number')
 
 
-def parse_inventory(body):
+def parse_json(body):
     """Fail the whole page on malformed evidence; never drop rows silently."""
     try:
         value = json.loads(body.decode('utf-8'), object_pairs_hook=pairs, parse_constant=constant)
@@ -58,6 +59,14 @@ def parse_inventory(body):
             if isinstance(item, dict): stack.extend((v, depth+1) for v in item.values())
             elif isinstance(item, list): stack.extend((v, depth+1) for v in item)
             elif isinstance(item, str): item.encode('utf-8')  # reject unpaired surrogates
+        return value
+    except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
+        raise invalid() from None
+
+
+def parse_inventory(body):
+    try:
+        value = parse_json(body)
         if not isinstance(value, dict) or not isinstance(value.get('markets'), list) or 'cursor' not in value:
             raise ValueError('Invalid market page')
         valid_cursor('' if value['cursor'] is None else value['cursor'])
@@ -99,10 +108,17 @@ class KalshiInventory:
     def fetch(self, scope, cursor, timeout_seconds):
         if type(scope) is not Scope:
             raise ValueError('Expected validated inventory scope')
+        path, args = scope.request(cursor)
+        return self._read(path, args, timeout_seconds, parse_inventory)
+
+    def _read(self, path, args, timeout_seconds, parser, *, allow_missing=False):
+        allowed = (path in ('/markets','/historical/markets','/markets/trades','/historical/trades')
+            or re.fullmatch(r'/historical/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path)
+            or re.fullmatch(r'/series/[A-Z0-9_-]{1,64}/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path))
+        if not allowed: raise ValueError('Unsupported public read route')
         if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
                 or not 0 < timeout_seconds <= 10):
             raise ValueError('Invalid provider request timeout')
-        path, args = scope.request(cursor)
         deadline = self.clock()+timeout_seconds
         # Build a Request directly: Client.build_request would merge its cookie
         # jar into later requests. No authorization, cookies or caller URLs here.
@@ -121,6 +137,8 @@ class KalshiInventory:
                 cooldown = retry_after(response.headers.get('retry-after'), self.wall_clock())
                 # Honor server-requested service backoff across workers as well.
                 raise ProviderFailure('provider_unavailable', delay=min(3600,cooldown), cooldown=cooldown)
+            if response.status_code == 404 and allow_missing:
+                return ProviderPage({'http_status':404}, 'unavailable')
             if response.status_code != 200:
                 # A listing 404 is not proof of an unavailable/empty series.
                 # Redirects/auth failures and unsupported statuses are terminal.
@@ -145,7 +163,7 @@ class KalshiInventory:
                 body.extend(chunk)
             if length is not None and len(body) != length: raise invalid()
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
-            payload = parse_inventory(bytes(body))
+            payload = parser(bytes(body))
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             return ProviderPage(payload)
         except httpx.TimeoutException:

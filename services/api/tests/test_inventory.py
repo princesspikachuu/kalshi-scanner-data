@@ -326,3 +326,111 @@ class InventoryPostgresTests(unittest.TestCase):
             normalize_inventory([SCOPE.series],SCOPE.day,SCOPE.generation,attempts,self.archives)
         self.assertEqual(self.row(recent)['status'],'succeeded')
         self.assertEqual(len(self.queue.page_evidence(recent['id'])),1)
+
+    def evidence_plan(self):
+        from services.research.normalize import normalize_inventory
+        from services.research.evidence import build_scopes
+        from test_kalshi import MARKET
+        recent = self.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[MARKET], 'cursor':''}))),recent)
+        history_scope = Scope(SCOPE.series,'historical',None,SCOPE.generation)
+        self.queue.enqueue('btc',history_scope.parameters(),'historical-evidence-plan')
+        history = self.queue.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[], 'cursor':''}))),history)
+        batch = normalize_inventory([SCOPE.series],SCOPE.day,SCOPE.generation,
+            [(self.row(j),self.queue.page_evidence(j['id'])) for j in (recent,history)],self.archives)
+        return build_scopes(batch,self.archives,lookback_seconds=3600)
+
+    def evidence_job(self,scope):
+        self.queue.enqueue('btc',scope.parameters(),'evidence:'+scope.key)
+        return self.queue.claim()
+
+    def test_evidence_trade_restart_reuses_pages_and_fences_obsolete_attempt(self):
+        import httpx
+        from services.research.evidence import KalshiEvidence, EvidenceWorker
+        from test_evidence import trade
+        from test_kalshi import reply
+        scope = next(s for s in self.evidence_plan().scopes if (s.resource,s.source)==('trades','recent'))
+        job = self.evidence_job(scope)
+        calls = []
+        responses = [reply(payload={'trades':[trade(scope)],'cursor':'two'}),
+                     reply(payload={'trades':[{**trade(scope),'trade_id':'trade-two'}],'cursor':''})]
+        def handler(request):
+            calls.append(request)
+            return responses.pop(0)
+        with KalshiEvidence(transport=httpx.MockTransport(handler)) as provider:
+            worker = EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=10)
+            self.assertEqual(self.step(worker,job)['state'],'partial')
+            self.expire(job); resumed = self.queue.claim()
+            with self.assertRaises(LeaseLost): self.step(worker,job)
+            self.assertEqual(self.step(worker,resumed)['state'],'complete')
+        self.assertEqual([r.url.params.get('cursor','') for r in calls],['','two'])
+        pages = self.queue.page_evidence(job['id'])
+        self.assertEqual(len(pages),2)
+        self.assertTrue(all(p['page_key'].startswith('evidence/') for p in pages))
+        for page in pages:
+            envelope = self.archives.read(page['receipt'])
+            self.assertEqual(envelope['response']['trades'][0]['yes_price_dollars'],'0.8800')
+        self.assertEqual(inspect_pages(scope,pages).items,2)
+
+    def test_evidence_candle_unavailability_is_retained_and_other_source_is_independent(self):
+        import httpx
+        from services.research.evidence import KalshiEvidence, EvidenceWorker
+        from test_evidence import candle
+        from test_kalshi import reply
+        scopes = [s for s in self.evidence_plan().scopes if s.resource=='candles']
+        calls = []
+        def handler(request):
+            calls.append(request)
+            if '/historical/' in request.url.path: return reply(404)
+            recent = next(s for s in scopes if s.source=='recent')
+            return reply(payload={'ticker':recent.ticker,'candlesticks':[candle(recent)]})
+        with KalshiEvidence(transport=httpx.MockTransport(handler)) as provider:
+            worker = EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=10)
+            for scope in scopes:
+                job = self.evidence_job(scope)
+                expected = 'unavailable' if scope.source=='historical' else 'complete'
+                self.assertEqual(self.step(worker,job)['state'],expected)
+                pages = self.queue.page_evidence(job['id'])
+                self.assertEqual(inspect_pages(scope,pages).state,expected)
+                if expected=='unavailable':
+                    self.assertEqual(self.archives.read(pages[0]['receipt'])['response'],{'http_status':404})
+        self.assertEqual(len(calls),2)
+
+    def test_evidence_rate_limit_does_not_advance_and_full_cooldown_survives_reclaim(self):
+        import httpx
+        from services.research.evidence import KalshiEvidence, EvidenceWorker
+        from test_kalshi import reply
+        scope = next(s for s in self.evidence_plan().scopes if (s.resource,s.source)==('trades','historical'))
+        job = self.evidence_job(scope)
+        with KalshiEvidence(transport=httpx.MockTransport(lambda _:reply(429,headers={'retry-after':'7200'}))) as provider:
+            worker = EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=10)
+            self.assertEqual(self.step(worker,job)['state'],'failed')
+        self.assertEqual(self.queue.pages(job['id']),[])
+        self.assertEqual(self.row(job)['status'],'queued')
+        self.assertGreaterEqual(ReadBudget(self.store.pool).take(10),7199)
+
+    def test_evidence_corrupt_membership_or_cancelled_attempt_cannot_fetch_or_checkpoint(self):
+        import httpx
+        from services.research.archive import ArchiveInvalid
+        from services.research.evidence import KalshiEvidence, EvidenceWorker
+        from test_evidence import candle
+        from test_kalshi import reply
+        scope = next(s for s in self.evidence_plan().scopes if (s.resource,s.source)==('candles','recent'))
+        job = self.evidence_job(scope)
+        saved = self.archives.objects.data[scope.manifest_key]
+        self.archives.objects.data[scope.manifest_key] = b'corrupt'
+        calls = []
+        def handler(request):
+            calls.append(request)
+            self.queue.cancel(job['id'])
+            return reply(payload={'ticker':scope.ticker,'candlesticks':[candle(scope)]})
+        with KalshiEvidence(transport=httpx.MockTransport(handler)) as provider:
+            worker = EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=10)
+            with self.assertRaises(ArchiveInvalid): self.step(worker,job)
+            self.assertEqual(calls,[])
+            self.archives.objects.data[scope.manifest_key] = saved
+            with self.assertRaises(LeaseLost): self.step(worker,job)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(self.queue.pages(job['id']),[])
+        self.assertEqual(self.row(job)['status'],'cancelled')

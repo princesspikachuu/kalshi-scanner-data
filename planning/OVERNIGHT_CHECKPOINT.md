@@ -213,30 +213,67 @@ confirm no deployment/provisioning ran. This session has finished writing code.
 No hosted requests/resources/credentials/owner email, deployment, live infra
 mutation, Google setup or trading. No worker remains active after this run.
 
+## Seventh milestone: resumable candle/trade evidence
+
+Started from remote `8a3a5f4d07b8e38fadd1a1f5f7739e9f3a8f9375`;
+**CI 40479277025 passed**. Previous checkpoint reported no active worker. Used
+fresh `pocket-evidence` worktree without overwriting older saved dirty worktrees.
+
+Added `evidence.py`: immutable candidate-manifest archives, full-membership
+EvidencePlan, bounded <=1-day lookbacks in <=6-hour scopes, both recent/historical
+candle and trade routes, schema/unit validation and evidence-specific 404 state.
+EvidenceWorker reuses the existing lease/checkpoint/retry engine through explicit
+scope/parser hooks. HTTP bounds/error handling/strict JSON parsing are shared;
+default inventory behavior and listing-404 semantics stay unchanged. One provider
+request per worker step; every source/fallback costs its own shared budget tokens.
+
+Manifest hash, normalization version, exact candidate membership and settled
+identity are checked before fetch. Every candidate is planned; optional trades
+cannot shrink full candle membership. Ready empty batches retain their manifest.
+Scope/page/envelope archives preserve original quote forms and price/quantity
+strings without cent/dollar guessing. Public trades are not fills. Existing live
+collector, execution/loss-prevention model, UI/table and full-sample metrics are
+untouched. No live collection, hosted resources/credentials, infrastructure change,
+deployment, Google account setup, owner email or trading occurred.
+
+Raw evidence only: future ingestion must verify archived envelopes, reconcile
+inclusive boundary/source overlaps using period/trade identity, reject conflicts,
+retain all provenance and gate publication on explicit coverage policy. Complete
+raw responses are not proof every minute has a quote or of maker acceptance.
+README records manifest registry/retention gaps, archive/plan limits, socket vs
+hard deadline limitations and exact integration/resume steps. No GC is implemented;
+future GC must retain manifest and transitive references from job scopes.
+
+Local: 73 API/research, 7 owner-policy and 14 gateway/client tests passed; 34 PG
+cases skipped without disposable local PostgreSQL. Blueprint, compile, dependency
+and diff checks passed. Added 9 pure and 4 real-PG cases. Full 128-test result awaits
+this commit's remote CI; inspect before claiming actual-PG success. This session
+finishes after saving and CI inspection; no background worker remains running.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest remote head and CI; fix failures first. Existing queue/archive,
-   R2, planner/worker, HTTP inventory transport and normalization are implemented.
-   Do not redo them or overwrite newer work. Read research README contracts.
-2. Add resumable candle/trade evidence scopes and bounded read adapters, using
-   normalized candidate references and <=1-day strategy horizons. Preserve both
-   source routing/fallback evidence, bid/ask price units, settled-only selection
-   and maker-fill provenance rules. Review existing collector/execution model
-   and current official API docs. Use stubs; no live collection is required.
-3. Versioned dataset/run membership and precomputed research summary storage.
-   Atomically publish complete datasets; retain prior runs. Never mix latest with
-   cumulative or replace full-sample counts with an observed/execution subset.
-   Normalize outputs are in-memory only; design durable schema/publication here.
-4. Authenticated read-only historical run/date queries with indexed SQL, keyset
-   pagination and tests. Owner mutations remain session+CSRF protected. Deliberately
-   update gateway allowlists when routes are added. No hosting needed.
-5. React/TypeScript research shell/history browser after stable API contract;
-   preserve familiar current table. Measure representative local performance later,
-   without promising speedups from structure or tiny synthetic samples.
+1. Inspect newest head/CI and fix failures first. Queue/archive/R2, inventory,
+   normalization and raw candle/trade evidence planning/workers are implemented.
+   Do not redo them. Read research README contracts and current schemas.
+2. Durable versioned dataset/run membership and precomputed research summaries.
+   Start with verified evidence ingestion: re-read archive receipts/envelopes,
+   merge/reject conflicting candle-period/trade-ID duplicates across windows and
+   sources, record empty/unavailable/failed/gap policy explicitly. Preserve full
+   candidate/candle sample metrics separately from optional execution evidence.
+   Register manifests/transitive provenance and atomically publish only complete
+   eligible versions. Retain old runs; never mix latest with cumulative. All tests
+   may use fixtures and disposable PG; no hosted account setup is needed.
+3. Authenticated read-only historical run/date queries with indexed SQL/keyset
+   pagination and tests; serve precomputed results. Keep owner mutations session+
+   CSRF protected and update gateway allowlists deliberately. No hosting required.
+4. React/TypeScript research shell/history browser after stable API contract.
+   Preserve familiar current table and exact loss-prevention/full-sample behavior.
+   Measure representative local performance, without claiming a speedup from
+   structure or tiny synthetic samples. Hosted acceptance remains owner-only.
 
-Save independent code/checkpoint milestones to draft PR #9 and inspect CI. Main
-has later live table fixes/automated data updates; reconcile only for a future
-explicitly authorized integration. Do not merge, deploy, provision or trade.
+Save independent code/checkpoint milestones to draft PR #9; inspect CI and diff.
+Main has later live table fixes/automated data updates. Reconcile only for a future
+explicitly authorized integration; do not merge, deploy, provision or trade now.
 
 ## Owner-only items to leave pending
 
