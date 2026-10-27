@@ -5,12 +5,23 @@ from .auth_policy import LoginRejected, require_owner
 
 
 class PostgresStore:
-    def __init__(self,url):
+    def __init__(self,url,*,require_runtime_db=False):
+        self._url=url
+        self._require_runtime_db=require_runtime_db
         self.pool=ConnectionPool(url,min_size=1,max_size=5,open=False,timeout=5,
                                  kwargs={'row_factory':dict_row,'connect_timeout':5,
                                          'options':'-c statement_timeout=5000'})
 
-    def open(self): self.pool.open(wait=True,timeout=5)
+    def open(self):
+        if self._require_runtime_db:
+            from .db_privileges import audit_database
+            try:
+                ready=audit_database(self._url,'api')['privilege_boundary_ready']
+            except Exception:
+                raise RuntimeError('API runtime database permission check failed') from None
+            if not ready:
+                raise RuntimeError('API runtime database privileges are not isolated')
+        self.pool.open(wait=True,timeout=5)
     def close(self): self.pool.close()
 
     def ready(self):

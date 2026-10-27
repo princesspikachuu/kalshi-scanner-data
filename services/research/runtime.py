@@ -37,6 +37,7 @@ class WorkerSettings:
     endpoint_cost:int
     enabled:bool=False
     acceptance:str='off'
+    operator_action:str='off'
 
     @classmethod
     def from_env(cls,env=None):
@@ -61,7 +62,10 @@ class WorkerSettings:
         acceptance=env.get('STAGING_ACCEPTANCE','off')
         if acceptance not in ('off','r2-v1','database-v1') or (enabled=='true' and acceptance!='off'):
             raise ConfigurationError('Invalid STAGING_ACCEPTANCE or collection must be disabled')
-        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance)
+        operator=env.get('STAGING_OPERATOR_ACTION','off')
+        if operator not in ('off','prepare-roles-v1') or (operator!='off' and (enabled=='true' or acceptance!='off')):
+            raise ConfigurationError('Invalid STAGING_OPERATOR_ACTION or disable collection and diagnostics')
+        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance,operator)
 
 
 @contextmanager
@@ -79,6 +83,12 @@ def termination(stop):
 def run(settings,stop):
     # Disabled staging deploys do not construct SDK/DB clients or schedule/fetch work.
     if not settings.enabled:
+        if settings.operator_action!='off':
+            from services.api.operations import prepare_runtime_roles
+            try:
+                print(json.dumps(prepare_runtime_roles(settings.database_url),sort_keys=True),flush=True)
+            except Exception:
+                print('Staging operator action failed; no retry; collection remains disabled',file=sys.stderr,flush=True)
         if settings.acceptance!='off':
             from .acceptance import run_check
             try:

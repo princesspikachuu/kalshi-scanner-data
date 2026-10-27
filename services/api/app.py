@@ -51,7 +51,7 @@ class LoginBody(BaseModel):
 def create_app(settings=None,store=None,verifier=verify_google_login,history_store=None,campaign_store=None):
     settings=settings or Settings.from_env()
     owned=store is None
-    store=store or PostgresStore(settings.database_url)
+    store=store or PostgresStore(settings.database_url,require_runtime_db=settings.require_runtime_db)
     @asynccontextmanager
     async def lifespan(app):
         if owned: store.open()

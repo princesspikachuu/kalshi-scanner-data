@@ -93,3 +93,46 @@ Official privilege references:
 - https://www.postgresql.org/docs/17/sql-grant.html
 - https://www.postgresql.org/docs/17/role-membership.html
 - https://render.com/docs/private-network
+
+## Preparing the non-login roles without credentials
+
+A default-off operator action can apply the reviewed NOLOGIN role plan from the
+existing private research worker. It checks the exact nine migration hashes,
+requires the database owner, allows ONLY pocket_staging or disposable pocket_test,
+and serializes with migrations. SQL and postconditions share one transaction;
+name collisions fail closed and roll back the whole preparation. No passwords,
+LOGIN permissions, runtime URL changes, ownership transfers or role memberships
+are created. Existing roles are never silently repurposed.
+
+After CI passes, merge these temporary worker values (preserve all other fields):
+COLLECTION_ENABLED=false, STAGING_ACCEPTANCE=off,
+STAGING_OPERATOR_ACTION=prepare-roles-v1. One attempt per process prints a
+runtime-role-preparation-v1 receipt, then idles. Failure is sanitized and does not
+retry. Reset STAGING_OPERATOR_ACTION=off and verify the final disabled deployment.
+A prepared=true receipt still says runtime_isolated=false and passwords_created=false.
+Existing role names on a repeat are deliberately an operator-review failure.
+Equivalent private operator command: python -m services.api.manage prepare-runtime-roles.
+Never run the operator action with a runtime login or enable collection alongside it.
+
+## API credential-cutover gate
+
+Shared read-only database audit v2 now checks the expected direct role as well as
+ownership, dangerous grants, memberships, schema/temp privileges and migration
+checksums. The research worker requires pocket_research_runtime. The API can opt
+into REQUIRE_API_RUNTIME_DB=true and requires pocket_api_runtime before opening
+its pool; connection diagnostics are sanitized. This API flag defaults false until
+the owner completes the coordinated cutover, preserving the working staging login.
+The worker collection gate remains mandatory. A worker login cannot pass the API
+profile and vice versa. Actual service credential isolation is still pending.
+
+For the eventual cutover, first apply/verify migrations through a private operator
+session that is separate from the long-lived app processes. Then remove automatic
+operator migration commands from BOTH services, configure private direct runtime
+DATABASE_URLs and remove any operator URL/password variables from their runtime
+environments, enable the API gate, deploy and inspect both direct-role audits.
+The existing Blueprint still specifies operator URLs and preDeploy migrations;
+it must be reconciled before any future manual sync, which otherwise restores
+unsafe settings. Keep Blueprint sync paused. A sync:false field does not prompt
+again when updating an existing Blueprint; private values require explicit edits.
+Do not hide an operator URL in a second service env variable or just SET ROLE.
+Owner-only secure password/connection setup must finish before collection.

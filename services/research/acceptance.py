@@ -1,14 +1,12 @@
 """Explicit staging diagnostics. Importing performs no I/O; never starts collection."""
 import argparse
-import hashlib
 import json
 import os
-from pathlib import Path
 import sys
 
 import psycopg
-from psycopg.rows import dict_row
 
+from services.api.db_privileges import audit_database, HISTORY
 from .archive import prepare
 from .r2 import R2Objects
 from .runtime import WorkerSettings, ConfigurationError
@@ -16,10 +14,6 @@ from .runtime import WorkerSettings, ConfigurationError
 PROBE_PAYLOAD = {'contract': 'pocket-staging-r2-probe-v1', 'purpose': 'non-market acceptance'}
 PROBE_PROVIDER = 'staging_acceptance'
 MAX_PROBE_BYTES = 1024
-HISTORY = ('research_artifact', 'research_dataset', 'research_summary',
-           'research_dataset_artifact', 'research_result', 'research_result_dataset',
-           'research_observation', 'research_campaign', 'research_campaign_work',
-           'research_campaign_result', 'raw_archive', 'collection_page')
 
 
 def probe_r2(objects):
@@ -44,35 +38,6 @@ def probe_r2(objects):
                 object_key=archive.key, compressed_bytes=len(archive.body), sha256=archive.sha256)
 
 
-def audit_database(url):
-    """Read-only metadata checks. Never reads identities, sessions, or data payloads."""
-    if not isinstance(url, str) or not url.startswith(('postgres://', 'postgresql://')):
-        raise ConfigurationError('Invalid DATABASE_URL')
-    with psycopg.connect(url, connect_timeout=5, row_factory=dict_row,
-                         options='-c default_transaction_read_only=on -c statement_timeout=5000') as c:
-        applied = {r['name']: r['checksum'] for r in c.execute('SELECT name,checksum FROM public.schema_migration')}
-        expected = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                    for p in (Path(__file__).resolve().parents[2] / 'migrations').glob('*.sql')}
-        role = c.execute('''SELECT rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls,
-            current_user=session_user AS direct_login,
-            EXISTS(SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) AS has_memberships,
-            has_schema_privilege(current_user,'public','CREATE') AS schema_create,
-            has_database_privilege(current_user,current_database(),'TEMP') AS temporary_tables,
-            EXISTS(SELECT 1 FROM pg_database WHERE datname=current_database()
-                AND pg_has_role(current_user,datdba,'USAGE')) AS database_owner
-            FROM pg_roles WHERE rolname=current_user''').fetchone()
-        history = c.execute('''SELECT count(*)::integer AS found,
-            coalesce(bool_or(pg_has_role(current_user,relowner,'USAGE')),false) AS owns_history,
-            coalesce(bool_or(has_table_privilege(current_user,pg_class.oid,'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES')
-                OR has_any_column_privilege(current_user,pg_class.oid,'UPDATE,REFERENCES')),false) AS history_mutation
-            FROM pg_class JOIN pg_namespace n ON n.oid=relnamespace
-            WHERE n.nspname='public' AND relname=ANY(%s) AND relkind='r' ''', (list(HISTORY),)).fetchone()
-    safe = (applied == expected and history['found'] == len(HISTORY)
-            and role['direct_login'] and not any(role[k] for k in role if k != 'direct_login')
-            and not history['owns_history'] and not history['history_mutation'])
-    return dict(contract='staging-database-audit-v1', migrations_match=applied == expected,
-                migration_count=len(applied), role_flags=role, history_flags=history,
-                privilege_boundary_ready=safe)
 
 
 def run_check(settings, action):

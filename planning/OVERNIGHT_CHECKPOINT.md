@@ -843,3 +843,44 @@ The role SQL has not run on hosted DB and no passwords were generated. Do not
 claim production-ready/collection-ready or toggle collection until this separation
 is implemented and direct-login audit passes. No paid upgrades/new resources,
 main merge, live UI/table changes, trading or automatic-deploy enablement.
+
+## Private non-login role preparation and API cutover gate
+
+Resumed actual remote f02687c; CI 40554503924 passed. Fresh pocket-isolation
+worktree preserves prior saved dirty worktrees. Owner asked to continue setup.
+Next step uses no new credential: prepare only NOLOGIN roles using the existing
+private operator connection, retaining collection disabled and current runtime URLs.
+
+Added services/api/operations.py transactional role-plan application. It requires
+matching migrations and DB ownership, limits target DB to pocket_staging/pocket_test,
+serializes with migrations, checks final role attributes/no ownership/memberships,
+and fails on existing role names rather than reusing them. Role creation/grants and
+postcondition checks commit together. No password, LOGIN, URL cutover or new paid
+resource. services.api.manage prepare-runtime-roles exposes the explicit command;
+it is never a numbered migration or automatic preDeploy action.
+
+Added default-off STAGING_OPERATOR_ACTION=prepare-roles-v1 to disabled worker.
+Exclusive with collection/diagnostics. One bounded attempt then idle; errors omit
+SQL/connection values and never retry automatically. Reset off after recording
+receipt. Shared audit moved to services/api/db_privileges.py; v2 additionally
+requires expected direct API/research role. REQUIRE_API_RUNTIME_DB=true opts API
+startup into its own guard before opening a pool, with sanitized failures. Default
+false preserves currently working operator-backed staging until coordinated cutover.
+Research collection remains guarded mandatorily; no model/table changes.
+
+Tests cover strict API flag, pre-pool rejection/allowance and secret-safe failures,
+operator gating/one-attempt cleanup, actual role preparation/direct API login,
+wrong-profile rejection and atomic rollback on name collision. The previous role
+SQL is unchanged, and new helper is exercised by real PostgreSQL suite setup.
+
+After CI passes: set temporary worker STAGING_OPERATOR_ACTION=prepare-roles-v1 with
+COLLECTION_ENABLED=false and STAGING_ACCEPTANCE=off, inspect prepared=true receipt,
+restore operator flag off and verify live. This prepares NOLOGIN roles only.
+Then owner-only credential creation and coordinated migration/runtime separation
+remain pending; no passwords should be generated or exposed in chat/public git.
+Existing Blueprint operator references/preDeploy commands must be reconciled before
+any future sync; leave sync paused. API credential cutover must enable its new gate.
+
+Local validation: 142 API/research cases passed, 65 actual-PG cases skipped without
+a disposable DB; 7 policy and 19 gateway cases passed. Compile/dependency/diff
+checks passed. Hosted role preparation remains unapplied until actual-PG CI passes.

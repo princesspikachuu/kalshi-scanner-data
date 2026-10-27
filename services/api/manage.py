@@ -22,7 +22,14 @@ def migrate(url,directory=None):
 
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['migrate']);parser.parse_args()
-    try:migrate(os.environ['DATABASE_URL'])
-    except Exception:raise SystemExit('Migration failed; inspect configuration and database availability') from None
-    print('Migrations applied')
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['migrate','prepare-runtime-roles']);args=parser.parse_args()
+    try:
+        if args.action=='migrate':
+            migrate(os.environ['DATABASE_URL']);print('Migrations applied')
+        else:
+            if os.environ.get('COLLECTION_ENABLED','false')!='false':
+                raise ValueError('Disable collection before operator actions')
+            from .operations import prepare_runtime_roles
+            import json
+            print(json.dumps(prepare_runtime_roles(os.environ['DATABASE_URL']),sort_keys=True))
+    except Exception:raise SystemExit('Database operation failed; inspect private configuration and database availability') from None

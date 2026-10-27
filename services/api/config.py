@@ -13,8 +13,11 @@ class Settings:
     owner_email: str = ''
     owner_subject: str = ''
     session_seconds: int = 43200
+    require_runtime_db: bool = False
 
     def __post_init__(self):
+        if type(self.require_runtime_db) is not bool:
+            raise ValueError('Invalid runtime database requirement')
         u=urlsplit(self.app_origin)
         if u.scheme!='https' or not u.netloc or u.username or u.password or u.path or u.query or u.fragment:
             raise ValueError('APP_ORIGIN must be an HTTPS origin without a path')
@@ -27,7 +30,10 @@ class Settings:
 
     @classmethod
     def from_env(cls):
+        require=os.environ.get('REQUIRE_API_RUNTIME_DB','false')
+        if require not in ('true','false'):
+            raise ValueError('REQUIRE_API_RUNTIME_DB must be true or false')
         return cls(app_origin=os.environ.get('APP_ORIGIN',''), google_client_id=os.environ.get('GOOGLE_CLIENT_ID',''),
                    database_url=os.environ.get('DATABASE_URL',''), proxy_secret=os.environ.get('API_PROXY_SECRET',''),
                    owner_email=os.environ.get('OWNER_GOOGLE_EMAIL','').strip().casefold(),
-                   owner_subject=os.environ.get('OWNER_GOOGLE_SUB','').strip())
+                   owner_subject=os.environ.get('OWNER_GOOGLE_SUB','').strip(),require_runtime_db=require=='true')

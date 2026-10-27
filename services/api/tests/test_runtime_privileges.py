@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from services.api.auth_policy import GoogleIdentity, new_session_material
 from services.api.config import Settings
 from services.api.manage import migrate
+from services.api.operations import prepare_runtime_roles
 from services.api.store import PostgresStore
 from services.research.acceptance import audit_database, HISTORY
 from services.research.budget import ReadBudget
@@ -42,8 +43,8 @@ class RuntimePrivilegesTests(unittest.TestCase):
     def setUpClass(cls):
         if urlsplit(URL).path != '/pocket_test': raise RuntimeError('Requires disposable pocket_test database')
         migrate(URL)
-        with psycopg.connect(URL, autocommit=True) as c:
-            c.execute((ROOT/'infra/runtime-roles.sql').read_text(), prepare=False)
+        receipt=prepare_runtime_roles(URL)
+        if receipt['login_enabled'] or receipt['passwords_created']: raise RuntimeError('Unexpected role credential creation')
         cls.api = ScopedPool('pocket_api_runtime')
         cls.worker = ScopedPool('pocket_research_runtime')
 
@@ -128,3 +129,36 @@ class RuntimePrivilegesTests(unittest.TestCase):
         finally:
             with psycopg.connect(URL,autocommit=True) as c:
                 c.execute('ALTER ROLE pocket_research_runtime NOLOGIN PASSWORD NULL')
+
+    def test_existing_role_name_is_not_repurposed(self):
+        with self.assertRaises(psycopg.errors.DuplicateObject): prepare_runtime_roles(URL)
+        with psycopg.connect(URL) as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM pg_roles WHERE rolname IN ('pocket_api_runtime','pocket_research_runtime') AND NOT rolcanlogin").fetchone()[0],2)
+
+    def test_api_direct_login_passes_only_its_profile_and_pool_gate(self):
+        password=uuid4().hex
+        with psycopg.connect(URL,autocommit=True) as c:
+            c.execute(sql.SQL('ALTER ROLE pocket_api_runtime LOGIN PASSWORD {}').format(sql.Literal(password)))
+        try:
+            parts=urlsplit(URL)
+            direct=parts._replace(netloc='pocket_api_runtime:'+password+'@'+parts.netloc.rsplit('@',1)[-1]).geturl()
+            self.assertTrue(audit_database(direct,'api')['privilege_boundary_ready'])
+            self.assertFalse(audit_database(direct,'research')['privilege_boundary_ready'])
+            store=PostgresStore(direct,require_runtime_db=True)
+            try:
+                store.open();self.assertTrue(store.ready())
+            finally:store.close()
+        finally:
+            with psycopg.connect(URL,autocommit=True) as c:
+                c.execute('ALTER ROLE pocket_api_runtime NOLOGIN PASSWORD NULL')
+
+    def test_partial_role_creation_rolls_back_on_second_name_collision(self):
+        with psycopg.connect(URL,autocommit=True) as c:
+            c.execute('ALTER ROLE pocket_api_runtime RENAME TO pocket_api_saved_test')
+        try:
+            with self.assertRaises(psycopg.errors.DuplicateObject):prepare_runtime_roles(URL)
+            with psycopg.connect(URL) as c:
+                self.assertEqual(c.execute("SELECT count(*) FROM pg_roles WHERE rolname='pocket_api_runtime'").fetchone()[0],0)
+        finally:
+            with psycopg.connect(URL,autocommit=True) as c:
+                c.execute('ALTER ROLE pocket_api_saved_test RENAME TO pocket_api_runtime')

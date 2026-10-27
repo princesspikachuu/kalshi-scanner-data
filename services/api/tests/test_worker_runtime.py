@@ -105,3 +105,25 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(runtime.ConfigurationError,'privileges are not isolated'):
                 runtime.run(settings,Event())
             pool.assert_not_called();r2.assert_not_called()
+
+    def test_operator_role_preparation_is_exclusive_once_and_stays_disabled(self):
+        settings=runtime.WorkerSettings.from_env({**environment(),'STAGING_OPERATOR_ACTION':'prepare-roles-v1'})
+        stop=Mock();stop.is_set.side_effect=[False,True]
+        with patch('services.api.operations.prepare_runtime_roles',return_value={'prepared':True}) as prepare, \
+             patch.object(runtime,'ConnectionPool') as pool,patch.object(runtime.R2Objects,'connect') as r2, \
+             patch('sys.stdout',new_callable=StringIO):
+            runtime.run(settings,stop);prepare.assert_called_once_with(settings.database_url)
+            pool.assert_not_called();r2.assert_not_called()
+        for values in ({'STAGING_OPERATOR_ACTION':'typo'},
+                       {'STAGING_OPERATOR_ACTION':'prepare-roles-v1','COLLECTION_ENABLED':'true'},
+                       {'STAGING_OPERATOR_ACTION':'prepare-roles-v1','STAGING_ACCEPTANCE':'database-v1'}):
+            with self.assertRaises(runtime.ConfigurationError):
+                runtime.WorkerSettings.from_env({**environment(),**values})
+
+    def test_operator_action_failure_is_sanitized_without_retry(self):
+        settings=runtime.WorkerSettings.from_env({**environment(),'STAGING_OPERATOR_ACTION':'prepare-roles-v1'})
+        stop=Mock();stop.is_set.return_value=True
+        with patch('services.api.operations.prepare_runtime_roles',side_effect=RuntimeError('private-sentinel')) as prepare, \
+             patch('sys.stderr',new_callable=StringIO) as errors:
+            runtime.run(settings,stop);prepare.assert_called_once()
+            self.assertNotIn('sentinel',errors.getvalue())
