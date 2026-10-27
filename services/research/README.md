@@ -120,3 +120,75 @@ Official references checked October 26, 2026:
 - https://developers.cloudflare.com/r2/examples/aws/boto3/ (endpoint and region)
 - https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/put_object.html
 - https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/get_object.html
+
+## Incremental inventory planning and resumable steps
+
+`inventory.py` defines immutable request scopes and a provider-injected one-page
+worker. `scopes_for_days` produces one historical market index per series and
+collection generation, shared by all requested days, plus recent per-day queries.
+Historical listings do not accept close-date filters. A generation is an explicit
+collection identity, NOT a provider snapshot or snapshot-consistency guarantee.
+Change it deliberately for refreshes; never silently reuse earlier generations.
+The recent query bounds are inclusive provider bounds widened by one second;
+downstream selection must enforce the exact half-open UTC close-day interval.
+
+Plan both sources: the historical cutoff is based on settlement time, so routing
+by market close date alone can omit delayed settlements. Keep settled `yes/no`
+selection, cross-source ticker deduplication and candle/trade provenance in the
+future normalization layer. Raw listing pages retain all rows and price strings;
+no new observation or return metric is produced in this milestone.
+
+To integrate without starting a daemon:
+1. Build scopes for explicit series, UTC days and a generation. Use `scope.key`
+   in the idempotency key and `scope.parameters()` as a queue job's parameters.
+   Keep one historical scope shared across days. Queue asset is a routing label;
+   the scope identity is the actual query identity. Retrying a terminal job needs
+   a deliberate new queue idempotency key; never reset its immutable pages.
+2. Reconstruct `plan(scopes, [(job, queue.pages(job['id'])), ...])` from stored jobs.
+   It returns every requested scope as fetch, resume, complete, empty, unavailable
+   or failed, with a job reference. No last-success-date high-water mark hides gaps.
+   Complete means a succeeded job with a contiguous terminal listing traversal.
+   Empty means zero rows in a successfully traversed listing, not zero trades,
+   zero eligible settled markets or unavailable prices. Both are inventory-only.
+3. Configure `ReadBudget` once from a deliberate conservative application policy;
+   all workers sharing the provider/account must share the same database name.
+   No account tier or endpoint cost is inferred. Conflicting configurations fail.
+   Pass an explicit endpoint token cost to `InventoryWorker`. This budget does not
+   coordinate the old live collector or other applications using that account.
+4. Claim a job with `ResearchQueue.claim()`, then call `worker.step(job, deadline=...)`
+   using a fixed monotonic deadline. Inject an `ArchiveStore` and a provider with
+   `fetch(scope, cursor, timeout_seconds) -> ProviderPage`. That provider must do
+   exactly one bounded read, no internal retries, and translate only known safe
+   errors to `ProviderFailure`. `scope.request(cursor)` supplies the read-only
+   relative listing path/arguments. No production HTTP transport exists yet.
+5. Repeat steps returning partial; schedule throttled steps after retry_after and
+   heartbeat while waiting. There is no blocking sleep or DB transaction around
+   remote I/O. Requeued jobs require a fresh claim/token. The shared token bucket
+   charges every fetch, includes a shared 429 cooldown and uses PostgreSQL time.
+6. Each successful step verifies archive bytes before atomically committing a
+   page key, input/output cursor, count, availability and archive reference. On a
+   restart the next cursor comes only from committed pages. A terminal checkpoint
+   followed by a crash can finish without fetching again. Cycles, missing pages
+   and safety limits cannot become complete coverage. A lost lease/cancellation
+   fences progress even if an in-flight archive upload finishes.
+
+A page deadline failure after upload can leave an unreferenced immutable object;
+it cannot advance a DB cursor. Unexpected I/O/integrity failures propagate and
+leave the lease to expire; callers must not save/log raw exception details. Known
+provider failures save only allowlisted codes and bounded delayed retries. Failed
+jobs retain completed pages and remain visible in the gap plan. The worker has no
+loop, schedule, hosted connection, API route, dataset publication or trading code.
+A future runner must handle shutdown/heartbeats and avoid letting slow archive
+I/O exceed the lease; socket timeouts are not hard end-to-end deadlines.
+
+Tests use a fake provider and object store with the actual PostgreSQL queue/budget
+in CI, exercising restart, terminal-checkpoint crashes, stale leases, cancellations,
+failed uploads, deadlines, unavailable data, cycles and concurrent token spending.
+This does not establish provider retention, real API throughput, point-in-time
+snapshot consistency, settled quote coverage or a measurable application speedup.
+
+Official Kalshi docs checked October 26, 2026:
+- https://docs.kalshi.com/api-reference/historical/get-historical-markets
+- https://docs.kalshi.com/getting_started/historical_data
+- https://docs.kalshi.com/getting_started/pagination
+- https://docs.kalshi.com/getting_started/rate_limits

@@ -1,0 +1,242 @@
+"""Inventory traversal and gap planning; real PG integration when configured."""
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+import os
+from unittest.mock import patch
+import time
+import unittest
+from urllib.parse import urlsplit
+
+from services.api.manage import migrate
+from services.api.store import PostgresStore
+from services.research.archive import ArchiveStore
+from services.research.budget import ReadBudget
+from services.research.inventory import (Scope, ProviderPage, ProviderFailure, InventoryWorker,
+    scopes_for_days, page_key, inspect_pages, plan)
+from services.research.queue import ResearchQueue, EvidenceConflict, LeaseLost
+
+URL = os.environ.get('POCKET_TEST_DATABASE_URL')
+SCOPE = Scope('KXBTC15M', 'recent', '2026-10-25', 'test-generation')
+
+
+def page(scope=SCOPE, seq=0, cursor_in='', cursor_out='', items=0, availability='available'):
+    return {'page_key': page_key(scope, seq), 'checkpoint': dict(scope=scope.key, sequence=seq,
+            cursor_in=cursor_in, cursor_out=cursor_out, items=items, availability=availability)}
+
+
+class InventoryTests(unittest.TestCase):
+    def test_historical_index_reused_across_days_and_recent_ranges_are_utc(self):
+        scopes = scopes_for_days(['KXBTC15M', 'KXBTC15M'], ['2026-10-24', '2026-10-25'], 'v1')
+        self.assertEqual(len(scopes), 3)
+        self.assertEqual(scopes_for_days(['KXBTC15M'], [], 'v1'), [])
+        path, args = scopes[0].request('next')
+        self.assertEqual(path, '/historical/markets')
+        self.assertEqual(args, {'series_ticker': 'KXBTC15M', 'limit': 1000, 'cursor': 'next'})
+        self.assertEqual(scopes[1].request('')[1]['max_close_ts'] - scopes[1].request('')[1]['min_close_ts'], 86401)
+
+    def test_scope_generation_source_and_dates_are_separate_identities(self):
+        scopes = scopes_for_days(['KXBTC15M'], ['2026-10-25'], 'v1')
+        self.assertNotEqual(scopes[0].key, scopes[1].key)
+        self.assertNotEqual(scopes[1].key, SCOPE.key)
+        for patch in ({'day': '20261025'}, {'series': '../secret'}, {'generation': 'a/b'},
+                      {'source': 'historical'}, {'source': 'unknown'}):
+            with self.assertRaises(ValueError): Scope(**{**asdict(SCOPE), **patch})
+
+    def test_empty_page_with_cursor_is_partial_and_final_empty_means_empty(self):
+        first = page(cursor_out='two')
+        self.assertEqual(inspect_pages(SCOPE, [first]).state, 'partial')
+        done = inspect_pages(SCOPE, [first, page(seq=1, cursor_in='two')])
+        self.assertEqual((done.state, done.pages, done.items), ('empty', 2, 0))
+        self.assertEqual(inspect_pages(SCOPE, [page(items=1)]).state, 'complete')
+
+    def test_missing_repeated_and_foreign_pages_cannot_hide_gaps(self):
+        for pages in ([page(seq=1)], [page(cursor_out='two'), page(seq=1, cursor_in='wrong')],
+                      [page(cursor_out='two'), page(seq=1, cursor_in='two', cursor_out='two')],
+                      [page(), page(seq=1)], [page(Scope('KXETH15M','recent','2026-10-25','v1'))]):
+            with self.assertRaises(EvidenceConflict): inspect_pages(SCOPE, pages)
+
+    def test_plan_distinguishes_complete_empty_unavailable_failed_and_unrequested(self):
+        def job(status='succeeded'): return {'id': 'job', 'parameters': SCOPE.parameters(), 'status': status}
+        for pages, status, expected in [([page(items=2)], 'succeeded','complete'),
+                                      ([page()], 'succeeded','empty'),
+                                      ([page(availability='unavailable')], 'succeeded','unavailable'),
+                                      ([], 'failed','failed'), ([], 'succeeded','failed'), ([page(items=2)], 'running','resume')]:
+            self.assertEqual(plan([SCOPE], [(job(status),pages)])[0]['state'], expected)
+        self.assertEqual(plan([SCOPE], [])[0]['state'], 'fetch')
+        self.assertEqual(plan([SCOPE], [(job(),[page(items=2)]),(job('failed'),[])])[0]['state'], 'complete')
+
+    def test_provider_failure_never_accepts_raw_diagnostics(self):
+        with self.assertRaises(ValueError): ProviderFailure('https://host/private-token')
+        with self.assertRaises(ValueError): ProviderFailure('provider_timeout', delay=4000)
+
+
+class MemoryObjects:
+    def __init__(self): self.data = {}
+    def put_if_absent(self, key, body, content_type):
+        if key in self.data: return False
+        self.data[key] = body
+        return True
+    def get(self, key, max_bytes): return self.data[key]
+
+
+class FakeProvider:
+    def __init__(self, *responses): self.responses, self.calls = list(responses), []
+    def fetch(self, scope, cursor, timeout_seconds):
+        self.calls.append((scope, cursor, timeout_seconds))
+        value = self.responses.pop(0)
+        if isinstance(value, Exception): raise value
+        return value
+
+
+@unittest.skipUnless(URL, 'Requires a disposable pocket_test PostgreSQL database')
+class InventoryPostgresTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if urlsplit(URL).path != '/pocket_test': raise RuntimeError('Requires disposable pocket_test database')
+        migrate(URL)
+        cls.store = PostgresStore(URL); cls.store.open()
+    @classmethod
+    def tearDownClass(cls): cls.store.close()
+    def setUp(self):
+        with self.store.pool.connection() as c:
+            c.execute('TRUNCATE research_read_budget,collection_page,raw_archive,research_job CASCADE')
+        self.queue = ResearchQueue(self.store.pool)
+        self.budget = ReadBudget(self.store.pool)
+        self.budget.configure(100, 100)
+        self.archives = ArchiveStore(MemoryObjects())
+    def claim(self):
+        self.queue.enqueue('btc', SCOPE.parameters(), 'inventory:' + SCOPE.key)
+        return self.queue.claim()
+    def worker(self, provider, **kwargs):
+        return InventoryWorker(self.queue, self.archives, provider, self.budget, endpoint_cost=10, **kwargs)
+    def step(self, worker, job): return worker.step(job, deadline=time.monotonic()+60)
+    def row(self, job):
+        with self.store.pool.connection() as c:
+            return c.execute('SELECT * FROM research_job WHERE id=%s', (job['id'],)).fetchone()
+    def expire(self, job):
+        with self.store.pool.connection() as c:
+            c.execute("UPDATE research_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s", (job['id'],))
+
+    def test_restart_reuses_committed_page_and_rejects_old_lease(self):
+        provider = FakeProvider(ProviderPage({'markets':[{'yes_bid_dollars':'0.8800'}], 'cursor':'two'}),
+                                ProviderPage({'markets':[], 'cursor':''}))
+        worker = self.worker(provider); old = self.claim()
+        self.assertEqual(self.step(worker,old)['state'], 'partial')
+        self.expire(old); resumed = self.queue.claim()
+        with self.assertRaises(LeaseLost): self.step(worker,old)
+        self.assertEqual(self.step(worker,resumed)['state'], 'complete')
+        self.assertEqual([c[1] for c in provider.calls], ['', 'two'])
+        pages = self.queue.pages(old['id'])
+        self.assertEqual(len(pages), 2)
+        self.assertEqual(inspect_pages(SCOPE,pages).items, 1)
+        self.assertEqual(self.row(old)['status'], 'succeeded')
+        self.assertEqual(plan([SCOPE], [(self.row(old),pages)])[0]['state'], 'complete')
+        # Every raw provider field survives unchanged in immutable object storage.
+        self.assertTrue(any(b'0.8800' in __import__('gzip').decompress(b) for b in self.archives.objects.data.values()))
+        with self.store.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM ingestion_cursor').fetchone()['n'], 0)
+
+    def test_crash_after_terminal_checkpoint_finishes_without_fetching_again(self):
+        provider = FakeProvider(ProviderPage({'markets':[], 'cursor':None}))
+        worker = self.worker(provider); job = self.claim()
+        original = self.queue.finish
+        self.queue.finish = lambda *_: (_ for _ in ()).throw(RuntimeError('simulated crash'))
+        with self.assertRaises(RuntimeError): self.step(worker,job)
+        self.queue.finish = original
+        self.expire(job); resumed = self.queue.claim()
+        self.assertEqual(self.step(worker,resumed)['state'], 'empty')
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_unavailable_and_failed_requests_never_look_like_empty_success(self):
+        job = self.claim()
+        worker = self.worker(FakeProvider(ProviderPage({}, 'unavailable')))
+        self.assertEqual(self.step(worker,job)['state'], 'unavailable')
+        self.assertEqual(plan([SCOPE],[(self.row(job),self.queue.pages(job['id']))])[0]['state'],'unavailable')
+
+    def test_rate_limit_cooldown_is_shared_and_failed_page_does_not_advance(self):
+        job = self.claim(); provider = FakeProvider(ProviderFailure('provider_rate_limit', delay=60))
+        self.assertEqual(self.step(self.worker(provider),job)['state'], 'failed')
+        self.assertEqual(self.queue.pages(job['id']), [])
+        other = ReadBudget(self.store.pool)
+        self.assertGreaterEqual(other.take(10), 59)
+        self.assertEqual(self.row(job)['error_code'], 'provider_rate_limit')
+        self.assertEqual(self.row(job)['status'], 'queued')
+
+    def test_throttle_and_deadline_do_not_fetch_or_hide_pages(self):
+        job = self.claim(); provider = FakeProvider()
+        worker = self.worker(provider)
+        self.budget.defer(60)
+        self.assertEqual(self.step(worker,job)['state'], 'throttled')
+        self.assertEqual(self.row(job)['attempts'], 1)
+        result = worker.step(job,deadline=time.monotonic()-1)
+        self.assertEqual(result['state'], 'failed')
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(self.queue.pages(job['id']), [])
+
+    def test_cycles_malformed_pages_and_page_cap_fail_without_partial_success(self):
+        job = self.claim()
+        provider = FakeProvider(ProviderPage({'markets':[], 'cursor':'two'}),
+                                ProviderPage({'markets':[], 'cursor':'two'}))
+        worker = self.worker(provider)
+        self.step(worker,job)
+        self.assertEqual(self.step(worker,job)['state'], 'failed')
+        self.assertEqual(len(self.queue.pages(job['id'])), 1)
+        self.assertEqual(self.row(job)['status'], 'failed')
+
+    def test_concurrent_budget_reservations_do_not_overspend_and_configuration_conflicts(self):
+        budget = ReadBudget(self.store.pool,'slow-test'); budget.configure(.001, 20)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            waits = list(executor.map(lambda _: budget.take(10), range(8)))
+        self.assertEqual(waits.count(0), 2)
+        with self.assertRaises(EvidenceConflict): budget.configure(.002,20)
+        with self.assertRaises(ValueError): budget.take(21)
+        with self.store.pool.connection() as c:
+            c.execute("UPDATE research_read_budget SET updated_at=clock_timestamp()-interval '20000 seconds' WHERE name='slow-test'")
+        self.assertEqual(budget.take(20), 0)
+
+    def test_bad_payload_and_safety_page_limit_leave_explicit_failed_gap(self):
+        job = self.claim()
+        worker = self.worker(FakeProvider(ProviderPage({'markets': [], 'cursor': False})))
+        self.assertEqual(self.step(worker, job)['state'], 'failed')
+        self.assertEqual(self.queue.pages(job['id']), [])
+        self.assertEqual(self.row(job)['error_code'], 'provider_invalid')
+        self.setUp()
+        job = self.claim()
+        worker = self.worker(FakeProvider(ProviderPage({'markets': [], 'cursor': 'more'})), max_pages=1)
+        self.step(worker,job)
+        self.assertEqual(self.step(worker,job)['state'], 'failed')
+        self.assertEqual(len(self.queue.pages(job['id'])), 1)
+        self.assertEqual(plan([SCOPE], [(self.row(job),self.queue.pages(job['id']))])[0]['state'], 'failed')
+
+    def test_failed_upload_and_cancellation_cannot_commit_progress(self):
+        job = self.claim()
+        provider = FakeProvider(ProviderPage({'markets': [], 'cursor': ''}))
+        worker = self.worker(provider)
+        with patch.object(self.archives, 'upload', side_effect=TimeoutError('simulated storage failure')):
+            with self.assertRaises(TimeoutError): self.step(worker,job)
+        self.assertEqual(self.queue.pages(job['id']), [])
+        self.expire(job); job = self.queue.claim()
+        original = self.archives.upload
+        def cancel_during_upload(*args):
+            receipt = original(*args)
+            self.queue.cancel(job['id'])
+            return receipt
+        worker = self.worker(FakeProvider(ProviderPage({'markets': [], 'cursor': ''})))
+        with patch.object(self.archives, 'upload', side_effect=cancel_during_upload):
+            with self.assertRaises(LeaseLost): self.step(worker,job)
+        self.assertEqual(self.queue.pages(job['id']), [])
+        self.assertEqual(self.row(job)['status'], 'cancelled')
+
+    def test_deadline_after_upload_leaves_orphan_but_no_cursor_advance(self):
+        job = self.claim()
+        now = [0.0]
+        worker = self.worker(FakeProvider(ProviderPage({'markets': [], 'cursor': ''})), clock=lambda: now[0])
+        original = self.archives.upload
+        def slow_upload(*args):
+            receipt = original(*args)
+            now[0] = 61
+            return receipt
+        with patch.object(self.archives, 'upload', side_effect=slow_upload):
+            self.assertEqual(worker.step(job,deadline=60)['state'], 'failed')
+        self.assertEqual(len(self.archives.objects.data), 1)
+        self.assertEqual(self.queue.pages(job['id']), [])

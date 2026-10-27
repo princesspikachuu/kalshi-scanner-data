@@ -108,37 +108,74 @@ and this checkpoint. Existing live collector, loss prevention, table/full-sample
 metrics, Worker and hosting configuration are untouched. No merge, deployment,
 provisioning, credentials, Google account setup or trading occurred.
 
+## Fourth milestone: incremental inventory planner and page worker
+
+Started from actual remote `8f35906444ecd682423e245d2c0042c0c32298b7`;
+**CI 40459196934 passed**. Prior checkpoint reported no active worker. Used fresh
+worktree `pocket-incremental`; did not overwrite previous saved dirty worktrees.
+
+Added `inventory.py`, `budget.py`, migration 0005 and inventory tests. Scopes are
+series/source/day/generation identities; one historical index is shared by all
+days per series/generation. Planner explicitly returns every requested scope as
+fetch/resume/complete/empty/unavailable/failed. Contiguous terminal evidence AND
+job success are required for complete inventory. Completion is never quote
+coverage, normalized data, a published dataset or proof of a provider snapshot.
+
+A one-page provider-injected worker ties the queue to verified immutable archive
+receipts, resumes committed cursors, rejects page gaps/cycles/caps, fences stale
+leases and finishes terminal checkpoints after crashes without refetching. Shared
+PostgreSQL read-token reservations/cooldowns bound concurrent application reads.
+Endpoint costs and budget configuration are explicit; no account tier is assumed.
+No provider HTTP transport, daemon or account connection was added. Fake provider
+and archive storage make this milestone testable without credentials.
+
+Reviewed `scripts/collect_backtest.py` and official current Kalshi docs (research
+README links). Historical market lists have no close-date filter; their cutoff
+uses SETTLEMENT time, not close time. Therefore new plans retain both recent and
+historical sources and do not infer routing from close-day alone. The old collector
+is untouched. Raw inventory retains all provider fields and price strings; settled
+selection/normalization and cross-source ticker deduplication remain future work.
+
+Local verification: 38 API/research, 7 owner-policy and 14 gateway/client tests
+passed; 26 PostgreSQL cases skipped without a local disposable database. Blueprint
+validation and diff checks passed. The new tests are 6 pure and 10 actual-PG cases.
+Actual PostgreSQL cases require CI. Inspect this milestone commit's CI before claiming
+full success. README records integration contract, retries, deadlines, archive
+orphans, shared-budget scope and provider snapshot limitations. No deployment,
+provisioning, infrastructure mutation, owner email/credentials or trading occurred.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest remote head and its CI first. The queue, archive codec and R2
-   adapter are implemented: do not redo them. If CI fails, fix that before new work.
-   This run finishes after saving and inspecting its CI; no worker stays running.
-2. Incremental coverage planner and resumable worker adapter using the queue.
-   Distinguish fetched page from complete series/date coverage, bounded shared
-   provider rate budgets, retries/deadlines, empty vs unavailable vs failed data.
-   Test interrupted/restarted collection reuses pages and gaps are not hidden.
-   Review existing collector before rewriting; preserve settled-only and price
-   provenance rules. Use official current Kalshi docs for provider behavior.
-   Develop with a fake provider/object adapter; no new account connection needed.
-3. Versioned dataset/run membership and precomputed research summary storage.
+1. Inspect newest head and CI. Queue/archive/R2 and inventory planner/worker are
+   implemented; do not redo them. Fix any CI failures before adding features.
+   No background worker remains running when this run finishes.
+2. Add a read-only Kalshi HTTP provider adapter (one bounded request per worker
+   step) with stub tests, strict schema/error handling, Retry-After mapping and
+   no credentials or live collection required. Verify official current API docs.
+   The injected provider contract is in `InventoryWorker` and the research README.
+   Keep historical-series index reuse and both-source inventory planning.
+3. Normalize inventory to settled yes/no candidates by exact UTC close day;
+   deduplicate cross-source tickers without losing immutable provenance. Add
+   resumable candle/trade evidence collection with <=1-day strategy horizons.
+   Never call inventory empty/complete a full-sample return result. Preserve
+   original settled-only, bid/ask price-unit and maker-fill provenance rules.
+4. Versioned dataset/run membership and precomputed research summary storage.
    Atomically publish complete datasets, retain previous runs, never mix latest
    with cumulative or replace full-sample counts with an observed subset.
-4. Authenticated read-only historical run/date queries with keyset pagination,
-   indexed SQL and tests. Keep any owner mutations session+CSRF protected. Update
-   gateway allowlist/response validation deliberately when adding API routes.
-5. React/TypeScript research shell and historical browser may follow a stable
-   API contract. Reuse familiar current table behavior. No live hosting required.
-6. Measure representative local performance and record reproducible timings.
-   Do not promise a speedup from code structure alone or synthetic tiny samples.
+5. Authenticated read-only historical run/date queries with keyset pagination,
+   indexed SQL and tests. Keep owner mutations session+CSRF protected. Deliberately
+   update gateway allowlists when adding API routes.
+6. React/TypeScript shell/history browser after a stable API contract. Preserve
+   familiar table behavior. No hosting required. Measure representative local
+   performance later; no speedup claims from tiny synthetic samples.
 
-Prefer a complete tested milestone per continuation. Save code/checkpoint in the
-remote draft branch so workspace expiration cannot erase it. Inspect PR diff and
-CI; report verified outcomes, pending work and owner-only blockers honestly.
+Save code/checkpoint in the remote draft branch; inspect PR diff and CI. Main has
+later live table fixes and automated data updates: recheck/reconcile before any
+future authorized integration. Do not merge or deploy during this build.
 
 ## Owner-only items to leave pending
 
 Google Web OAuth client/public client ID, hosted resource/budget authorization,
 secure runtime secrets, R2 bucket/access configuration and retention policy, real
-R2 read/write acceptance, and real staging sign-in acceptance. No need to wake
-owner or repeatedly ask for these during this build. The adapter's SDK tests do
-not establish hosted R2 access, durability policy or network timing.
+R2 read/write and staging sign-in acceptance. No owner involvement is needed for
+the next pure-code milestones. No hosted credentials or owner email belong here.
