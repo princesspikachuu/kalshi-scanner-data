@@ -44,6 +44,9 @@ class FakeHistory:
         return self.row if identifier==1 else None
     def members(self,stream,identifier,**kwargs):return [] if identifier==1 else None
     def datasets(self,stream,**kwargs):return []
+    def windows(self,stream,identifier,**kwargs):
+        if identifier!=1:return None
+        return [dict(id=str(i),dataset_id='9007199254740993',start_at=STAMP,end_at=STAMP.replace(day=28)) for i in (3,2,1) if kwargs['before'] is None or i<kwargs['before']][:kwargs['limit']]
 
 
 def client(history):
@@ -58,7 +61,7 @@ class HistoryTests(unittest.TestCase):
     def setUp(self):self.history=FakeHistory();self.client,self.auth=client(self.history)
     def tearDown(self):self.client.close()
     def test_proxy_and_live_owner_session_required_before_any_history_query(self):
-        for path in ('datasets','results','results/1?view=latest','results/1/datasets'):
+        for path in ('datasets','results','results/1?view=latest','results/1/datasets','results/1/coverage'):
             url='/research/'+path+('&' if '?' in path else '?')+'stream=btc'
             self.assertEqual(self.client.get(url,headers={'x-pocket-proxy':'wrong'}).status_code,403)
         self.client.cookies.clear()
@@ -79,6 +82,16 @@ class HistoryTests(unittest.TestCase):
         c=Cursors('x'*32);token=c.encode(['members','btc','1'],4)
         with self.assertRaises(Exception):c.decode(token,['members','btc','2'])
         with self.assertRaises(Exception):Cursors('y'*32).decode(token,['members','btc','1'])
+
+    def test_coverage_windows_are_bounded_parent_scoped_readonly_pages(self):
+        first=self.client.get('/research/results/1/coverage?stream=category-btc&limit=1').json()
+        self.assertEqual([r['id'] for r in first['items']],['3'])
+        self.assertEqual(first['items'][0]['dataset_id'],'9007199254740993')
+        second=self.client.get('/research/results/1/coverage',params={'stream':'category-btc','cursor':first['next_cursor']}).json()
+        self.assertEqual([r['id'] for r in second['items']],['2','1'])
+        self.assertEqual(self.client.get('/research/results/2/coverage',params={'stream':'category-btc','cursor':first['next_cursor']}).status_code,422)
+        self.assertEqual(self.client.get('/research/results/99/coverage?stream=category-btc').status_code,404)
+        self.assertEqual(self.client.get('/research/results/1/datasets',params={'stream':'category-btc','cursor':first['next_cursor']}).status_code,422)
 
     def test_unknown_duplicate_and_unbounded_queries_fail_without_echo(self):
         for suffix in ('','?stream=btc&stream=eth','?stream=btc&limit=51','?stream=btc&limit=-1','?stream=btc&limit=1.2',

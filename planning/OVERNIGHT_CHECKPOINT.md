@@ -1281,3 +1281,37 @@ recheck deduplication/retained old reports and stale frozen retry suppression. L
 all actualPG cases before deploying this engine. Next connect dashboard This load /
 All saved history choices, source membership/coverage and measured performance.
 Keep current running collection online; deploys resume fenced saved pages.
+
+## Cumulative engine verified; research views and source inspector prepared
+
+03d752e CI40570248523 PASSED:224 API/research including72actualPG cases,
+7policy+28gateway/dashboard=259 tests without skips, plus Blueprint validation.
+Cumulative worker deploy dep-dbgfpve7bikc73bf8fi0 LIVE19:36:28.422541 UTC.
+Existing active year collection remains running; no duplicate job, data reset,
+operator credential, schema migration or role expansion was used.
+
+Fresh pocket-research-views from03d752e adds This load / All saved history choice,
+remembered on reload. Cumulative GET reads only published category reports; while
+none is ready, it explicitly says completed collection required. Selected-load
+progress remains visible separately. Views fetch saved cells, never rebuild model
+or call provider. CSV exports ALL saved cells with hold/loss rows and original n,
+regardless of UI minimum/display metric. Bigint result/source IDs remain strings.
+
+Lazy Sources and collection coverage inspector pages exact immutable dataset
+membership with existing raw coverage summaries and SHA fingerprints. Explicit
+text says raw source totals can overlap and are not report sample totals. Category
+selection revision/version is available in detail; owner-only /research/results/ID/
+coverage returns signed, query/parent-bound pages of exact half-open close-time
+windows. API validates closed aware-time intervals; no archives/raw observations
+are fetched in requests. API uses only existing SELECT grants, including direct
+limited-role tests. Source/member pagination works for reused cross-campaign data.
+No new table, migration, grant, secret or paid resource. Root/live production UI
+and pinned return/loss model remain unchanged.
+
+Local tests add coverage-window auth/cursor isolation, actual limited-role source
+reads, same-origin cumulative/client pagination, exact IDs and complete CSV output.
+Run actual-PG CI before deploying API/worker and publishing updated gateway. Next
+measure representative performance/memory, inspect running collection for explicit
+provider/coverage issues, and continue independent improvements. Owner's blanket
+deploy/collection authorization remains active; no repeated approval is required
+for these existing app services. Skip account/credential blockers if encountered.

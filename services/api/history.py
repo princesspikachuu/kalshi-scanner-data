@@ -89,6 +89,18 @@ class Member(Closed):
     fingerprint:Hash
     day:Day
     is_latest:bool=Field(strict=True)
+    summary:Coverage|None=None
+
+
+class SourceWindow(Closed):
+    id:ID
+    dataset_id:ID
+    start_at:datetime
+    end_at:datetime
+    @model_validator(mode='after')
+    def valid_range(self):
+        if self.start_at.tzinfo is None or self.end_at.tzinfo is None or self.start_at>=self.end_at:raise ValueError('Invalid coverage interval')
+        return self
 
 
 class Hold(Closed):
@@ -140,6 +152,9 @@ class Detail(Metadata):
     execution_included:Literal[False]
     baseline_fees_cents:Literal[0]
     exit_cost_stress_cents:Literal[2]
+    selection_version:Literal['category-window-selection-v1']|None=None
+    selection_revision:ID|None=None
+    dataset_count:Annotated[int,Field(strict=True,ge=1,le=3661)]|None=None
     summary:Totals
     cells:list[Cell]=Field(max_length=45)
     @model_validator(mode='after')
@@ -225,3 +240,11 @@ def install_history(app,auth,settings,store):
         rows=store.members(stream,int(identifier),before=before,limit=limit+1)
         if rows is None:raise HTTPException(404,'Research result not found')
         return page(rows,Member,scope,limit)
+
+
+    @app.get('/research/results/{identifier}/coverage')
+    def windows(identifier:str,request:Request):
+        stream,scope,before,limit=query(request,'windows',identifier)
+        rows=store.windows(stream,int(identifier),before=before,limit=limit+1)
+        if rows is None:raise HTTPException(404,'Research result not found')
+        return page(rows,SourceWindow,scope,limit)

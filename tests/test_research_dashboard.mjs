@@ -101,3 +101,26 @@ test('signed-out workspace exposes a sign-in link and fetches no private history
   assert.equal(nodes.workspace.hidden,true);assert.equal(nodes.signIn.hidden,false);
  }finally{events.pagehide?.();Object.assign(globalThis,previous)}
 });
+
+test('cumulative reports and paginated sources stay same-origin and retain string IDs',async()=>{
+ const requests=[],report=fixture();
+ const client=createResearchClient({fetcher:async(url,options)=>{
+  requests.push(url);assert.equal(options.credentials,'same-origin');assert.equal(options.body,undefined);
+  if(url.includes('results?'))return Response.json({contract:'research-history-v1',items:[{id:report.id}],next_cursor:null});
+  if(url.includes('/datasets?')||url.includes('/coverage?'))return Response.json({contract:'research-history-v1',items:[],next_cursor:null});
+  return Response.json({contract:'research-history-v1',view:'historical',result:report});
+ }});
+ assert.equal((await client.category('btc')).id,report.id);
+ await client.sources('category-btc',report.id,'opaque_cursor');await client.coverage('category-btc',report.id);
+ assert.equal(requests[0],'/api/research/results?stream=category-btc&limit=1');
+ assert.match(requests[1],/stream=category-btc&view=historical$/);assert.match(requests[2],/datasets.*cursor=opaque_cursor$/);
+ const blocked=createResearchClient({fetcher:()=>assert.fail('must not fetch')});await assert.rejects(blocked.category('arbitrary'));
+ await assert.rejects(blocked.sources('https://evil.test','1'));await assert.rejects(blocked.coverage('category-btc','1','!'));
+});
+test('full report CSV preserves every cell and both original denominators regardless of display minimum',async()=>{
+ const {reportCsv}=await import('../apps/web/report-view.mjs'),report=fixture();
+ const csv=reportCsv(report),lines=csv.trim().split('\r\n');
+ assert.equal(lines.length,3);assert.match(lines[1],/"hold","10","2"/);assert.match(lines[2],/"loss_prevention","10","2"/);
+ assert.match(csv,/9007199254740993/);assert.match(lines[2],/Sell ≤ 70¢/);
+ tableModel(report,{minimum:100});assert.equal(reportCsv(report),csv);
+});

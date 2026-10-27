@@ -1,15 +1,18 @@
 import {createAuthClient} from './auth-client.mjs';
 import {createCollectionClient} from './collection-client.mjs';
 import {createResearchClient} from './research-client.mjs';
-import {renderTable} from './report-view.mjs';
+import {renderTable,reportCsv} from './report-view.mjs';
 const $=id=>document.getElementById(id),client=createCollectionClient();
 let timer,statusTimer,revision=0,selected=null,next=null,key=null,busy=false,historyNext=null,report=null,reportKey=null;
 const research=createResearchClient(),auth=createAuthClient();
+let reportContext=null,sourceNext=null,windowNext=null,sourcesLoaded=null,reportRequest=0;
 const prefs={};
 try{Object.assign(prefs,JSON.parse(localStorage.getItem('pocket-collection-v1')||'{}'))}catch{}
 const today=new Date().toISOString().slice(0,10);
 $('asset').value=['btc','eth','crypto','weather','weather_daily','sports'].includes(prefs.asset)?prefs.asset:'btc';
 for(const id of ['start','end']){$(id).max=today;$(id).value=/^\d{4}-\d{2}-\d{2}$/.test(prefs[id]||'')?prefs[id]:today}
+$('reportScope').value=prefs.reportScope==='category'?'category':'load';
+$('reportScope').addEventListener('change',()=>{prefs.reportScope=$('reportScope').value;save();category()});
 $('recheck').checked=prefs.pending?.recheck===true;
 key=prefs.pending?.asset===$('asset').value&&prefs.pending?.start===$('start').value&&prefs.pending?.end===$('end').value?prefs.pending.key:null;
 function save(){try{localStorage.setItem('pocket-collection-v1',JSON.stringify({...prefs,asset:$('asset').value,start:$('start').value,end:$('end').value}))}catch{}}
@@ -25,9 +28,53 @@ async function workerStatus(){
   $('workerTitle').textContent=online?'Worker online · collection enabled':'Waiting for background worker';
   $('workerMessage').textContent=online?'Saved requests are processed section by section, even after you close this page. No trades are placed.':'Requests stay safely queued. The worker has not checked in recently; saved progress is retained.';
  }catch(error){$('workerTitle').textContent='Worker status unavailable';$('workerMessage').textContent='Your saved work is retained. Refresh to retry.';if(error.status===401){failure(error);return}}
+ if($('reportScope').value==='category')void loadCategory(revision);
  statusTimer=setTimeout(workerStatus,30000);
 }
-function clearReport(){report=null;reportKey=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true}
+function clearReport(){report=null;reportKey=null;reportContext=null;reportRequest++;sourcesLoaded=null;sourceNext=null;windowNext=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true;$('exportCsv').hidden=true;$('provenance').open=false}
+function showReport(data,context){
+ report=data;reportContext=context;sourcesLoaded=null;sourceNext=null;windowNext=null;$('provenance').open=false;
+ $('sourceList').replaceChildren();$('windowList').replaceChildren();$('sourcesMore').hidden=true;$('windowsMore').hidden=true;
+ $('reportStamp').textContent=($('reportScope').value==='category'?'All saved history':'This load')+' · Saved '+new Date(data.published_at).toLocaleString();
+ $('candidates').textContent=data.summary.candidate_count===null?'Unknown':data.summary.candidate_count.toLocaleString();
+ $('observations').textContent=data.summary.observation_count.toLocaleString();
+ $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';
+ $('scopeNote').textContent=$('reportScope').value==='category'?'Completed collections combined, with the newest source version selected once for each covered close time.':'All sections in this collection are combined.';
+ $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':'No eligible observations. No result has been invented.';
+ $('research').hidden=false;$('reportContent').hidden=false;$('exportCsv').hidden=false;drawReport();
+}
+async function loadCategory(version){
+ const ticket=++reportRequest;
+ if(!report){$('research').hidden=false;$('reportContent').hidden=true;$('reportStatus').textContent='Loading precomputed category history…'}
+ try{
+  const data=await research.category($('asset').value);if(version!==revision||ticket!==reportRequest||$('reportScope').value!=='category')return;
+  if(!data){clearReport();$('research').hidden=false;$('reportStatus').textContent='No completed category report yet. A collection must finish before its data joins all saved history.';return}
+  if(reportContext?.stream==='category-'+$('asset').value&&reportContext.id===data.id)return;
+  showReport(data,{stream:'category-'+$('asset').value,id:data.id});
+ }catch(error){if(version===revision&&ticket===reportRequest){$('reportStatus').textContent=error.message;failure(error)}}
+}
+async function loadSources(kind,append=false){
+ const context=reportContext,version=revision;if(!context)return;
+ const sources=kind==='sources',target=$(sources?'sourceList':'windowList'),status=$(sources?'sourcesStatus':'windowsStatus'),more=$(sources?'sourcesMore':'windowsMore');
+ status.textContent='Loading saved '+(sources?'source versions':'coverage windows')+'…';more.disabled=true;
+ try{
+  const data=await (sources?research.sources:research.coverage)(context.stream,context.id,append?(sources?sourceNext:windowNext):null);
+  if(context!==reportContext||version!==revision)return;
+  if(!append)target.replaceChildren();
+  for(const item of data.items){const li=document.createElement('li');
+   if(sources){const summary=item.summary;li.textContent=item.day+' · source #'+item.id+' · '+(summary?`${summary.candidate_count} candidates · candles ${summary.candidates_with_candles}/${summary.candidate_count} · trades ${summary.candidates_with_trades}/${summary.candidate_count} · unavailable scopes ${summary.scope_states.unavailable}`:'Coverage unavailable');li.title=item.fingerprint}
+   else li.textContent=item.start_at+' → '+item.end_at+' · source #'+item.dataset_id;
+   target.append(li);
+  }
+  if(sources)sourceNext=data.next_cursor;else windowNext=data.next_cursor;
+  more.hidden=!data.next_cursor;status.textContent=target.children.length?'Saved immutable '+(sources?'source versions.':'close-time coverage. Gaps remain explicit.'):(sources?'No source versions available.':'This load uses its frozen requested range; close-time overlays apply to cumulative history.');
+ }catch(error){if(context===reportContext&&version===revision){status.textContent=error.message;failure(error)}}finally{more.disabled=false}
+}
+$('provenance').addEventListener('toggle',()=>{if($('provenance').open&&reportContext&&sourcesLoaded!==reportContext){sourcesLoaded=reportContext;void loadSources('sources');void loadSources('windows')}});
+$('sourcesMore').addEventListener('click',()=>loadSources('sources',true));
+$('windowsMore').addEventListener('click',()=>loadSources('windows',true));
+$('exportCsv').addEventListener('click',()=>{if(!report)return;const url=URL.createObjectURL(new Blob([reportCsv(report)],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='pocket-'+$('asset').value+'-report-'+report.id+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
+
 function drawReport(){
  if(!report)return;$('cellDetail').hidden=true;
  renderTable($('table'),report,{loss:$('loss').checked,metric:$('metric').value,minimum:Number($('minimum').value)},(cell,minutes,band)=>{
@@ -48,12 +95,7 @@ async function loadReport(campaign,version){
  reportKey=identity;report=null;$('research').hidden=false;$('reportContent').hidden=true;$('reportStatus').textContent='Loading saved report…';
  try{
   const data=await research.result(campaign.id,campaign.result_id);if(version!==revision||reportKey!==identity)return;
-  report=data;$('reportStamp').textContent='Saved '+new Date(data.published_at).toLocaleString();
-  $('candidates').textContent=data.summary.candidate_count===null?'Unknown':data.summary.candidate_count.toLocaleString();
-  $('observations').textContent=data.summary.observation_count.toLocaleString();
-  $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';
-  $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':'No eligible observations. No result has been invented.';
-  $('reportContent').hidden=false;drawReport();
+  showReport(data,{stream:research.campaignStream(campaign.id),id:campaign.result_id});
  }catch(error){if(version===revision){reportKey=null;$('reportStatus').textContent=error.message;failure(error)}}
 }
 async function loadHistory(version,append=false){
@@ -73,6 +115,7 @@ async function loadHistory(version,append=false){
  }catch(error){if(version===revision){$('historyStatus').textContent='Could not load saved collections. Use Refresh saved work to retry.';failure(error)}return []}
 }
 async function selectCampaign(id){
+ $('reportScope').value='load';prefs.reportScope='load';
  clearTimeout(timer);const version=++revision;selected=id;prefs[$('asset').value]=id;save();clearReport();
  for(const button of $('history').children)button.setAttribute('aria-pressed',String(button.dataset.campaign===id));
  await poll(version);
@@ -84,7 +127,7 @@ $('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{a
 function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
  $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last issue: '+c.last_work_error.replaceAll('_',' '):''}`;
- $('completion').max=c.total_sections;$('completion').value=c.completed_sections;void loadReport(c,revision);
+ $('completion').max=c.total_sections;$('completion').value=c.completed_sections;if($('reportScope').value==='load')void loadReport(c,revision);
  $('counts').textContent=`${c.completed_sections} of ${c.total_sections} sections collected · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
  $('pause').hidden=!['queued','running'].includes(c.status);$('resume').hidden=!['failed','cancelled'].includes(c.status);
@@ -106,7 +149,7 @@ async function category(){
   if(!selected)selected=items[0]?.id||data.refresh.latest_campaign_id;
   for(const button of $('history').children)button.setAttribute('aria-pressed',String(button.dataset.campaign===selected));
   $('automatic').checked=data.refresh.enabled;$('refreshStatus').textContent=data.refresh.enabled?'Hourly refresh enabled. Switching it off prevents future refreshes; a current run can finish.':'Automatic refresh is off.';
-  await poll(version);
+  await poll(version);if($('reportScope').value==='category')await loadCategory(version);
  }catch(error){if(version===revision)failure(error)}
 }
 $('asset').addEventListener('change',()=>category());

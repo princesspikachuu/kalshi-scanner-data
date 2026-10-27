@@ -204,3 +204,10 @@ test('worker heartbeat status is GET-only, bounded and rejects extra query state
  assert.equal((await proxyAuth(request('/api/collection/status',{method:'POST'}),env,{fetcher:()=>assert.fail('must not fetch')})).status,405);
  assert.equal((await proxyAuth(request('/api/collection/status'),env,{fetcher:async()=>json({...body,private:'sentinel'})})).status,502);
 });
+
+test('coverage window reads use the same bounded authenticated research gateway',async()=>{
+ const payload={contract:'research-history-v1',items:[{id:'1',dataset_id:'9007199254740993',start_at:'2026-10-01T00:00:00Z',end_at:'2026-10-02T00:00:00Z'}],next_cursor:null};
+ const response=await proxyAuth(request('/api/research/results/1/coverage?stream=category-btc&limit=1'),env,{fetcher:async()=>json(payload)});
+ assert.equal(response.status,200);assert.deepEqual(await response.json(),payload);
+ assert.equal((await proxyAuth(request('/api/research/results/1/coverage?stream=category-btc&view=latest'),env,{fetcher:()=>assert.fail('must not fetch')})).status,400);
+});

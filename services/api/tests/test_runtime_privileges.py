@@ -211,3 +211,24 @@ class RuntimePrivilegesTests(unittest.TestCase):
             c.execute("UPDATE research_job SET finished_at=clock_timestamp()-interval '91 seconds' WHERE id=%s",(HEARTBEAT_ID,))
         self.assertEqual(campaigns.worker_status()['state'],'waiting')
         heartbeat.beat();self.assertEqual(campaigns.worker_status()['state'],'online')
+
+
+    def test_api_reads_category_selection_and_source_coverage_with_existing_grants(self):
+        import json
+        from datetime import timedelta
+        from services.research.cumulative import prepare_category,select_windows
+        from services.research.history import HistoryStore
+        from services.api.history import Detail
+        prepared=Fixture().prepare();dataset_id=DatasetStore(self.worker).publish('coverage-'+str(uuid4()),prepared)
+        with self.worker.connection() as c:
+            raw=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(dataset_id,)).fetchone()
+        start=datetime.fromisoformat(raw['payload']['day']).replace(tzinfo=timezone.utc)
+        manifest=select_windows([dict(dataset_id=dataset_id,start_at=start.isoformat(),end_at=(start+timedelta(days=1)).isoformat())])
+        report=prepare_category('btc',[raw],manifest,1)
+        stream='category-role-'+str(uuid4());identifier=ReportStore(self.worker)._save(stream,'btc',report,minimum_revision=1)
+        history=HistoryStore(self.api)
+        self.assertTrue(history.members(stream,identifier)[0]['summary'])
+        windows=history.windows(stream,identifier,limit=1);self.assertEqual(windows[0]['dataset_id'],str(dataset_id))
+        self.assertEqual(history.windows(stream,identifier,before=1),[])
+        data=Detail.model_validate(history.result(stream,identifier,view='historical'))
+        self.assertEqual(data.selection_version,'category-window-selection-v1');self.assertEqual(data.selection_revision,'1')

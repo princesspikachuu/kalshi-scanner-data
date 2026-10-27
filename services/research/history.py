@@ -39,6 +39,9 @@ class HistoryStore:
                 report->'price_bands' AS price_bands,report->'execution_included' AS execution_included,
                 report->'baseline_fees_cents' AS baseline_fees_cents,
                 report->'exit_cost_stress_cents' AS exit_cost_stress_cents,
+                report->'selection'->>'version' AS selection_version,
+                report->'selection'->>'revision' AS selection_revision,
+                jsonb_array_length(report->'datasets') AS dataset_count,
                 {self._summary(view)} AS summary,
                 CASE WHEN octet_length((report->%s->'cells')::text)<=131072
                      THEN report->%s->'cells' ELSE NULL END AS cells
@@ -50,6 +53,18 @@ class HistoryStore:
         args=(identifier,before,limit) if before is not None else (identifier,limit)
         with self.pool.connection() as c:
             if not c.execute('SELECT id FROM research_result WHERE stream_key=%s AND id=%s',(stream,identifier)).fetchone():return None
-            return c.execute(f'''SELECT d.id::text AS id,d.fingerprint,d.day::text AS day,m.is_latest
+            return c.execute(f'''SELECT d.id::text AS id,d.fingerprint,d.day::text AS day,m.is_latest,s.summary
                 FROM research_result_dataset m JOIN research_dataset d ON d.id=m.dataset_id
+                LEFT JOIN research_summary s ON s.dataset_id=d.id
                 WHERE m.result_id=%s {boundary} ORDER BY m.dataset_id DESC LIMIT %s''',args).fetchall()
+
+
+    def windows(self,stream,identifier,*,before=None,limit=26):
+        with self.pool.connection() as c:
+            if not c.execute('SELECT id FROM research_result WHERE stream_key=%s AND id=%s',(stream,identifier)).fetchone():return None
+            return c.execute('''SELECT ordinality::text AS id,w->>'dataset_id' AS dataset_id,
+                w->>'start_at' AS start_at,w->>'end_at' AS end_at
+                FROM research_result r CROSS JOIN LATERAL
+                    jsonb_array_elements(COALESCE(report->'selection'->'windows','[]'::jsonb)) WITH ORDINALITY AS t(w,ordinality)
+                WHERE r.id=%s AND (%s::bigint IS NULL OR ordinality<%s)
+                ORDER BY ordinality DESC LIMIT %s''',(identifier,before,before,limit)).fetchall()
