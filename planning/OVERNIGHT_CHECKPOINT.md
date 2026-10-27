@@ -1572,3 +1572,9 @@ cells, no quadratic preview observation copies and stale/final publication guard
 Run actualPG CI, resolve regressions, deploy tested API+worker then gateway on dev
 branch only. Verify actual existing year/hourly job tables/sources while running;
 no need for owner action or new credentials. Record exact receipts and limitations.
+
+1408cf5 CI40590164616 passed241/242 API/research plus32JS+7policy; new
+realPG progressive test showed a final enrichment transition problem after an
+artificial continuing empty trade-page fixture. No failed revision deployed.
+Added fixture-only diagnostics to identify the exact integrity check; preserve
+strict final-completion assertion and all source/denominator checks.

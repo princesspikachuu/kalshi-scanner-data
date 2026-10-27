@@ -181,8 +181,14 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(sum(x['hold']['sampled_markets'] for x in report['historical']['cells']),10)
         self.assertEqual(observations,0)  # Raw immutable inputs retain every row; no quadratic preview copies.
         before=state['result_id'];self.evidence.fetch=original
-        self.worker=self.make_worker();self.drive(identifier,limit=250)
-        final=self.store.get(identifier);self.assertTrue(final['report_complete'])
+        self.worker=self.make_worker()
+        import services.research.campaigns as model
+        build=model.prepare_dataset
+        def explain_fixture(*args,**kwargs):
+            try:return build(*args,**kwargs)
+            except EvidenceConflict as error:raise AssertionError('Fixture enrichment failed: '+str(error)) from error
+        with patch.object(model,'prepare_dataset',side_effect=explain_fixture):self.drive(identifier,limit=250)
+        final=self.store.get(identifier);self.assertTrue(final['report_complete'],final)
         self.assertNotEqual(final['result_id'],before)
         with self.db.pool.connection() as c:
             full=c.execute('SELECT report FROM research_result WHERE id=%s',(final['result_id'],)).fetchone()['report']
