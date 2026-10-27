@@ -328,7 +328,10 @@ Local: 109 API/research tests passed; 46 PG cases skip without disposable local 
 (the last PG rollback case was separately discovered). Seven policy and 14 gateway
 cases passed. Compile, dependency and whitespace checks passed. Added 10 pure
 report, 18 pinned model regression and 5 actual-PG cases. **176-test CI result awaits
-this commit**: inspect before claiming actual PG success. Local network Blueprint
+this commit**: inspect before claiming actual PG success. First CI run
+40501966528 found a missing dataclasses.replace import in the new rollback test;
+that test-only import is corrected in a follow-up commit. Remaining tests passed;
+full rerun still required before claiming this milestone passed. Local network Blueprint
 validation was intentionally not rerun; unchanged CI performs its schema-only GET.
 No owner email/credentials, hosted provider/object-store reads, Google account setup,
 live infra changes or running worker. No speedup/real-hosted acceptance claim.
