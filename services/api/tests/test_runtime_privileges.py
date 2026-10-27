@@ -116,12 +116,13 @@ class RuntimePrivilegesTests(unittest.TestCase):
 
 
     def test_audit_accepts_direct_unprivileged_login_and_refuses_operator(self):
-        from psycopg.conninfo import make_conninfo
         password=uuid4().hex  # Disposable test-only credential, never printed.
         with psycopg.connect(URL,autocommit=True) as c:
             c.execute(sql.SQL('ALTER ROLE pocket_research_runtime LOGIN PASSWORD {}').format(sql.Literal(password)))
         try:
-            result=audit_database(make_conninfo(URL,user='pocket_research_runtime',password=password))
+            parts=urlsplit(URL)
+            direct=parts._replace(netloc='pocket_research_runtime:'+password+'@'+parts.netloc.rsplit('@',1)[-1]).geturl()
+            result=audit_database(direct)
             self.assertTrue(result['privilege_boundary_ready'],result)
             self.assertFalse(audit_database(URL)['privilege_boundary_ready'])
         finally:
