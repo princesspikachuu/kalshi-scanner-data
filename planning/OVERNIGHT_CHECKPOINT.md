@@ -63,12 +63,28 @@ Documentation distinguishes parsed JSON archives from exact HTTP-wire captures.
 
 No actual object-store/R2 adapter or hosted bucket exists. Tests use an in-memory
 adapter; missing credentials are not blocking pure codec work. Archive unit tests
-pass locally. Inspect the newest commit CI before claiming the combined suite
-passed with the archive addition.
+pass locally. Archive milestone saved at commit
+`e341359ea0054585374f0a49979182f6346430fa`. **CI run 40453964106 passed**:
+36 API/research tests (including all 16 actual PostgreSQL cases), 7 owner-policy
+tests, 14 gateway/browser-client tests, and Blueprint validation. No tests skipped
+in CI and no deployment ran. Total: 57 automated tests plus schema validation.
+
+The draft diff was reviewed: no existing live collector, table, backtest or Worker
+files changed. A local `git merge-tree` against main `26c65c2` was conflict-free;
+no merge was performed and the draft remains unmerged. Main can receive automated
+research data updates, so recheck its current head before eventual integration.
+
+This initial build session has finished writing; no overnight worker process is
+running in the local workspace. The scheduled continuation may start its next
+independent milestone after reading the current remote checkpoint. Local worktree
+`kalshi-data-pipeline` is dirty because source was published through GitHub tools;
+its saved content is already remote. Do not treat those files as unpublished new
+changes or reset an unrelated dirty worktree.
 
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest CI. Queue milestone already passed; fix any archive failures.
+1. Queue and archive milestones both passed CI. Inspect the newest remote head
+   before starting; do not redo either milestone.
 2. Archive codec/interface are implemented; add a real R2 adapter only after
    checking current official SDK behavior. Keep it unconfigured/undeployed; use
    SDK stub tests rather than any account credentials.
