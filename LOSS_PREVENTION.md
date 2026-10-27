@@ -24,19 +24,23 @@ uncertainty; they do not cover regime shifts, cross-event correlation or missing
 bias. A descriptive estimate is displayed even with one observation, accompanied
 by its wide interval. There is no minimum seven-day display gate.
 
-Adjacent observed price bins can bracket a downward 50% loss-probability crossing.
-Missing bins are not bridged. Reversals or multiple crossings are labeled ambiguous;
-there is no forced monotonic curve or extrapolated precise stop. Boundary estimates
-are conditional on remaining time and series, not one timeless exit price.
+The table now shows a single approximate threshold directly in each cell when
+loss prevention is enabled. There is no decision-time picker, tap prompt or risk
+detail panel. Turning it off restores the unchanged P/L/ROI/win-rate view.
 
-The table's loss-prevention control adds risk annotations and per-bin details.
-Original holding P/L, ROI, win rate and sample sizes remain unchanged in both
-historical and latest views. Both use the full historical risk study, clearly
-labeled; latest returns still come only from the latest collection. The optional
-sale advantage is a descriptive net-bid-versus-expected-payout comparison under
-a hypothetical 2-cent exit cost, not verified fees or a validated policy. No live
-orders are placed. A frozen exit policy, later-event replay and forward paper
-validation are separate future work.
+The display pools event counts across series within the selected market category
+at an automatic checkpoint at or before half the original entry time. Weighted
+isotonic regression fits loss probability as decreasing with current bid; this
+is an explicit modeling assumption, not a claim that the raw bins are monotonic.
+The displayed integer is the interpolated 50% crossing between adjacent observed
+price bins, marked approximate. No crossing, a missing adjacent bin, zero-bid
+interpolation or a crossing above the original average entry price yields a dash.
+It does not average selected series thresholds or extrapolate across missing bins.
+
+Both historical and latest use all saved history for threshold estimation while
+the original return datasets and counts remain separate and unchanged. These
+numbers estimate loss likelihood, not validated sell-versus-hold policies. No
+live orders are placed. Later-event replay and paper validation remain separate.
 
 Legacy scenario/replay helpers remain in `scripts/loss_prevention.py` for
 reproducibility and existing collector integration. They are no longer used by

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const html=fs.readFileSync('docs/index.html','utf8');
 let script=html.split('<script>')[1].split('</script>')[0];
 script=script.slice(0,script.lastIndexOf('document.querySelectorAll(".tab")'));
-script+='globalThis.dashboard={state,render,lookup,validCollection,collectionDate,renderLossControls,applySavedView,showDetail,csv,loadLossStudy};})();';
+script+='globalThis.dashboard={state,render,lookup,validCollection,collectionDate,renderLossControls,applySavedView,showDetail,csv,loadLossStudy,thresholdEstimate};})();';
 const elements=new Map();
 function element(id){
  if(!elements.has(id))elements.set(id,{value:({collectAsset:'crypto',collectMarkets:'300',collectDays:'7',collectOffset:'1'})[id]||'',classList:{toggle(){},remove(){},add(){}},appendChild(){},setAttribute(){},addEventListener(){}});
@@ -31,40 +31,42 @@ assert.equal(element('marketCount').textContent,latest.markets_sampled_total.toL
 assert.equal(element('coverage').textContent,latest.first_date+' → '+latest.last_date);
 assert.equal(lookup('crypto',15,'50-60').sampled_markets,20);
 
-// Conditional risk must never replace either original table sample or returns.
-const {applySavedView,showDetail,csv}=context.dashboard;
+// A single visible threshold replaces the old time controls and tap prompts.
+const {applySavedView,showDetail,csv,thresholdEstimate}=context.dashboard;
 const original={asset:'crypto',minutes_before_close:15,price_band_cents:'90-100',sampled_markets:100,sampled_days:10,average_purchase_price_cents:95,average_profit_loss_cents_per_contract:-10,hypothetical_roi_percent:-10.5263,wins:85,win_rate_percent:85};
 state.records.push(original);
-const riskRecord={asset:'crypto',family:'KXBTC15M',minutes_before_close:15,price_band_cents:'90-100',decision_minutes_remaining:5,eligible_events:40,observed_events:22,saved_checkpoint_events:0,bins:[{bid_low_cents:50,bid_high_cents:60,events:22,losses:12,loss_rate_percent:54.5,loss_lower_percent:34,loss_upper_percent:74,sale_advantage_cents:7.5,zero_bid_events:0}],boundary:{status:'estimated',ranges:[{low_cents:50,high_cents:70,events:44,clear_at_95_percent:false}]}};
-state.lossStudy={version:2,historical:{crypto:{records:[riskRecord],event_entry_groups:100,covered_event_entry_groups:40}}};
+const bins=[{bid_low_cents:50,bid_high_cents:60,mean_bid_cents:55,events:10,losses:8},{bid_low_cents:60,bid_high_cents:70,mean_bid_cents:65,events:10,losses:2}];
+const riskRecord={asset:'crypto',family:'KXBTC15M',minutes_before_close:15,price_band_cents:'90-100',decision_minutes_remaining:5,observed_events:20,bins};
+state.lossStudy={version:2,historical:{crypto:{records:[riskRecord]}}};
 state.view='historical';state.lossEnabled=false;render();
 assert.equal(lookup('crypto',15,'90-100'),original);
-state.lossEnabled=true;state.lossDecision='auto';render();
+state.lossEnabled=true;render();
 let cell=lookup('crypto',15,'90-100');
+assert.equal(cell.threshold_cents,60);
 assert.equal(cell.average_profit_loss_cents_per_contract,-10);
-assert.equal(cell.hypothetical_roi_percent,original.hypothetical_roi_percent);
 assert.equal(cell.sampled_markets,100);
-assert.equal(cell.risk_records[0],riskRecord);
-assert.equal(cell.risk_decision,5);
-showDetail(cell,15,'90-100');
-assert.match(element('detail').innerHTML,/50–70¢/);
-assert.match(element('detail').innerHTML,/54.5%/);
-assert.match(element('detail').innerHTML,/uncertain/);
-assert.match(element('detail').innerHTML,/12 \/ 22 lost/);
-assert.doesNotMatch(element('detail').innerHTML,/Sell at|continue holding|no supported threshold/);
+assert.equal(element('marketHeading').textContent,'Loss-prevention thresholds');
+assert.equal(element('metricControls').hidden,true);
+assert.equal(element('valueLegend').hidden,true);
+assert.doesNotMatch(html,/id="lossDecision"|Mixed risk pattern · tap|Tap for risk coverage|Series risk ranges · tap/);
+assert.match(html,/threshold==null\?"—":"≈"\+threshold\+"¢"/);
+// Old saved time-picker preferences cannot override the automatic checkpoint.
 state.lossDecision='30';render();
-cell=lookup('crypto',15,'90-100');
-assert.equal(cell.risk_records.length,0);
-showDetail(cell,15,'90-100');
-assert.match(element('detail').innerHTML,/missing evidence, not a recommendation to hold/);
-state.view='latest';state.lossDecision='auto';render();
+assert.equal(lookup('crypto',15,'90-100').threshold_cents,60);
+assert.equal(thresholdEstimate([],95),null);
+assert.equal(thresholdEstimate([riskRecord],50),null); // never manufacture an above-entry stop
+assert.equal(thresholdEstimate([{bins:[{...bins[0],bid_low_cents:30},bins[1]]}],95),null); // do not bridge missing bands
+assert.equal(thresholdEstimate([{bins:bins.map(b=>({...b,losses:0}))}],95),null);
+// Small reversals are pooled using event weights, not chosen based on outcomes
+// of entire future paths. A flat 50% fit has no established >50% crossing.
+assert.equal(thresholdEstimate([{bins:[{...bins[0],losses:2},{...bins[1],losses:8}]}],95),null);
+state.view='latest';render();
 cell=lookup('crypto',15,'50-60');
 assert.equal(cell.sampled_markets,20);
 assert.equal(cell.average_profit_loss_cents_per_contract,1);
+assert.equal(cell.threshold_cents,null);
 assert.equal(element('marketCount').textContent,latest.markets_sampled_total.toLocaleString());
-assert.match(element('lossCoverage').textContent,/Estimates use all saved history, including in Latest/);
-applySavedView({lossEnabled:true,lossDecision:'5'});assert.equal(state.lossEnabled,true);assert.equal(state.lossDecision,'5');
-applySavedView({lossDecision:'999'});assert.equal(state.lossDecision,'5');
+applySavedView({lossEnabled:true});assert.equal(state.lossEnabled,true);
 
 state.records=csv(fs.readFileSync('backtests/AVERAGES_BY_TIME_AND_PRICE.csv','utf8'));
 state.latestRecords=csv(fs.readFileSync('backtests/LATEST_BY_CATEGORY.csv','utf8'));
