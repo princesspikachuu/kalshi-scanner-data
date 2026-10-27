@@ -1849,3 +1849,9 @@ restart/fullcohort,coalescing/frozenretry/pacing and lane fairness tests. Local
 verification before actualPG CI:255tests173passed/82PGskipped before final fairness
 case,34JS,7policy,Blueprint allpassed. Run latestPG CI and resolve real regressions
 before mainoptimized rollout; preserve active8campaigns and daily03Pacificsetting.
+
+c21fe0b CI40604400466/job122540176909 passed255/256API/research incl allnew
+actualPG cases; old four-way barrier fixture had3candles plus1trade, intentionally
+no longer mixed by candlelane. Expand fixture to4candlemarkets, retaining real
+4-thread barrier and full20-observation assertions. Do not weaken concurrency or
+full-sample checks. Failed revision undeployed; instrumented7fd37db keepsworking.

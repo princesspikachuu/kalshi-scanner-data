@@ -121,7 +121,7 @@ class CampaignPostgresTests(unittest.TestCase):
         def many(scope,cursor,timeout):
             page=original(scope,cursor,timeout)
             page.payload['markets']=[{**m,'ticker':m['ticker']+'-'+str(i),'event_ticker':m['event_ticker']+'-'+str(i)}
-                                     for m in page.payload['markets'] for i in range(3)]
+                                     for m in page.payload['markets'] for i in range(4)]
             return page
         self.inventory.fetch=many
         def handler(request):
@@ -154,8 +154,8 @@ class CampaignPostgresTests(unittest.TestCase):
             report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['result_id'],)).fetchone()['report']
             n=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(state['result_id'],)).fetchone()['n']
         self.assertGreaterEqual(entered,4)
-        self.assertEqual(report['historical']['candidate_count'],3);self.assertEqual(n,15)
-        self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),15)
+        self.assertEqual(report['historical']['candidate_count'],4);self.assertEqual(n,20)
+        self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),20)
         self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
 
     @patch('services.research.datasets.COMPACT_THRESHOLD',0)
