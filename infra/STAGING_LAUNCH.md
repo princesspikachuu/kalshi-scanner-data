@@ -1,6 +1,6 @@
-# Staging launch proposal — not applied
+# Staging launch — smaller stack applied
 
-Prepared October 27, 2026. Owner reports creating the **pocket-r2-staging** Render
+Updated October 27, 2026. Smaller staging stack created from 4fdc898; API and\nworker deployments are LIVE, PG available. Collection remains disabled. See\nplanning/OVERNIGHT_CHECKPOINT.md for resource/deploy IDs and remaining checks.\nBlueprint auto-sync and service auto deploys are off.\n\nPrepared October 27, 2026. Owner reports creating the **pocket-r2-staging** Render
 environment group with R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID and
 R2_SECRET_ACCESS_KEY. Secret values were not retrieved or copied into this repo.
 The public Google Web client ID has been provided in the private setup conversation;

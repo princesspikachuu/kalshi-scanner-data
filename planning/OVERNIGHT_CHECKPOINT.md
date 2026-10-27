@@ -558,3 +558,43 @@ as well as existing service auto deploys. Inspect migrations/readiness and disab
 worker logs; record actual resource/deploy IDs. Google gateway acceptance, R2
 read/write verification, runtime privilege hardening and collection enablement remain
 separate pending steps. No resources or hosted collection created at this save.
+
+## Applied smaller staging stack (October 27, 2026)
+
+Owner authorized the smaller plan; Render review showed $21.50/month. Blueprint
+exs-dbgcgusipgvc73f5pot0 created from 4fdc898. Auto Sync set No; UI confirmed
+Sync paused. Service auto deploys remain off. No automatic paid upgrades.
+
+Verified through Render connector:
+- API srv-dbgcsb6c6qcc73f1j6n0, 0.5c-512mb, Oregon, one instance.
+- Worker srv-dbgcsb6c6qcc73f1j6lg, 0.5c-512mb, Oregon, one instance.
+- PG dpg-dbgcrl6c6qcc73f1hi1g-a, PostgreSQL 17, 0.1c-256mb, available,
+  disk 5 GB, autoscaling false, ipAllowList empty, no replicas/HA.
+- Project prj-dbgcrkuc6qcc73f1hhl0; environment evm-dbgcrkuc6qcc73f1hhlg.
+- Worker deploy dep-dbgcsbec6qcc73f1j7n0 LIVE; logs say Migrations applied.
+- First API deploy dep-dbgcsbec6qcc73f1j820 failed pre-deploy with sanitized
+  migration error. Cause unconfirmed; database error-log query returned no errors.
+  One retry dep-dbgcu16gekts738i4iq0 LIVE at 16:20:42 UTC, with Migrations applied.
+- API URL https://pocket-api-staging.onrender.com, healthCheckPath /health/ready.
+  Render live status confirms its configured deployment health gate passed.
+  Independent HTTP verification was unavailable through the web fetch tool.
+- CI 40538572583 passed on 4fdc898; offline YAML sizing/privacy/gating checks and
+  git diff --check passed before committing. No application code changed.
+
+COLLECTION_ENABLED remains false in applied source. Worker live startup validates
+configuration format, not R2 permissions. No collection was enabled, no trading,
+no live Cloudflare Worker modification and no merge. Private API configuration
+was supplied only to Render; no owner email/credential values were committed.
+
+The local/browser environment disconnected during verification. Connector monitoring
+continued; no screenshot could be saved. Older dirty worktrees were preserved.
+
+Exact resume: inspect latest branch/CI and Render deployment statuses using IDs
+above. Do NOT create duplicate resources or blindly resync the Blueprint. Applied
+runtime commit is 4fdc898; later documentation commits need no deployment. Verify
+private env key names/group linkage without revealing values, independently test
+HTTP readiness and unauthenticated access denial, investigate migration failure if
+it recurs, harden DB runtime privileges, then separately configure/test the staging
+Cloudflare gateway and real owner Google login. Tiny R2 integrity acceptance and
+representative memory/throughput benchmarks remain pending. Keep collection off
+until connection/privilege checks and explicit enablement; no automatic upgrade.
