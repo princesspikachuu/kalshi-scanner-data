@@ -6,7 +6,7 @@
 <title>Kalshi Pocket Analytics</title>
 <style>
 :root{color-scheme:dark;--bg:#0a111c;--surface:#111e2e;--raised:#19283a;--muted:#99acbc;--border:#304255;--text:#f1f8fb;--mint:#74e0b4;--pink:#ff9eaa;--gold:#efcc8f;--radius:18px}
-*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#102337 0,#0a111c 45%);color:var(--text);font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:linear-gradient(135deg,#102337 0,#0a111c 45%);color:var(--text);font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
 button,select{font:inherit}button{cursor:pointer}a{color:var(--mint)}.shell{max-width:1100px;margin:0 auto;padding:24px 24px 72px}
 header{display:flex;gap:18px;align-items:center;justify-content:space-between;margin-bottom:24px}.brand{display:flex;align-items:center;gap:12px}.logo{width:44px;height:44px;border-radius:13px;background:#19392f;color:var(--mint);display:grid;place-items:center;font-size:24px;font-weight:800}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:10px;font-weight:800;color:var(--mint)}h1{font-size:clamp(24px,4vw,34px);line-height:1.05;margin:4px 0 0;letter-spacing:-.035em}h2{font-size:20px;margin:0 0 12px;letter-spacing:-.025em}.muted{color:var(--muted)}.small{font-size:12px}.refresh{background:var(--raised);border:1px solid var(--border);border-radius:12px;color:var(--text);padding:10px 13px;white-space:nowrap}
@@ -196,6 +196,7 @@ function render(){
   id("marketHeading").textContent=matched?"Loss-prevention thresholds":"Average profit & loss";
   id("metricControls").hidden=matched;id("valueLegend").hidden=matched;
   id("resultTable").classList.toggle("thresholds",matched);
+  id("resultTable").setAttribute("aria-label",matched?"Loss-prevention thresholds by entry price and entry time":"Average historical profit and loss by purchase price and settlement time");
   document.querySelectorAll("#resultTable thead th").forEach(function(th,i){th.textContent=i===0?"Entry time":matched?BANDS[i-1].replace("-","–")+"¢":BANDS[i-1].split("-")[0]+"–"+(Number(BANDS[i-1].split("-")[1])-.1)+"¢"});
   id("tableMethod").textContent=matched?"Estimated price where losing becomes more likely than winning":"Time until settlement × entry price (maker bid) · before fees";
   id("datasetInfo").textContent=state.view==="latest"?(st.run_id?"Latest completed collection · Run "+st.run_id+" · "+(st.days_sampled||0)+" UTC day(s)":"No latest collection saved for this category yet."):"All saved historical observations for this category (deduplicated by market, side and entry time).";
