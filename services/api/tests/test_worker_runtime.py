@@ -127,3 +127,13 @@ class RuntimeTests(unittest.TestCase):
              patch('sys.stderr',new_callable=StringIO) as errors:
             runtime.run(settings,stop);prepare.assert_called_once()
             self.assertNotIn('sentinel',errors.getvalue())
+
+
+class RunnerWaitTests(unittest.TestCase):
+    def test_wait_uses_ready_time_with_idle_and_spin_bounds(self):
+        from services.research.runner import serve
+        for value,expected in ((.8,.8),(-10,.1),(90,5)):
+            stop=Mock();stop.is_set.side_effect=[False,True]
+            campaigns=Mock();worker=Mock();worker.run_once.return_value=False
+            serve(campaigns,worker,stop,idle_wait=lambda:value)
+            campaigns.schedule_due.assert_called_once();stop.wait.assert_called_once_with(expected)

@@ -68,7 +68,7 @@ def summarize(items):
             'sale_advantage_upper_cents': None if has_zero_bid else round(mean_bid - EXIT_COST_STRESS_CENTS - 100*(1-upper), 4)})
     return bins
 
-def analyze_risk(rows, paths, asset, include_snapshots=False):
+def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
     saved = canonical(rows)
     representatives = {}
     eligible = 0
@@ -126,6 +126,8 @@ def analyze_risk(rows, paths, asset, include_snapshots=False):
                 continue
             group = (family, minute, band, decision)
             requested[group] += 1
+            if compact and decision==next((t for t in CHECKPOINTS if t<=minute/2),None):
+                grid[group]  # Preserve empty policy cells when no exit quote exists.
             try:
                 close = int(path['close_ts']) if path is not None else int(dt.datetime.fromisoformat(r['close_time'].replace('Z', '+00:00')).timestamp())
             except (KeyError, ValueError, TypeError):
@@ -148,12 +150,15 @@ def analyze_risk(rows, paths, asset, include_snapshots=False):
                     source = 'saved_checkpoint'
             if not isinstance(bid, (int, float)) or not math.isfinite(bid) or not 0 <= bid <= 100:
                 continue
-            grid[group].append({'event': event, 'bid': bid, 'won': int(r['won']),
-                                'entry': 100*float(r['maker_bid']), 'source': source,
-                                'key': (r['date'], r['ticker'], minute), 'close_ts': close, 'decision_ts': target})
+            # Reports consume only the pinned policy checkpoint, not the diagnostic
+            # per-checkpoint bins. Coverage still counts EVERY observed checkpoint.
+            if not compact or decision==next((t for t in CHECKPOINTS if t<=minute/2),None):
+                grid[group].append({'event': event, 'bid': bid, 'won': int(r['won']),
+                                    'entry': 100*float(r['maker_bid']), 'source': source,
+                                    'key': (r['date'], r['ticker'], minute), 'close_ts': close, 'decision_ts': target})
             covered.add(key)
     records = []
-    for (family, minute, band, decision), count in sorted(requested.items()):
+    for (family, minute, band, decision), count in (sorted(requested.items()) if not compact else []):
         items = grid[(family, minute, band, decision)]
         bins = summarize(items)
         records.append({'asset': asset, 'family': family, 'minutes_before_close': minute,

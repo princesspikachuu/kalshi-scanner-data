@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 from .inventory import digest
 from .normalize import _closed
 from .queue import ResearchQueue,EvidenceConflict
-from .reports import ReportStore,PreparedReport,prepare_report_stream,SERIES
+from .reports import ReportStore,PreparedReport,prepare_report_stream,SERIES,MAX_REPORT_BYTES,report_fingerprint
 
 VERSION='category-window-selection-v1'
 MAX_WINDOWS=50000
@@ -64,11 +64,11 @@ def prepare_category(asset,datasets,manifest,revision):
             loaded.add(d['id']);yield d
         if loaded!=expected:raise EvidenceConflict('Missing category input')
     prepared=prepare_report_stream(asset,checked(),latest_ids=None,candidate_filter=include)
-    payload=json.loads(prepared.payload_json);observations=json.loads(prepared.observations_json)
+    payload=json.loads(prepared.payload_json)
     payload['selection']={'version':VERSION,'windows':manifest,'revision':revision}
     encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
-    if len(encoded.encode())+len(prepared.observations_json.encode())>64*1024*1024:raise ValueError('Category result exceeds bounded report size')
-    return PreparedReport(encoded,digest(dict(report=payload,observations=observations)),prepared.observations_json)
+    if len(encoded.encode())+len(prepared.observations_json.encode())>MAX_REPORT_BYTES:raise ValueError('Category result exceeds bounded report size')
+    return PreparedReport(encoded,report_fingerprint(encoded,prepared.observations_json),prepared.observations_json)
 
 
 class CategoryReports:

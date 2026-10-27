@@ -135,6 +135,7 @@ function render(data,append=false){
  for(const s of data.sections||[]){const li=document.createElement('li');li.textContent=`${s.day} · ${s.stage}${s.dataset_id?' · saved version '+s.dataset_id:''}`;$('sections').append(li)}
  next=data.next_after;$('more').hidden=!next;
  if(c.status==='succeeded')$('notice').textContent='Collection complete. All sections and the combined research report are saved.';
+ else if(['queued','running'].includes(c.status))$('notice').textContent='Collection in progress. Saved pages are retained across retries and restarts.';
  else if(c.status==='failed')$('notice').textContent='Collection stopped with an unresolved error. Resume retries unfinished work and retains saved pages.';
 }
 async function poll(version){

@@ -131,6 +131,15 @@ class CampaignStore:
                 row['last_work_error']=failure['error_code'] if failure else None
             return row
 
+    def next_wait(self):
+        """Wake promptly for durable parent/report retry times, with a 5s idle cap."""
+        with self.pool.connection() as c:
+            row=c.execute('''SELECT min(extract(epoch FROM
+                (CASE WHEN status='running' THEN lease_expires_at ELSE available_at END)-clock_timestamp())) AS seconds
+                FROM research_job WHERE status IN ('queued','running') AND attempts<max_attempts
+                AND parameters->>'collector' IN ('campaign-v1','category-report-v1')''').fetchone()
+        return 5 if row['seconds'] is None else max(.1,min(5,float(row['seconds'])))
+
     def worker_status(self):
         from .heartbeat import HEARTBEAT_ID,HEARTBEAT_KEY
         with self.pool.connection() as c:

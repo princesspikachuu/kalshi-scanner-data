@@ -39,6 +39,20 @@ def row(ticker='T',won=0):
 class ReportTests(unittest.TestCase):
     def report(self,rows,latest=None):return json.loads(prepare_report('btc',rows,latest_ids=latest).payload_json)
 
+    def test_compact_policy_inputs_preserve_exact_report_and_fingerprint(self):
+        import services.research.reports as model
+        selected=[dataset(i,day=i,decision=None if i%3==0 else '.55',
+                          won=i%2==0,age=120 if i%4==0 else 0) for i in range(1,21)]
+        compact=prepare_report('btc',selected,latest_ids=[19,20])
+        original=model.analyze_risk
+        def diagnostics(*args,**kwargs):
+            kwargs['compact']=False
+            return original(*args,**kwargs)
+        with patch.object(model,'analyze_risk',side_effect=diagnostics):
+            self.assertEqual(compact,prepare_report('btc',selected,latest_ids=[19,20]))
+        payload=json.loads(compact.payload_json);rows=json.loads(compact.observations_json)
+        self.assertEqual(compact.fingerprint,digest(dict(report=payload,observations=rows)))
+
     def test_hold_denominator_does_not_shrink_to_exit_coverage_or_missing_trades(self):
         rows=[row(str(i),int(i==0)) for i in range(4)]
         p=dict(minutes_before_close=10,price_band_cents='90-100',threshold_cents=60,
@@ -165,6 +179,21 @@ class ReportPostgresTests(unittest.TestCase):
         self.assertEqual(member,dict(dataset_id=self.dataset_id,is_latest=True))
         self.assertEqual(self.counts()[0:2],(1,1))
 
+    def test_multiple_publication_batches_commit_all_observations(self):
+        import services.research.reports as model
+        prepared=prepare_report('btc',[dataset()],latest_ids=[1])
+        rows=json.loads(prepared.observations_json)
+        self.assertGreater(len(rows),1)
+        payload=json.loads(prepared.payload_json)
+        payload['datasets']=[dict(id=self.dataset_id,latest=True)]
+        changed=replace(prepared,payload_json=json.dumps(payload))
+        with patch.object(model,'PUBLICATION_BATCH_ROWS',1):
+            result=self.reports._save('batched-results','btc',changed)
+        self.assertEqual(self.counts(),(1,1,len(rows)))
+        with self.store.pool.connection() as c:
+            saved=c.execute('SELECT observation FROM research_observation WHERE result_id=%s ORDER BY minute',(result,)).fetchall()
+        self.assertEqual([r['observation'] for r in saved],sorted(rows,key=lambda r:r['minutes_before_close']))
+
     def test_failed_or_unknown_membership_cannot_publish_partial_report(self):
         with self.assertRaises(EvidenceConflict):self.reports.publish('btc-results','btc',[self.dataset_id,999999999],latest_ids=[])
         with self.assertRaises(ValueError):self.reports.publish('btc-results','btc',[self.dataset_id],latest_ids=[999999999])
@@ -194,7 +223,7 @@ class ReportPostgresTests(unittest.TestCase):
             rows=rows+rows
             payload=json.loads(prepared.payload_json)
             return replace(prepared,observations_json=json.dumps(rows),fingerprint=digest(dict(report=payload,observations=rows)))
-        with patch.object(model,'prepare_report',side_effect=duplicate):
+        with patch.object(model,'prepare_report',side_effect=duplicate),patch.object(model,'PUBLICATION_BATCH_ROWS',1):
             with self.assertRaises(psycopg.Error):
                 self.reports.publish('btc-results','btc',[self.dataset_id],latest_ids=[self.dataset_id])
         self.assertEqual(self.counts(),(0,0,0))

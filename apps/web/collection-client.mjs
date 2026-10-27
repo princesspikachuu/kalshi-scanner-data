@@ -16,7 +16,7 @@ export function createCollectionClient({fetcher=fetch,readCookie=()=>document.co
     error.status=response.status;throw error;
    }
    const data=await response.json();if(data.contract!=='collection-v1')throw Error('Collection response is unavailable.');return data;
-  }finally{clearTimeout(timer)}
+  }catch(error){if(Number.isInteger(error.status))throw error;throw Error(controller.signal.aborted?'Collection update timed out. Saved progress is safe; retrying shortly.':'Collection connection unavailable. Saved progress is safe; please retry.')}finally{clearTimeout(timer)}
  }
  const asset=a=>{if(!['btc','eth','crypto','weather','weather_daily','sports'].includes(a))throw Error('Choose a category.');return a};
  const id=i=>{if(!/^[a-f0-9-]{36}$/.test(i))throw Error('Choose a collection.');return i};

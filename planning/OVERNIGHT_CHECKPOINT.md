@@ -1322,3 +1322,39 @@ API/PG/browser tests passed, including new limited-role coverage/window reads.
 Updated that expected contract to include the fixture's exact summary, preserving
 strict field checking rather than dropping the assertion. No failed build deployed.
 The currently active worker/source report engine and year-long collection continue.
+
+
+## Small-plan performance and collection retry milestone
+
+1d58cfa CI40572387629 passed the corrected source-member integration contract.
+Current local work continues from that exact remote head (no other writer observed).
+Added synthetic benchmark CLI and infra/PERFORMANCE_ACCEPTANCE.md with measured
+30/330/366-day receipts and explicit limits. 366 synthetic days retained35136
+markets/175680 observations,19.272s,426880KiB peakRSS; not a hosted capacity claim.
+Avoided duplicate canonical JSON hashing/parsing, removed unused diagnostic risk
+snapshots while retaining all checkpoint coverage and EMPTY policy cells, released
+paths sooner. Exact compact/full-report regression and existing goldenfingerprint
+checks protect metric/denominator/loss-table behavior. Raised explicit output cap
+64->96MiB and path cap500k->1M for measured year case; no sampling. Batched inserts
+1000rows in SAME publication transaction; realPG tests cover all rows and rollback
+across failed later batch. Worker idle wait follows durable ready times (0.1..5s)
+without increasing conservative providerbudget. Browser errors sanitized; successful
+collection polling clears stale timeout notice. No secrets/DDL/new resources.
+
+Local verification:229 API/research (155pass,74PG skipped without disposable DB),
+7policy,32JS allpass; Blueprint validation and diffcheck pass. Run real-PG CI next
+before deploying. Current hosted API/gateway92ec64d,worker03d752e; existing user
+BTC2025-10-27..2026-10-27 job last observed34/366sections,59pages35/36tasks.
+It remains enabled; do NOT duplicate it or reset progress. No live report completion
+or dense hosted memory acceptance claimed. Current views not yet published.
+
+Exact resume: inspect actual remote head/CI; deploy green head to existing manual
+Render API+worker (auto-deployoff), publish dev-branch deploy-pocket-app workflow
+(production mustskip), inspect signed-in UI/progress/views/sources/CSV; record exact
+receipts. Known automated staging assetsmoke HTTP403 remains unresolved; browser
+works; do not weaken access. Keep source/main production unchanged and PRdraft.
+Owner authorized collection+existing service deploys; no repeatapproval needed.
+Owner-only: any future Google/credential/account issue, larger paid capacity or
+operator migration remains pending only if actually needed; skip blocked work.
+Next independent need: partitioned cumulative reports beyond explicitcaps; actual
+hosted large-report memory and populated source/export acceptance afterloadfinishes.

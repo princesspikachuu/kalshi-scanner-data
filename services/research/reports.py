@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
+import hashlib
 
 from psycopg.types.json import Jsonb
 
@@ -14,6 +15,9 @@ from .normalize import _closed
 from .queue import EvidenceConflict, text_key
 
 MODEL = 'research-return-conditional-v1'
+MAX_REPORT_BYTES=96*1024*1024
+MAX_PATH_BARS=1000000
+PUBLICATION_BATCH_ROWS=1000
 MINUTES = {
     'btc':(15,10,5,3,1),'eth':(15,10,5,3,1),'crypto':(15,10,5,3,1),
     'weather':(60,45,30,20,15,10,5,3,1),
@@ -63,7 +67,7 @@ def _observations(asset,datasets,*,candidate_filter=None):
         for record in payload['records']:
             if record['resource']=='candles' and (candidate_filter is None or record['ticker'] in tickers):
                 bar_count+=1
-                if bar_count>500000:raise ValueError('Report path limit exceeded; split the range')
+                if bar_count>MAX_PATH_BARS:raise ValueError('Report path limit exceeded; split the range')
                 bars[record['ticker']].append(record['record'])
         for candidate in candidates:
             ticker,day=candidate['ticker'],payload['day']
@@ -139,6 +143,16 @@ class PreparedReport:
     observations_json: str
 
 
+def report_fingerprint(report_json,observations_json):
+    """Hash the exact canonical envelope without another full observation copy."""
+    checksum=hashlib.sha256()
+    checksum.update(b'{"observations":')
+    for value in (observations_json,',"report":',report_json,'}'):
+        for offset in range(0,len(value),65536):
+            checksum.update(value[offset:offset+65536].encode())
+    return checksum.hexdigest()
+
+
 def prepare_report(asset,datasets,*,latest_ids):
     return prepare_report_stream(asset,iter(sorted(datasets,key=lambda d:d['id'])),latest_ids=latest_ids)
 
@@ -166,7 +180,9 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     latest=None if latest_list is None else set(latest_list)
     if latest is not None and not latest.issubset(ids): raise ValueError('Latest membership must be an explicit subset')
     latest_keys=None if latest is None else {k for k,v in origin.items() if v in latest}
-    risk=analyze_risk(rows,paths,asset,include_snapshots=True)
+    del origin
+    risk=analyze_risk(rows,paths,asset,include_snapshots=True,compact=True)
+    del paths
     historical_policy,latest_policy=policy_cells(risk.pop('_snapshot_groups'),latest_keys)
     risk.pop('records',None)
     latest_rows=[r for r in rows if latest_keys is not None and (r['date'],r['ticker'],r['minutes_before_close']) in latest_keys]
@@ -188,8 +204,8 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
         execution_included=False,baseline_fees_cents=0,exit_cost_stress_cents=2)
     encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
     obs=json.dumps(rows,sort_keys=True,separators=(',',':'),allow_nan=False)
-    if len(encoded.encode())+len(obs.encode())>64*1024*1024: raise ValueError('Research result too large; explicit partitions required')
-    return PreparedReport(encoded,digest(dict(report=payload,observations=rows)),obs)
+    if len(encoded.encode())+len(obs.encode())>MAX_REPORT_BYTES: raise ValueError('Research result too large; explicit partitions required')
+    return PreparedReport(encoded,report_fingerprint(encoded,obs),obs)
 
 
 class ReportStore:
@@ -221,9 +237,12 @@ class ReportStore:
                 (stream_key,MODEL,prepared.fingerprint,asset,Jsonb(payload))).fetchone()['id']
             c.execute('''INSERT INTO research_result_dataset(result_id,dataset_id,is_latest)
                 SELECT %s,id,latest FROM jsonb_to_recordset(%s::jsonb) AS m(id bigint,latest boolean)''',(result,Jsonb(payload['datasets'])))
-            c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation)
-                SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
-                FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(rows)))
+            # Bound PostgreSQL's JSON expansion memory; every batch remains in
+            # this SAME publication transaction, preserving all-or-nothing sealing.
+            for offset in range(0,len(rows),PUBLICATION_BATCH_ROWS):
+                c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation)
+                    SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
+                    FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(rows[offset:offset+PUBLICATION_BATCH_ROWS])))
             return result
 
     def publish_campaign(self,stream_key,asset,dataset_ids):

@@ -133,7 +133,8 @@ def run(settings,stop):
         from .heartbeat import WorkerHeartbeat
         heartbeat=WorkerHeartbeat(pool)
         print('Collection enabled; worker ready',flush=True)
-        serve(CampaignStore(pool),worker,stop,on_tick=heartbeat.beat,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        campaigns=CampaignStore(pool)
+        serve(campaigns,worker,stop,on_tick=heartbeat.beat,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
 
 
 def main(argv=None):

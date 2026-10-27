@@ -9,7 +9,7 @@ export function createResearchClient({fetcher=fetch}={}){
    const response=await fetcher('/api/research/'+path,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{accept:'application/json'},signal:controller.signal});
    if(!response.ok){const e=Error(response.status===401?'Sign in to view saved reports.':response.status===404?'This saved report was not found.':'Saved report unavailable. Please retry.');e.status=response.status;throw e}
    const data=await response.json();if(data.contract!=='research-history-v1')throw Error('Saved report unavailable.');return data;
-  }finally{clearTimeout(timer)}
+  }catch(error){if(Number.isInteger(error.status))throw error;throw Error('Saved report unavailable. Please retry.')}finally{clearTimeout(timer)}
  }
  async function resultInStream(source,id){
   const data=await call('results/'+identifier(id)+'?stream='+stream(source)+'&view=historical');

@@ -124,3 +124,10 @@ test('full report CSV preserves every cell and both original denominators regard
  assert.match(csv,/9007199254740993/);assert.match(lines[2],/Sell ≤ 70¢/);
  tableModel(report,{minimum:100});assert.equal(reportCsv(report),csv);
 });
+
+test('transport errors do not expose browser or connection diagnostics',async()=>{
+ const {createCollectionClient}=await import('../apps/web/collection-client.mjs');
+ const fetcher=async()=>{throw Error('private-sentinel signal is aborted without reason')};
+ await assert.rejects(createCollectionClient({fetcher}).status(),e=>!e.message.includes('sentinel')&&/Saved progress is safe/.test(e.message));
+ await assert.rejects(createResearchClient({fetcher}).category('btc'),e=>!e.message.includes('sentinel')&&/unavailable/i.test(e.message));
+});
