@@ -646,3 +646,45 @@ Gateway preparation saved at c15813d5143fdcc0fedbb926c6bd73f0a507d177. CI run
 40541181548 PASSED, including gateway guards, API/real-Postgres tests and Blueprint
 validation. A browser recovery attempt also timed out at focus emulation; manual
 dispatch remains blocked in this environment. No Cloudflare deployment was started.
+
+
+## Staging gateway published; private proxy-secret binding pending
+
+After owner completed Google device approval and GitHub device verification via
+secure browserAuth, verified signed-in GitHub UI and manually dispatched the
+existing workflow from build/google-auth-foundation at af11bd8. Run 40543386602,
+job 122327432008: 19 gateway tests/config guards and Cloudflare deploy PASSED;
+production deploy job 122327434471 SKIPPED. Cloudflare version:
+34461827-22a9-4975-a185-7cbb9fac18ce. Staging Worker URL:
+https://pocket-analytics-staging.ezrealrose831.workers.dev/
+No main merge/live Worker update, no collection enabled, no paid size changes.
+
+Overall deploy workflow FAILED at HTTP smoke check: received 403 expecting 200.
+Original message did not identify which endpoint. Improved checker diagnostics
+now name the check without printing bodies, credentials or cookies. Local
+independent probes: API readiness 200/no-store, direct auth/me 403/no-store;
+Cloudflare staging root and auth/me return 403 text/plain to the Python client.
+Browser opens the staging sign-in page normally; browser /api/auth/me visibly
+returns Sign-in connection is not configured. No bot-block classification inferred
+from a bare 403, no access-control changes or user-agent/network evasion attempted.
+Do not call the smoke workflow green or real login verified. Browser screenshot
+saved privately; no credentials/owner email added to git.
+
+Cloudflare dashboard required sign-in. Owner selected Google via secure browserAuth;
+account selection returned submission_failed. The next normal rendered-state check
+was blocked by automatic browser approval review at dash.cloudflare.com: review
+could not establish authority to observe the post-auth state and interpreted it as
+retrying sign-in. Authentication result is UNKNOWN. Do not retry or use alternate
+browser surfaces as a workaround. Ask owner to explicitly approve a dashboard
+status check/recovery before continuing. No Cloudflare secret was entered.
+
+Resume: first inspect remote head/CI, avoid redispatch/duplicate Worker creation.
+After dashboard recovery is authorized, inspect actual login state; do not assume
+failure or repeat credential entry. Navigate only pocket-analytics-staging Settings.
+Owner must enter the EXISTING Render API_PROXY_SECRET as a Cloudflare Secret of
+the same name, copying directly from private Render API configuration. Never put
+it in chat/git or frontend assets. Verify gateway auth/me becomes 401 and challenge
+works, existing Google JavaScript origin matches, then owner popup/cookie/logout
+acceptance. Investigate client-specific smoke 403 without weakening protections;
+new labeled diagnostics identify the exact failed check on a future authorized run.
+Keep collection off, API/worker auto deploy off and Blueprint sync paused.

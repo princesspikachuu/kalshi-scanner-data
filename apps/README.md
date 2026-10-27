@@ -1,8 +1,10 @@
 # Staging gateway connection
 
 Current October 27, 2026: the separate Render API/worker/database are running;
-collection remains disabled. The staging gateway deployment path is prepared but
-not yet dispatched. Earlier preparation notes below describe the original state.
+collection remains disabled. The staging gateway was published from af11bd8 by workflow
+40543386602. Its deploy step passed, but HTTP smoke checks failed with 403. The
+browser loads the page and reports missing proxy-secret configuration. Login
+acceptance remains pending. Earlier preparation notes below describe the original state.
 
 ## Manual development-branch launch
 
