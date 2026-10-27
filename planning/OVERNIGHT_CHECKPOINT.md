@@ -170,8 +170,12 @@ long rate-limit/reclaim/cursor reuse and invalid-page/404 failure without progre
 
 Local: 52 API/research, 7 owner-policy, 14 gateway/client tests passed; 28 PG cases
 skipped without a disposable local database. Blueprint, compile, dependency and
-diff checks passed. Full 101-test result awaits this milestone's actual remote
-CI; inspect that before claiming PostgreSQL success. README records exact wiring,
+diff checks passed. **CI run 40471009009 passed** on implementation commit
+`39e2c3e9de01c13037706c0b400c4a7f83942d09`: 80 API/research tests, including all
+28 actual PostgreSQL cases, 7 owner-policy and 14 gateway/client tests. No tests
+skipped in CI: **101 automated tests plus Blueprint validation passed**. Job logs
+confirm no deployment/provisioning ran. This session has finished writing code;
+no worker process is running. README records exact wiring,
 strict response assumptions, cooperative deadline limitations and shared-budget
 scope. No runner, schedule, deployment, resource, hosted migration, owner email,
 credentials, Google setup, infrastructure mutation or trading was introduced.
