@@ -327,17 +327,21 @@ Ordinary baseline is before fees. No execution acceptance/fill claims are made.
 Local: 109 API/research tests passed; 47 PG cases skip without disposable local PG
 (the last PG rollback case was separately discovered). Seven policy and 14 gateway
 cases passed. Compile, dependency and whitespace checks passed. Added 10 pure
-report, 18 pinned model regression and 6 actual-PG cases. **177-test CI result awaits
-this commit**: inspect before claiming actual PG success. First CI run
+report, 18 pinned model regression and 6 actual-PG cases. **CI run 40502592972 passed** on implementation commit
+`c0b20bf4cf06123f9978f867beb6b585332a2c88`: all 156 API/research tests (including
+47 actual PostgreSQL cases), 7 policy and 14 gateway/client tests passed without
+skips. Total **177 automated tests plus Blueprint validation**. No deployment or
+provisioning job ran. First CI run
 40501966528 found a missing dataclasses.replace import in the new rollback test;
 that test-only import is corrected in a follow-up commit. Remaining tests passed;
 rerun 40502245909 passed all 176 tests plus Blueprint validation. Final review
 added publication seals (migration 0008) and a late-child-insert regression: child
 rows must share the parent publication xid, preventing later INSERTs as well as
-UPDATE/DELETE. Final 177-test rerun is pending for this additive change. Local network Blueprint
+UPDATE/DELETE. Final 177-test rerun passed, including rollback and late-child-insert protection. Local network Blueprint
 validation was intentionally not rerun; unchanged CI performs its schema-only GET.
 No owner email/credentials, hosted provider/object-store reads, Google account setup,
-live infra changes or running worker. No speedup/real-hosted acceptance claim.
+live infra changes or running worker. No speedup/real-hosted acceptance claim. This session has finished writing code;
+no background worker remains active.
 
 ## Next independent milestones (complete in order, adjust to evidence)
 
