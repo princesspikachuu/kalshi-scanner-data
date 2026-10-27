@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'services/api/**'
+      - 'apps/**'
+      - 'tests/test_login_bridge.mjs'
       - 'migrations/**'
       - 'infra/**'
       - 'tests/test_auth_policy.py'
@@ -35,6 +37,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test staging gateway and browser auth client
+        run: node --test tests/test_login_bridge.mjs
       - name: Install pinned development dependencies
         run: pip install -r services/api/requirements-dev.txt
       - name: Test owner policy, API and actual PostgreSQL

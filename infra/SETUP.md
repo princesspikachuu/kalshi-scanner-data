@@ -71,10 +71,11 @@ No Redis, Kubernetes or additional database is required by this draft.
 ## Work already prepared versus outstanding
 
 Prepared: API/auth code, pinned dependencies, session and research-storage
-migrations, staging Blueprint, schema validation, and PostgreSQL CI checks.
+migrations, staging Blueprint, schema validation, PostgreSQL CI checks, and an
+undeployed Cloudflare gateway/sign-in preview in `apps/`.
 
 Outstanding: actual Google OAuth configuration and storing the chosen owner account in server configuration,
-Cloudflare staging proxy/UI, Render resource creation, hosted migration run,
+Google staging hostname/client registration, Render resource creation, hosted migration run,
 R2 archival client, SQL research ingestion/queries, job workers and eventual
 forward paper trading. No live order placement exists in this draft.
 
@@ -96,3 +97,12 @@ Google productivity connectors do not provide that capability. More integrations
 may be available in https://chatgpt.com/plugins; none were installed for an
 unrelated capability. Continue through the existing Cloudflare CI connection
 and owner-controlled Google Cloud console setup for this milestone.
+
+## Browser connection preparation
+
+The future gateway and Google-only sign-in preview now live in `apps/`. See
+`apps/README.md` for the exact configuration contract. The separate staging
+Wrangler file has public and preview URLs disabled and no routes. This milestone
+does not require changing the live research Worker, giving the browser a backend
+secret, or turning on any automatic deployment. The draft CI tests the proxy and
+browser client before any hosting changes.

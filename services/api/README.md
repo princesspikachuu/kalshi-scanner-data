@@ -48,7 +48,7 @@ Start the API with `uvicorn services.api.app:create_app --factory`. See
 
 ## Browser/proxy contract
 
-The browser remains on the Cloudflare app origin. A future Worker proxy forwards
+The browser remains on the Cloudflare app origin. The undeployed `apps/gateway` Worker proxy forwards
 `/api/auth/*` to this API's `/auth/*`, passing cookies, Origin, Content-Type,
 `X-CSRF-Token` and Sec-Fetch-Site while replacing `X-Pocket-Proxy` with the
 server-stored `API_PROXY_SECRET`. Never send this secret to the browser. Preserve
@@ -71,3 +71,5 @@ The normal flow uses Google identity only; it requests no Gmail or Drive access.
 
 Official identity reference:
 https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
+
+The matching sign-in preview and connection tests are documented in `apps/README.md`.
