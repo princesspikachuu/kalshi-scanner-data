@@ -1,5 +1,17 @@
 # Pocket Analytics continuation checkpoint
 
+## Current owner setup authorization (October 27, 2026)
+
+This supersedes the earlier overnight prohibition ONLY for the separate staging
+stack: owner selected the smaller API $7, research worker $7, Postgres $6 and
+5 GB disk budget $1.50, approximately $21.50/month plus applicable usage/taxes.
+Initial staging creation/deployment is authorized; no automatic upgrades.
+COLLECTION_ENABLED stays false, service auto deploys off, DB private. No merge,
+live Worker change or trading. Owner reports billing added manually. Browser plan
+was reviewed at the old $52.50 size, but no resources were created; automatic
+approval review blocked that attempt. Refresh the plan from this new commit and
+verify the lower price before applying. Private email/config stays out of git.
+
 ## Instructions and boundaries
 
 Owner asked for overnight independent build work, periodic durable saves, and to
@@ -530,3 +542,19 @@ hosted resource/budget authorization,
 secure runtime secrets, R2 bucket/access configuration/retention and least-privilege
 runtime roles, real R2 read/write and staging sign-in acceptance. Pure-code work
 needs no owner action. Keep owner email and credentials out of the public repo.
+
+## Smaller staging sizing checkpoint
+
+Resumed from remote 858d943; CI 40533797897 passed. Owner chose smaller plans
+after price review: worker 0.5c-512mb, database 0.1c-256mb; API unchanged.
+Launch estimate updated to approximately $21.50/month including 5 GB disk budget.
+No code/model/table/full-sample behavior changed. No capacity claim: benchmark
+representative workloads before enabling collection or considering upgrades.
+
+Resume: inspect newest remote CI, reopen Render Blueprint creation with development
+branch and infra/render.staging.yaml, verify the new $21.50 estimate and private
+settings, then apply initial staging only. Disable Blueprint auto-sync after creation
+as well as existing service auto deploys. Inspect migrations/readiness and disabled
+worker logs; record actual resource/deploy IDs. Google gateway acceptance, R2
+read/write verification, runtime privilege hardening and collection enablement remain
+separate pending steps. No resources or hosted collection created at this save.

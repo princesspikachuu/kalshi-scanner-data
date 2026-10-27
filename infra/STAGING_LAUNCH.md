@@ -13,17 +13,19 @@ needs confirmation if the repository does not appear in its creation flow.
 | Resource | Plan | Proposed monthly cost |
 | --- | --- | ---: |
 | pocket-api-staging | 0.5 CPU / 512 MB | $7 |
-| pocket-research-staging | 1 CPU / 2 GB | $25 |
-| pocket-db-staging | 0.5 CPU / 1 GB | $19 compute |
+| pocket-research-staging | 0.5 CPU / 512 MB | $7 |
+| pocket-db-staging | 0.1 CPU / 256 MB | $6 compute |
 | Database disk | 5 GB, autoscaling off | Budget $1.50 at $0.30/GB |
-| **Render planning subtotal** | One instance each, Oregon | **About $52.50/month** |
+| **Render planning subtotal** | One instance each, Oregon | **About $21.50/month** |
 
 Verify the final Render review estimate before creation, including any included
 storage, workspace subscription, taxes, bandwidth and build-minute overages. This
 subtotal is a sizing proposal, NOT a hard spending cap or measured capacity claim.
-There is no trading engine in this staging stack. The research worker's 2 GB and
-DB's 1 GB leave more headroom for JSON/derived paths than the initial 512 MB worker/
-256 MB DB idea. Dense ranges may still hit the explicitly documented report limits.
+There is no trading engine in this staging stack. The owner selected the smaller
+512 MB worker and 256 MB database, with upgrades considered only after measurements.
+These sizes are unbenchmarked. Dense ranges may exceed memory or report limits;
+resume saved work and use explicit smaller report partitions without sampling or
+changing full-cohort denominators. No automatic paid upgrades are authorized.
 
 Cloudflare R2 Standard's account-wide free allowance includes 10 GB-month, 1 million
 Class A requests and 10 million Class B requests monthly. Beyond it: $0.015/GB-month,
@@ -42,6 +44,10 @@ Verified official references (HTML read after the fetch tool could not read Mark
 - https://render.com/docs/health-checks
 - https://render.com/docs/private-network
 - https://developers.cloudflare.com/r2/pricing/
+
+Owner selected this smaller starting stack in the setup conversation. Initial
+staging creation/deployment is authorized within this estimate, subject to final
+Render pricing review; collection remains disabled. Keep the live app unchanged.
 
 ## Exact future creation input
 
