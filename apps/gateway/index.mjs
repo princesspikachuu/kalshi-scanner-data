@@ -4,7 +4,7 @@ const ROUTES=new Map([
  ['/api/auth/google','POST'],['/api/auth/logout','POST']
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
-const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);
+const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}

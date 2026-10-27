@@ -186,3 +186,13 @@ test('campaign history gateway validates read-only category/keysets before fetch
  const invalid={...body,items:Array(51).fill({id,status:'queued'})};
  assert.equal((await proxyAuth(request('/api/collection/campaigns?asset=btc'),env,{fetcher:async()=>json(invalid)})).status,502);
 });
+
+test('dashboard allows Cloudflare canonical HTML alias after asset redirect',async()=>{
+ const paths=[];const configured={...env,ASSETS:{fetch:async request=>{paths.push(new URL(request.url).pathname);return new Response('<!doctype html><title>Dashboard</title>',{headers:{'content-type':'text/html'}})}}};
+ for(const path of ['/collection','/collection.html']){
+  const response=await gateway.fetch(request(path),configured);
+  assert.equal(response.status,200);assert.match(await response.text(),/Dashboard/);
+  assert.match(response.headers.get('content-security-policy'),/default-src 'none'/);
+ }
+ assert.deepEqual(paths,['/collection','/collection.html']);
+});

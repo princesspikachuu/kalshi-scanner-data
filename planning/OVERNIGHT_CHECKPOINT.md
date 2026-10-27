@@ -1118,3 +1118,23 @@ no console errors. Browser session/secret rules still apply. Record actual commi
 deploy/run receipts, any HTTP smoke 403 and remaining limits. Representative
 performance and a separately authorized tiny collection remain before enabling
 real worker; do not imply all app setup is finished merely because UI is deployed.
+
+First dashboard implementation 434a06b CI 40564856050 PASSED: 214 API/research
+including all 68 actual-PG cases, 7 policy, 26 gateway/dashboard = 247 tests with
+no skips, plus Blueprint validation. Existing API manually deployed only after
+CI green: dep-dbgf9bou01pc73cel2tg LIVE at 19:02:18.686543 UTC, strict API audit
+again returned privilege_boundary_ready=true with unchanged nine migrations.
+Independent readiness 200/no-store; direct no-proxy collection history 403/no-store.
+No environment value, credential, worker deployment or collection flag changed.
+
+Manually dispatched existing staging workflow via signed-in GitHub UI, run
+40565477453 from 434a06b; production deploy job 122405474007 SKIPPED, staging
+job 122405471724 published version 12e7904c-cf00-4f71-b32b-f0e08e18280d.
+Workflow overall FAILED at known automated HTTP smoke 403; publication step passed.
+A real signed-in browser refresh then caught a separate UI routing error:
+Cloudflare Assets canonicalizes /collection.html to /collection, which the static
+allowlist omitted. The browser reached JSON Not found at /collection. Do NOT
+claim first publication usable. Added explicit canonical alias support, root
+redirect/link to /collection, gateway regression coverage for both forms with CSP,
+and CI path coverage for the new dashboard tests. Republish only staging after
+this corrective commit's CI passes; API does not need redeploy for the alias fix.

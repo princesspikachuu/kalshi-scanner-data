@@ -6,6 +6,7 @@ on:
       - 'services/research/**'
       - 'apps/**'
       - 'tests/test_login_bridge.mjs'
+      - 'tests/test_research_dashboard.mjs'
       - 'migrations/**'
       - 'infra/**'
       - 'tests/test_auth_policy.py'
