@@ -139,8 +139,12 @@ selection/normalization and cross-source ticker deduplication remain future work
 Local verification: 38 API/research, 7 owner-policy and 14 gateway/client tests
 passed; 26 PostgreSQL cases skipped without a local disposable database. Blueprint
 validation and diff checks passed. The new tests are 6 pure and 10 actual-PG cases.
-Actual PostgreSQL cases require CI. Inspect this milestone commit's CI before claiming
-full success. README records integration contract, retries, deadlines, archive
+**CI run 40465273241 passed** on implementation commit
+`f7f0a83a6728e890e2696105fba304096566988a`: all 64 API/research tests (26 actual
+PostgreSQL cases), 7 owner-policy and 14 gateway/client cases passed without skips.
+Total **85 automated tests plus Blueprint validation**. Job logs confirm no
+provisioning/deployment job ran. Compile and dependency consistency checks passed.
+This run has finished writing code; no worker remains active. README records integration contract, retries, deadlines, archive
 orphans, shared-budget scope and provider snapshot limitations. No deployment,
 provisioning, infrastructure mutation, owner email/credentials or trading occurred.
 
