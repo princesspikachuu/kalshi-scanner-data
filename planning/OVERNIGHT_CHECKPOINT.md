@@ -1138,3 +1138,58 @@ claim first publication usable. Added explicit canonical alias support, root
 redirect/link to /collection, gateway regression coverage for both forms with CSP,
 and CI path coverage for the new dashboard tests. Republish only staging after
 this corrective commit's CI passes; API does not need redeploy for the alias fix.
+
+## Dashboard published and browser-verified after canonical route fix
+
+Corrective implementation 2c3047d7652e669ae290232d0638dd1bba2f43b8 CI
+40565839212 PASSED, job 122406725622: 214 API/research including all 68
+actual-PG cases, 7 policy, 27 gateway/dashboard = 248 tests without skips, plus
+Blueprint validation. Only static alias/redirect and regression/path guards changed;
+API remains on tested 434a06b deployment above; worker remains ae17366, disabled.
+
+Automatic browser approval review initially rejected corrective publication because
+it had not recognized connector evidence that corrective CI passed. No bypass was
+used. Opened the exact CI run in browser, visibly verified Status Success for
+2c3047d, rechecked the unchanged staging branch selection, then repeated the SAME
+publish action successfully. No extra owner confirmation was needed once the
+explicit prerequisite was visibly proved.
+
+Corrective staging workflow run 40566210897 from 2c3047d, staging job
+122408040068: tests/config/connection/deployment steps passed; published Cloudflare
+version 15fe62d6-b113-42e4-b265-1e0270ac144a. Production job 122408042606 SKIPPED.
+Overall workflow still FAILED only at labeled HTTP smoke: Staging sign-in assets
+unexpected HTTP403, expected200. This client-specific limitation remains unresolved;
+no retry loop, fingerprint/network evasion or access-control weakening was used.
+
+Real existing signed-in browser now loaded the canonical /collection dashboard.
+Verified category/date controls, Save collection request, server-backed empty
+collection history, automatic-refresh preference OFF, collection-paused banner and
+Sign out. Selected Daily weather, reloaded, and observed Daily weather remained
+selected with the authenticated workspace. Restored original Bitcoin selection.
+Opening original staging root also redirects into /collection successfully.
+No new sign-in/consent flow or credential handling was necessary. No collection
+request, pause/resume mutation or hourly preference change was submitted. History
+is genuinely empty for the observed categories; no production history was imported,
+no fabricated fixtures published, and populated hosted report acceptance is still
+pending. Full table/coverage/toggle behavior has DOM/client and real-PG API tests,
+not a claim of a real collected hosted report.
+
+Resume from newest remote checkpoint/CI, preserving pocket-dashboard dirty worktree
+whose contents are already saved remotely. Keep collection false, auto deploy off,
+Blueprint paused and private DB boundaries. Next prepare representative synthetic
+performance/memory acceptance and an explicit campaign-scoped, read-count/time-
+bounded real-collection acceptance before asking to enable a tiny live read test.
+The existing worker rate limit alone is NOT a total test-size cap; enabling the
+whole worker could process other queued work, so inspect queues and bound it first.
+Category-wide cumulative deduplication and large-history metadata index remain
+independent follow-ups. Existing main/live UI/full-sample metrics remain untouched.
+
+Final browser observation: root redirects to authenticated canonical dashboard;
+BTC history empty; daily-weather selection survived reload, then BTC restored.
+No application request/script error was observed in the current error log slice;
+six browser-extension metadata transport errors were present and are not claimed
+fixed by app changes. A private verification screenshot was captured outside git;
+no owner email or credential appears in the dashboard screenshot. Owner-only
+Google/setup action is no longer pending for this milestone. Approval for an
+explicitly bounded real collection remains a separate future step after preparing
+its caps; no such approval is requested by this checkpoint itself.
