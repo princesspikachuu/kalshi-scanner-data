@@ -246,9 +246,12 @@ future GC must retain manifest and transitive references from job scopes.
 
 Local: 73 API/research, 7 owner-policy and 14 gateway/client tests passed; 34 PG
 cases skipped without disposable local PostgreSQL. Blueprint, compile, dependency
-and diff checks passed. Added 9 pure and 4 real-PG cases. Full 128-test result awaits
-this commit's remote CI; inspect before claiming actual-PG success. This session
-finishes after saving and CI inspection; no background worker remains running.
+and diff checks passed. Added 9 pure and 4 real-PG cases. **CI run 40486543645 passed** on implementation commit
+`52a5b414bd2588e18b33adbea61ae0ab943da59f`: 107 API/research tests including all
+34 actual-PG cases, 7 owner-policy and 14 gateway/client tests passed without skips.
+Total **128 automated tests plus Blueprint validation**. Job logs confirm no
+provisioning/deployment ran. This session has finished writing code; no background
+worker remains running.
 
 ## Next independent milestones (complete in order, adjust to evidence)
 
@@ -260,6 +263,8 @@ finishes after saving and CI inspection; no background worker remains running.
    merge/reject conflicting candle-period/trade-ID duplicates across windows and
    sources, record empty/unavailable/failed/gap policy explicitly. Preserve full
    candidate/candle sample metrics separately from optional execution evidence.
+   Read current MAIN loss-prevention logic/tests first: this draft's old base
+   predates later live fixes. Do not merge or overwrite live files to do that.
    Register manifests/transitive provenance and atomically publish only complete
    eligible versions. Retain old runs; never mix latest with cumulative. All tests
    may use fixtures and disposable PG; no hosted account setup is needed.
