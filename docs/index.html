@@ -30,7 +30,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 .heat:not(:disabled):hover,.heat:focus-visible{transform:translateY(-1px);border-color:#a6c7d9;outline:none}.heat:disabled{cursor:default;opacity:.6}
 .heat.positive{background:linear-gradient(140deg,#204d42,#1b373b);border-color:#356a59}.heat.negative{background:linear-gradient(140deg,#552a38,#382738);border-color:#8b5064}.heat.neutral{background:#28333e;border-color:#45515d}
 .heat.low-sample{background:#25303e;border-style:dashed;border-color:#516377}.heat span{font-weight:750;letter-spacing:-.02em;font-size:16px;font-variant-numeric:tabular-nums}
-.heat small{font-size:11px;color:#c1d2dc}.heat.low-sample span{color:#d5e3ec}
+.heat small{font-size:11px;color:#c1d2dc}.heat.low-sample span{color:#d5e3ec}.heatmap.thresholds{min-width:0}.heatmap.thresholds thead th:first-child{width:65px}.heatmap.thresholds thead th{font-size:10px;white-space:normal}.heatmap.thresholds tbody th{font-size:11px}.heatmap.thresholds .heat{min-height:58px}.heatmap.thresholds .heat span{font-size:16px}
 .legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:8px 0}.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px}
 .detail{display:none;margin-top:17px;border:1px solid #47736b;background:#102a2d;border-radius:14px;padding:16px}.detail.visible{display:block}
 .risk-table{border-collapse:collapse;width:100%;min-width:540px;font-size:12px;text-align:left;margin-top:12px}.risk-table th,.risk-table td{padding:8px;border-bottom:1px solid var(--border)}.detail details{margin-top:14px}.detail summary{cursor:pointer;font-size:13px}.detail h3{margin:0 0 4px;font-size:17px}.detailgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
@@ -96,12 +96,11 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 <div class="controls"><div><label for="datasetView">Results dataset</label><select id="datasetView"><option value="latest">Latest collection</option><option value="historical">All historical data</option></select></div><div id="datasetInfo" class="muted small">Historical results include all saved unique observations.</div></div>
 <div class="heading"><div><div class="eyebrow" id="marketLabel">All hourly weather contracts</div><h2 id="marketHeading">Average profit &amp; loss</h2><p class="muted small" id="tableMethod">Time until settlement × entry price (maker bid)</p></div><div class="muted small" id="updated">Loading saved results…</div></div>
 <div class="stats"><div class="stat"><label>Markets sampled</label><strong id="marketCount">—</strong></div><div class="stat"><label>Days in sample</label><strong id="dayCount">—</strong></div><div class="stat"><label>Price observations</label><strong id="obsCount">—</strong></div><div class="stat"><label>Date range</label><strong id="coverage" style="font-size:13px">—</strong></div></div>
-<div class="controls"><div><label for="minSample">Hide cells with fewer than</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
-<div class="controls"><label><input id="lossEnabled" type="checkbox"/> Show loss prevention in table</label><label>Evaluate with time remaining <select id="lossDecision"><option value="auto">Auto per entry</option><option value="180">180 minutes</option><option value="120">120 minutes</option><option value="60">60 minutes</option><option value="30">30 minutes</option><option value="15">15 minutes</option><option value="10">10 minutes</option><option value="5">5 minutes</option><option value="3">3 minutes</option><option value="1">1 minute</option></select></label></div>
-<p id="lossCoverage" class="muted small" aria-live="polite">Loading conditional loss risk…</p>
-<details><summary>Loss-prevention method and costs</summary><p class="muted small">Loss prevention now estimates when settlement at zero becomes more likely than winning, using current bid and remaining time within each original entry category and contract series. The table shows estimated 50% risk boundary ranges; tap a cell for observed rates, 95% uncertainty intervals and event counts. Estimates appear as soon as quotes and settled outcomes exist: no seven-day wait and no complete-future-path requirement. Auto chooses an available checkpoint at or before half the original entry time. Sparse, conflicting or missing price ranges remain unresolved. A risk boundary is not a sale recommendation. Sale-versus-hold estimates are shown separately with a hypothetical 2¢ exit cost. Risk estimates use all saved history in both views; latest P/L stays latest-only. Original P/L, ROI and sample counts remain unchanged because descriptive risk is not a validated exit backtest. Event representatives reduce correlated outcomes; observations across table rows still reuse events. Times are relative to saved contract close, which may differ from event end or settlement.</p></details>
-<div class="gridwrap"><table class="heatmap" aria-label="Average historical profit and loss by purchase price and settlement time"><thead><tr><th scope="col">Time left</th><th scope="col">50–59.9¢</th><th scope="col">60–69.9¢</th><th scope="col">70–79.9¢</th><th scope="col">80–89.9¢</th><th scope="col">90–99.9¢</th></tr></thead><tbody id="matrix"><tr><td colspan="6" class="state">Loading…</td></tr></tbody></table></div>
-<div class="legend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
+<div class="controls"><div><label for="minSample">Hide cells with fewer than</label><select id="minSample"><option value="1">1 observation (all)</option><option value="5">5 observations</option><option value="10">10 observations</option><option value="20">20 observations</option><option value="30">30 observations</option></select></div><div id="metricControls"><label>Show cell value as</label><div class="pillgroup"><button data-metric="pnl" aria-pressed="true">Avg. P/L</button><button data-metric="roi" aria-pressed="false">ROI</button><button data-metric="win" aria-pressed="false">Win rate</button></div></div></div>
+<div class="controls"><label><input id="lossEnabled" type="checkbox"/> Show loss-prevention thresholds</label></div>
+<p id="lossCoverage" class="muted small" aria-live="polite">Loading thresholds…</p>
+<div class="gridwrap"><table id="resultTable" class="heatmap" aria-label="Average historical profit and loss by purchase price and settlement time"><thead><tr><th scope="col">Time left</th><th scope="col">50–59.9¢</th><th scope="col">60–69.9¢</th><th scope="col">70–79.9¢</th><th scope="col">80–89.9¢</th><th scope="col">90–99.9¢</th></tr></thead><tbody id="matrix"><tr><td colspan="6" class="state">Loading…</td></tr></tbody></table></div>
+<div class="legend" id="valueLegend"><span><i style="background:#2d725c"></i>Positive</span><span><i style="background:#814454"></i>Negative</span><span><i style="background:#45515d"></i>No observed trades</span><span><i style="border:1px dashed #a8c0d5;background:#25303e"></i>Small sample</span></div>
 <div id="detail" class="detail" aria-live="polite"></div><div class="summaryline" id="dataNote">One cell represents one hypothetical maker decision per market at that entry time. The same market can appear at other times.</div>
 </section>
 <section class="panel" aria-labelledby="executionHeading">
@@ -111,7 +110,7 @@ select{background:var(--raised);border:1px solid var(--border);border-radius:11p
 <div id="executionSummary" class="state">Run a new collection to generate execution evidence.</div>
 <p class="muted small"><a href="https://github.com/princesspikachuu/kalshi-scanner-data/blob/main/backtests/EXECUTION_REPORT.md" target="_blank" rel="noopener noreferrer">View full execution study</a></p>
 </section>
-<section class="panel"><h2>What am I looking at?</h2><p class="muted">The large number in each square is the <strong style="color:#f1f8fb">average simulated profit or loss per contract</strong>. For example, <strong style="color:#74e0b4">+4.2¢</strong> means that group gained an average of 4.2 cents per hypothetically filled contract under the displayed model and cost assumptions. A loss of <strong style="color:#ff9eaa">−8¢</strong> means it lost an average of eight cents.</p><p class="muted small">The loss-prevention switch adds current-price risk boundaries to this table. Tap a square for loss probabilities by current bid and remaining time. Risk estimates do not change historical returns or claim that an early sale was filled. Comparing rows is exploratory: repeated observations of the same contracts are not independent trades.</p></section>
+<section class="panel"><h2>What am I looking at?</h2><p class="muted">The large number in each square is the <strong style="color:#f1f8fb">average simulated profit or loss per contract</strong>. For example, <strong style="color:#74e0b4">+4.2¢</strong> means that group gained an average of 4.2 cents per hypothetically filled contract under the displayed model and cost assumptions. A loss of <strong style="color:#ff9eaa">−8¢</strong> means it lost an average of eight cents.</p><p class="muted small">Turn on loss prevention to replace P/L with the estimated threshold price in each square. No extra controls or taps are needed. Estimates do not change historical returns. Comparing rows is exploratory: repeated observations of the same contracts are not independent trades.</p></section>
 <footer class="bottom"><p>Source: <a href="https://github.com/princesspikachuu/kalshi-scanner-data/blob/main/backtests/OVERVIEW.md" target="_blank" rel="noopener noreferrer">Historical research</a><a href="https://github.com/princesspikachuu/kalshi-scanner-data" target="_blank" rel="noopener noreferrer">GitHub repository</a></p><p>Built for research; no brokerage connection and no order placement.</p></footer>
 </div>
 <script>
@@ -121,7 +120,7 @@ var REPO="https://raw.githubusercontent.com/princesspikachuu/kalshi-scanner-data
 var apiBase="/api";var workerAvailable=false;
 var ASSETS={weather:{label:"All hourly weather markets",times:[60,45,30,20,15,10,5,3,1],status:"weather_hourly"},btc:{label:"Bitcoin · 15-minute markets",times:[15,10,5,3,1],status:"btc15m"},eth:{label:"Ethereum · 15-minute markets",times:[15,10,5,3,1],status:"eth15m"},crypto:{label:"Crypto · pooled 15-minute markets",times:[15,10,5,3,1],status:"crypto15m"},sports:{label:"Sports · game/match winners",times:[360,180,120,60,30,15,5],status:"sports_game"},weather_daily:{label:"Daily weather · high temperatures",times:[360,180,120,60,30,15,5],status:"weather_daily"},financial_daily:{label:"Daily financial index closing targets",times:[360,180,120,60,30,15,5],status:"financial_daily"}};
 var BANDS=["50-60","60-70","70-80","80-90","90-100"];
-var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},latestRecords:[],latestMeta:{},view:"historical",loadedAt:null,lossEnabled:false,lossDecision:"auto",lossStudy:null,lossError:false};
+var state={asset:"weather",metric:"pnl",minimum:1,records:[],meta:{},latestRecords:[],latestMeta:{},view:"historical",loadedAt:null,lossEnabled:false,lossStudy:null,lossError:false};
 /* Persist the last selected category AND dataset across mobile reloads.
  * URL is a reliable fallback for browsers that evict or disallow localStorage.
  * Do not rewrite URL during initial restoration (deep-linked views must win).
@@ -134,10 +133,9 @@ function applySavedView(v){
  if(["pnl","roi","win"].includes(v.metric))state.metric=v.metric;
  if([1,5,10,20,30].includes(Number(v.minimum)))state.minimum=Number(v.minimum);
  if(typeof v.lossEnabled==="boolean")state.lossEnabled=v.lossEnabled;
- if(["auto","180","120","60","30","15","10","5","3","1"].includes(String(v.lossDecision)))state.lossDecision=String(v.lossDecision);
 }
 function saveView(){
- var v={asset:state.asset,view:state.view,metric:state.metric,minimum:state.minimum,lossEnabled:state.lossEnabled,lossDecision:state.lossDecision};
+ var v={asset:state.asset,view:state.view,metric:state.metric,minimum:state.minimum,lossEnabled:state.lossEnabled};
  try{localStorage.setItem(VIEW_STORAGE_KEY,JSON.stringify(v))}catch(e){}
  try{
   var url=new URL(window.location.href);
@@ -146,7 +144,7 @@ function saveView(){
   url.searchParams.set("pa_metric",v.metric);
   url.searchParams.set("pa_min",String(v.minimum));
   url.searchParams.set("pa_loss",v.lossEnabled?"1":"0");
-  url.searchParams.set("pa_decision",v.lossDecision);
+  url.searchParams.delete("pa_decision");
   window.history.replaceState(window.history.state,"",url.pathname+url.search+url.hash);
  }catch(e){}
 }
@@ -161,7 +159,6 @@ function restoreView(){
   applySavedView({asset:q.get("pa_asset"),view:q.get("pa_view"),
     metric:q.get("pa_metric"),minimum:q.get("pa_min")});
   if(q.has("pa_loss"))state.lossEnabled=q.get("pa_loss")==="1";
-  if(q.has("pa_decision"))applySavedView({lossDecision:q.get("pa_decision")});
  }catch(e){}
  id("datasetView").value=state.view;
  id("minSample").value=String(state.minimum);
@@ -196,10 +193,13 @@ function describeValue(r){var v=determineValue(r);if(!Number.isFinite(v))return 
 function render(){
   renderLossControls();
   var matched=usingLossSample(),scope=lossScope()||{},a=ASSETS[state.asset],dataset=matched?lossTableRecords():state.view==="latest"?state.latestRecords:state.records,records=dataset.filter(function(r){return r.asset===state.asset}),st=(state.view==="latest"?state.latestMeta:state.meta)[state.asset]||{},has=records.length>0;
-  id("marketHeading").textContent="Average profit & loss";
-  id("tableMethod").textContent=matched?"Original holding P/L + conditional loss-risk boundaries · tap a cell":"Time until settlement × entry price (maker bid) · before fees";
+  id("marketHeading").textContent=matched?"Loss-prevention thresholds":"Average profit & loss";
+  id("metricControls").hidden=matched;id("valueLegend").hidden=matched;
+  id("resultTable").classList.toggle("thresholds",matched);
+  document.querySelectorAll("#resultTable thead th").forEach(function(th,i){th.textContent=i===0?"Entry time":matched?BANDS[i-1].replace("-","–")+"¢":BANDS[i-1].split("-")[0]+"–"+(Number(BANDS[i-1].split("-")[1])-.1)+"¢"});
+  id("tableMethod").textContent=matched?"Estimated price where losing becomes more likely than winning":"Time until settlement × entry price (maker bid) · before fees";
   id("datasetInfo").textContent=state.view==="latest"?(st.run_id?"Latest completed collection · Run "+st.run_id+" · "+(st.days_sampled||0)+" UTC day(s)":"No latest collection saved for this category yet."):"All saved historical observations for this category (deduplicated by market, side and entry time).";
-  if(matched)id("datasetInfo").textContent=(state.view==="latest"?"Latest collection":"Historical data")+" · historical loss-risk reference enabled · original holding returns and counts retained.";
+  if(matched)id("datasetInfo").textContent=(state.view==="latest"?"Latest collection":"Historical data")+" · thresholds estimated from all saved history.";
   document.querySelectorAll('[data-metric="win"]').forEach(function(b){b.textContent="Win rate"});
   id("marketLabel").textContent=a.label;
   id("updated").textContent=state.loadedAt?"Updated from saved data · "+state.loadedAt:"No dataset loaded";
@@ -215,11 +215,15 @@ function render(){
     var tr=document.createElement("tr"),th=document.createElement("th");th.scope="row";th.textContent=min+" min";tr.appendChild(th);
     BANDS.forEach(function(band){
       var td=document.createElement("td"),r=lookup(state.asset,min,band),n=r?number(r.sampled_markets):0;
-      var btn=document.createElement("button");btn.type="button";btn.className="heat";
-      if(!r||n<state.minimum){btn.disabled=true;btn.classList.add("neutral");btn.innerHTML="<span>—</span><small>"+(n?n+" sample":matched?"no paths":"no quotes")+"</small>"}
+      var btn=document.createElement(matched?"div":"button");if(!matched)btn.type="button";btn.className="heat";
+      if(matched){
+        var threshold=r&&n>=state.minimum?r.threshold_cents:null;
+        btn.classList.add("neutral");
+        btn.innerHTML="<span>"+(threshold==null?"—":"≈"+threshold+"¢")+"</span>";
+        btn.setAttribute("aria-label",a.label+", entered "+min+" minutes before close, "+band+" cents, "+(threshold==null?"threshold not established":"estimated loss threshold "+threshold+" cents"));
+      }else if(!r||n<state.minimum){btn.disabled=true;btn.classList.add("neutral");btn.innerHTML="<span>—</span><small>"+(n?n+" sample":"no quotes")+"</small>"}
       else{var val=determineValue(r);btn.classList.add(n<10?"low-sample":state.metric==="win"?"neutral":val>0?"positive":val<0?"negative":"neutral");
-        var exitLabel=matched?riskLabel(r):"";
-        btn.innerHTML="<span>"+htmlSafe(describeValue(r))+"</span><small>n="+n+"</small>"+(exitLabel?"<small>"+htmlSafe(exitLabel)+"</small><small>"+htmlSafe(r.risk_decision!=null?r.risk_decision+" min remaining · estimate":"Tap for risk coverage")+"</small>":"");
+        btn.innerHTML="<span>"+htmlSafe(describeValue(r))+"</span><small>n="+n+"</small>";
         btn.setAttribute("aria-label",a.label+", "+min+" minutes left, "+band+" cents, "+describeValue(r)+", "+n+" observations");
         btn.addEventListener("click",function(){showDetail(r,min,band)});
       }
@@ -229,13 +233,13 @@ function render(){
   var msg="One time×price cell includes at most one hypothetical buy per contract. Multiple rows can reuse those contracts.";
   if(state.asset==="weather"&&Array.isArray(st.hourly_types)&&st.hourly_types.length===1&&st.hourly_types[0]==="index")msg+=" Current weather sample contains Weather Index contracts only; no single-station data.";
   if(st.latest_run_status&&st.latest_run_status.sampling_truncated)msg+=" The most recent research run sampled only part of the available market set.";
-  if(matched)msg+=" Loss-risk boundaries are descriptive historical estimates, not sale instructions or tested returns. P/L, ROI and counts retain the original holding results. A missing boundary does not mean holding is safe.";
+  if(matched)msg="≈ = estimated threshold in cents. — = threshold not established. These are loss-risk estimates, not validated sale signals.";
   if(!matched&&state.metric==="roi")msg+=" ROI compares simulated profit with the amount invested; it excludes fees.";
   id("dataNote").textContent=msg;
   renderCollection();
 }
 function showDetail(r,min,band){
-  if(r.loss_comparison){showLossDetail(r,min,band);return;}
+  if(r.loss_comparison)return;
   var n=number(r.sampled_markets),wins=number(r.wins);
   id("detail").innerHTML='<h3>'+htmlSafe(ASSETS[state.asset].label)+' · '+min+' minutes · '+band+'¢</h3><div class="muted small">Historical maker-bid simulation · before fees</div>'+
     '<div class="detailgrid">'+
@@ -276,50 +280,54 @@ function riskRows(min,band){
  var scope=lossScope();
  var records=((scope&&scope.records)||[]).filter(function(r){return Number(r.minutes_before_close)===Number(min)&&r.price_band_cents===band});
  var checkpoints=Array.from(new Set(records.map(function(r){return Number(r.decision_minutes_remaining)}))).sort(function(a,b){return b-a});
- var decision=state.lossDecision==="auto"?checkpoints.find(function(t){return t<=min/2}):Number(state.lossDecision);
+ var decision=checkpoints.find(function(t){return t<=min/2});
  return {decision:decision,records:records.filter(function(r){return Number(r.decision_minutes_remaining)===decision})};
 }
 function lossTableRecords(){
  var base=state.view==="latest"?state.latestRecords:state.records;
  return base.filter(function(r){return r.asset===state.asset}).map(function(original){
   var risk=riskRows(Number(original.minutes_before_close),original.price_band_cents);
-  return Object.assign({},original,{loss_comparison:true,risk_records:risk.records,risk_decision:risk.decision});
+  return Object.assign({},original,{loss_comparison:true,risk_records:risk.records,risk_decision:risk.decision,threshold_cents:thresholdEstimate(risk.records,number(original.average_purchase_price_cents))});
  });
 }
-function riskLabel(r){
- var records=(r.risk_records||[]).filter(function(x){return x.observed_events>0});
- if(!records.length)return "Risk unavailable · tap";
- var ranges=records.filter(function(x){return x.boundary.status==="estimated"}).flatMap(function(x){return x.boundary.ranges});
- var unique=Array.from(new Set(ranges.map(function(x){return x.low_cents+"–"+x.high_cents+"¢"})));
- if(records.some(function(x){return x.boundary.status==="ambiguous"}))return "Mixed risk pattern · tap";
- if(unique.length===1)return "50% risk: "+unique[0]+(records.length>1?" · some series":"");
- if(unique.length>1)return "Series risk ranges · tap";
- return "Risk boundary unresolved · tap";
+function thresholdEstimate(records,entryPrice){
+ // Pool event counts within the displayed category, not averages of series
+ // thresholds. Weighted isotonic regression smooths sampling reversals while
+ // preserving the explicit assumption that loss risk decreases with price.
+ var grouped=new Map();
+ records.forEach(function(record){(record.bins||[]).forEach(function(bin){
+  var n=number(bin.events),losses=number(bin.losses),low=number(bin.bid_low_cents);
+  if(n<=0||losses<0||losses>n)return;
+  var g=grouped.get(low)||{low:low,n:0,losses:0,paid:0};
+  g.n+=n;g.losses+=losses;g.paid+=number(bin.mean_bid_cents)*n;grouped.set(low,g);
+ })});
+ var points=Array.from(grouped.values()).sort(function(a,b){return a.low-b.low}),blocks=[];
+ points.forEach(function(point,index){
+  blocks.push({first:index,last:index,n:point.n,losses:point.losses});
+  while(blocks.length>1){
+   var right=blocks[blocks.length-1],left=blocks[blocks.length-2];
+   if(left.losses/left.n>=right.losses/right.n)break;
+   blocks.splice(-2,2,{first:left.first,last:right.last,n:left.n+right.n,losses:left.losses+right.losses});
+  }
+ });
+ blocks.forEach(function(block){for(var i=block.first;i<=block.last;i++)points[i].risk=block.losses/block.n});
+ for(var i=1;i<points.length;i++){
+  var left=points[i-1],right=points[i];
+  if(left.risk>.5&&right.risk<=.5){
+   // Do not invent a crossing across an unobserved price band or at zero bid.
+   if(right.low-left.low!==10)return null;
+   var x=left.paid/left.n,y=right.paid/right.n;
+   if(x<=0||y<=x)return null;
+   var threshold=Math.round(x+(y-x)*(left.risk-.5)/(left.risk-right.risk));
+   return threshold>0&&threshold<entryPrice?threshold:null;
+  }
+ }
+ return null;
 }
 function renderLossControls(){
  id("lossEnabled").checked=state.lossEnabled;
- id("lossDecision").value=state.lossDecision;
- id("lossDecision").disabled=!state.lossEnabled;
- var scope=lossScope();
- if(!scope){id("lossCoverage").textContent=state.lossError?"Loss-risk estimates could not be loaded. Original holding returns remain shown. Refresh to retry.":"Loading conditional loss risk…";return;}
- id("lossCoverage").textContent=number(scope.covered_event_entry_groups).toLocaleString()+" of "+number(scope.event_entry_groups).toLocaleString()+" event/entry groups have later decision quotes. Estimates use all saved history, including in Latest. "+(state.lossEnabled?"50% risk ranges are estimates; tap a cell for probabilities, uncertainty and counts. Holding returns remain unchanged.":"Enable loss prevention to show risk boundaries in each table cell.");
-}
-function showLossDetail(r,min,band){
- var rows=r.risk_records||[];
- var checkpoint=r.risk_decision;
- id("detail").innerHTML='<h3>'+htmlSafe(ASSETS[state.asset].label)+' · entered '+min+' minutes before close · '+htmlSafe(band)+'¢</h3><p class="muted small">Conditional loss risk from all saved history · '+htmlSafe(checkpoint!=null?checkpoint+' minutes remaining':'no eligible checkpoint')+'</p><div class="detailgrid">'+
-  '<div><span>Original holding P/L</span><strong>'+htmlSafe(format(number(r.average_profit_loss_cents_per_contract),"¢"))+'</strong></div>'+
-  '<div><span>Original observations</span><strong>'+number(r.sampled_markets)+'</strong></div>'+
-  '<div><span>Original ROI</span><strong>'+htmlSafe(format(number(r.hypothetical_roi_percent),"%"))+'</strong></div></div>'+
-  '<p>Loss means this side settles at zero. Above 50% means losing is more likely than winning. The sale advantage is a separate descriptive comparison: current average bid minus a 2¢ exit-cost stress, versus observed expected settlement payout. It is not a validated exit signal. Entry cost cancels in that comparison; actual fees and fills are not verified.</p>'+
-  (!rows.length?'<p>No eligible decision quotes at this checkpoint. Choose a time below the original entry time. This is missing evidence, not a recommendation to hold.</p>':'')+
-  rows.map(function(record,index){
-   var boundary=record.boundary;
-   var label=boundary.status==="estimated"?'Estimated 50% loss-risk boundary: '+boundary.ranges.map(function(x){return x.low_cents+'–'+x.high_cents+'¢'+(x.clear_at_95_percent?' (neighboring intervals separate 50%)':' (uncertain)')}).join(', '):boundary.status==="ambiguous"?'Mixed risk pattern: no single boundary established':'50% loss-risk boundary unresolved in observed prices';
-   return '<details'+(index===0?' open':'')+'><summary>'+htmlSafe(record.family)+' · '+number(record.observed_events)+' events · '+htmlSafe(label)+'</summary><p>'+number(record.observed_events)+' of '+number(record.eligible_events)+' event representatives have a valid decision quote. '+number(record.saved_checkpoint_events)+' use older saved checkpoint quotes (50–100¢ coverage only). Price bins are 10¢ wide; ranges do not establish a precise stop price. Missing bins are not bridged.</p>'+
-    (record.bins.length?'<div class="gridwrap"><table class="risk-table"><thead><tr><th>Current bid</th><th>Loss chance</th><th>95% interval</th><th>Events</th><th>Sale advantage*</th></tr></thead><tbody>'+record.bins.map(function(bin){return '<tr><td>'+bin.bid_low_cents+'–'+bin.bid_high_cents+'¢</td><td>'+number(bin.loss_rate_percent).toFixed(1)+'%</td><td>'+number(bin.loss_lower_percent).toFixed(1)+'–'+number(bin.loss_upper_percent).toFixed(1)+'%</td><td>'+bin.losses+' / '+bin.events+' lost</td><td>'+(bin.sale_advantage_cents==null?'Unavailable: zero bid':htmlSafe(format(bin.sale_advantage_cents,"¢")))+'</td></tr>'}).join('')+'</tbody></table></div><p>*Estimated per-contract sale-minus-hold value under a 2¢ exit cost; no performance adjustment is applied. Zero bids mean no buyer, not an executable sale. All below-entry and above-entry states are shown to explain the risk curve; this feature adds no profit-taking policy.</p>':'<p>No valid later quotes in this series at this checkpoint.</p>')+'</details>';
-  }).join('')+'<p class="muted small">One outcome-blind representative per event/entry category. Different checkpoints reuse events. Intervals describe sampling uncertainty, not market shifts or missing-quote bias. Times use saved contract close, not necessarily event end.</p>';
- id("detail").classList.add("visible");
+ id("lossCoverage").hidden=!state.lossEnabled;
+ id("lossCoverage").textContent=state.lossError?"Thresholds unavailable. Refresh to retry.":lossScope()?"Thresholds shown directly below in cents.":"Loading thresholds…";
 }
 function loadLossStudy(){
  var query="?v="+Date.now();state.lossError=false;
@@ -469,7 +477,6 @@ document.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click"
 document.querySelectorAll("[data-metric]").forEach(function(b){b.addEventListener("click",function(){state.metric=b.dataset.metric;saveView();id("detail").classList.remove("visible");render()})});
 id("datasetView").addEventListener("change",function(){state.view=this.value;saveView();id("detail").classList.remove("visible");render()});
 id("minSample").addEventListener("change",function(){state.minimum=Number(this.value);saveView();id("detail").classList.remove("visible");render()});
-id("lossDecision").addEventListener("change",function(){state.lossDecision=this.value;saveView();id("detail").classList.remove("visible");render()});
 id("lossEnabled").addEventListener("change",function(){state.lossEnabled=this.checked;saveView();id("detail").classList.remove("visible");render()});
 id("refresh").addEventListener("click",function(){load();loadExecutionSummary();loadLossStudy()});
 restoreView();
