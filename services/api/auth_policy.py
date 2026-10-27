@@ -1,9 +1,10 @@
-"""Google-only auth primitives for the future API. No public routes yet."""
+"""Google-only verification and owner authorization policy."""
 from dataclasses import dataclass
 import hashlib
 import math
 import secrets
 import time
+import threading
 
 
 class LoginRejected(ValueError):
@@ -14,6 +15,7 @@ class LoginRejected(ValueError):
 class GoogleIdentity:
     subject: str
     email: str
+    email_authoritative: bool = False
 
 
 def require_login_csrf(*, cookie_token, body_token, origin, app_origin):
@@ -26,12 +28,24 @@ def require_login_csrf(*, cookie_token, body_token, origin, app_origin):
         raise LoginRejected('Login rejected')
 
 
-def _verify_with_google(credential, client_id):
-    # Use the official library's signature, audience, issuer and expiry checks.
-    # Dependency installation and live verification belong to API integration.
-    from google.auth.transport.requests import Request
+_transport=threading.local()
+
+
+def _google_request():
+    if not hasattr(_transport,'request'):
+        from cachecontrol import CacheControl
+        from requests import Session
+        from google.auth.transport.requests import Request
+        _transport.request=Request(session=CacheControl(Session()))
+    def bounded(*args,**kwargs):
+        kwargs['timeout']=5
+        return _transport.request(*args,**kwargs)
+    return bounded
+
+
+def _verify_with_google(credential,client_id):
     from google.oauth2.id_token import verify_oauth2_token
-    return verify_oauth2_token(credential, Request(), client_id)
+    return verify_oauth2_token(credential,_google_request(),client_id)
 
 
 def verify_google_login(*, credential, client_id, expected_nonce):
@@ -59,7 +73,7 @@ def verify_google_login(*, credential, client_id, expected_nonce):
         valid = False
     if not valid:
         raise LoginRejected('Login rejected')
-    return GoogleIdentity(subject=subject, email=email)
+    return GoogleIdentity(subject=subject,email=email,email_authoritative=email.casefold().endswith('@gmail.com') or (isinstance(claims.get('hd'),str) and bool(claims.get('hd'))))
 
 
 def require_owner(identity, bound_google_subject):

@@ -1,0 +1,44 @@
+# DRAFT ONLY. Creating/syncing a Blueprint provisions and can deploy resources.
+# This file is not linked to Render. No resources have been created.
+previews:
+  generation: 'off'
+projects:
+  - name: Pocket Analytics
+    environments:
+      - name: staging
+        services:
+          - type: web
+            name: pocket-api-staging
+            runtime: python
+            region: oregon
+            plan: 0.5c-512mb
+            numInstances: 1
+            autoDeployTrigger: 'off'
+            buildCommand: pip install -r services/api/requirements.txt
+            preDeployCommand: python -m services.api.manage migrate
+            startCommand: uvicorn services.api.app:create_app --factory --host 0.0.0.0 --port $PORT --no-access-log
+            healthCheckPath: /health/ready
+            envVars:
+              - key: PYTHON_VERSION
+                value: 3.12.12
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: pocket-db-staging
+                  property: connectionString
+              - key: API_PROXY_SECRET
+                generateValue: true
+              - key: APP_ORIGIN
+                sync: false
+              - key: GOOGLE_CLIENT_ID
+                sync: false
+              - key: OWNER_GOOGLE_EMAIL
+                sync: false
+        databases:
+          - name: pocket-db-staging
+            databaseName: pocket_staging
+            user: pocket_staging
+            plan: 0.1c-256mb
+            region: oregon
+            postgresMajorVersion: '17'
+            diskSizeGB: 5
+            ipAllowList: []

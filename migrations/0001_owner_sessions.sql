@@ -1,6 +1,5 @@
--- Draft PostgreSQL migration; not applied to any database.
--- Owner provisioning is an explicit authenticated administrative operation.
-BEGIN;
+-- Initial owner/session schema. Applied explicitly by services.api.manage.
+-- Owner bootstrap requires an explicitly configured, verified Google identity.
 CREATE TABLE owner_account (
     id smallint PRIMARY KEY CHECK (id = 1),
     google_subject text NOT NULL UNIQUE CHECK (length(google_subject) BETWEEN 1 AND 255),
@@ -17,4 +16,3 @@ CREATE TABLE owner_session (
     CHECK (expires_at > created_at)
 );
 CREATE INDEX owner_session_expiry ON owner_session(expires_at);
-COMMIT;

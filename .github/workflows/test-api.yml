@@ -1,0 +1,45 @@
+name: Validate future API and infrastructure (no deployment)
+on:
+  pull_request:
+    paths:
+      - 'services/api/**'
+      - 'migrations/**'
+      - 'infra/**'
+      - 'tests/test_auth_policy.py'
+      - '.github/workflows/test-api.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pocket_test
+          POSTGRES_PASSWORD: pocket_test
+          POSTGRES_DB: pocket_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pocket_test -d pocket_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POCKET_TEST_DATABASE_URL: postgresql://pocket_test:pocket_test@localhost:5432/pocket_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned development dependencies
+        run: pip install -r services/api/requirements-dev.txt
+      - name: Test owner policy, API and actual PostgreSQL
+        run: |
+          python -m unittest discover -s tests -p 'test_auth_policy.py' -v
+          python -m unittest discover -s services/api/tests -v
+      - name: Validate staging Blueprint without applying it
+        run: python infra/validate_blueprint.py
