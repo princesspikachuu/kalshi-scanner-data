@@ -7,7 +7,7 @@
 | GitHub | Repository read/write and draft PR access work | Keep application and infrastructure changes on the development draft |
 | Render | Connected; owner selected “My Workspace”; workspace-scoped queries work | No services returned; no PostgreSQL instances found. Prepare staging before any creation |
 | Cloudflare | Existing GitHub Actions deployment connection works for the research app | Prepare a separate staging app/proxy and scoped R2 access; no direct Cloudflare administration tool is connected |
-| Google Cloud | No administration connection or web OAuth client ID established for this app | Owner creates or selects a Google Cloud project and a Web OAuth client |
+| Google Cloud | Owner account confirmed; no administration connection or web OAuth client ID established for this app | Owner creates or selects a Google Cloud project and a Web OAuth client |
 | PostgreSQL | Code, migrations and CI integration are prepared | No Render database created; use a disposable CI database first |
 | R2 | Planned for compressed raw archives | No buckets, access keys or uploads created |
 
@@ -73,7 +73,7 @@ No Redis, Kubernetes or additional database is required by this draft.
 Prepared: API/auth code, pinned dependencies, session and research-storage
 migrations, staging Blueprint, schema validation, and PostgreSQL CI checks.
 
-Outstanding: owner account selection and actual Google OAuth configuration,
+Outstanding: actual Google OAuth configuration and storing the chosen owner account in server configuration,
 Cloudflare staging proxy/UI, Render resource creation, hosted migration run,
 R2 archival client, SQL research ingestion/queries, job workers and eventual
 forward paper trading. No live order placement exists in this draft.
@@ -87,3 +87,12 @@ forward paper trading. No live order placement exists in this draft.
 - https://render.com/docs/configure-environment-variables
 - https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid
 - https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
+
+## Integration discovery result
+
+The current plugin search returned no Cloudflare plugin and no Google Cloud
+administration plugin capable of creating OAuth clients. BigQuery and the
+Google productivity connectors do not provide that capability. More integrations
+may be available in https://chatgpt.com/plugins; none were installed for an
+unrelated capability. Continue through the existing Cloudflare CI connection
+and owner-controlled Google Cloud console setup for this milestone.
