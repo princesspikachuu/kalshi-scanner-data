@@ -529,3 +529,15 @@ prior raw-dataset child tables, closing their late-append gap without changing
 past migration checksums. Privileged DDL/trigger bypass remains outside this
 application-level guarantee. PostgreSQL reference:
 https://www.postgresql.org/docs/17/functions-info.html#FUNCTIONS-TXID-SNAPSHOT
+
+### Reading published history without recomputation
+
+`HistoryStore` in `history.py` deliberately depends on the supplied database pool
+only, not on report/collection modules. Dataset/result pages use existing stream/id
+indexes and bounded keysets. A result's exact source dataset hashes, UTC close
+dates and latest flags come from its sealed membership relation. Report detail
+projects saved cells for one explicit view; summaries do not load raw evidence or
+missing-slot lists. The authenticated API contract/limits are documented in
+`services/api/README.md`. This supports published immutable history, not in-flight
+job monitoring or server-side date-filtered recomputation. No schema migration,
+archive request, hosted configuration or live table change is needed.

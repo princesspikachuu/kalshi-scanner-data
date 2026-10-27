@@ -1,4 +1,4 @@
-"""Google-only, owner-only API. No research or trading actions are exposed yet."""
+"""Google-only, owner-only API. Precomputed research reads; no trading actions."""
 from contextlib import asynccontextmanager
 import hashlib
 import secrets
@@ -11,6 +11,7 @@ from psycopg_pool import PoolTimeout
 from .auth_policy import LoginRejected,new_session_material,require_login_csrf,verify_google_login
 from .config import Settings
 from .store import PostgresStore
+from .history import install_history,HistoryStore
 
 SESSION='__Host-pocket_session'
 CSRF='__Host-pocket_csrf'
@@ -46,7 +47,7 @@ class LoginBody(BaseModel):
     csrf_token:StrictStr=Field(min_length=32,max_length=256)
 
 
-def create_app(settings=None,store=None,verifier=verify_google_login):
+def create_app(settings=None,store=None,verifier=verify_google_login,history_store=None):
     settings=settings or Settings.from_env()
     owned=store is None
     store=store or PostgresStore(settings.database_url)
@@ -145,4 +146,5 @@ def create_app(settings=None,store=None,verifier=verify_google_login):
         response.delete_cookie(SESSION,path='/',secure=True,httponly=True,samesite='strict')
         response.delete_cookie(CSRF,path='/',secure=True,samesite='strict')
         return response
+    install_history(app,current,settings,history_store or HistoryStore(getattr(store,'pool',None)))
     return app

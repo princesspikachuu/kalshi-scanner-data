@@ -73,3 +73,51 @@ Official identity reference:
 https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
 
 The matching sign-in preview and connection tests are documented in `apps/README.md`.
+
+### Undeployed research history contract
+
+Authenticated GET routes (through the staging gateway's `/api` prefix):
+
+- `/research/datasets?stream=btc-raw`: published raw dataset **coverage** versions.
+- `/research/results?stream=btc-results`: compact saved report versions/counts.
+- `/research/results/123?stream=btc-results&view=historical` (or `latest`): exact
+  saved table cells, baseline/exit stress and pinned model/source version.
+- `/research/results/123/datasets?stream=btc-results`: exact dataset membership,
+  immutable hashes, UTC close dates and `is_latest` flags for that saved result.
+
+All require the existing proxy secret AND current owner session. GET needs no
+CSRF token; logout and login protections are unchanged. No research writes are
+exposed. Unknown result/wrong stream is 404; an empty published cohort is 200.
+`historical` means the complete explicitly selected cumulative cohort, not a
+server-generated date filter. `latest` must be selected explicitly; inspect
+`latest_membership_known` because an unknown latest cohort is not an empty run.
+
+Pages have `{contract:"research-history-v1",items:[...],next_cursor:null|"..."}`;
+pass `next_cursor` as `cursor` until null. Default limit 25, maximum 50. Cursors
+are authenticated with a domain-separated use of the existing server-only proxy
+key, bound to stream/collection/result and invalid after key rotation. Page size
+may change. IDs are decimal **strings** (Postgres bigint exceeds browser integer
+precision). Metadata exposes dates/counts/hashes, never raw archives/observations.
+Membership pages let clients verify every date/version rather than infer exact
+membership from a first/last date range. Do not apply a saved cell's adjustment
+to another report, dataset set or baseline.
+
+Streams use `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`. Duplicate/unknown query parameters,
+malformed/out-of-range IDs, altered/cross-query cursors and unsupported views fail
+closed. Response models forbid extra fields/nonfinite metrics and check original
+cohort counts, table dimensions, strict >50% labels and original observations.
+Unsupported/corrupt saved versions yield a generic 503, never a partial table.
+The gateway bounds body reads to 256 KiB and validates response envelopes; the
+API validates nested fields. All responses are `no-store`; gateway research
+responses cannot set login cookies. These routes remain separate from live UI.
+
+`services/research/history.py` uses indexed stream/id keysets and the membership
+primary key. SQL projects only precomputed coverage/counts/cells from immutable
+rows; no collector, archive reader, observation scan or policy builder runs in a
+GET. Table cells have a 128 KiB SQL projection guard and at most 45 validated
+cells. Lists request one extra metadata row to detect another page. Keysets avoid
+offset drift, but independent requests are not a database snapshot: concurrently
+committing older allocated IDs can appear only on a later fresh traversal. No
+representative throughput/latency benchmark or hosted compatibility claim yet.
+Unfinished queue jobs, detailed path evidence and arbitrary date recomputation
+are intentionally outside this publication-history read contract.

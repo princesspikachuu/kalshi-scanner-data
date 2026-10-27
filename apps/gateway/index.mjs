@@ -27,6 +27,18 @@ function successBody(path,data){
  if(data.authenticated!==true||typeof data.email!=='string'||data.email.length>320||!data.email.includes('@'))throw Error('invalid identity');
  return {authenticated:true,email:data.email};
 }
+function researchBody(path,data){
+ const detail=/\/results\/[1-9][0-9]*$/.test(path);
+ const keys=Object.keys(data).sort().join(',');
+ if(data.contract!=='research-history-v1')throw Error('invalid research contract');
+ if(detail){
+  if(keys!=='contract,result,view'||!['historical','latest'].includes(data.view)||
+     (typeof data.result?.id!=='string'||!/^[1-9][0-9]{0,18}$/.test(data.result.id))||!Array.isArray(data.result?.cells)||data.result.cells.length>45)throw Error('invalid result');
+ }else if(keys!=='contract,items,next_cursor'||!Array.isArray(data.items)||data.items.length>50||
+    data.items.some(item=>typeof item.id!=='string'||!/^[1-9][0-9]{0,18}$/.test(item.id))||
+    (data.next_cursor!==null&&!/^[A-Za-z0-9_-]{1,1024}$/.test(data.next_cursor)))throw Error('invalid research page');
+ return data; // Nested fields are validated by the API's closed, versioned response models.
+}
 function responseCookies(headers){
  const values=typeof headers.getSetCookie==='function'?headers.getSetCookie():headers.getAll('Set-Cookie');
  return values.filter(value=>{
@@ -37,10 +49,21 @@ function responseCookies(headers){
  });
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
- const url=new URL(request.url),method=ROUTES.get(url.pathname);
+ const url=new URL(request.url);
+ const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/datasets)?)?)$/.test(url.pathname);
+ const method=research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
- if(url.search)return problem(400,'Query parameters are not accepted');
+ if(research){
+  const detail=/\/results\/[1-9][0-9]*$/.test(url.pathname);
+  const allowed=new Set(detail?['stream','view']:['stream','cursor','limit']);
+  const params=[...url.searchParams];
+  if(url.search.length>2048||params.some(([k])=>!allowed.has(k))||new Set(params.map(([k])=>k)).size!==params.length||
+     !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(url.searchParams.get('stream')||'')||
+     (detail&&!['historical','latest'].includes(url.searchParams.get('view')))||
+     (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit')))||
+     (url.searchParams.has('cursor')&&!/^[A-Za-z0-9_-]{1,1024}$/.test(url.searchParams.get('cursor'))))return problem(400,'Invalid research query');
+ }else if(url.search)return problem(400,'Query parameters are not accepted');
  const app=origin(env.APP_ORIGIN),api=origin(env.API_ORIGIN);
  if(!app||!api||app===api||typeof env.API_PROXY_SECRET!=='string'||env.API_PROXY_SECRET.length<32)return problem(503,'Sign-in connection is not configured');
  if(url.origin!==app||request.headers.get('sec-fetch-site')==='cross-site')return problem(403,'Request rejected');
@@ -59,13 +82,14 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  }
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
  try{
-  const upstream=await fetcher(api+url.pathname.slice(4),{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
+  const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
   if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');
   const outgoing=new Headers(BASE_HEADERS);
-  const setCookies=responseCookies(upstream.headers);
+  const setCookies=research?[]:responseCookies(upstream.headers);
   let response;
   if(!upstream.ok){
    const messages={400:'Invalid request',401:'Sign in required',403:'Request rejected',413:'Request too large',415:'JSON required',422:'Invalid sign-in request',429:'Too many requests. Try again shortly.',503:'Sign-in connection unavailable'};
+   if(research)messages[404]='Research result not found';
    const status=Object.hasOwn(messages,upstream.status)?upstream.status:502;
    response=problem(status,messages[status]||'Sign-in connection unavailable');
    if(status===429)response.headers.set('retry-after','60');
@@ -75,8 +99,8 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
-   const text=new TextDecoder().decode(await boundedBody(upstream.body,32768));
-   response=new Response(JSON.stringify(successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,research?262144:32768));
+   response=new Response(JSON.stringify(research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;

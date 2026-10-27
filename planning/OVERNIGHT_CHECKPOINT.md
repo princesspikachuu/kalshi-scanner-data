@@ -343,24 +343,71 @@ No owner email/credentials, hosted provider/object-store reads, Google account s
 live infra changes or running worker. No speedup/real-hosted acceptance claim. This session has finished writing code;
 no background worker remains active.
 
+## Tenth milestone: authenticated precomputed history/result reads
+
+Started from actual remote `7603ceb4b647c229d7bd9dcd5e629496a6b0847b`;
+**CI 40502928319 passed**. Read this remote checkpoint before files. No newer head
+or active collection/test worker was found (the Codex runtime itself is active).
+Used fresh `pocket-history` worktree; older saved dirty worktrees remain untouched.
+PR #9 remains draft/unmerged. Main has advanced to `9ede11b7` per PR metadata;
+no live files were copied or merged. Reconcile main only in future authorized work.
+
+Added separate HistoryStore SQL projections, closed versioned response models and
+four authenticated GET routes: published raw dataset coverage pages, compact report
+history, explicit historical/latest table cells and exact paginated dataset/hash/
+UTC-date/latest membership. Existing stream/id and membership indexes serve keysets.
+IDs are strings externally (safe beyond browser integer precision), numeric in SQL.
+Cursors are signed/domain-separated with existing server key and bound to stream,
+collection and parent result. Limits/unknown or duplicate queries/unsupported stored
+versions fail closed. Unknown result/wrong stream is 404, empty cohort is explicit.
+
+No GET fetches archives, scans observations or recomputes research. Raw coverage
+and report metadata are projected without raw payloads/missing-slot lists; table
+cells have bounded SQL and API validation. Original full-sample counts, assets,
+entry grids and strict >50% loss labels are checked. Unknown latest cannot invent
+rows/counts. Both proxy AND owner session required; login/logout CSRF unchanged.
+Staging gateway deliberately allowlists only these GET routes, bounded queries and
+responses; research cannot set auth cookies. Existing live Worker/table untouched.
+
+Local: **115 API/research tests passed**, **51 PG tests skipped** without a local
+disposable database; 7 policy and 17 gateway/client tests passed. Added 6 contract/
+auth/cursor/full-sample tests, 4 real-PG history/membership/bigint cases and 3 gateway
+cases. Compile/dependency/whitespace checks passed. CI verification pending this
+implementation commit; inspect the associated workflow/jobs before claiming PG
+success. Do not rerun the previously review-blocked local Blueprint schema request;
+unchanged CI validates it read-only. No hosted requests, credentials, Google setup,
+provisioning, infrastructure mutation, deployment or trading occurred.
+
+Limitations: published dataset history only (not in-flight queue monitoring), no
+arbitrary date-subset recomputation, no research shell yet. Keysets are independent
+reads, not a cross-request transaction snapshot; a late commit of an older allocated
+ID may require a fresh traversal. Key rotation invalidates cursors. Hosted acceptance
+and representative performance are unverified. Exact API/SQL/gateway limits and
+resume wiring are documented in services/api/README.md and research/apps READMEs.
+This code session has no collection daemon; finish CI/checkpoint before resuming UI.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
 1. Inspect latest head/CI and fix any failure first. Queue/archive/collection,
    normalization, verified raw datasets and versioned return/loss-risk publication
    are implemented. Do not duplicate work or overwrite newer changes.
-2. Authenticated read-only history API for raw runs and research results: indexed
-   SQL/keyset cursors, exact result/dataset/date membership, compact precomputed
-   summaries, strict response validation and tests. ReportStore has publication
-   only; add summary/detail reads. Raw DatasetStore already has summary-only
-   history. Keep unknown/latest/cumulative views explicit. Never scan source
-   archives or recompute policy in a GET handler. Require session+proxy; preserve
-   session+CSRF on mutations. Deliberately update gateway route allowlists.
+2. Authenticated published dataset/result history API is implemented in the tenth
+   milestone. Inspect newest CI first. Read services/api/README.md and history.py
+   contracts before adding clients; use exact result ID/stream and source membership,
+   explicit view and opaque keysets. No GET recomputation or source archive reads.
 3. Add research/history shell using that API contract, preserving familiar current
    cell fields, full-sample counts, threshold-only labels, >50% message and selected
    view persistence. Keep all code undeployed and separate from live Worker/UI.
 4. Measure representative local performance and checkpoint remaining integration
    work. Do not claim production speedups from tiny fixtures or CI test runtime.
    Hosted resources, real Google acceptance and budget/secrets remain owner-only.
+
+Local resume: fetch actual branch into a fresh worktree; create a new Python venv,
+install services/api/requirements-dev.txt; run `python -m unittest discover -s
+services/api/tests -v`, `python -m unittest discover -s tests -p test_auth_policy.py
+-v`, `node --test tests/test_login_bridge.mjs`, compileall, pip check and git diff
+--check. Actual PostgreSQL tests require an explicitly disposable /pocket_test DB;
+otherwise verify all PG cases in CI. No hosted migration or provision is authorized.
 
 Save code/checkpoint to draft PR #9 and inspect CI/diff. Main can receive more live
 fixes/data; reconcile only for a future explicitly authorized integration. Do not

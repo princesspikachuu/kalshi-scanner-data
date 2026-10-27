@@ -105,3 +105,43 @@ test('preview has no credential fields or browser-storage persistence',()=>{
  assert.doesNotMatch(sources,/localStorage|sessionStorage/);
  assert.doesNotMatch(fs.readFileSync('apps/web/index.html','utf8'),/<input|password/i);
 });
+
+test('research gateway allowlists read routes and bounded unique queries before fetch',async()=>{
+ const fetcher=()=>assert.fail('must not fetch');
+ for(const path of ['/api/research/results/1/observations?stream=btc','/api/research/orders?stream=btc','/api/research/results/01?stream=btc&view=latest']){
+  assert.equal((await proxyAuth(request(path),env,{fetcher})).status,404);
+ }
+ for(const query of ['','?stream=btc&stream=eth','?stream=btc&limit=51','?stream=btc&day=2026-10-25','?stream=bad%20stream','?stream=btc&cursor=bad!']){
+  assert.equal((await proxyAuth(request('/api/research/results'+query),env,{fetcher})).status,400);
+ }
+ assert.equal((await proxyAuth(request('/api/research/results/1?stream=btc'),env,{fetcher})).status,400);
+ assert.equal((await proxyAuth(request('/api/research/results?stream=btc',{method:'POST'}),env,{fetcher})).status,405);
+ assert.equal((await proxyAuth(request('/api/research/results?stream=btc',{headers:{origin:'https://evil.test'}}),env,{fetcher})).status,403);
+});
+test('research gateway forwards exact query and session without arbitrary headers or response cookies',async()=>{
+ const body={contract:'research-history-v1',items:[{id:'9007199254740993'}],next_cursor:'opaque_cursor'};
+ let sent;
+ const response=await proxyAuth(request('/api/research/results?stream=btc-results&limit=1&cursor=opaque_cursor',{
+  headers:{cookie:'__Host-pocket_session='+nonce+'; analytics=private',authorization:'Bearer private','x-pocket-proxy':'forged'}
+ }),env,{fetcher:async(url,options)=>{sent={url,...options};return json(body,200,{'set-cookie':'private=hidden; Path=/'})}});
+ assert.equal(response.status,200);assert.deepEqual(await response.json(),body);
+ assert.equal(sent.url,'https://api.test/research/results?stream=btc-results&limit=1&cursor=opaque_cursor');
+ assert.equal(sent.headers.get('authorization'),null);assert.equal(sent.headers.get('cookie'),'__Host-pocket_session='+nonce);
+ assert.equal(sent.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);assert.equal(sent.redirect,'manual');
+ assert.equal(response.headers.get('set-cookie'),null);assert.equal(response.headers.get('cache-control'),'no-store');
+});
+test('research gateway bounds responses and requires closed contract envelopes',async()=>{
+ for(const data of [
+  {contract:'future',items:[],next_cursor:null},
+  {contract:'research-history-v1',items:[],next_cursor:null,email:'private-sentinel'},
+  {contract:'research-history-v1',items:Array(51).fill({id:'1'}),next_cursor:null},
+  {contract:'research-history-v1',items:[{id:9007199254740992}],next_cursor:null},
+  {contract:'research-history-v1',items:[],next_cursor:'!'}
+ ])assert.equal((await proxyAuth(request('/api/research/datasets?stream=raw'),env,{fetcher:async()=>json(data)})).status,502);
+ const large={contract:'research-history-v1',items:[{id:'1',large:'x'.repeat(262144)}],next_cursor:null};
+ assert.equal((await proxyAuth(request('/api/research/datasets?stream=raw'),env,{fetcher:async()=>json(large)})).status,502);
+ const missing=await proxyAuth(request('/api/research/results/1?stream=btc&view=latest'),env,{fetcher:async()=>json({private:'sentinel'},404)});
+ assert.equal(missing.status,404);assert.doesNotMatch(await missing.text(),/sentinel/);
+ const valid={contract:'research-history-v1',view:'latest',result:{id:'1',cells:[]}};
+ assert.deepEqual(await (await proxyAuth(request('/api/research/results/1?stream=btc&view=latest'),env,{fetcher:async()=>json(valid)})).json(),valid);
+});

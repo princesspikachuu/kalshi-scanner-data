@@ -65,3 +65,10 @@ Official implementation references:
 - https://developers.cloudflare.com/workers/wrangler/configuration/
 - https://developers.google.com/identity/gsi/web/reference/js-reference
 - https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid
+
+The staging gateway also allowlists the four authenticated read-only research
+history routes documented in `services/api/README.md`. Only those GET paths and
+bounded unique query parameters are forwarded; arbitrary provider/trading paths
+remain unavailable. Saved results require an explicit historical/latest view.
+Nested response validation remains in the API. Research responses are bounded,
+`no-store` and cannot set auth cookies. No research shell or deployment is included.
