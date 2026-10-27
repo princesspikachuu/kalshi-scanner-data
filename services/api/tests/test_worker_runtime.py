@@ -52,7 +52,8 @@ class RuntimeTests(unittest.TestCase):
         pool.connection.return_value.__exit__=Mock(return_value=False)
         inventory.__enter__=Mock(return_value=inventory);inventory.__exit__=Mock(return_value=False)
         evidence.__enter__=Mock(return_value=evidence);evidence.__exit__=Mock(return_value=False)
-        with patch.object(runtime,'ConnectionPool',return_value=pool),patch.object(runtime.R2Objects,'connect',return_value=objects) as r2,\
+        with patch('services.research.acceptance.audit_database',return_value={'privilege_boundary_ready':True}), \
+                patch.object(runtime,'ConnectionPool',return_value=pool),patch.object(runtime.R2Objects,'connect',return_value=objects) as r2,\
                 patch.object(runtime,'KalshiInventory',return_value=inventory),patch.object(runtime,'KalshiEvidence',return_value=evidence),\
                 patch.object(runtime,'ReadBudget') as budget,patch.object(runtime,'CampaignWorker') as worker,\
                 patch.object(runtime,'serve',side_effect=RuntimeError('secret-sentinel')):
@@ -95,3 +96,12 @@ class RuntimeTests(unittest.TestCase):
              patch('sys.stderr',new_callable=StringIO) as errors:
             runtime.run(settings,stop);check.assert_called_once()
             self.assertNotIn('sentinel',errors.getvalue())
+
+
+    def test_collection_refuses_operator_credentials_before_constructing_clients(self):
+        settings=runtime.WorkerSettings.from_env({**environment(),'COLLECTION_ENABLED':'true'})
+        with patch('services.research.acceptance.audit_database',return_value={'privilege_boundary_ready':False}), \
+             patch.object(runtime,'ConnectionPool') as pool,patch.object(runtime.R2Objects,'connect') as r2:
+            with self.assertRaisesRegex(runtime.ConfigurationError,'privileges are not isolated'):
+                runtime.run(settings,Event())
+            pool.assert_not_called();r2.assert_not_called()

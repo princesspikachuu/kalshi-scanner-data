@@ -790,3 +790,14 @@ Record actual receipts/findings; successful deploy does not prove a test passed.
 Only after owner-controlled credential/migration separation, privilege audit and
 R2 acceptance should a tiny real collection be separately enabled. Preserve full
 cohort/loss-prevention behavior; no live app changes, merge or trading.
+
+Enabled worker startup also requires the read-only database privilege audit before
+opening its pool/R2/Kalshi clients. Operator credentials or a migration mismatch
+fail closed even if COLLECTION_ENABLED is manually set true. A new unit case proves
+that this failure constructs no collection clients. Disabled mode remains no-I/O
+unless a diagnostic flag is explicitly selected.
+
+First diagnostic CI run 40552870658 exposed test-fixture read-budget state retained
+from another suite, not a grant denial. Added explicit disposable test cleanup for
+that row and a real direct-login audit test; operator remains rejected. No hosted
+role or collection changes made while validating.

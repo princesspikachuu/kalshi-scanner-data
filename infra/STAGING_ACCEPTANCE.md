@@ -1,6 +1,9 @@
 # Staging acceptance and runtime database isolation
 
-Collection stays disabled throughout. Do not change live Cloudflare configuration,
+Collection stays disabled throughout. Enabled worker startup now refuses collection
+unless the read-only audit verifies a direct non-owner login without elevated
+privileges, memberships, schema/temp creation or history-mutation privileges.
+An operator DATABASE_URL cannot pass even if COLLECTION_ENABLED is toggled true. Do not change live Cloudflare configuration,
 upgrade compute, expose the database, or add a trading credential for these checks.
 Owner has confirmed actual Google login, persistence after refresh and logout.
 These are owner-reported browser checks; automated wrong-account testing remains

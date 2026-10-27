@@ -88,6 +88,9 @@ def run(settings,stop):
                 print('Staging acceptance failed; collection remains disabled',file=sys.stderr,flush=True)
         while not stop.is_set():stop.wait(30)
         return
+    from .acceptance import audit_database
+    if not audit_database(settings.database_url)['privilege_boundary_ready']:
+        raise ConfigurationError('Research runtime database privileges are not isolated')
     with ExitStack() as stack:
         pool=ConnectionPool(settings.database_url,min_size=1,max_size=2,open=False,timeout=5,
             kwargs={'row_factory':dict_row,'connect_timeout':5,'options':'-c statement_timeout=30000'})

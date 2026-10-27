@@ -56,7 +56,7 @@ class RuntimePrivilegesTests(unittest.TestCase):
     def test_api_login_session_and_campaign_controls_work(self):
         store = PostgresStore.__new__(PostgresStore); store.pool = self.api
         with psycopg.connect(URL) as c:
-            c.execute('TRUNCATE owner_account,owner_session,login_challenge,login_rate CASCADE')
+            c.execute('TRUNCATE owner_account,owner_session,login_challenge,login_rate,research_read_budget CASCADE')
         self.assertTrue(store.ready()); self.assertTrue(store.allow('role-test', 10))
         store.challenge('a'*64, 'b'*64, 'c'*64)
         self.assertTrue(store.consume('a'*64, 'b'*64, 'c'*64))
@@ -113,3 +113,17 @@ class RuntimePrivilegesTests(unittest.TestCase):
             rows = c.execute("SELECT rolcanlogin,rolcreaterole,rolcreatedb,rolsuper,rolbypassrls FROM pg_roles WHERE rolname IN ('pocket_api_runtime','pocket_research_runtime')").fetchall()
             self.assertEqual(rows,[(False,False,False,False,False)]*2)
             self.assertEqual(c.execute("SELECT count(*) FROM pg_auth_members WHERE member IN (SELECT oid FROM pg_roles WHERE rolname IN ('pocket_api_runtime','pocket_research_runtime'))").fetchone()[0],0)
+
+
+    def test_audit_accepts_direct_unprivileged_login_and_refuses_operator(self):
+        from psycopg.conninfo import make_conninfo
+        password=uuid4().hex  # Disposable test-only credential, never printed.
+        with psycopg.connect(URL,autocommit=True) as c:
+            c.execute(sql.SQL('ALTER ROLE pocket_research_runtime LOGIN PASSWORD {}').format(sql.Literal(password)))
+        try:
+            result=audit_database(make_conninfo(URL,user='pocket_research_runtime',password=password))
+            self.assertTrue(result['privilege_boundary_ready'],result)
+            self.assertFalse(audit_database(URL)['privilege_boundary_ready'])
+        finally:
+            with psycopg.connect(URL,autocommit=True) as c:
+                c.execute('ALTER ROLE pocket_research_runtime NOLOGIN PASSWORD NULL')
