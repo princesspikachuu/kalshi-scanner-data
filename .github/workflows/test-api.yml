@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'services/api/**'
+      - 'services/research/**'
       - 'apps/**'
       - 'tests/test_login_bridge.mjs'
       - 'migrations/**'
