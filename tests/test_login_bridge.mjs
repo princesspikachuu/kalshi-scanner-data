@@ -173,3 +173,16 @@ test('date-range client uses same-origin CSRF mutations and retains request idem
  const expired=createCollectionClient({fetcher:async()=>json({detail:'private-sentinel'},401)});
  await assert.rejects(expired.refresh('btc'),e=>e.status===401&&!e.message.includes('sentinel'));
 });
+
+test('campaign history gateway validates read-only category/keysets before fetching',async()=>{
+ const id='11111111-1111-4111-8111-111111111111';let sent;
+ const body={contract:'collection-v1',items:[{id,status:'queued'}],next_before:id};
+ const response=await proxyAuth(request('/api/collection/campaigns?asset=btc&limit=1&before='+id),env,{fetcher:async(url,options)=>{sent={url,...options};return json(body)}});
+ assert.equal(response.status,200);assert.deepEqual(await response.json(),body);assert.equal(sent.method,'GET');
+ assert.equal(sent.url,'https://api.test/collection/campaigns?asset=btc&limit=1&before='+id);
+ for(const query of ['', '?asset=financial_daily','?asset=btc&limit=51','?asset=btc&before=oops','?asset=btc&asset=eth','?asset=btc&after=2026-01-01']){
+  assert.equal((await proxyAuth(request('/api/collection/campaigns'+query),env,{fetcher:()=>assert.fail('must not fetch')})).status,400);
+ }
+ const invalid={...body,items:Array(51).fill({id,status:'queued'})};
+ assert.equal((await proxyAuth(request('/api/collection/campaigns?asset=btc'),env,{fetcher:async()=>json(invalid)})).status,502);
+});

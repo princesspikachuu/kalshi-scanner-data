@@ -4,7 +4,7 @@ const ROUTES=new Map([
  ['/api/auth/google','POST'],['/api/auth/logout','POST']
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
-const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css']);
+const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -42,7 +42,11 @@ function researchBody(path,data){
 function collectionBody(data){
  if(data.contract!=='collection-v1')throw Error('invalid collection');
  const keys=Object.keys(data).sort().join(',');
- if(data.refresh){
+ if('items' in data){
+  if(keys!=='contract,items,next_before'||!Array.isArray(data.items)||data.items.length>50||
+     data.items.some(c=>!/^[-a-f0-9]{36}$/.test(c.id)||!['queued','running','succeeded','cancelled','failed'].includes(c.status))||
+     (data.next_before!==null&&!/^[-a-f0-9]{36}$/.test(data.next_before)))throw Error('invalid campaign list');
+ }else if(data.refresh){
   if(keys!=='contract,refresh'||typeof data.refresh.enabled!=='boolean'||data.refresh.interval_seconds!==3600)throw Error('invalid refresh');
  }else{
   if(!['campaign,contract','campaign,contract,next_after,sections'].includes(keys)||typeof data.campaign?.id!=='string'||
@@ -70,12 +74,19 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const collection=url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
- const method=collection?(campaignGet?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
+ const method=collection?((campaignGet||campaignList)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
  if(collection){
   const entries=[...url.searchParams];
-  if(url.search.length>64||entries.length>(campaignGet?1:0)||entries.some(([k,v])=>k!=='after'||!/^\d{4}-\d{2}-\d{2}$/.test(v)))return problem(400,'Invalid collection query');
+  if(campaignList){
+   if(url.search.length>180||new Set(entries.map(([k])=>k)).size!==entries.length||
+      entries.some(([k])=>!['asset','before','limit'].includes(k))||
+      !new RegExp('^'+category+'$').test(url.searchParams.get('asset')||'')||
+      (url.searchParams.has('before')&&!new RegExp('^'+uuid+'$').test(url.searchParams.get('before')))||
+      (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit'))))return problem(400,'Invalid collection query');
+  }else if(url.search.length>64||entries.length>(campaignGet?1:0)||entries.some(([k,v])=>k!=='after'||!/^\d{4}-\d{2}-\d{2}$/.test(v)))return problem(400,'Invalid collection query');
  }else if(research){
   const detail=/\/results\/[1-9][0-9]*$/.test(url.pathname);
   const allowed=new Set(detail?['stream','view']:['stream','cursor','limit']);

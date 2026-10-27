@@ -108,6 +108,19 @@ class CampaignPostgresTests(unittest.TestCase):
             c.execute("UPDATE research_job SET available_at=clock_timestamp() WHERE status='queued'")
             c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()")
 
+    def test_campaign_history_keyset_is_category_scoped_and_survives_new_inserts(self):
+        ids=[self.create(key='history-'+str(i)) for i in range(4)]
+        other=self.store.create('eth','2026-10-25','2026-10-26','history-other',now=NOW)
+        first=self.store.list('btc',limit=2)
+        self.assertEqual([r['id'] for r in first],list(reversed(ids[2:])))
+        inserted=self.create(key='history-after-page')
+        second=self.store.list('btc',before=first[-1]['id'],limit=2)
+        self.assertEqual([r['id'] for r in second],list(reversed(ids[:2])))
+        self.assertNotIn(inserted,[r['id'] for r in second])
+        self.assertEqual(first[0]['total_sections'],2);self.assertEqual(first[0]['completed_sections'],0)
+        self.assertEqual(self.store.list('btc',before=other),[])
+        self.assertEqual(self.store.list('weather'),[])
+
     def test_multiple_days_finish_full_report_and_reuse_historical_index_once(self):
         identifier=self.create();self.drive(identifier)
         row=self.store.get(identifier);self.assertEqual((row['status'],row['completed_sections'],row['total_sections']),('succeeded',2,2))

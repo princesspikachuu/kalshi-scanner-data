@@ -3,7 +3,7 @@ const client=createAuthClient();
 const status=document.getElementById('status'),container=document.getElementById('googleButton'),account=document.getElementById('account'),retry=document.getElementById('retry');
 let busy=false,expiry;
 function failure(error){container.hidden=true;status.textContent=error.message||'Sign-in is unavailable. Please try again.';retry.hidden=false}
-function signedIn(identity){clearTimeout(expiry);container.hidden=true;account.hidden=false;document.getElementById('email').textContent=identity.email;status.textContent='You’re signed in to Pocket Analytics.';retry.hidden=true}
+function signedIn(identity){window.location.replace('/collection.html');clearTimeout(expiry);container.hidden=true;account.hidden=false;document.getElementById('email').textContent=identity.email;status.textContent='You’re signed in to Pocket Analytics.';retry.hidden=true}
 function googleLibrary(){return new Promise((resolve,reject)=>{
  if(window.google?.accounts?.id){resolve(window.google.accounts.id);return}
  const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;

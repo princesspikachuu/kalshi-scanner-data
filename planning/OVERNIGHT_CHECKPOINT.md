@@ -1060,3 +1060,61 @@ both Render runtime configurations were saved. All credentials remain private;
 none were written to workspace files or public repo. No other writer/worker is
 active in this session; local pocket-credentials remains dirty only because these
 changes/checkpoints were saved through GitHub tools. Preserve it on continuation.
+
+## Usable staging research dashboard (October 27, 2026)
+
+Owner confirmed sign-in and sign-out still work AFTER runtime credential cutover,
+then pointed out the staging page still exposes only authentication. Prioritize
+connecting the visible app now. Resumed remote d6293ec, CI 40562842838 passed;
+fresh pocket-dashboard worktree preserves previous saved dirty worktrees. No
+other writer observed. This update targets existing staging only; no main/live
+Worker changes, paid resource, credential rotation or enabled collection.
+
+Root now redirects an authenticated owner to /collection.html. Replaced the old
+unlinked controller with a responsive workspace: category/date requests, clear
+collection-paused banner, hourly-refresh preferences, server-backed saved campaign
+list with older-page navigation, section progress/pause/resume and immutable saved
+reports. Dashboard has sign-out. Category/display/selected campaign persist across
+reloads; no identity/session data in browser storage. Signed-out/expired sessions
+show a sign-in link and hide private workspace. Request retry keys still prevent
+duplicate ambiguous submissions. No live collection request was submitted here.
+
+Added authenticated bounded GET /collection/campaigns?asset=...&before=UUID&limit=N.
+Metadata keysets order by created_at/id, count only each chosen page's sections,
+and survive new inserts without skipping older rows. Cross-category boundaries
+return empty; strict query/session guards and closed gateway envelopes apply.
+No archive/observation scan, new table, migration or new grant. Existing runtime
+API SELECT permissions are exercised by actual-PG tests. For large campaign counts,
+an (asset,created_at,id) index is a follow-up explicit operator migration; not
+claimed benchmarked/index-backed ordering today.
+
+Saved report client selects exact campaign stream and string bigint result ID.
+Displays existing precomputed full-sample cells: average P/L/ROI/win rate, original
+n/days, threshold-only loss labels and cell-detail exit coverage. Toggle selects
+saved rows without recomputation, sampling or denominator shrink. Missing exits
+keep hold outcomes; original losses >50% remain Trade not recommended (50% does
+not reject). Existing production table/model/source files are untouched. Reports
+combine only the selected campaign's sections; a deduplicated category-wide
+cumulative report across campaigns is STILL pending and is not falsely labeled
+as available. Empty history/reports are explicit; no fake sample data is shipped.
+
+Tests add gateway bounds, listing auth/query pagination, actual-PG keyset insertion
+and category isolation, actual limited-role listing, report identity/error safety,
+full-cohort loss/minimum behavior, safe DOM rendering and signed-in/signed-out
+workspace flows with preference restoration. Existing auth/gateway and Blueprint
+guards remain enabled. Local: 214 API/research (146 pass, 68 actual-PG skip without
+local disposable DB), 7 policy and 26 gateway/dashboard tests pass; compile,
+dependency, Blueprint schema/guard and whitespace checks pass. CI must prove all
+68 actual-PG cases before staging API/gateway publication.
+
+Exact resume: inspect this implementation CI; after green, deploy only existing
+staging API at tested branch head (same private runtime profile/gates, no secret
+changes or migrations). Then manually dispatch existing deploy-pocket-app workflow
+from build/google-auth-foundation; verify production job skipped and staging Worker
+updated. GitHub connector lacks dispatch; authorized browser fallback uses existing
+signed-in GitHub tab. Keep COLLECTION_ENABLED=false and all diagnostic/operator
+flags off. Verify actual dashboard after login, empty/history/request states and
+no console errors. Browser session/secret rules still apply. Record actual commit,
+deploy/run receipts, any HTTP smoke 403 and remaining limits. Representative
+performance and a separately authorized tiny collection remain before enabling
+real worker; do not imply all app setup is finished merely because UI is deployed.

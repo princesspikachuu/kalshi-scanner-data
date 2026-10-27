@@ -70,6 +70,7 @@ class RuntimePrivilegesTests(unittest.TestCase):
         identifier = campaigns.create('btc','2026-10-25','2026-10-25',str(uuid4()),
                                       now=datetime(2026,10,27,tzinfo=timezone.utc))
         self.assertIsNotNone(campaigns.get(identifier)); self.assertTrue(campaigns.days(identifier))
+        self.assertIn(identifier,[r['id'] for r in campaigns.list('btc')])
         self.assertTrue(campaigns.control(identifier,'pause')); self.assertTrue(campaigns.control(identifier,'resume'))
         self.assertFalse(campaigns.set_refresh('btc',False)['enabled'])
         with self.worker.connection() as c:

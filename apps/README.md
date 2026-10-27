@@ -130,3 +130,30 @@ request's retry key are stored locally; session/CSRF credentials remain in their
 existing cookies. Progress polling does NOT drive collection; the injected server
 runner owns all work. The account smoke page links to the controller. The live
 research Worker/table remains unchanged. Backend/worker resource setup is pending.
+
+## Current staging dashboard
+
+The existing staging gateway is deployed separately from the production Worker.
+After authentication, the root sign-in screen redirects to `/collection.html`.
+The dashboard includes date-range request preparation, server-backed newest-first
+collection history, section progress, pause/resume, hourly-refresh preferences and
+precomputed reports for completed collections. Sign-out is available directly on
+the dashboard. Category, dates, selected campaign and metric/minimum/loss display
+choices persist locally; identity/session material never does. Expired sessions
+hide the workspace and provide a sign-in link.
+
+History GET is owner-only with bounded metadata pages and created_at/UUID keysets.
+It reads no archives or observations. Its current metadata ordering needs an
+(asset,created_at,id) index before very large campaign counts; no new hosted
+migration is introduced here. Existing runtime grants support this SELECT path.
+Saved-report requests retain string bigint IDs and resolve the selected campaign's
+explicit immutable stream. The table switches between saved hold/loss rows, keeps
+original n and missing-exit outcomes, and uses the saved threshold/rejection label.
+A display minimum hides the value only; it never resamples or changes the report.
+All server-derived text uses textContent, never HTML interpolation.
+
+Collection remains paused in staging. The dashboard states that saved requests
+wait until the worker is enabled. No sample fixtures or fabricated reports are
+published. Each report combines that campaign's sections; a separate deduplicated
+category-wide cumulative report across multiple campaigns remains future work.
+Do not label campaign results as a union of all category history.

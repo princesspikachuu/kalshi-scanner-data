@@ -120,6 +120,28 @@ class CampaignStore:
             if row:row['id']=str(row['id'])
             return row
 
+    def list(self,asset,*,before=None,limit=26):
+        """Newest-first bounded campaign metadata; no archive/observation reads."""
+        configuration(asset)
+        if type(limit) is not int or not 1<=limit<=51:raise ValueError('Invalid campaign limit')
+        if before is not None:before=UUID(str(before))
+        with self.pool.connection() as c:
+            rows=c.execute('''WITH chosen AS MATERIALIZED (
+                SELECT r.* FROM research_campaign r WHERE r.asset=%s
+                AND (%s::uuid IS NULL OR (r.created_at,r.id)<(
+                    SELECT created_at,id FROM research_campaign WHERE id=%s AND asset=%s))
+                ORDER BY r.created_at DESC,r.id DESC LIMIT %s)
+                SELECT r.id::text AS id,r.asset,r.mode,r.start_at,r.end_at,r.created_at,
+                    j.status,j.error_code,cr.result_id::text AS result_id,
+                    d.total_sections,d.completed_sections
+                FROM chosen r JOIN research_job j ON j.id=r.job_id
+                LEFT JOIN research_campaign_result cr ON cr.campaign_id=r.id
+                CROSS JOIN LATERAL (SELECT count(*)::integer AS total_sections,
+                    count(dataset_id)::integer AS completed_sections
+                    FROM research_campaign_day WHERE campaign_id=r.id) d
+                ORDER BY r.created_at DESC,r.id DESC''',(asset,before,before,asset,limit)).fetchall()
+            return rows
+
     def days(self,identifier,*,after=None,limit=50):
         if type(limit) is not int or not 1<=limit<=100:raise ValueError('Invalid section limit')
         if after is not None:after=date.fromisoformat(after)

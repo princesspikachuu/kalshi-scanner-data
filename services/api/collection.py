@@ -71,6 +71,25 @@ def install_collection(app,auth,mutate,store):
         except ValueError:raise HTTPException(422,'Select a valid range of up to 3660 UTC days') from None
         return dict(contract='collection-v1',campaign=summary(identifier))
 
+    @app.get('/collection/campaigns')
+    def campaigns(request:Request):
+        auth(request)
+        pairs=list(request.query_params.multi_items());q=dict(pairs)
+        if len(q)!=len(pairs) or set(q)-{'asset','before','limit'}:
+            raise HTTPException(422,'Invalid collection page')
+        try:
+            asset=q.get('asset','')
+            if asset not in ('btc','eth','crypto','weather','weather_daily','sports'):raise ValueError()
+            before=str(UUID(q['before'])) if 'before' in q else None
+            raw=q.get('limit','25')
+            if not raw.isascii() or not raw.isdecimal() or not 1<=int(raw)<=50 or str(int(raw))!=raw:raise ValueError()
+            limit=int(raw)
+            rows=store.list(asset,before=before,limit=limit+1)
+        except ValueError:raise HTTPException(422,'Invalid collection page') from None
+        items=[Campaign.model_validate(row).model_dump(mode='json') for row in rows[:limit]]
+        return dict(contract='collection-v1',items=items,
+                    next_before=items[-1]['id'] if len(rows)>limit else None)
+
     @app.get('/collection/campaigns/{identifier}')
     def get(identifier:UUID,request:Request):
         auth(request)

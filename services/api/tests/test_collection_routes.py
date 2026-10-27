@@ -14,6 +14,8 @@ class FakeCampaigns:
     def get(self,identifier):
         if str(identifier)!=ID:return None
         return dict(id=ID,asset='btc',mode='backfill',start_at=NOW,end_at=NOW,created_at=NOW,status='queued',error_code=None,result_id=None,total_sections=60,completed_sections=0)
+    def list(self,asset,*,before=None,limit=26):
+        self.calls.append(('list',asset,before,limit));return [self.get(ID)]*limit if before is None else []
     def create(self,*args,**kwargs):self.calls.append(('create',args));return ID
     def control(self,*args):self.calls.append(('control',args));return str(args[0])==ID
     def days(self,identifier,after=None,limit=51):
@@ -65,3 +67,15 @@ class CollectionRoutes(unittest.TestCase):
             self.assertEqual(self.client.get(f'/collection/campaigns/{ID}?'+query).status_code,422)
         self.assertEqual(self.client.get('/collection/campaigns/'+str(uuid4())).status_code,404)
         self.assertTrue(all(call[0]=='days' for call in self.store.calls))
+
+
+    def test_campaign_history_is_authenticated_bounded_and_readonly(self):
+        r=self.client.get('/collection/campaigns?asset=btc&limit=2')
+        self.assertEqual(r.status_code,200);self.assertEqual(len(r.json()['items']),2)
+        self.assertEqual(r.json()['next_before'],ID)
+        self.assertEqual(self.store.calls,[('list','btc',None,3)])
+        self.assertEqual(self.client.get('/collection/campaigns?asset=btc&before='+ID).json()['items'],[])
+        for query in ('','asset=nope','asset=btc&asset=eth','asset=btc&limit=51','asset=btc&limit=01','asset=btc&before=bad','asset=btc&unexpected=yes'):
+            self.assertEqual(self.client.get('/collection/campaigns?'+query).status_code,422,query)
+        self.client.cookies.clear()
+        self.assertEqual(self.client.get('/collection/campaigns?asset=btc').status_code,401)

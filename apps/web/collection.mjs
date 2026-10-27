@@ -1,7 +1,10 @@
 import {createAuthClient} from './auth-client.mjs';
 import {createCollectionClient} from './collection-client.mjs';
+import {createResearchClient} from './research-client.mjs';
+import {renderTable} from './report-view.mjs';
 const $=id=>document.getElementById(id),client=createCollectionClient();
-let timer,revision=0,selected=null,next=null,key=null,busy=false;
+let timer,revision=0,selected=null,next=null,key=null,busy=false,historyNext=null,report=null,reportKey=null;
+const research=createResearchClient(),auth=createAuthClient();
 const prefs={};
 try{Object.assign(prefs,JSON.parse(localStorage.getItem('pocket-collection-v1')||'{}'))}catch{}
 const today=new Date().toISOString().slice(0,10);
@@ -10,9 +13,69 @@ for(const id of ['start','end']){$(id).max=today;$(id).value=/^\d{4}-\d{2}-\d{2}
 $('recheck').checked=prefs.pending?.recheck===true;
 key=prefs.pending?.asset===$('asset').value&&prefs.pending?.start===$('start').value&&prefs.pending?.end===$('end').value?prefs.pending.key:null;
 function save(){try{localStorage.setItem('pocket-collection-v1',JSON.stringify({...prefs,asset:$('asset').value,start:$('start').value,end:$('end').value}))}catch{}}
-function failure(error){$('notice').textContent=error.message;if(error.status===401){$('collection').hidden=true;clearTimeout(timer)}}
+function failure(error){$('notice').textContent=error.message;if(error.status===401){$('workspace').hidden=true;$('signOut').hidden=true;$('signIn').hidden=false;clearTimeout(timer)}}
+for(const id of ['metric','minimum','loss']){
+ if(id==='loss')$(id).checked=prefs.loss===true;
+ else if([...$(id).options].some(o=>o.value===String(prefs[id])))$(id).value=prefs[id];
+ $(id).addEventListener('change',()=>{prefs[id]=id==='loss'?$(id).checked:$(id).value;save();drawReport()});
+}
+function clearReport(){report=null;reportKey=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true}
+function drawReport(){
+ if(!report)return;$('cellDetail').hidden=true;
+ renderTable($('table'),report,{loss:$('loss').checked,metric:$('metric').value,minimum:Number($('minimum').value)},(cell,minutes,band)=>{
+  const row=$('loss').checked?cell.loss_prevention:cell.hold,p=cell.loss_prevention,doc=document;
+  const heading=doc.createElement('h3');heading.textContent=`${minutes} minutes before close · ${band}¢`;
+  const lines=[`Full original sample: ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days.`,
+   `Wins: ${row.wins} · Win rate: ${row.win_rate_percent.toFixed(2)}%`,
+   `Average P/L: ${row.average_profit_loss_cents_per_contract.toFixed(2)}¢ · ROI: ${row.hypothetical_roi_percent.toFixed(2)}%`,
+   `Exit coverage: ${p.exit_coverage} of ${cell.hold.sampled_markets} · Early exits: ${p.early_exits}`,
+   $('loss').checked?p.sell_label:'Hold to settlement · loss prevention is off'];
+  $('cellDetail').replaceChildren(heading,...lines.map(text=>{const p=doc.createElement('p');p.textContent=text;return p}));
+  $('cellDetail').hidden=false;$('cellDetail').focus({preventScroll:true});
+ });
+}
+async function loadReport(campaign,version){
+ if(!campaign.result_id){clearReport();return}
+ const identity=version+'/'+campaign.id+'/'+campaign.result_id;if(reportKey===identity)return;
+ reportKey=identity;report=null;$('research').hidden=false;$('reportContent').hidden=true;$('reportStatus').textContent='Loading saved report…';
+ try{
+  const data=await research.result(campaign.id,campaign.result_id);if(version!==revision||reportKey!==identity)return;
+  report=data;$('reportStamp').textContent='Saved '+new Date(data.published_at).toLocaleString();
+  $('candidates').textContent=data.summary.candidate_count===null?'Unknown':data.summary.candidate_count.toLocaleString();
+  $('observations').textContent=data.summary.observation_count.toLocaleString();
+  $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';
+  $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':'No eligible observations. No result has been invented.';
+  $('reportContent').hidden=false;drawReport();
+ }catch(error){if(version===revision){reportKey=null;$('reportStatus').textContent=error.message;failure(error)}}
+}
+async function loadHistory(version,append=false){
+ $('historyStatus').textContent='Loading saved collections…';
+ try{
+  const data=await client.list($('asset').value,append?historyNext:null);if(version!==revision)return [];
+  if(!append)$('history').replaceChildren();
+  for(const c of data.items){
+   const button=document.createElement('button');button.type='button';button.dataset.campaign=c.id;button.setAttribute('aria-pressed',String(c.id===selected));
+   const title=document.createElement('strong');title.textContent=c.start_at.slice(0,10)+' – '+c.end_at.slice(0,10);
+   const subtitle=document.createElement('small');subtitle.textContent=`${c.mode==='rolling'?'24-hour update':'Date range'} · ${c.status==='cancelled'?'paused':c.status} · ${c.completed_sections}/${c.total_sections} sections${c.result_id?' · report saved':''}`;
+   button.append(title,subtitle);button.addEventListener('click',()=>selectCampaign(c.id));$('history').append(button);
+  }
+  historyNext=data.next_before;$('historyMore').hidden=!historyNext;
+  $('historyStatus').textContent=$('history').children.length?'Newest collections first.':'No collections saved for this category yet. Save a date range to begin.';
+  return data.items;
+ }catch(error){if(version===revision){$('historyStatus').textContent='Could not load saved collections. Use Refresh saved work to retry.';failure(error)}return []}
+}
+async function selectCampaign(id){
+ clearTimeout(timer);const version=++revision;selected=id;prefs[$('asset').value]=id;save();clearReport();
+ for(const button of $('history').children)button.setAttribute('aria-pressed',String(button.dataset.campaign===id));
+ await poll(version);
+}
+$('historyMore').addEventListener('click',async()=>{$('historyMore').disabled=true;try{await loadHistory(revision,true)}finally{$('historyMore').disabled=false}});
+$('reload').addEventListener('click',()=>category());
+$('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{await auth.signOut();window.location.replace('/')}catch(error){failure(error);$('signOut').disabled=false}});
+
 function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
+ $('completion').max=c.total_sections;$('completion').value=c.completed_sections;void loadReport(c,revision);
  $('counts').textContent=`${c.completed_sections} of ${c.total_sections} sections collected · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
  $('pause').hidden=!['queued','running'].includes(c.status);$('resume').hidden=!['failed','cancelled'].includes(c.status);
@@ -29,9 +92,10 @@ async function poll(version){
  }catch(error){if(version!==revision)return;failure(error);if(error.status!==401)timer=setTimeout(()=>poll(version),15000)}
 }
 async function category(){
- clearTimeout(timer);const version=++revision;selected=prefs[$('asset').value]||null;key=prefs.pending?.asset===$('asset').value?prefs.pending.key:null;$('progress').hidden=true;save();
- try{const data=await client.refresh($('asset').value);if(version!==revision)return;
-  if(!selected)selected=data.refresh.latest_campaign_id;
+ clearTimeout(timer);const version=++revision;selected=prefs[$('asset').value]||null;clearReport();historyNext=null;key=prefs.pending?.asset===$('asset').value?prefs.pending.key:null;$('progress').hidden=true;save();
+ try{const [data,items]=await Promise.all([client.refresh($('asset').value),loadHistory(version)]);if(version!==revision)return;
+  if(!selected)selected=items[0]?.id||data.refresh.latest_campaign_id;
+  for(const button of $('history').children)button.setAttribute('aria-pressed',String(button.dataset.campaign===selected));
   $('automatic').checked=data.refresh.enabled;$('refreshStatus').textContent=data.refresh.enabled?'Hourly refresh enabled. Switching it off prevents future refreshes; a current run can finish.':'Automatic refresh is off.';
   await poll(version);
  }catch(error){if(version===revision)failure(error)}
@@ -44,14 +108,14 @@ $('collection').addEventListener('submit',async event=>{
  key=key||crypto.randomUUID();prefs.pending={asset:$('asset').value,start:$('start').value,end:$('end').value,recheck:$('recheck').checked,key};save();
  $('start').disabled=true;$('end').disabled=true;$('recheck').disabled=true;
  try{const data=await client.create($('asset').value,$('start').value,$('end').value,key,$('recheck').checked);if(version!==revision)return;
-  selected=data.campaign.id;prefs[$('asset').value]=selected;delete prefs.pending;save();key=null;$('notice').textContent='Collection queued. You can close this page; the background worker will continue.';await poll(version);
+  selected=data.campaign.id;prefs[$('asset').value]=selected;delete prefs.pending;save();key=null;$('notice').textContent='Request saved. Collection is paused in staging; this request will wait until the background worker is enabled.';await loadHistory(version);await poll(version);
  }catch(error){failure(error)}finally{busy=false;$('begin').disabled=false;$('asset').disabled=false;$('start').disabled=false;$('end').disabled=false;$('recheck').disabled=false}
 });
 $('showAutomatic').addEventListener('click',async()=>{
  clearTimeout(timer);const version=++revision;
  try{const data=await client.refresh($('asset').value);if(version!==revision)return;
-  selected=data.refresh.latest_campaign_id;
-  if(selected)await poll(version);else $('notice').textContent='No automatic update has started yet. The background worker starts it after automatic refresh is enabled.';
+  if(data.refresh.latest_campaign_id)await selectCampaign(data.refresh.latest_campaign_id);
+  else{selected=null;clearReport();$('progress').hidden=true;$('notice').textContent='No automatic update has started yet. It will start when the worker and automatic refresh are enabled.'}
  }catch(error){if(version===revision)failure(error)}
 });
 $('automatic').addEventListener('change',async()=>{
@@ -65,7 +129,7 @@ for(const action of ['pause','resume'])$(action).addEventListener('click',async(
 });
 $('more').addEventListener('click',async()=>{
  if(!next||!selected)return;const version=revision;$('more').disabled=true;clearTimeout(timer);
- try{const data=await client.get(selected,next);if(version===revision)render(data,true)}catch(error){failure(error)}finally{$('more').disabled=false}
+ try{const data=await client.get(selected,next);if(version===revision)render(data,true)}catch(error){failure(error)}finally{$('more').disabled=false;if(version===revision)timer=setTimeout(()=>poll(version),5000)}
 });
 window.addEventListener('pagehide',()=>{revision++;clearTimeout(timer)});
-try{if(await createAuthClient().current()){$('collection').hidden=false;$('notice').textContent='Ready to collect.';await category()}else{$('notice').textContent='Sign in from the account page to start a collection.'}}catch(error){failure(error)}
+try{if(await auth.current()){$('workspace').hidden=false;$('signOut').hidden=false;$('collection').hidden=false;$('notice').textContent='Choose a date range or open a saved collection.';await category()}else{$('signIn').hidden=false;$('notice').textContent='Sign in to open your research workspace.'}}catch(error){failure(error)}

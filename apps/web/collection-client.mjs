@@ -21,6 +21,7 @@ export function createCollectionClient({fetcher=fetch,readCookie=()=>document.co
  const asset=a=>{if(!['btc','eth','crypto','weather','weather_daily','sports'].includes(a))throw Error('Choose a category.');return a};
  const id=i=>{if(!/^[a-f0-9-]{36}$/.test(i))throw Error('Choose a collection.');return i};
  return {
+  list:(a,before=null)=>call('campaigns?asset='+asset(a)+(before?'&before='+encodeURIComponent(id(before)):'')),
   create:(a,start_date,end_date,key,refresh_existing=false)=>call('campaigns',{asset:asset(a),start_date,end_date,request_key:key,refresh_existing}),
   get:(i,after=null)=>call('campaigns/'+id(i)+(after?'?after='+encodeURIComponent(after):'')),
   control:(i,action)=>{if(!['pause','resume'].includes(action))throw Error('Invalid action.');return call('campaigns/'+id(i)+'/'+action,{})},

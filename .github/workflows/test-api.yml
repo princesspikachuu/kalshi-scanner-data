@@ -46,7 +46,7 @@ jobs:
           node-version: '24'
       - name: Test staging gateway and browser auth client
         run: |
-          node --test tests/test_login_bridge.mjs
+          node --test tests/test_login_bridge.mjs tests/test_research_dashboard.mjs
           node scripts/check_staging_gateway.mjs
       - name: Install pinned development dependencies
         run: pip install -r services/api/requirements-dev.txt
