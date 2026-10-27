@@ -237,7 +237,8 @@ class ReportStore:
                 if latest:
                     previous=latest['report'].get('publication',{'complete':True,'revision':0})
                     incoming=payload['publication']
-                    if (previous['complete'] and not incoming['complete']) or previous['revision']>incoming['revision']:return latest['id']
+                    if not incoming['complete'] and (previous['complete'] or previous['revision']>incoming['revision']):return latest['id']
+                    if incoming['complete'] and previous['complete'] and previous['revision']>incoming['revision']:return latest['id']
             if minimum_revision is not None:
                 latest=c.execute('SELECT id,report FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1',(stream_key,)).fetchone()
                 if latest and latest['report'].get('selection',{}).get('revision',0)>minimum_revision:return latest['id']

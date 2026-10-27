@@ -188,7 +188,10 @@ class CampaignPostgresTests(unittest.TestCase):
             try:return build(*args,**kwargs)
             except EvidenceConflict as error:raise AssertionError('Fixture enrichment failed: '+str(error)) from error
         with patch.object(model,'prepare_dataset',side_effect=explain_fixture):self.drive(identifier,limit=250)
-        final=self.store.get(identifier);self.assertTrue(final['report_complete'],final)
+        final=self.store.get(identifier)
+        with self.db.pool.connection() as c:
+            versions=c.execute("SELECT id,report->'publication' AS publication FROM research_result WHERE stream_key=%s ORDER BY id",('campaign-'+identifier.replace('-',''),)).fetchall()
+        self.assertTrue(final['report_complete'],(final,versions))
         self.assertNotEqual(final['result_id'],before)
         with self.db.pool.connection() as c:
             full=c.execute('SELECT report FROM research_result WHERE id=%s',(final['result_id'],)).fetchone()['report']

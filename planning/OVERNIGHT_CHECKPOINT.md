@@ -1578,3 +1578,9 @@ realPG progressive test showed a final enrichment transition problem after an
 artificial continuing empty trade-page fixture. No failed revision deployed.
 Added fixture-only diagnostics to identify the exact integrity check; preserve
 strict final-completion assertion and all source/denominator checks.
+
+6b2ba52 CI40590529719 isolated transition to a succeeded parent whose selected
+report still carried partial publication metadata. No enrichment integrity error.
+Strengthened final-publication precedence so partial revision ordering can never
+block a verified completed report; kept version diagnostics in the fixture.
+Failed revisions remain undeployed; current worker continues11dfd44.
