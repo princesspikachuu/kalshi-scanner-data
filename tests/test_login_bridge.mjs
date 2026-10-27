@@ -145,3 +145,30 @@ test('research gateway bounds responses and requires closed contract envelopes',
  const valid={contract:'research-history-v1',view:'latest',result:{id:'1',cells:[]}};
  assert.deepEqual(await (await proxyAuth(request('/api/research/results/1?stream=btc&view=latest'),env,{fetcher:async()=>json(valid)})).json(),valid);
 });
+
+test('collection gateway allows bounded controls and only the progress date query',async()=>{
+ const id='11111111-1111-4111-8111-111111111111';
+ const payload={contract:'collection-v1',campaign:{id,status:'queued'}};
+ let sent;
+ const result=await proxyAuth(request('/api/collection/campaigns',{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json','x-csrf-token':csrf},body:'{}'}),env,{fetcher:async(url,options)=>{sent={url,...options};return json(payload)}});
+ assert.equal(result.status,200);assert.equal(sent.url,'https://api.test/collection/campaigns');assert.equal(sent.headers.get('x-csrf-token'),csrf);
+ const fetcher=()=>assert.fail('must not fetch');
+ for(const path of ['/api/collection/run-trades','/api/collection/campaigns/'+id+'/delete','/api/collection/refresh/financial_daily'])assert.equal((await proxyAuth(request(path),env,{fetcher})).status,404);
+ for(const path of ['/api/collection/campaigns/'+id+'?after=bad','/api/collection/campaigns/'+id+'?after=2026-10-25&after=2026-10-26','/api/collection/refresh/btc?enabled=true'])assert.equal((await proxyAuth(request(path),env,{fetcher})).status,400);
+ const valid={contract:'collection-v1',refresh:{enabled:false,interval_seconds:3600}};
+ assert.equal((await proxyAuth(request('/api/collection/refresh/btc'),env,{fetcher:async()=>json(valid)})).status,200);
+ assert.equal((await proxyAuth(request('/api/collection/campaigns/'+id),env,{fetcher:async()=>json({...payload,private:'secret'})})).status,502);
+});
+test('date-range client uses same-origin CSRF mutations and retains request idempotency key',async()=>{
+ const {createCollectionClient}=await import('../apps/web/collection-client.mjs');let sent;
+ const client=createCollectionClient({readCookie:()=>`__Host-pocket_csrf=${csrf}`,fetcher:async(url,options)=>{sent={url,...options};return json({contract:'collection-v1'})}});
+ await client.create('btc','2026-01-01','2026-10-26','request-id');
+ assert.equal(sent.url,'/api/collection/campaigns');assert.equal(sent.credentials,'same-origin');assert.equal(sent.redirect,'error');
+ assert.equal(sent.headers['x-csrf-token'],csrf);assert.equal(JSON.parse(sent.body).request_key,'request-id');
+ assert.equal(JSON.parse(sent.body).end_date,'2026-10-26');
+ await client.setRefresh('btc',true);assert.equal(sent.url,'/api/collection/refresh/btc');assert.equal(JSON.parse(sent.body).enabled,true);
+ const missing=createCollectionClient({readCookie:()=>'',fetcher:()=>assert.fail('must not fetch')});
+ await assert.rejects(missing.create('btc','a','b','id'),/Sign in/);
+ const expired=createCollectionClient({fetcher:async()=>json({detail:'private-sentinel'},401)});
+ await assert.rejects(expired.refresh('btc'),e=>e.status===401&&!e.message.includes('sentinel'));
+});

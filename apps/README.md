@@ -72,3 +72,11 @@ bounded unique query parameters are forwarded; arbitrary provider/trading paths
 remain unavailable. Saved results require an explicit historical/latest view.
 Nested response validation remains in the API. Research responses are bounded,
 `no-store` and cannot set auth cookies. No research shell or deployment is included.
+
+`/collection.html` is a separate undeployed collection controller. It includes UTC
+inclusive date controls, section progress/pause/resume, saved recheck option and
+opt-in hourly last-24-hours settings. Only selection, campaign IDs and an ambiguous
+request's retry key are stored locally; session/CSRF credentials remain in their
+existing cookies. Progress polling does NOT drive collection; the injected server
+runner owns all work. The account smoke page links to the controller. The live
+research Worker/table remains unchanged. Backend/worker resource setup is pending.

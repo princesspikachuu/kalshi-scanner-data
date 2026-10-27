@@ -44,10 +44,14 @@ def _bid(candle,side):
 
 
 def observations(asset,datasets):
+    return _observations(asset,sorted(datasets,key=lambda d:d['id']))
+
+
+def _observations(asset,datasets):
     if asset not in MINUTES: raise ValueError('Unsupported research category')
     rows,paths,origin,seen,missing=[],{}, {},set(),[]
-    candidate_count=0
-    for dataset in sorted(datasets,key=lambda d:d['id']):
+    candidate_count=0;bar_count=0
+    for dataset in datasets:
         payload=dataset['payload']
         if payload.get('format')!=FORMAT or digest(payload)!=dataset['fingerprint']:
             raise EvidenceConflict('Published raw dataset integrity mismatch')
@@ -55,12 +59,16 @@ def observations(asset,datasets):
             raise EvidenceConflict('Candle membership is required for return summaries')
         bars=defaultdict(list)
         for record in payload['records']:
-            if record['resource']=='candles': bars[record['ticker']].append(record['record'])
+            if record['resource']=='candles':
+                bar_count+=1
+                if bar_count>500000:raise ValueError('Report path limit exceeded; split the range')
+                bars[record['ticker']].append(record['record'])
         for candidate in payload['candidates']:
             ticker,day=candidate['ticker'],payload['day']
             key=(day,ticker)
             if key in seen: raise EvidenceConflict('Select one raw version per market/day; refreshes cannot be pooled')
             seen.add(key);candidate_count+=1
+            if candidate_count*len(MINUTES[asset])>250000:raise ValueError('Report entry limit exceeded; split the range')
             if candidate['series'] not in SERIES[asset] or candidate['result'] not in ('yes','no'):
                 raise EvidenceConflict('Candidate does not belong to selected category')
             close=int(_closed(candidate['close_time']).timestamp())
@@ -130,16 +138,31 @@ class PreparedReport:
 
 
 def prepare_report(asset,datasets,*,latest_ids):
-    datasets=list(datasets)
-    ids=[d['id'] for d in datasets]
-    if not ids or len(ids)>1000 or len(set(ids))!=len(ids) or any(type(i) is not int or i<1 for i in ids):
-        raise ValueError('Select 1..1000 unique raw dataset IDs')
+    return prepare_report_stream(asset,iter(sorted(datasets,key=lambda d:d['id'])),latest_ids=latest_ids)
+
+
+def prepare_report_stream(asset,datasets,*,latest_ids):
+    """Load one immutable raw dataset at a time, retaining bounded derived inputs.
+
+    Caller supplies ascending unique IDs; model/rounding/full-cohort arithmetic is
+    identical to the original builder. Memory limits FAIL rather than sample rows.
+    """
+    metadata=[]
+    def inputs():
+        previous=0
+        for d in datasets:
+            if type(d['id']) is not int or d['id']<=previous or len(metadata)>=3661:raise ValueError('Select ascending unique dataset IDs, at most 3661')
+            previous=d['id']
+            metadata.append(dict(id=d['id'],fingerprint=d['fingerprint'],day=d['payload']['day'],candidate_count=len(d['payload']['candidates'])))
+            yield d
+    rows,paths,origin,coverage=_observations(asset,inputs())
+    datasets=metadata;ids=[d['id'] for d in datasets]
+    if not ids:raise ValueError('Select dataset versions')
     latest_list=None if latest_ids is None else list(latest_ids)
     if latest_list is not None and (len(set(latest_list))!=len(latest_list) or any(type(i) is not int or i<1 for i in latest_list)):
         raise ValueError('Invalid latest membership')
     latest=None if latest_list is None else set(latest_list)
     if latest is not None and not latest.issubset(ids): raise ValueError('Latest membership must be an explicit subset')
-    rows,paths,origin,coverage=observations(asset,datasets)
     latest_keys=None if latest is None else {k for k,v in origin.items() if v in latest}
     risk=analyze_risk(rows,paths,asset,include_snapshots=True)
     historical_policy,latest_policy=policy_cells(risk.pop('_snapshot_groups'),latest_keys)
@@ -151,9 +174,9 @@ def prepare_report(asset,datasets,*,latest_ids):
         for p in policies:
             base=bases.get((p['minutes_before_close'],p['price_band_cents']))
             if base: p.update(base_n=base['sampled_markets'],base_wins=base['wins'],base_price_cents=base['average_purchase_price_cents'])
-    days=sorted({d['payload']['day'] for d in datasets})
-    latest_days=sorted({d['payload']['day'] for d in datasets if latest is not None and d['id'] in latest})
-    latest_candidates=None if latest is None else sum(len(d['payload']['candidates']) for d in datasets if d['id'] in latest)
+    days=sorted({d['day'] for d in datasets})
+    latest_days=sorted({d['day'] for d in datasets if latest is not None and d['id'] in latest})
+    latest_candidates=None if latest is None else sum(d['candidate_count'] for d in datasets if d['id'] in latest)
     payload=dict(model_version=MODEL,source_commit=SOURCE_COMMIT,asset=asset,entry_minutes=list(MINUTES[asset]),
         price_bands=['50-60','60-70','70-80','80-90','90-100'],
         datasets=[dict(id=d['id'],fingerprint=d['fingerprint'],latest=latest is not None and d['id'] in latest) for d in sorted(datasets,key=lambda d:d['id'])],
@@ -181,6 +204,9 @@ class ReportStore:
             datasets=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=ANY(%s::bigint[]) ORDER BY id',(ids,)).fetchall()
         if len(datasets)!=len(ids): raise EvidenceConflict('Missing selected dataset version')
         prepared=prepare_report(asset,datasets,latest_ids=latest_ids)
+        return self._save(stream_key,asset,prepared)
+
+    def _save(self,stream_key,asset,prepared):
         payload,rows=json.loads(prepared.payload_json),json.loads(prepared.observations_json)
         with self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91028))',(stream_key,))
@@ -194,3 +220,18 @@ class ReportStore:
                 SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
                 FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(rows)))
             return result
+
+    def publish_campaign(self,stream_key,asset,dataset_ids):
+        text_key(stream_key,128)
+        ids=sorted(dataset_ids)
+        if not ids or len(ids)>3661 or len(set(ids))!=len(ids) or any(type(i) is not int or i<1 for i in ids):raise ValueError('Invalid campaign membership')
+        def inputs():
+            for identifier in ids:
+                with self.pool.connection() as c:
+                    size=c.execute('SELECT octet_length(payload::text) AS bytes FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                    if not size:raise EvidenceConflict('Missing campaign dataset')
+                    if size['bytes']>64*1024*1024:raise ValueError('Raw dataset exceeds bounded report input')
+                    row=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                yield row
+        prepared=prepare_report_stream(asset,inputs(),latest_ids=ids)
+        return self._save(stream_key,asset,prepared)

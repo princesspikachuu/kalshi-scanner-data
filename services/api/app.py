@@ -12,6 +12,7 @@ from .auth_policy import LoginRejected,new_session_material,require_login_csrf,v
 from .config import Settings
 from .store import PostgresStore
 from .history import install_history,HistoryStore
+from .collection import install_collection,CampaignStore
 
 SESSION='__Host-pocket_session'
 CSRF='__Host-pocket_csrf'
@@ -47,7 +48,7 @@ class LoginBody(BaseModel):
     csrf_token:StrictStr=Field(min_length=32,max_length=256)
 
 
-def create_app(settings=None,store=None,verifier=verify_google_login,history_store=None):
+def create_app(settings=None,store=None,verifier=verify_google_login,history_store=None,campaign_store=None):
     settings=settings or Settings.from_env()
     owned=store is None
     store=store or PostgresStore(settings.database_url)
@@ -146,5 +147,12 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
         response.delete_cookie(SESSION,path='/',secure=True,httponly=True,samesite='strict')
         response.delete_cookie(CSRF,path='/',secure=True,samesite='strict')
         return response
+    def collection_mutation(request):
+        token,row=current(request)
+        csrf=request.headers.get('x-csrf-token','')
+        csrf_check(request,csrf,CSRF)
+        if not secrets.compare_digest(digest(csrf),row['csrf_hash']):raise HTTPException(403,'Request rejected')
+        limit('collection',30)
+    install_collection(app,current,collection_mutation,campaign_store or CampaignStore(getattr(store,'pool',None)))
     install_history(app,current,settings,history_store or HistoryStore(getattr(store,'pool',None)))
     return app

@@ -4,7 +4,7 @@ const ROUTES=new Map([
  ['/api/auth/google','POST'],['/api/auth/logout','POST']
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
-const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css']);
+const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css']);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -39,6 +39,19 @@ function researchBody(path,data){
     (data.next_cursor!==null&&!/^[A-Za-z0-9_-]{1,1024}$/.test(data.next_cursor)))throw Error('invalid research page');
  return data; // Nested fields are validated by the API's closed, versioned response models.
 }
+function collectionBody(data){
+ if(data.contract!=='collection-v1')throw Error('invalid collection');
+ const keys=Object.keys(data).sort().join(',');
+ if(data.refresh){
+  if(keys!=='contract,refresh'||typeof data.refresh.enabled!=='boolean'||data.refresh.interval_seconds!==3600)throw Error('invalid refresh');
+ }else{
+  if(!['campaign,contract','campaign,contract,next_after,sections'].includes(keys)||typeof data.campaign?.id!=='string'||
+     !['queued','running','succeeded','cancelled','failed'].includes(data.campaign.status))throw Error('invalid campaign');
+  if('sections' in data&&(!Array.isArray(data.sections)||data.sections.length>50||
+     (data.next_after!==null&&!/^\d{4}-\d{2}-\d{2}$/.test(data.next_after))))throw Error('invalid sections');
+ }
+ return data;
+}
 function responseCookies(headers){
  const values=typeof headers.getSetCookie==='function'?headers.getSetCookie():headers.getAll('Set-Cookie');
  return values.filter(value=>{
@@ -51,10 +64,19 @@ function responseCookies(headers){
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/datasets)?)?)$/.test(url.pathname);
- const method=research?'GET':ROUTES.get(url.pathname);
+ const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
+ const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
+ const campaignGet=new RegExp('^/api/collection/campaigns/'+uuid+'$').test(url.pathname);
+ const collection=url.pathname==='/api/collection/campaigns'||campaignGet||
+  new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume)$').test(url.pathname)||
+  new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
+ const method=collection?(campaignGet?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
- if(research){
+ if(collection){
+  const entries=[...url.searchParams];
+  if(url.search.length>64||entries.length>(campaignGet?1:0)||entries.some(([k,v])=>k!=='after'||!/^\d{4}-\d{2}-\d{2}$/.test(v)))return problem(400,'Invalid collection query');
+ }else if(research){
   const detail=/\/results\/[1-9][0-9]*$/.test(url.pathname);
   const allowed=new Set(detail?['stream','view']:['stream','cursor','limit']);
   const params=[...url.searchParams];
@@ -85,11 +107,11 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
   if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');
   const outgoing=new Headers(BASE_HEADERS);
-  const setCookies=research?[]:responseCookies(upstream.headers);
+  const setCookies=(research||collection)?[]:responseCookies(upstream.headers);
   let response;
   if(!upstream.ok){
    const messages={400:'Invalid request',401:'Sign in required',403:'Request rejected',413:'Request too large',415:'JSON required',422:'Invalid sign-in request',429:'Too many requests. Try again shortly.',503:'Sign-in connection unavailable'};
-   if(research)messages[404]='Research result not found';
+   if(research||collection){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
    const status=Object.hasOwn(messages,upstream.status)?upstream.status:502;
    response=problem(status,messages[status]||'Sign-in connection unavailable');
    if(status===429)response.headers.set('retry-after','60');
@@ -99,8 +121,8 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
-   const text=new TextDecoder().decode(await boundedBody(upstream.body,research?262144:32768));
-   response=new Response(JSON.stringify(research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,(research||collection)?262144:32768));
+   response=new Response(JSON.stringify(collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;

@@ -541,3 +541,61 @@ missing-slot lists. The authenticated API contract/limits are documented in
 `services/api/README.md`. This supports published immutable history, not in-flight
 job monitoring or server-side date-filtered recomputation. No schema migration,
 archive request, hosted configuration or live table change is needed.
+
+### Date ranges and hourly rolling updates (undeployed)
+
+`campaigns.py` coordinates one UTC close-day section at a time. Inclusive start/end
+controls support up to 3,660 days; today's section freezes at the request's creation
+instant. `CampaignStore.create(asset,start_date,end_date,request_key)` saves the
+request, all sections and a parent queue job atomically. Repeated request keys
+return the original frozen window, even after midnight. Different parameters with
+the same key conflict. A recheck (`refresh_existing=True`) creates new immutable
+versions; otherwise exact complete sections with matching collection configuration
+can be reused. Historical listing traversal is shared across the campaign's days.
+
+`CampaignWorker` coordinates the existing fenced page workers. Each step performs
+at most one child HTTP read or one local normalization/publication stage. Healthy
+page progress/yields do not exhaust retry attempts; crashes/provider failures still
+consume the bounded attempt budget. Every page, selected manifest and dataset ID
+survives restart. Evidence jobs are planned once; stage-completion metadata reads
+are bulk reads rather than per-child reads on every HTTP step. Pause fences parent
+and unfinished children; resume retains pages/succeeded jobs and gives stopped work
+an explicit new retry budget. Expired/stale workers cannot attach progress. An
+upload or dataset publication may leave an unreferenced immutable artifact after
+lease loss, but cannot falsely finish a campaign. No GC is implemented.
+
+After every section is collected, the worker publishes one combined report with
+EXACT campaign dataset membership. That report's historical and latest cohorts
+both refer to this selected range; it does not pool overlapping prior refreshes.
+`ReportStore.publish_campaign` loads one raw section at a time, retaining bounded
+normalized observations/paths rather than the entire multi-day raw payload corpus.
+Pinned policy/rounding/full-cohort math is unchanged (golden regression against
+pre-refactor e63e093). Limits are explicit: <=3,661 datasets, <=250,000 requested
+entry slots, <=500,000 candle records, <=64 MiB per raw section and <=64 MiB serialized
+report/observations. Excess fails the report with `campaign_result_blocked`; all
+collected sections stay saved. It never silently samples/truncates denominators.
+Dense long ranges may need smaller explicit ranges or a future disk-backed model.
+Collection completeness and report success remain distinct in the progress API.
+
+Hourly refresh is opt-in per category (`research_refresh` starts empty/off).
+`CampaignStore.schedule_due()` freezes `[now-86400 seconds, now)` and clips its
+one/two daily sections to those exact instants BEFORE evidence planning. It does
+not substitute two full days, depend on local DST, or modify prior versions.
+Only settled yes/no markets enter research. Later settlement/corrections are picked
+up by subsequent rolling windows while close time remains within 24 hours; older
+late data needs an explicit backfill recheck. Concurrent scheduler ticks coalesce,
+missed ticks do not create a backlog, and an active rolling run prevents another
+rolling run for the same category. Manual campaigns share the same read budget.
+Switching auto off stops future scheduling; pause a current run separately.
+
+Future worker wiring (NOT active, no infrastructure change): construct the existing
+explicit PostgreSQL pool, verified ArchiveStore/object adapter, configured shared
+ReadBudget, fixed-host KalshiInventory/KalshiEvidence and InventoryWorker/
+EvidenceWorker; then pass these into CampaignWorker and call
+`runner.serve(CampaignStore(pool), worker, threading.Event())`. Nothing starts on
+import or API startup. The loop checks opt-in due work and claims only campaign
+parents; child claims are explicitly targeted. SIGTERM integration should set the
+stop Event; in-flight operations remain bounded and durable leases recover crashes.
+Real R2 credentials/bucket, runtime budget, least-privilege roles and hosted worker
+setup remain pending authorization. Do not turn this into a browser-owned loop or
+add a hosted schedule during this undeployed build.

@@ -60,22 +60,26 @@ class ResearchQueue:
                     raise EvidenceConflict('Idempotency key belongs to different job parameters')
             return row
 
-    def claim(self, seconds=120):
+    def claim(self, seconds=120, *, job_id=None, collector=None):
         seconds = lease_seconds(seconds)
+        job_id=None if job_id is None else UUID(str(job_id))
+        if collector is not None:text_key(collector,64)
         with self.pool.connection() as c:
             # Expired attempts at the limit become terminal instead of being stranded.
             c.execute('''UPDATE research_job SET status='failed',finished_at=clock_timestamp(),
                 error_code='attempts_exhausted',lease_token=NULL,lease_expires_at=NULL
                 WHERE status='running' AND lease_expires_at<=clock_timestamp() AND attempts>=max_attempts''')
             return c.execute('''WITH candidate AS (
-                SELECT id FROM research_job WHERE attempts<max_attempts AND
+                SELECT id FROM research_job WHERE attempts<max_attempts
+                AND (%s::uuid IS NULL OR id=%s::uuid)
+                AND (%s::text IS NULL OR parameters->>'collector'=%s::text) AND
                 ((status='queued' AND available_at<=clock_timestamp()) OR
                  (status='running' AND lease_expires_at<=clock_timestamp()))
                 ORDER BY available_at,created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
                 ) UPDATE research_job j SET status='running',attempts=attempts+1,
                 lease_token=%s,lease_expires_at=clock_timestamp()+%s*interval '1 second',
                 started_at=COALESCE(started_at,clock_timestamp()),finished_at=NULL,error_code=NULL
-                FROM candidate WHERE j.id=candidate.id RETURNING j.*''', (uuid4(), seconds)).fetchone()
+                FROM candidate WHERE j.id=candidate.id RETURNING j.*''', (job_id,job_id,collector,collector,uuid4(), seconds)).fetchone()
 
     @staticmethod
     def _owned(c, job_id, token):
@@ -177,3 +181,16 @@ class ResearchQueue:
             return c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),
                 lease_token=NULL,lease_expires_at=NULL WHERE id=%s AND status IN ('queued','running') RETURNING id""",
                 (UUID(str(job_id)),)).fetchone() is not None
+
+    def yield_job(self,job_id,token,delay_seconds=0):
+        """Healthy progress/wait is not a failed attempt. Release the lease for restart.
+
+        Crashes and provider failures still consume attempts. Only fenced owners
+        can refund the current healthy claim; completed pages remain immutable.
+        """
+        if type(delay_seconds) is not int or not 0<=delay_seconds<=3600:raise ValueError('Invalid yield delay')
+        with self.pool.connection() as c:
+            self._owned(c,job_id,token)
+            c.execute("""UPDATE research_job SET status='queued',attempts=attempts-1,
+                lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp()+%s*interval '1 second'
+                WHERE id=%s""",(delay_seconds,job_id))

@@ -48,7 +48,7 @@ class Result(Metadata):
     model_version:Literal['research-return-conditional-v1']
     asset:Asset
     latest_membership_known:bool=Field(strict=True)
-    dataset_count:Annotated[int,Field(strict=True,ge=1,le=1000)]
+    dataset_count:Annotated[int,Field(strict=True,ge=1,le=3661)]
     historical:Totals
     latest:Totals
     @model_validator(mode='after')

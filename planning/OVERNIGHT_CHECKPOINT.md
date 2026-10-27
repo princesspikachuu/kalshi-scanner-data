@@ -390,16 +390,61 @@ resume wiring are documented in services/api/README.md and research/apps READMEs
 This session has finished writing code; no collection daemon or background worker
 remains active. Implementation and verified CI are durably checkpointed before UI work.
 
+## Eleventh milestone: requested long-range backfills and rolling updates
+
+User's next explicit request supersedes the shell-first order: enter historical
+start/end dates, process a section at a time until finished, and automatically
+update the preceding 24 hours. Continued from actual remote `e63e093` with passing
+**CI 40510491073** in fresh `pocket-backfill`. Existing worktrees preserved; no
+background collector was active. Full app stays undeployed.
+
+Added migration 0009 and durable campaign/section/job membership, exact-window
+normalization (separate WindowBatch leaves old batch fingerprints unchanged),
+one-child-page coordinator, restart-safe manifest/job planning, completed-section
+reuse and explicit recheck. Healthy yields do not exhaust failure budgets; targeted
+child claims and parent/child fencing preserve retry/cancel semantics. Pause/resume
+retains immutable pages. A finished campaign requires every raw section AND a
+combined precomputed report with exact membership. Report publication streams raw
+sections one at a time; existing pinned full-cohort math has a pre-refactor golden
+hash regression. Missing coverage never shrinks denominators or becomes success.
+
+Added owner-session/proxy/CSRF collection controls and a separate development date
+form/progress page. Inputs support <=3660 inclusive UTC days, today clipped at
+creation. Latest/cumulative report membership is this explicit requested range,
+not overlapping historical refreshes. Hourly refresh setting starts OFF. Injected
+runner coalesces due work, prevents concurrent rolling campaigns per category and
+freezes exact [now-86400s,now) windows across midnight/DST; old versions stay intact.
+No scheduler/process was started, no resources/credentials/live requests were used.
+
+Local: 122 API/research cases, 7 owner-policy and 19 gateway/client cases passed;
+58 actual-PG tests skipped without a local disposable database. Compile, dependency
+and diff checks pass. Seven new PG campaign tests cover multi-day completion,
+combined counts, historical-index reuse, cursor recovery/pause/fencing, retry/
+cooldown, exact section reuse/recheck, scheduler concurrency, 24-hour exclusion,
+idempotency across midnight and empty cohorts. CI verification is pending the
+implementation commit; inspect jobs/logs and fix failures before claiming PG success.
+
+Limits/remaining: dense ranges can exceed explicit report entry/path/output bounds;
+then raw sections stay saved and the combined report fails explicitly, never samples.
+Only settled markets enter research; older late settlements require backfill recheck.
+Current page is collection/progress, not the complete research table/history shell.
+The worker loop requires injected configured adapters and must eventually run as a
+server process. Hosted resources, runtime budget, least-privilege/retention/secrets,
+Google OAuth and real acceptance remain pending owner steps. Full details and exact
+runner/API wiring are in services/research/README.md and services/api/README.md.
+No merge/deployment/provisioning/live infrastructure alteration or trading occurred.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect latest head/CI and fix any failure first. Queue/archive/collection,
+1. Inspect latest head/CI and fix any failure first. The user-requested date-range
+   campaign/rolling-refresh milestone takes priority over the old shell-first plan. Queue/archive/collection,
    normalization, verified raw datasets and versioned return/loss-risk publication
    are implemented. Do not duplicate work or overwrite newer changes.
 2. Authenticated published dataset/result history API is implemented in the tenth
    milestone. Inspect newest CI first. Read services/api/README.md and history.py
    contracts before adding clients; use exact result ID/stream and source membership,
    explicit view and opaque keysets. No GET recomputation or source archive reads.
-3. Add research/history shell using that API contract, preserving familiar current
+3. Expand the collection controller into the research/history shell using that API contract, preserving familiar current
    cell fields, full-sample counts, threshold-only labels, >50% message and selected
    view persistence. Keep all code undeployed and separate from live Worker/UI.
 4. Measure representative local performance and checkpoint remaining integration

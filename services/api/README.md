@@ -121,3 +121,36 @@ committing older allocated IDs can appear only on a later fresh traversal. No
 representative throughput/latency benchmark or hosted compatibility claim yet.
 Unfinished queue jobs, detailed path evidence and arbitrary date recomputation
 are intentionally outside this publication-history read contract.
+
+### Undeployed collection controls
+
+The separate `/collection.html` page supplies UTC start/through dates, category,
+recheck option, section progress, pause/resume and an hourly last-24-hours toggle.
+A background worker continues independently of the browser; it is not deployed yet.
+
+- `POST /collection/campaigns`: `{asset,start_date,end_date,request_key,refresh_existing?}`.
+  Dates are inclusive `YYYY-MM-DD`, <=3,660 days, no future end dates. Request key is
+  a client UUID retained across ambiguous failures; recheck defaults false.
+- `GET /collection/campaigns/{uuid}?after=YYYY-MM-DD`: status, exact frozen window,
+  total/completed sections, saved combined `result_id`, first 50 section statuses
+  and `next_after`. Continue with that date until null. Future sections say pending.
+- `POST /collection/campaigns/{uuid}/pause` or `/resume`: preserve committed pages;
+  resume explicitly retries failed/cancelled work. Complete runs remain immutable.
+- `GET` / `POST /collection/refresh/{asset}`: read settings/latest rolling campaign,
+  or set `{enabled:true|false}`. Off by default. Hourly cadence, no overlapping
+  rolling runs or stale catch-up backlog. Disable prevents future runs; pause a
+  current run separately. Enabling a setting does not provision/start any worker.
+
+All return `contract:"collection-v1"`; reads require proxy+owner session and writes
+also require exact same-origin cookie/header CSRF and a mutation rate budget.
+Closed request schemas, path allowlists and generic errors keep credentials and
+provider diagnostics out of responses. The gateway permits only the documented
+paths/methods and the one bounded progress `after` query. No trading routes exist.
+
+A campaign succeeds only after its exact datasets AND combined precomputed result
+are saved. Read that result using the existing research history API with stream
+`campaign-{campaign UUID without hyphens}` and explicit historical/latest view.
+Source membership is paginated; full counts/labels retain original model behavior.
+Very dense ranges can reach explicit model memory limits; progress then shows
+failed report with all raw sections retained (never misleading partial success).
+See research README for bounds, late-settlement handling and future runner wiring.

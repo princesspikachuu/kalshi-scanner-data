@@ -63,6 +63,13 @@ class CandidateBatch:
     def fingerprint(self): return digest(asdict(self))
 
 
+@dataclass(frozen=True)
+class WindowBatch(CandidateBatch):
+    # Separate subclass preserves the exact fingerprints of all existing v1 batches.
+    window_start: str = ''
+    window_end: str = ''
+
+
 class NormalizationLimit(ValueError):
     pass
 
@@ -94,7 +101,7 @@ def _payload(scope, page, archives):
     return response['markets']
 
 
-def normalize_inventory(series, day, generation, attempts, archives, *, max_rows=250000, max_pages=10000):
+def normalize_inventory(series, day, generation, attempts, archives, *, max_rows=250000, max_pages=10000, window=None):
     """attempts = iterable of (job, queue.page_evidence(job_id)).
 
     Exactly one succeeded terminal job is selected per requested scope; multiple
@@ -139,11 +146,18 @@ def normalize_inventory(series, day, generation, attempts, archives, *, max_rows
                 label = ('unavailable' if state.state == 'unavailable' else
                          'failed' if status in ('failed','cancelled','succeeded') else 'resume')
                 inputs.append(Input(key, jid, label, state.pages, state.items))
-    base = dict(day=day, generation=generation, series=series, inputs=tuple(inputs))
-    batch = CandidateBatch(**base)
-    if not batch.ready: return batch
     start = datetime.combine(date.fromisoformat(day), time(), timezone.utc)
     end = start + timedelta(days=1)
+    batch_type=CandidateBatch
+    extra={}
+    if window is not None:
+        left,right=map(_closed,window)
+        if not start<=left<right<=end:raise ValueError('Close window must be within the UTC day')
+        start,end=left,right;batch_type=WindowBatch
+        extra=dict(window_start=start.isoformat(),window_end=end.isoformat())
+    base = dict(day=day, generation=generation, series=series, inputs=tuple(inputs),**extra)
+    batch = batch_type(**base)
+    if not batch.ready: return batch
     seen, candidates, rows_scanned, pages_scanned = {}, {}, 0, 0
     for scope, jid, pages in selected:
         for page in sorted(pages, key=lambda p: p['page_key']):
@@ -178,4 +192,4 @@ def normalize_inventory(series, day, generation, attempts, archives, *, max_rows
         event, scoped_series, closed = seen[ticker]
         normalized.append(Candidate(ticker,event,scoped_series,closed.isoformat().replace('+00:00','Z'),
                                     result,tuple(sorted(refs))))
-    return CandidateBatch(**base, candidates=tuple(normalized), rows_scanned=rows_scanned)
+    return batch_type(**base, candidates=tuple(normalized), rows_scanned=rows_scanned)
