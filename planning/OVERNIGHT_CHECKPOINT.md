@@ -1711,3 +1711,74 @@ run realPG CI, resolve failures, then deploy existing API first, gateway, worker
 Observe recovery/page/report growth and daily next_due; never reset active collections.
 No throughput ratio/old7days5min promise yet. Keep full samples/trades, small plans,
 main unmerged, production Worker unchanged, no trading/contact/owner credentials.
+
+## VERIFIED queue / daily reconciliation / publication mitigation — 3:49 p.m. PDT
+
+Code a3a39e233ce2f9939730f04122f58d985f670d1b passed CI40596795263,
+job122514634795:248 API/research tests including80 actual PostgreSQL,34JS,
+7policy =289 total without skips/failures; Blueprint validation passed.
+Compressed-storage progressive/restart/final equivalence passed actualPG. No
+failed revision deployed. Small repetitive benchmark:3,080,048 canonical bytes
+become29,440 database-input bytes in0.024sec locally; NOT a collection speed ratio.
+
+API dep-dbgihu59el5s73b1t09g LIVE22:44:05.361018Z; worker
+ dep-dbgiijnf3r2c73au0lhg LIVE22:45:16.849053Z, both a3a39e2. Existing runtime
+read-only audits ready9migrations/12historytables, no elevated or history-mutation
+privileges. Worker p9q5s startup22:45:20 confirms5reads/sec,burst5,batching and
+concurrency4. Plans/credentials/env/schema unchanged. No merge/newresources/trading.
+
+Gateway40597029425 stagingjob122515431645 published version
+46887f13-ca60-4af9-95bb-da2d9663f743. Productionjob122515433479 SKIPPED. Overall
+workflow failed ONLY known automated asset HTTP403 smoke; actual signed-in UI
+verified, no access control weakening or client/network evasion.
+
+Actual hosted UI receipts:
+- All-category queue Showing5/8 initially; Show more yields8/8, oldest first.
+  Category labels include hourly/dailyweather,sports,allcrypto,BTC,ETH and running
+  BTC24h plus a second sportsrequest. Nothing removed/reset/duplicated by this run.
+- Recentlyfinished separate0/0 panel visible;100finishcap and independent expansion
+  are tested with105finishes. Remove buttons visible; actual cancellation/fencing/
+  persistence tested only on disposablePG, not on owner jobs.
+- Clicking BTC queue entry fromweather switches category and selectedreport.
+  BTC48fullycollected/49table-ready,216candidate markets/656observations/19cells,
+  report90 (this report predates the newest deployment; do not credit it to this
+  compression fix). Savedpage counts953->956->962 and tasks929->932->938/1155
+  observed during rollover/recovery, NOT a controlled throughput measurement.
+- Existing enabled BTC refresh migrated to daily03:00 Pacific with nextdue
+  2026-10-28T10:00:00Z (3amPDT). Clicked Save daily time atsame03:00 to verify
+  existing runtimeAPI can persist preference; success returned, value retained.
+  Weather remains disabled; no previously disabled category was enabled.
+- Weather grew54->56available sections through2025-12-21, still0candidates/quotes.
+  New message explicitly states empty settled membership over the available dates.
+  Why upstream old dates lack matching markets remains unverified, not fixed by
+  a UI message. Source series match the existing collector. Do not invent quotes.
+- Screenshot proof pocket-global-queue-1793141333147.jpg,123218bytes, all8queuecount,
+  labels/removecontrols/daily3am andrecentfinished panel; noemail/credentials.
+
+IMPORTANT remaining runtime limit: another datasetINSERT signal9/recovery occurred
+22:46:33UTC DURING old877b9/newp9q5s overlapping worker rollout. Both instances
+logged fallout. Old worker still had active DB work at this time; cannot prove
+which issued the failing INSERT from available logs. Therefore do NOT claim the
+publication memory/stall problem fully resolved, a speed factor, or7days<5min.
+No further signal9 was returned for22:47:00..22:49:17UTC, but that short interval
+is insufficient evidence. New worker memory sample22:46 was135,479,300/536,870,900
+bytes; old overlapping instance291,979,260bytes. Coarse samples do not bound peaks.
+API had connection timeouts/recovery fallout; signed-in UI subsequently recovered
+Workeronline andsavedprogress. Occasional client timeouts remain open.
+
+Exact resume: use clean pocket-daily-resume at a3a39e2, then fetch actual remote
+newestcheckpoint commit before edits. Saved dirty pocket-progressive-resume matches
+published code; preserve it. No local collection or duplicate coding process runs.
+Inspect new-only worker logs after olddrain, PGsignal9 and actual samejob source/
+report/page advancement. Parent leases are600s; crash recovery can delay those
+parents until expiry. Do not reset cooldowns, jobs or published history to force
+progress. Verify the previously blocked large section publishes compressed and
+its report grows before claiming the memory fix accepted live. Add safe perstage
+provider/R2/DB timings if throughput remains poor; reduce repeated normalization/
+report work, retaining full cohorts. No private DB allowlist opening for diagnostics.
+
+Future work remains full-sample large-history partitioning beyond250kentry/1Mbar/
+96MiB caps, throughput/ETA clarity and other APP_PLAN sections. No owner action is
+needed for this deployed milestone. Skip future newcredentials/Googleaccount/paid
+expansion/operatorDDL until actually necessary. Keep development draft/unmerged,
+original production Worker unchanged, no trading or contacting others.
