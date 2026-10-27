@@ -1326,7 +1326,7 @@ The currently active worker/source report engine and year-long collection contin
 
 ## Small-plan performance and collection retry milestone
 
-1d58cfa CI40572387629 passed the corrected source-member integration contract.
+1d58cfa CI40571997503 passed the corrected source-member integration contract.
 Current local work continues from that exact remote head (no other writer observed).
 Added synthetic benchmark CLI and infra/PERFORMANCE_ACCEPTANCE.md with measured
 30/330/366-day receipts and explicit limits. 366 synthetic days retained35136
@@ -1358,3 +1358,51 @@ Owner-only: any future Google/credential/account issue, larger paid capacity or
 operator migration remains pending only if actually needed; skip blocked work.
 Next independent need: partitioned cumulative reports beyond explicitcaps; actual
 hosted large-report memory and populated source/export acceptance afterloadfinishes.
+
+
+## VERIFIED deployed milestone:7235d31 (2026-10-27 19:56 UTC)
+
+Exact head7235d318ff084c4d3e7a339aa263b88eb2a33d15 passed CI40572924816,
+job122431630696:229 API/research with74actualPG,7policy,32JS=268tests,
+no skips/failures, plus Blueprint checks. Corrected prior1d58cfa runreceipt above:
+actual API run40571997503;40572387629 was not a valid receipt on reinspection.
+
+API dep-dbgg26nf3r2c73eh7740 LIVE19:54:22.056174UTC from7235d31.
+Worker dep-dbgg27ks728c739mn5ug LIVE19:53:53.618299UTC from7235d31;
+startup says Collection enabled; worker ready. Both runtime privilege audits again
+passed9exactmigrations/12historytables with no elevated/historymutation privileges.
+Predeploy remains read-only verification through runtimeprofile; no DDL/credential
+changes. Existing plans/cost and auto-deployoff/pausedBlueprint remain unchanged.
+
+Gateway workflow40573204003 stagingjob122432612936 publish stepSUCCEEDED;
+Cloudflare version5aff0179-df3f-465a-a470-d0b2eb0a7c26 at19:54:15UTC.
+Productionjob122432615376 SKIPPED. OverallrunFAILED known assets HTTP403 smoke
+only. Signed-in actualbrowser loaded new reportselector and collection controls;
+no access-control weakening or alternate-client workaround. API/worker arelive.
+
+Browser verified originalyear BTCload kept44/366sections and86savedpages,
+62/78tasks afterworker restart; sectioncount currentlyunchanged whilepagesadvance.
+No duplicate historicalrequest. Owner's requested BTC hourly24h refresh nowENABLED
+through signed-in UI; persistedstatuschecked, automaticrollingwindow26Oct19:54:51
+through27Oct19:54:51UTC createdby scheduler,0/2sections and8pageslastobserved.
+Othercategories' automaticpreferences unchanged. Explicit userauthorization is
+latestblanketdeploy/unpauseinstruction; earlierOFF restrictions are superseded.
+
+Browser All saved history selector returned correct explicit no-completed-report
+message (no fabricatedresults). Returned toThisload and originalyearprogress.
+Progressnotice clears stale abort diagnostics aftersuccess. Occasional10sclient
+requesttimeouts stillobserved and automaticallyretry; savedworkerpagescontinued.
+Do not claimnetworklatencyresolved. Report/source/CSV codepassesCI, but populated
+hostedreport/export notyetverified because no observedcampaignfinished.
+PR9descriptionupdated tocurrentcapabilities,enabledstate,tests andlimitations.
+
+Resume fromremoteactualhead; doNOTreplayactivation, provisionresources, duplicate
+runningyearload, resetDB, or merge main. Inspect runningcampaign+hourlywindow,
+workerheartbeat andnewlogs. Whenreportcomplete, verifyfulln/pinnedlosstable,
+source/coveragepagination, CSV andcategorydedup inactualUI. MeasureliveworkerRSS
+andDBgrowth beforebroadeningcategories. Next independentengineering milestone:
+explicit partitionedprecomputedreports beyond250kentries/1Mbars/96MiB, preserving
+full-samplepolicytraining and immutablehistory. Do notsilentlysampleorraisecaps
+withoutmeasurement. Investigate boundedAPIlatency iftimeoutscontinue; documented
+HTTP403smoke remainsunresolved. Owner-only blockers: anynewGoogleconsent/credentials,
+paidcapacityexpansion oroperatorDDL; noneisrequiredforcurrentenabledstack.
