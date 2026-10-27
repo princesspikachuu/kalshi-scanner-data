@@ -196,3 +196,11 @@ test('dashboard allows Cloudflare canonical HTML alias after asset redirect',asy
  }
  assert.deepEqual(paths,['/collection','/collection.html']);
 });
+
+test('worker heartbeat status is GET-only, bounded and rejects extra query state',async()=>{
+ const body={contract:'collection-v1',worker:{state:'online',last_seen:'2026-10-27T19:00:00Z',heartbeat_ttl_seconds:90}};
+ assert.deepEqual(await (await proxyAuth(request('/api/collection/status'),env,{fetcher:async()=>json(body)})).json(),body);
+ assert.equal((await proxyAuth(request('/api/collection/status?secret=x'),env,{fetcher:()=>assert.fail('must not fetch')})).status,400);
+ assert.equal((await proxyAuth(request('/api/collection/status',{method:'POST'}),env,{fetcher:()=>assert.fail('must not fetch')})).status,405);
+ assert.equal((await proxyAuth(request('/api/collection/status'),env,{fetcher:async()=>json({...body,private:'sentinel'})})).status,502);
+});

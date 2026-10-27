@@ -42,7 +42,10 @@ function researchBody(path,data){
 function collectionBody(data){
  if(data.contract!=='collection-v1')throw Error('invalid collection');
  const keys=Object.keys(data).sort().join(',');
- if('items' in data){
+ if('worker' in data){
+  if(keys!=='contract,worker'||!['online','waiting'].includes(data.worker.state)||data.worker.heartbeat_ttl_seconds!==90||
+     (data.worker.last_seen!==null&&(typeof data.worker.last_seen!=='string'||!Number.isFinite(Date.parse(data.worker.last_seen)))))throw Error('invalid worker status');
+ }else if('items' in data){
   if(keys!=='contract,items,next_before'||!Array.isArray(data.items)||data.items.length>50||
      data.items.some(c=>!/^[-a-f0-9]{36}$/.test(c.id)||!['queued','running','succeeded','cancelled','failed'].includes(c.status))||
      (data.next_before!==null&&!/^[-a-f0-9]{36}$/.test(data.next_before)))throw Error('invalid campaign list');
@@ -71,11 +74,12 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
  const campaignGet=new RegExp('^/api/collection/campaigns/'+uuid+'$').test(url.pathname);
- const collection=url.pathname==='/api/collection/campaigns'||campaignGet||
+ const workerStatus=url.pathname==='/api/collection/status';
+ const collection=workerStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=collection?((campaignGet||campaignList)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=collection?((campaignGet||campaignList||workerStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
  if(collection){

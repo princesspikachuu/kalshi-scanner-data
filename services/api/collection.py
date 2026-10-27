@@ -37,6 +37,11 @@ class Campaign(Closed):
     error_code:str|None=Field(max_length=64)
     total_sections:int=Field(ge=1,le=3661)
     completed_sections:int=Field(ge=0,le=3661)
+    saved_pages:int=Field(default=0,ge=0)
+    work_items:int=Field(default=0,ge=0)
+    completed_work_items:int=Field(default=0,ge=0)
+    retry_at:datetime|None=None
+    last_work_error:str|None=Field(default=None,pattern=r'^[a-z][a-z0-9_]{0,63}$')
 
 
 class Section(Closed):
@@ -62,6 +67,12 @@ def install_collection(app,auth,mutate,store):
         return Campaign.model_validate(row).model_dump(mode='json')
     def no_query(request):
         if request.query_params:raise HTTPException(422,'Invalid request')
+
+    @app.get('/collection/status')
+    def worker_status(request:Request):
+        auth(request);no_query(request)
+        row=store.worker_status()
+        return dict(contract='collection-v1',worker=dict(state=row['state'],last_seen=row['last_seen'],heartbeat_ttl_seconds=90))
 
     @app.post('/collection/campaigns')
     def create(body:RangeBody,request:Request):

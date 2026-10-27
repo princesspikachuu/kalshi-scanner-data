@@ -75,6 +75,7 @@ test('signed-in workspace loads server history/report and restores category/disp
   globalThis.fetch=async(url,options)=>{
    requests.push(url);assert.equal(options.credentials,'same-origin');
    if(url==='/api/auth/me')return Response.json({authenticated:true,email:'owner@example.test'});
+   if(url==='/api/collection/status')return Response.json({contract:'collection-v1',worker:{state:'online',last_seen:'2026-10-27T19:00:00Z',heartbeat_ttl_seconds:90}});
    if(url.includes('/refresh/'))return Response.json({contract:'collection-v1',refresh:{enabled:false,latest_campaign_id:null}});
    if(url.includes('campaigns?asset='))return Response.json({contract:'collection-v1',items:[campaign],next_before:null});
    if(url.includes('/campaigns/'+id))return Response.json({contract:'collection-v1',campaign,sections:[],next_after:null});
@@ -84,7 +85,7 @@ test('signed-in workspace loads server history/report and restores category/disp
   await import('../apps/web/collection.mjs?workspace-test');await new Promise(resolve=>setImmediate(resolve));
   assert.equal(nodes.workspace.hidden,false);assert.equal(nodes.signOut.hidden,false);assert.equal(nodes.asset.value,'eth');
   assert.equal(nodes.metric.value,'roi');assert.equal(nodes.loss.checked,true);assert.equal(nodes.history.children.length,1);
-  assert.equal(nodes.reportContent.hidden,false);assert.equal(nodes.candidates.textContent,'10');assert.equal(nodes.completion.value,2);
+  assert.equal(nodes.reportContent.hidden,false);assert.equal(nodes.candidates.textContent,'10');assert.equal(nodes.completion.value,2);assert.equal(nodes.workerTitle.textContent,'Worker online · collection enabled');
   assert.match(nodes.table.textContent,/-23.53%/);
   nodes.metric.value='win';await nodes.metric.fire('change');assert.equal(JSON.parse(saved).metric,'win');
   assert.ok(!saved.includes('owner@example.test'));assert.ok(!saved.includes('__Host-pocket'));

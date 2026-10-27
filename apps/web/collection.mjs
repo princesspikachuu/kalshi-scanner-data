@@ -3,7 +3,7 @@ import {createCollectionClient} from './collection-client.mjs';
 import {createResearchClient} from './research-client.mjs';
 import {renderTable} from './report-view.mjs';
 const $=id=>document.getElementById(id),client=createCollectionClient();
-let timer,revision=0,selected=null,next=null,key=null,busy=false,historyNext=null,report=null,reportKey=null;
+let timer,statusTimer,revision=0,selected=null,next=null,key=null,busy=false,historyNext=null,report=null,reportKey=null;
 const research=createResearchClient(),auth=createAuthClient();
 const prefs={};
 try{Object.assign(prefs,JSON.parse(localStorage.getItem('pocket-collection-v1')||'{}'))}catch{}
@@ -13,11 +13,19 @@ for(const id of ['start','end']){$(id).max=today;$(id).value=/^\d{4}-\d{2}-\d{2}
 $('recheck').checked=prefs.pending?.recheck===true;
 key=prefs.pending?.asset===$('asset').value&&prefs.pending?.start===$('start').value&&prefs.pending?.end===$('end').value?prefs.pending.key:null;
 function save(){try{localStorage.setItem('pocket-collection-v1',JSON.stringify({...prefs,asset:$('asset').value,start:$('start').value,end:$('end').value}))}catch{}}
-function failure(error){$('notice').textContent=error.message;if(error.status===401){$('workspace').hidden=true;$('signOut').hidden=true;$('signIn').hidden=false;clearTimeout(timer)}}
+function failure(error){$('notice').textContent=error.message;if(error.status===401){$('workspace').hidden=true;$('signOut').hidden=true;$('signIn').hidden=false;clearTimeout(timer);clearTimeout(statusTimer)}}
 for(const id of ['metric','minimum','loss']){
  if(id==='loss')$(id).checked=prefs.loss===true;
  else if([...$(id).options].some(o=>o.value===String(prefs[id])))$(id).value=prefs[id];
  $(id).addEventListener('change',()=>{prefs[id]=id==='loss'?$(id).checked:$(id).value;save();drawReport()});
+}
+async function workerStatus(){
+ try{
+  const data=await client.status(),online=data.worker.state==='online';
+  $('workerTitle').textContent=online?'Worker online · collection enabled':'Waiting for background worker';
+  $('workerMessage').textContent=online?'Saved requests are processed section by section, even after you close this page. No trades are placed.':'Requests stay safely queued. The worker has not checked in recently; saved progress is retained.';
+ }catch(error){$('workerTitle').textContent='Worker status unavailable';$('workerMessage').textContent='Your saved work is retained. Refresh to retry.';if(error.status===401){failure(error);return}}
+ statusTimer=setTimeout(workerStatus,30000);
 }
 function clearReport(){report=null;reportKey=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true}
 function drawReport(){
@@ -75,6 +83,7 @@ $('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{a
 
 function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
+ $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last issue: '+c.last_work_error.replaceAll('_',' '):''}`;
  $('completion').max=c.total_sections;$('completion').value=c.completed_sections;void loadReport(c,revision);
  $('counts').textContent=`${c.completed_sections} of ${c.total_sections} sections collected · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
@@ -108,7 +117,7 @@ $('collection').addEventListener('submit',async event=>{
  key=key||crypto.randomUUID();prefs.pending={asset:$('asset').value,start:$('start').value,end:$('end').value,recheck:$('recheck').checked,key};save();
  $('start').disabled=true;$('end').disabled=true;$('recheck').disabled=true;
  try{const data=await client.create($('asset').value,$('start').value,$('end').value,key,$('recheck').checked);if(version!==revision)return;
-  selected=data.campaign.id;prefs[$('asset').value]=selected;delete prefs.pending;save();key=null;$('notice').textContent='Request saved. Collection is paused in staging; this request will wait until the background worker is enabled.';await loadHistory(version);await poll(version);
+  selected=data.campaign.id;prefs[$('asset').value]=selected;delete prefs.pending;save();key=null;$('notice').textContent='Collection queued. The worker continues from saved checkpoints when you leave this page.';await loadHistory(version);await poll(version);
  }catch(error){failure(error)}finally{busy=false;$('begin').disabled=false;$('asset').disabled=false;$('start').disabled=false;$('end').disabled=false;$('recheck').disabled=false}
 });
 $('showAutomatic').addEventListener('click',async()=>{
@@ -131,5 +140,5 @@ $('more').addEventListener('click',async()=>{
  if(!next||!selected)return;const version=revision;$('more').disabled=true;clearTimeout(timer);
  try{const data=await client.get(selected,next);if(version===revision)render(data,true)}catch(error){failure(error)}finally{$('more').disabled=false;if(version===revision)timer=setTimeout(()=>poll(version),5000)}
 });
-window.addEventListener('pagehide',()=>{revision++;clearTimeout(timer)});
-try{if(await auth.current()){$('workspace').hidden=false;$('signOut').hidden=false;$('collection').hidden=false;$('notice').textContent='Choose a date range or open a saved collection.';await category()}else{$('signIn').hidden=false;$('notice').textContent='Sign in to open your research workspace.'}}catch(error){failure(error)}
+window.addEventListener('pagehide',()=>{revision++;clearTimeout(timer);clearTimeout(statusTimer)});
+try{if(await auth.current()){$('workspace').hidden=false;$('signOut').hidden=false;$('collection').hidden=false;$('notice').textContent='Choose a date range or open a saved collection.';await Promise.all([category(),workerStatus()])}else{$('signIn').hidden=false;$('notice').textContent='Sign in to open your research workspace.'}}catch(error){failure(error)}

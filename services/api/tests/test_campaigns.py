@@ -121,6 +121,14 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.list('btc',before=other),[])
         self.assertEqual(self.store.list('weather'),[])
 
+    def test_saved_page_progress_uses_distinct_child_jobs_and_does_not_read_raw_objects(self):
+        identifier=self.create();self.worker.run_once(deadline=time.monotonic()+30)
+        progress=self.store.get(identifier)
+        self.assertGreater(progress['work_items'],0)
+        self.assertGreaterEqual(progress['saved_pages'],1)
+        self.assertLessEqual(progress['completed_work_items'],progress['work_items'])
+        self.assertIsNone(progress['last_work_error'])
+
     def test_multiple_days_finish_full_report_and_reuse_historical_index_once(self):
         identifier=self.create();self.drive(identifier)
         row=self.store.get(identifier);self.assertEqual((row['status'],row['completed_sections'],row['total_sections']),('succeeded',2,2))

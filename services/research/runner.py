@@ -6,7 +6,7 @@ import time
 from .queue import LeaseLost
 
 
-def serve(campaigns,worker,stop,*,clock=time.monotonic,on_error=lambda code:None):
+def serve(campaigns,worker,stop,*,clock=time.monotonic,on_error=lambda code:None,on_tick=lambda:None):
     """stop is a threading.Event, also used for interruptible idle waits.
 
     The worker's fenced leases recover from interruption/crashes. Keep exception
@@ -15,6 +15,7 @@ def serve(campaigns,worker,stop,*,clock=time.monotonic,on_error=lambda code:None
     """
     while not stop.is_set():
         try:
+            on_tick()
             campaigns.schedule_due()
             if not worker.run_once(deadline=clock()+30):stop.wait(5)
         except LeaseLost:

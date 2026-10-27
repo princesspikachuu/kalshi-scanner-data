@@ -117,8 +117,30 @@ class CampaignStore:
                 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
                 JOIN research_campaign_day d ON d.campaign_id=r.id WHERE r.id=%s
                 GROUP BY r.id,j.status,j.error_code''',(UUID(str(identifier)),)).fetchone()
-            if row:row['id']=str(row['id'])
+            if row:
+                row['id']=str(row['id'])
+                detail=c.execute('''SELECT count(*)::integer AS work_items,
+                    count(*) FILTER(WHERE status='succeeded')::integer AS completed_work_items,
+                    coalesce(sum((progress->>'completed_pages')::bigint),0)::bigint AS saved_pages,
+                    min(available_at) FILTER(WHERE status='queued' AND available_at>clock_timestamp()) AS retry_at
+                    FROM research_job WHERE id IN (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)''',(UUID(str(identifier)),)).fetchone()
+                row.update(detail)
+                failure=c.execute('''SELECT error_code FROM research_job WHERE id IN
+                    (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)
+                    AND error_code IS NOT NULL ORDER BY finished_at DESC NULLS LAST,id LIMIT 1''',(UUID(str(identifier)),)).fetchone()
+                row['last_work_error']=failure['error_code'] if failure else None
             return row
+
+    def worker_status(self):
+        from .heartbeat import HEARTBEAT_ID,HEARTBEAT_KEY
+        with self.pool.connection() as c:
+            row=c.execute('''SELECT finished_at AS last_seen,
+                finished_at>clock_timestamp()-interval '90 seconds' AS online
+                FROM research_job WHERE id=%s AND idempotency_key=%s
+                    AND status='succeeded' AND parameters->>'collector'='worker-heartbeat-v1' ''',
+                (HEARTBEAT_ID,HEARTBEAT_KEY)).fetchone()
+        return dict(state='online' if row and row['online'] else 'waiting',
+                    last_seen=row['last_seen'] if row else None,heartbeat_ttl_seconds=90)
 
     def list(self,asset,*,before=None,limit=26):
         """Newest-first bounded campaign metadata; no archive/observation reads."""

@@ -16,6 +16,7 @@ class FakeCampaigns:
         return dict(id=ID,asset='btc',mode='backfill',start_at=NOW,end_at=NOW,created_at=NOW,status='queued',error_code=None,result_id=None,total_sections=60,completed_sections=0)
     def list(self,asset,*,before=None,limit=26):
         self.calls.append(('list',asset,before,limit));return [self.get(ID)]*limit if before is None else []
+    def worker_status(self):return dict(state='online',last_seen=NOW,heartbeat_ttl_seconds=90)
     def create(self,*args,**kwargs):self.calls.append(('create',args));return ID
     def control(self,*args):self.calls.append(('control',args));return str(args[0])==ID
     def days(self,identifier,after=None,limit=51):
@@ -79,3 +80,11 @@ class CollectionRoutes(unittest.TestCase):
             self.assertEqual(self.client.get('/collection/campaigns?'+query).status_code,422,query)
         self.client.cookies.clear()
         self.assertEqual(self.client.get('/collection/campaigns?asset=btc').status_code,401)
+
+
+    def test_worker_status_requires_session_and_accepts_no_query(self):
+        r=self.client.get('/collection/status');self.assertEqual(r.status_code,200)
+        self.assertEqual(r.json()['worker']['state'],'online')
+        self.assertEqual(self.client.get('/collection/status?unexpected=1').status_code,422)
+        self.client.cookies.clear();self.assertEqual(self.client.get('/collection/status').status_code,401)
+        self.assertFalse(self.store.calls)

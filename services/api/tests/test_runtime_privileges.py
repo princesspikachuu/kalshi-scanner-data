@@ -200,3 +200,14 @@ class RuntimePrivilegesTests(unittest.TestCase):
                 self.assertFalse(c.execute("SELECT rolcanlogin FROM pg_roles WHERE rolname='pocket_api_runtime'").fetchone()[0])
         finally:
             with psycopg.connect(URL,autocommit=True) as c:c.execute('ALTER ROLE pocket_research_runtime NOLOGIN PASSWORD NULL')
+
+    def test_worker_heartbeat_is_visible_to_api_without_new_grants_or_claimable_work(self):
+        from services.research.heartbeat import WorkerHeartbeat,HEARTBEAT_ID
+        heartbeat=WorkerHeartbeat(self.worker);campaigns=CampaignStore(self.api)
+        heartbeat.beat();heartbeat.beat()
+        self.assertEqual(campaigns.worker_status()['state'],'online')
+        self.assertIsNone(ResearchQueue(self.worker).claim(collector='worker-heartbeat-v1'))
+        with self.worker.connection() as c:
+            c.execute("UPDATE research_job SET finished_at=clock_timestamp()-interval '91 seconds' WHERE id=%s",(HEARTBEAT_ID,))
+        self.assertEqual(campaigns.worker_status()['state'],'waiting')
+        heartbeat.beat();self.assertEqual(campaigns.worker_status()['state'],'online')

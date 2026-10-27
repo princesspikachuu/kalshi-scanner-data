@@ -1193,3 +1193,42 @@ no owner email or credential appears in the dashboard screenshot. Owner-only
 Google/setup action is no longer pending for this milestone. Approval for an
 explicitly bounded real collection remains a separate future step after preparing
 its caps; no such approval is requested by this checkpoint itself.
+
+## Owner-authorized activation and continuing app implementation
+
+Owner explicitly instructed: unpause collection, implement the other app parts,
+save progress incrementally, skip steps needing assistance, and has granted blanket
+permission to deploy. This supersedes the earlier collection-off/deploy approval
+boundaries for this app. Keep existing paid sizes/private runtime roles, secrets
+out of git, and no trading or contacting others. No main merge is needed for staged
+implementation; work remains on draft PR9 branch with leased updates.
+
+Resumed actual remote 7be2e6d; CI40566763839 passed; fresh pocket-active worktree
+preserves earlier saved dirty worktrees. Merged only worker COLLECTION_ENABLED=true,
+STAGING_ACCEPTANCE=off, STAGING_OPERATOR_ACTION=off into existing private Render
+configuration. Worker deployment dep-dbgfjad9fdbs73c6qj1g LIVE at
+19:22:24.630598 UTC from tested 7be2e6d. Research direct-login audit again passed
+with 9 exact migrations/12 protected history tables, no unsafe privilege flags.
+Existing shared budget remains 1 read token/second, capacity1, endpoint cost1.
+No additional resource/paid upgrade, trading credential or live production UI edit.
+
+Next code milestone adds a real owner-only GET collection/status and worker
+heartbeat, rather than the stale hardcoded collection-paused banner. The marker
+is one fixed terminal operational research_job record, updated only by ENABLED
+workers; it cannot be claimed as campaign/provider work and contains no market
+sample or credential. Existing worker/API queue grants suffice; no migration,
+operator credential or privilege expansion. State expires after 90 seconds without
+an idle/step heartbeat; waiting is not falsely called healthy. Collection progress
+also returns committed-page totals from existing child progress (deduplicated job
+membership), finished/total work items, retry time and safe child error codes.
+UI shows those counts while section count remains unchanged; this prevents long
+inventory work from looking frozen. Root/table/history/full-sample metrics unchanged.
+
+Source Blueprint now records owner-authorized COLLECTION_ENABLED=true; its guard
+checks this new intended state. Auto-deploy and Blueprint auto-sync remain off.
+After actual-PG CI green, manually deploy existing API+worker and publish staging
+gateway from the same tested head, verify online heartbeat in browser and a small
+real one-day BTC collection. Do not leave blocked account/credential work pending
+as a reason to stop independent app work. Save receipts before next milestone.
+Then implement precomputed category-wide deduplicated history/this-load views,
+coverage/source inspection and representative performance acceptance incrementally.

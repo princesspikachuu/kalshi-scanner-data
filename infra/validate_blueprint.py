@@ -26,7 +26,7 @@ for project in blueprint['projects']:
         assert len(workers)==1,'Staging requires exactly one research worker'
         worker=workers[0]
         variables={v['key']:v for v in worker['envVars'] if 'key' in v}
-        assert variables['COLLECTION_ENABLED']['value']=='false','Collection must start disabled'
+        assert variables['COLLECTION_ENABLED']['value']=='true','Owner-authorized collection must remain enabled'
         assert {'fromGroup':'pocket-r2-staging'} in worker['envVars'],'Worker must use the private R2 group'
         for service in environment.get('services',[]):
             if service['type']!='worker':

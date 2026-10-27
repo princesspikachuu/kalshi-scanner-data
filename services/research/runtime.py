@@ -130,7 +130,10 @@ def run(settings,stop):
         worker=CampaignWorker(pool,archives,
             InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
             EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost))
-        serve(CampaignStore(pool),worker,stop,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        from .heartbeat import WorkerHeartbeat
+        heartbeat=WorkerHeartbeat(pool)
+        print('Collection enabled; worker ready',flush=True)
+        serve(CampaignStore(pool),worker,stop,on_tick=heartbeat.beat,on_error=lambda code:print(code,file=sys.stderr,flush=True))
 
 
 def main(argv=None):
