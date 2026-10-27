@@ -29,7 +29,7 @@ class PostgresTests(unittest.TestCase):
     def test_migrations_are_idempotent_and_ready(self):
         self.assertTrue(self.store.ready())
         with self.store.pool.connection() as c:
-            self.assertEqual(c.execute('SELECT count(*) AS n FROM schema_migration').fetchone()['n'],6)
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM schema_migration').fetchone()['n'],7)
     def test_challenge_consumption_is_atomic_under_concurrency(self):
         self.store.challenge('a'*64,'b'*64,'c'*64)
         with ThreadPoolExecutor(max_workers=8) as executor:

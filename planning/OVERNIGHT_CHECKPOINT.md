@@ -296,29 +296,65 @@ No provisioning/deployment/live infrastructure mutation or trading was attempted
 No hosted collection, credentials, owner email or Google setup was introduced.
 No worker remains active after this run.
 
+## Ninth milestone: versioned full-cohort return/loss-risk summaries
+
+Started from remote `41a866a8921496b1b6e0fbd16608f4c68485a0d8`;
+**CI 40494901967 passed**. Checkpoint reported no active worker. Used fresh
+`pocket-metrics` worktree and preserved earlier saved dirty worktrees.
+
+Read newest actual main `26c65c2325d3c5f18e3c8e9ef8142fc938f8bbdf`, including
+loss_policy.py, loss_risk.py, collector/report logic, table overlay formulas and
+policy tests. Added a PINNED pure model extraction under research/models with
+SOURCE.json upstream hashes/commit; no live script, dashboard or Worker changed.
+Pinned upstream regression tests run with future API CI. No imports execute live
+script builders or write files. No merge/deployment/provisioning/trading occurred.
+
+Added reports.py and migration 0007: explicit immutable raw dataset membership,
+source-verified observations, full-hold baseline and paired conditional-exit
+summaries, exact historical/latest membership, precomputed table cells/coverage,
+and atomic append-only report/observation/membership storage. Stream locks and
+fingerprints deduplicate retries; selected raw inputs/output have explicit bounds.
+Unknown latest membership cannot invent ROI; overlapping refreshes are rejected.
+Source dataset IDs/hashes and actual quote timestamps are retained per observation.
+
+Preserves 120-second ordinary entry quote support vs stricter 60-second exit
+eligibility; uncovered paths keep hold outcomes. Exit deltas use FULL original n;
+optional trade data never shrinks it. Strict original loss rate >50% yields Trade
+not recommended; exactly 50% does not. Threshold-only labels, actual sale bid,
+missed recoveries, event/time separation and 2-cent exit stress match pinned main.
+Ordinary baseline is before fees. No execution acceptance/fill claims are made.
+
+Local: 109 API/research tests passed; 46 PG cases skip without disposable local PG
+(the last PG rollback case was separately discovered). Seven policy and 14 gateway
+cases passed. Compile, dependency and whitespace checks passed. Added 10 pure
+report, 18 pinned model regression and 5 actual-PG cases. **176-test CI result awaits
+this commit**: inspect before claiming actual PG success. Local network Blueprint
+validation was intentionally not rerun; unchanged CI performs its schema-only GET.
+No owner email/credentials, hosted provider/object-store reads, Google account setup,
+live infra changes or running worker. No speedup/real-hosted acceptance claim.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest remote head/CI and fix failures first. Queue, archives, planners,
-   normalized membership, raw evidence, immutable raw datasets and precomputed
-   coverage history are implemented. Do not redo them or overwrite newer changes.
-2. Add versioned full-sample research observations/return/loss-risk summaries from
-   verified raw datasets. Read current MAIN code/tests (not the draft's older
-   model) and preserve exact full-cohort denominators, latest-vs-cumulative
-   membership, threshold-only cell display and >50% Trade not recommended rule.
-   Missing quotes/paths/trades must remain explicit and never shrink the hold
-   baseline or become presumed safe holding/fills. Optional execution is separate.
-   Current dataset summaries are coverage counts only; do not label them ROI.
-3. Authenticated read-only run/date and precomputed-summary API with indexed SQL,
-   keyset cursors and tests. Keep mutations session+CSRF protected; deliberately
-   update gateway allowlists/response validation. No deployment needed. The store
-   already has a summary-only history query; it is not an exposed API route.
-4. Research shell/history browser after stable API contract, keeping familiar
-   live table behavior. Measure representative local performance, without
-   claiming speedups from structure/tiny fixtures. Hosted acceptance is owner-only.
+1. Inspect latest head/CI and fix any failure first. Queue/archive/collection,
+   normalization, verified raw datasets and versioned return/loss-risk publication
+   are implemented. Do not duplicate work or overwrite newer changes.
+2. Authenticated read-only history API for raw runs and research results: indexed
+   SQL/keyset cursors, exact result/dataset/date membership, compact precomputed
+   summaries, strict response validation and tests. ReportStore has publication
+   only; add summary/detail reads. Raw DatasetStore already has summary-only
+   history. Keep unknown/latest/cumulative views explicit. Never scan source
+   archives or recompute policy in a GET handler. Require session+proxy; preserve
+   session+CSRF on mutations. Deliberately update gateway route allowlists.
+3. Add research/history shell using that API contract, preserving familiar current
+   cell fields, full-sample counts, threshold-only labels, >50% message and selected
+   view persistence. Keep all code undeployed and separate from live Worker/UI.
+4. Measure representative local performance and checkpoint remaining integration
+   work. Do not claim production speedups from tiny fixtures or CI test runtime.
+   Hosted resources, real Google acceptance and budget/secrets remain owner-only.
 
-Save independent code/checkpoint milestones to draft PR #9 and inspect CI/diff.
-Main can receive later live fixes/data updates. Reconcile only for future explicit
-integration authorization; do not merge, deploy, provision or trade in this build.
+Save code/checkpoint to draft PR #9 and inspect CI/diff. Main can receive more live
+fixes/data; reconcile only for a future explicitly authorized integration. Do not
+merge, deploy, provision or trade during this build.
 
 ## Owner-only items to leave pending
 

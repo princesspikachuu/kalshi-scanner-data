@@ -459,3 +459,63 @@ checkpoint. No deployment was attempted.
 PostgreSQL references checked October 27, 2026:
 - https://www.postgresql.org/docs/17/explicit-locking.html
 - https://www.postgresql.org/docs/17/sql-createtrigger.html
+
+## Versioned full-sample return and conditional-loss results
+
+`reports.py` converts explicitly selected immutable raw dataset IDs into entry
+observations and precomputed historical/latest table cells. `ReportStore.publish(
+stream_key, asset, dataset_ids, latest_ids=...)` loads only selected published
+versions, verifies fingerprints and computes outside the write transaction. It
+then atomically inserts the report, exact dataset/latest membership and immutable
+observations. Per-stream locking/fingerprint uniqueness make retries idempotent.
+Migration 0007 adds append-only tables and a `(stream_key,id DESC)` history index.
+No API, scheduler, hosting or live-data ingestion is enabled by publication code.
+
+Current-main pure model functions are pinned under `models/conditional_v2.py`.
+`models/SOURCE.json` records upstream commit, source hashes and extracted functions;
+only filesystem/network builders and script-local imports are omitted. The eighteen
+upstream policy/risk regression cases run in future-API CI. Model changes require a new
+explicit version/pin; importing live scripts cannot silently change stored history.
+No main/live files were overwritten or merged. Reviewed main commit:
+`26c65c2325d3c5f18e3c8e9ef8142fc938f8bbdf`.
+
+Observations preserve current collector/report behavior: one highest priced valid
+YES/NO bid per market and entry time, YES on exact ties, chosen before examining
+settlement. NO bid may use one minus YES ask, never the opposite bid. Category
+series and <=1-day entry grids are explicit. Quote age up to 120 seconds remains
+in the ordinary hold cohort; only the existing stricter <=60-second evidence
+qualifies for conditional exit training. Null/zero bids stay distinct in paths.
+Missing quote slots are explicit coverage records, not assumed safe holding.
+
+Historical/cumulative membership is the exact selected dataset set, not an automatic
+union of every refresh. Overlapping market/day versions are rejected rather than
+cherry-picking snapshots. Latest IDs must be an explicit subset; unknown legacy
+membership produces no invented latest observations/ROI. Later historical outcomes
+cannot enter threshold fitting/replay for an older latest collection. Observations
+retain source dataset ID/fingerprint and actual quote-period timestamp.
+
+Hold cells preserve full original n, wins, price and before-fee P/L/ROI, rounded as
+in current CSV outputs. Loss prevention overlays paired sale-minus-hold deltas over
+that same n. Uncovered positions retain hold outcomes; optional trade evidence
+never changes the baseline denominator. Current two-cent exit-cost stress,
+missed-recovery accounting, event representative selection and chronological
+training are unchanged. Base n/wins/price bind policy cells to their hold cohort.
+A strict original loss rate >50% produces `Trade not recommended`; exactly 50%
+does not. Cell sell labels contain only the threshold or that message, never a
+decision-time replacement. No fee/fill/acceptance claim is added: execution remains
+explicitly excluded, and no real order is submitted.
+
+Precomputed report JSON includes model/source version, selected dataset hashes,
+historical/latest cells, policy metadata, candidate/date/observation coverage and
+missing entry slots. Full observations are stored separately, with a primary key
+per result/day/ticker/entry time. Published reports, membership and observations
+reject UPDATE/DELETE. Selected raw input text and output are each bounded at
+64 MiB; larger studies require explicit partitioning/aggregation. This remains a
+bounded in-memory implementation; representative performance is unmeasured.
+
+Ten new pure report tests plus eighteen pinned upstream regressions and five real-PG
+publication cases cover full denominators, exact 50%, source identity, missing/
+stale quotes, older latest isolation, actual-bid deltas, immutable observations,
+concurrent retry, exact source membership and mid-publication rollback. The
+read-only API and research/history shell remain subsequent milestones. Tests
+use fixtures/disposable PG only; no Kalshi/R2 requests or hosted mutations occur.
