@@ -57,3 +57,25 @@ whose name is exactly `pocket_test`. Never point this test suite at hosted data.
 References: PostgreSQL 17 SELECT locking documentation
 https://www.postgresql.org/docs/17/sql-select.html and Psycopg transactions
 https://www.psycopg.org/psycopg3/docs/basic/transactions.html.
+
+## Immutable archive codec
+
+`archive.py` produces sorted compact UTF-8 JSON and gzip with a fixed timestamp,
+then uses the SHA-256 of the compressed bytes in the object key. The same payload
+and encoder version deduplicate; if a future compressor version changes bytes,
+it creates a new immutable object. Original decimal price strings remain strings.
+This is canonicalized parsed JSON, not an exact HTTP-wire capture. Never archive
+request authorization headers or tokens as provider payloads.
+
+`ArchiveStore` wraps an `ObjectStore` interface with conditional create, bounded
+reads, and read-after-write checksum/length verification. It returns the receipt
+accepted by `ResearchQueue.checkpoint` only after successful readback. Existing
+corrupt evidence fails rather than being overwritten. The object-store adapter
+must propagate upload/read failures and limit reads while streaming. A successful
+readback is an integrity check, not a substitute for a cloud retention policy.
+
+Decompression caps output at 32 MiB and compressed objects at 8 MiB. Invalid UTF-8,
+truncated/corrupt gzip, duplicate keys, nonfinite numbers, non-string object keys
+and excessive nesting are rejected. Split larger provider responses into pages.
+The tests use an in-memory object adapter. No R2 bucket, SDK client or credentials
+are configured, and raw objects are not being uploaded anywhere yet.

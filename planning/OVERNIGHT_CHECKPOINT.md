@@ -47,17 +47,31 @@ observations, aggregate publication, historical queries or UI. Queue completion
 is not dataset publication and does not advance global coverage. Archive upload
 verification is the future archive adapter's responsibility, explicitly documented.
 
-Local validation: API suite 28 tests, 12 passed, 16 real-Postgres cases skipped
-(no disposable database here). The skipped group includes 10 new queue cases and
-6 existing auth cases. Real PG verification MUST come from CI; inspect its result
-before claiming the queue works against PostgreSQL. CI is test-only, no deployment.
+Queue milestone saved at commit `dc3f8a6d7f913cc7655a3abbdb3d96d3cd2701de`.
+**CI run 40453754645 passed**, including the 10 new real-Postgres queue cases,
+6 existing PostgreSQL auth cases, other API/policy tests, 14 gateway/client tests,
+and Blueprint schema validation. No deployment job ran.
+
+## Second milestone: immutable archive codec
+
+Added `services/research/archive.py` and 8 archive tests. Canonical parsed JSON,
+deterministic gzip timestamp, SHA-256 object keys, immutable conditional upload
+contract, bounded reads/decompression, and readback integrity verification before
+returning a checkpoint receipt. Duplicate keys/nonfinite JSON/corrupt gzip and
+receipt mismatches fail. Prices encoded as decimal strings preserve their units.
+Documentation distinguishes parsed JSON archives from exact HTTP-wire captures.
+
+No actual object-store/R2 adapter or hosted bucket exists. Tests use an in-memory
+adapter; missing credentials are not blocking pure codec work. Archive unit tests
+pass locally. Inspect the newest commit CI before claiming the combined suite
+passed with the archive addition.
 
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect queue commit CI. Fix any failures; record exact verified result here.
-2. Immutable archive codec + object-store interface: canonical JSON, deterministic
-   gzip, content-addressed keys, checksums/size verification, safe bounded reads.
-   Fake/local test adapter allowed; R2 adapter must stay unconfigured/undeployed.
+1. Inspect newest CI. Queue milestone already passed; fix any archive failures.
+2. Archive codec/interface are implemented; add a real R2 adapter only after
+   checking current official SDK behavior. Keep it unconfigured/undeployed; use
+   SDK stub tests rather than any account credentials.
 3. Incremental coverage planner and resumable worker adapter using the queue.
    Distinguish fetched page from complete series/date coverage, bounded shared
    provider rate budgets, retries/deadlines, empty vs unavailable vs failed data.

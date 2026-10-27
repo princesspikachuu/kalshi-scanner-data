@@ -72,11 +72,15 @@ No Redis, Kubernetes or additional database is required by this draft.
 
 Prepared: API/auth code, pinned dependencies, session and research-storage
 migrations, staging Blueprint, schema validation, PostgreSQL CI checks, and an
-undeployed Cloudflare gateway/sign-in preview in `apps/`.
+undeployed Cloudflare gateway/sign-in preview in `apps/`, durable research queue
+primitives with fenced retry leases/page checkpoints, and an immutable JSON archive
+codec/object-store contract in `services/research/`. Recovery/concurrency tests run
+against disposable PostgreSQL in CI. These modules are not connected to the live
+collector. See `planning/OVERNIGHT_CHECKPOINT.md` for current continuation status.
 
 Outstanding: actual Google OAuth configuration and storing the chosen owner account in server configuration,
 Google staging hostname/client registration, Render resource creation, hosted migration run,
-R2 archival client, SQL research ingestion/queries, job workers and eventual
+configured R2 SDK adapter, SQL research ingestion/queries, running job workers and eventual
 forward paper trading. No live order placement exists in this draft.
 
 ## Current official references
