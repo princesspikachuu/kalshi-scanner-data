@@ -112,7 +112,7 @@ class KalshiInventory:
         return self._read(path, args, timeout_seconds, parse_inventory)
 
     def _read(self, path, args, timeout_seconds, parser, *, allow_missing=False):
-        allowed = (path in ('/markets','/historical/markets','/markets/trades','/historical/trades')
+        allowed = (path in ('/markets','/historical/markets','/markets/trades','/historical/trades','/markets/candlesticks')
             or re.fullmatch(r'/historical/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path)
             or re.fullmatch(r'/series/[A-Z0-9_-]{1,64}/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path))
         if not allowed: raise ValueError('Unsupported public read route')

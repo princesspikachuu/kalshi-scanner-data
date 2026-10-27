@@ -194,6 +194,18 @@ class InventoryPostgresTests(unittest.TestCase):
             c.execute("UPDATE research_read_budget SET updated_at=clock_timestamp()-interval '20000 seconds' WHERE name='slow-test'")
         self.assertEqual(budget.take(20), 0)
 
+    def test_runtime_pacing_change_preserves_cooldown_and_does_not_mint_tokens(self):
+        budget=ReadBudget(self.store.pool,'runtime-change');budget.configure(1,1)
+        budget.take(1);budget.defer(60)
+        with self.store.pool.connection() as c:
+            before=c.execute("SELECT * FROM research_read_budget WHERE name='runtime-change'").fetchone()
+        budget.configure(5,5,allow_update=True)
+        with self.store.pool.connection() as c:
+            after=c.execute("SELECT * FROM research_read_budget WHERE name='runtime-change'").fetchone()
+        self.assertEqual(after['blocked_until'],before['blocked_until'])
+        self.assertEqual(after['tokens'],before['tokens']);self.assertEqual(after['updated_at'],before['updated_at'])
+        self.assertEqual((after['refill_per_second'],after['capacity']),(5,5));self.assertGreater(budget.take(1),0)
+
     def test_bad_payload_and_safety_page_limit_leave_explicit_failed_gap(self):
         job = self.claim()
         worker = self.worker(FakeProvider(ProviderPage({'markets': [], 'cursor': False})))

@@ -201,11 +201,12 @@ class InventoryWorker:
         try:
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if state.pages >= self.max_pages: raise ProviderFailure('provider_invalid', retry=False)
-            delay = self.budget.take(self.cost)
+            cached = getattr(self.provider,'cached',lambda *_:None)(scope,state.next_cursor)
+            delay = 0 if cached is not None else self.budget.take(self.cost)
             if delay: return {'state': 'throttled', 'retry_after': delay}
             remaining = deadline-self.clock()
             if remaining <= 0: raise ProviderFailure('provider_timeout')
-            response = self.provider.fetch(scope, state.next_cursor, min(10, remaining))
+            response = cached if cached is not None else self.provider.fetch(scope, state.next_cursor, min(10, remaining))
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if not isinstance(response, ProviderPage) or response.availability not in ('available', 'unavailable'):
                 raise ProviderFailure('provider_invalid', retry=False)
@@ -221,6 +222,7 @@ class InventoryWorker:
             receipt = self.archives.upload('kalshi', {'scope': asdict(scope), 'checkpoint': cp, 'response': payload})
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             self.queue.checkpoint(job_id, token, page['page_key'], receipt, cp)
+            getattr(self.provider,'acknowledge',lambda *_:None)(scope)
             if next_state.state != 'partial': self.queue.finish(job_id, token)
             return {'state': next_state.state, 'retry_after': 0}
         except ProviderFailure as error:

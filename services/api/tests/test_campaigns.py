@@ -108,6 +108,55 @@ class CampaignPostgresTests(unittest.TestCase):
             c.execute("UPDATE research_job SET available_at=clock_timestamp() WHERE status='queued'")
             c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()")
 
+    def test_batched_recent_candles_publish_full_cohort_and_survive_cache_loss(self):
+        import httpx
+        from unittest.mock import Mock
+        from services.research.evidence import KalshiEvidence
+        from test_kalshi import reply
+        from threading import Barrier,Lock
+        calls=[];gate=Barrier(4);lock=Lock();entered=0
+        self.worker.parallelism=4
+        original=self.inventory.fetch
+        def many(scope,cursor,timeout):
+            page=original(scope,cursor,timeout)
+            page.payload['markets']=[{**m,'ticker':m['ticker']+'-'+str(i),'event_ticker':m['event_ticker']+'-'+str(i)}
+                                     for m in page.payload['markets'] for i in range(3)]
+            return page
+        self.inventory.fetch=many
+        def handler(request):
+            nonlocal entered
+            calls.append(request)
+            if request.url.path!='/trade-api/v2/markets/candlesticks' and not request.url.path.startswith('/trade-api/v2/series/'):
+                with lock:
+                    entered+=1;ordinal=entered
+                if ordinal<=4:gate.wait(timeout=5)  # Proves four overlapping reads, no sleeps.
+            if request.url.path.endswith('/trades'):return reply(payload={'trades':[],'cursor':''})
+            start=int(request.url.params['start_ts']);end=int(request.url.params['end_ts'])
+            bars=[dict(end_period_ts=end-m*60,yes_bid={'close':'0.88'}) for m in (15,10,5,3,1) if end-m*60>=start]
+            if request.url.path=='/trade-api/v2/markets/candlesticks':
+                tickers=request.url.params['market_tickers'].split(',')
+                return reply(payload={'markets':[dict(market_ticker=t,candlesticks=bars) for t in tickers]})
+            return reply(payload=dict(ticker=request.url.path.split('/')[-2],candlesticks=bars))
+        def install():
+            provider=KalshiEvidence(archives=self.archives,transport=httpx.MockTransport(handler));self.addCleanup(provider.close)
+            self.worker.evidence_worker=EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=1)
+            return provider
+        install();identifier=self.create(start='2026-10-25',end='2026-10-25')
+        # Lose the process-local batch cache after its first child checkpoints.
+        for _ in range(40):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            if any(r.url.path=='/trade-api/v2/markets/candlesticks' for r in calls):break
+        else:self.fail('Batch endpoint was not used')
+        install();self.drive(identifier)
+        state=self.store.get(identifier);self.assertEqual(state['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['result_id'],)).fetchone()['report']
+            n=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(state['result_id'],)).fetchone()['n']
+        self.assertGreaterEqual(entered,4)
+        self.assertEqual(report['historical']['candidate_count'],3);self.assertEqual(n,15)
+        self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),15)
+        self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
+
     def test_campaign_history_keyset_is_category_scoped_and_survives_new_inserts(self):
         ids=[self.create(key='history-'+str(i)) for i in range(4)]
         other=self.store.create('eth','2026-10-25','2026-10-26','history-other',now=NOW)

@@ -599,3 +599,26 @@ stop Event; in-flight operations remain bounded and durable leases recover crash
 Real R2 credentials/bucket, runtime budget, least-privilege roles and hosted worker
 setup remain pending authorization. Do not turn this into a browser-owned loop or
 add a hosted schedule during this undeployed build.
+
+
+## Enabled collector throughput (October 27, 2026)
+
+The development worker supports recent candle batching with `GET /markets/candlesticks`:
+up to100 tickers and a conservative9000 worst-case minute bars per request. Missing
+or explicitly truncated members fall back to individual reads. Original batch
+responses are archived, and each market still checkpoints separately. Archived
+candles continue using the documented per-market historical route. Listings/trades
+already request1000 records per page, their existing maximum; no sample is dropped.
+
+Up to4 archived-candle/trade I/O tasks overlap while sharing the same database
+HTTP-read budget. `KALSHI_READ_RATE=5`, `KALSHI_READ_CAPACITY=5` are app pacing
+settings, not a claim about an authenticated exchange tier. Rate-limit cooldowns
+are honored across workers; configuration changes do not reset cooldown/tokens.
+Verified immutable manifests are cached within an8MiB serialized budget. Existing
+leases/page receipts remain authoritative after any process restart. See checkpoint
+for actual deployed revision; configuration requires deploying the tested code.
+
+Primary endpoint references:
+https://docs.kalshi.com/api-reference/market/batch-get-market-candlesticks
+https://docs.kalshi.com/api-reference/historical/get-historical-market-candlesticks
+https://docs.kalshi.com/getting_started/rate_limits

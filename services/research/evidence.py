@@ -1,11 +1,12 @@
 """Resumable raw candle/trade evidence bound to archived normalized membership."""
 from dataclasses import asdict, dataclass
+from collections import OrderedDict
 from decimal import Decimal, InvalidOperation
 import math
 import json
 import re
 
-from .inventory import InventoryWorker, digest, valid_cursor
+from .inventory import InventoryWorker, ProviderPage, ProviderFailure, digest, valid_cursor
 from .kalshi import KalshiInventory, invalid, parse_json
 from .normalize import CandidateBatch, VERSION, _closed
 from .queue import EvidenceConflict, text_key
@@ -188,9 +189,94 @@ def evidence_page(scope,payload,availability):
     return rows,cursor
 
 
+class ManifestCache:
+    """Bounded process-local cache of verified immutable manifests only."""
+    def __init__(self,archives):self.archives=archives;self.values=OrderedDict();self.bytes=0
+    def read(self,receipt):
+        key=(receipt['object_key'],receipt['sha256'],receipt['byte_length'])
+        if key in self.values:
+            self.values.move_to_end(key);return self.values[key][0]
+        value=self.archives.read(receipt);size=len(json.dumps(value).encode())
+        if size<=8*1024*1024:
+            while self.values and self.bytes+size>8*1024*1024:
+                _,(_,old)=self.values.popitem(last=False);self.bytes-=old
+            self.values[key]=(value,size);self.bytes+=size
+        return value
+
+
 class KalshiEvidence(KalshiInventory):
+    def __init__(self,*,archives=None,**kwargs):
+        super().__init__(**kwargs)
+        self.archives=archives;self.batch=();self.responses={};self.single_only=OrderedDict()
+
+    def cached(self,scope,cursor):
+        return None if cursor else self.responses.get(scope.key)
+
+    def acknowledge(self,scope):
+        self.responses.pop(scope.key,None)
+
+    def plan_batch(self,scopes):
+        if self.archives is None:return
+        if scopes and self.cached(scopes[0],'') is not None:
+            self.batch=();return
+        chosen=[];tickers=set()
+        for scope in scopes:
+            if (scope.resource,scope.source)!=('candles','recent') or scope.key in self.single_only:continue
+            if self.cached(scope,'') is not None:continue
+            if scope.ticker in tickers:continue
+            trial=chosen+[scope]
+            span=max(s.end_ts for s in trial)-min(s.start_ts for s in trial)
+            # Inclusive minute bars: below upstream 100 markets / 10,000 bars.
+            if len(trial)>100 or len(trial)*(math.ceil(span/60)+1)>9000:continue
+            chosen=trial;tickers.add(scope.ticker)
+        self.batch=tuple(chosen) if len(chosen)>1 else ()
+
+    def _single_next(self,scope):
+        self.single_only[scope.key]=True
+        if len(self.single_only)>1000:self.single_only.popitem(last=False)
+
+    def _batch_fetch(self,timeout_seconds):
+        scopes=self.batch;self.batch=();self.responses={}
+        args=dict(market_tickers=','.join(s.ticker for s in scopes),
+            start_ts=min(s.start_ts for s in scopes),end_ts=max(s.end_ts for s in scopes),period_interval=1)
+        response=self._read('/markets/candlesticks',args,timeout_seconds,parse_json,allow_missing=True)
+        payload=response.payload
+        if response.availability=='unavailable':
+            for scope in scopes:self._single_next(scope)
+            return
+        entries=payload.get('markets') if isinstance(payload,dict) else None
+        if not isinstance(entries,list) or len(entries)>len(scopes):raise invalid()
+        by_ticker={s.ticker:s for s in scopes};seen=set();projected={};count=0
+        for entry in entries:
+            if not isinstance(entry,dict):raise invalid()
+            ticker=entry.get('market_ticker');bars=entry.get('candlesticks')
+            if ticker not in by_ticker or ticker in seen or not isinstance(bars,list):raise invalid()
+            seen.add(ticker);count+=len(bars)
+            if count>10000:raise invalid()
+            scope=by_ticker[ticker]
+            if 'adjusted_end_ts' in entry and entry['adjusted_end_ts']!=args['end_ts']:
+                self._single_next(scope);continue
+            if any(not isinstance(b,dict) or type(b.get('end_period_ts')) is not int
+                   or not args['start_ts']<=b['end_period_ts']<=args['end_ts'] for b in bars):raise invalid()
+            item=dict(ticker=ticker,candlesticks=[b for b in bars if scope.start_ts<=b['end_period_ts']<=scope.end_ts])
+            evidence_page(scope,item,'available');projected[scope.key]=item
+        # Omitted members/truncation are NOT an empty market: fetch individually.
+        if 'adjusted_end_ts' in payload and payload['adjusted_end_ts']!=args['end_ts']:
+            projected={}
+        for scope in scopes:
+            if scope.key not in projected:self._single_next(scope)
+        receipt=self.archives.upload('kalshi',dict(format='candle-batch-v1',request=args,response=payload))
+        for key,item in projected.items():
+            item['batch_receipt']=receipt
+            self.responses[key]=ProviderPage(item)
+
     def fetch(self,scope,cursor,timeout_seconds):
         if type(scope) is not EvidenceScope: raise ValueError('Validated evidence scope required')
+        if not cursor and any(s.key==scope.key for s in self.batch):
+            self._batch_fetch(timeout_seconds)
+            cached=self.cached(scope,cursor)
+            if cached is None:raise ProviderFailure('provider_unavailable',delay=1)
+            return cached
         path,args = scope.request(cursor)
         def parser(body):
             payload = parse_json(body)
@@ -201,5 +287,10 @@ class KalshiEvidence(KalshiInventory):
 
 class EvidenceWorker(InventoryWorker):
     def __init__(self,queue,archives,provider,budget,*,endpoint_cost,**kwargs):
+        manifests=ManifestCache(archives)
         super().__init__(queue,archives,provider,budget,endpoint_cost=endpoint_cost,
-            scope_loader=lambda job:scope_for_job(job,archives),page_parser=evidence_page,**kwargs)
+            scope_loader=lambda job:scope_for_job(job,manifests),page_parser=evidence_page,**kwargs)
+
+    def prepare_batch(self,jobs):
+        if hasattr(self.provider,'plan_batch'):
+            self.provider.plan_batch([self.scope_loader(job) for job in jobs])

@@ -125,14 +125,15 @@ def run(settings,stop):
             access_key_id=settings.access_key_id,secret_access_key=settings.secret_access_key)
         stack.callback(objects.client.close)
         archives=ArchiveStore(objects);queue=ResearchQueue(pool);budget=ReadBudget(pool)
-        budget.configure(settings.read_rate,settings.read_capacity)
-        inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence())
+        budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)
+        inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence(archives=archives))
         worker=CampaignWorker(pool,archives,
             InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
-            EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost))
+            EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=4)
         from .heartbeat import WorkerHeartbeat
         heartbeat=WorkerHeartbeat(pool)
         print('Collection enabled; worker ready',flush=True)
+        print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; recent candle batching enabled; evidence concurrency 4',flush=True)
         campaigns=CampaignStore(pool)
         serve(campaigns,worker,stop,on_tick=heartbeat.beat,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
 

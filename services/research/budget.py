@@ -8,7 +8,7 @@ class ReadBudget:
         text_key(name, 64)
         self.pool, self.name = pool, name
 
-    def configure(self, refill_per_second, capacity):
+    def configure(self, refill_per_second, capacity, *, allow_update=False):
         if (type(refill_per_second) not in (int, float) or not math.isfinite(refill_per_second)
                 or not 0 < refill_per_second <= 100000 or type(capacity) is not int or not 1 <= capacity <= 100000):
             raise ValueError('Invalid read budget')
@@ -16,9 +16,12 @@ class ReadBudget:
             c.execute('''INSERT INTO research_read_budget(name,refill_per_second,capacity,tokens)
                 VALUES(%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING''',
                 (self.name, refill_per_second, capacity, capacity))
-            row = c.execute('SELECT * FROM research_read_budget WHERE name=%s', (self.name,)).fetchone()
+            row = c.execute('SELECT * FROM research_read_budget WHERE name=%s FOR UPDATE', (self.name,)).fetchone()
             if (row['refill_per_second'], row['capacity']) != (refill_per_second, capacity):
-                raise EvidenceConflict('Read budget already configured differently')
+                if not allow_update:raise EvidenceConflict('Read budget already configured differently')
+                # Runtime configuration may change pacing, never reset cooldown or mint tokens.
+                c.execute('''UPDATE research_read_budget SET refill_per_second=%s,capacity=%s,
+                    tokens=LEAST(tokens,%s) WHERE name=%s''',(refill_per_second,capacity,capacity,self.name))
 
     def take(self, cost):
         """Return 0 if reserved, otherwise seconds until caller may try again."""

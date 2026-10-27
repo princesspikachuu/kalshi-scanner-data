@@ -5,6 +5,7 @@ coverage, not quote eligibility, research completion or a trading recommendation
 """
 from datetime import date,datetime,time,timedelta,timezone
 from uuid import UUID,uuid4,uuid5
+from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Jsonb
 from .datasets import DatasetStore,prepare_dataset
@@ -200,7 +201,9 @@ class CampaignStore:
 
 class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
-    def __init__(self,pool,archives,inventory_worker,evidence_worker):
+    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1):
+        if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
+        self.parallelism=parallelism
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
@@ -251,10 +254,42 @@ class CampaignWorker:
         if row is None:return 5
         job=self.queue.claim(job_id=row['id'])
         if job is None:return 5
-        result=worker.step(job,deadline=deadline)
-        if result['state'] in ('partial','throttled'):
-            self.queue.yield_job(job['id'],job['lease_token'],min(3600,result['retry_after']))
-        return min(3600,result['retry_after'])
+        if (phase=='evidence' and hasattr(worker,'prepare_batch') and
+                job['parameters']['scope']['resource']=='candles' and job['parameters']['scope']['source']=='recent'):
+            with self.pool.connection() as c:
+                nearby=c.execute('''SELECT j.* FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
+                    WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
+                    j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
+                    AND j.parameters->'scope'->>'resource'='candles'
+                    AND j.parameters->'scope'->>'source'='recent'
+                    AND coalesce((j.progress->>'completed_pages')::integer,0)=0
+                    ORDER BY j.available_at,j.id LIMIT 99''',args).fetchall()
+            worker.prepare_batch([job]+nearby)
+        jobs=[job]
+        # Batch-capable recent candles use the single HTTP path above. Other
+        # evidence (including archived candles) overlaps I/O for at most 4 jobs.
+        recent_candle=lambda j:(j['parameters']['scope']['resource'],j['parameters']['scope']['source'])==('candles','recent')
+        if phase=='evidence' and self.parallelism>1 and not recent_candle(job):
+            with self.pool.connection() as c:
+                nearby=c.execute('''SELECT j.id FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
+                    WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND
+                    j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
+                    AND NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent')
+                    ORDER BY j.available_at,j.id LIMIT %s''',(*args,self.parallelism-1)).fetchall()
+            for row in nearby:
+                child=self.queue.claim(job_id=row['id'])
+                if child is not None:jobs.append(child)
+        def process(child):
+            result=worker.step(child,deadline=deadline)
+            if result['state'] in ('partial','throttled'):
+                self.queue.yield_job(child['id'],child['lease_token'],min(3600,result['retry_after']))
+            return min(3600,result['retry_after'])
+        if len(jobs)==1:return process(job)
+        # Every future is joined before releasing the parent; failures never
+        # mark unsaved pages successful. Existing leases fence crash recovery.
+        with ThreadPoolExecutor(max_workers=self.parallelism) as executor:
+            waits=list(executor.map(process,jobs))
+        return min(waits)
 
     def _plan(self,campaign,day):
         manifest=self.archives.read(day['manifest']);raw=manifest['batch']

@@ -60,7 +60,7 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):runtime.run(settings,Event())
             self.assertEqual(r2.call_args.kwargs['access_key_id'],settings.access_key_id)
             self.assertEqual(r2.call_args.kwargs['secret_access_key'],settings.secret_access_key)
-            budget.return_value.configure.assert_called_once_with(1,1)
+            budget.return_value.configure.assert_called_once_with(1,1,allow_update=True)
             worker.assert_called_once();objects.client.close.assert_called_once();pool.close.assert_called_once()
             inventory.__exit__.assert_called_once();evidence.__exit__.assert_called_once()
 

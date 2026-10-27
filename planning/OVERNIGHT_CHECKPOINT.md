@@ -1406,3 +1406,53 @@ full-samplepolicytraining and immutablehistory. Do notsilentlysampleorraisecaps
 withoutmeasurement. Investigate boundedAPIlatency iftimeoutscontinue; documented
 HTTP403smoke remainsunresolved. Owner-only blockers: anynewGoogleconsent/credentials,
 paidcapacityexpansion oroperatorDDL; noneisrequiredforcurrentenabledstack.
+
+
+## Collection speed milestone prepared (2026-10-27)
+
+User explicitly requested removing the app's one-read/sec bottleneck and larger
+requests. Continued from actual remote 938f8ed in isolated pocket-speed worktree;
+pocket-resume has an unrelated untracked data temporary file, left untouched.
+No other branch writer/deploy was observed. Existing worker is still7235d31.
+
+Added recent-candle batches: up to100 market tickers, with a conservative9000
+worst-case inclusive minute-bar bound below Kalshi's10000 response limit. Reads
+only documented public GET /markets/candlesticks. Original batch request/response
+is archived immutably with verified receipt; each market retains its own fenced
+checkpoint and linked batch receipt. Omitted/truncated members retry individually,
+never become invented empty candles. Foreign/duplicate/malformed batches fail;
+429/backoff remains shared. Cached batch members do not charge another HTTP read;
+acknowledged members leave the cache. Lost process caches only cause re-fetches,
+never lost checkpoints or duplicate raw/report publication. Archived candle API
+remains per market; no undocumented historical batch request is invented.
+
+Added up to4 concurrent non-batch evidence reads (archived candles/trades) within
+one leased parent step, same shared cross-process read budget, bounded futures,
+per-child leases and immutable receipts. Inventory remains serial. Existing small
+pool and plans unchanged. Cached verified candidate manifests (8MiB serialized
+budget) avoid repeated R2 downloads per evidence page. No observations are removed;
+both requested source routes and all candle/trade pagination remain intact.
+
+Application public-HTTP pacing target is now5reads/sec,capacity5 in source. This
+is NOT a verified authenticated Kalshi account allowance (no new credentials).
+Runtime budget reconfiguration explicitly updates only rate/capacity, clamps old
+tokens and preserves cooldown/clock; default callers still reject conflicts.
+Need patch ONLY KALSHI_READ_RATE=5 and KALSHI_READ_CAPACITY=5 on existing worker,
+replace=false AFTER actual-PG CI passes, then inspect triggereddeploy (avoid extra
+trigger). Blueprint sync remains paused; source mirrors intended hosted pacing.
+
+Local238API/research:162pass,76PG skipped without disposableDB;32JS+7policy pass,
+Blueprint validation/compile/pipcheck/diffcheck pass. Added100markets/oneHTTPtest,
+missing/truncation/foreign/duplicate/bounds/429/cache tests; realPG cases cover
+runtime cooldown preservation and full15-observation publication after losing
+batch cache, with barrier proving4 simultaneous I/O operations. Await CI before
+deploy; do not claim measured hosted speedup from stub tests. Live year+hourly
+campaigns must resume in place, no new duplicate collection or reset. No schema,
+credentials, paid resources, trading, API/UI deployment or main merge needed.
+
+Resume: inspect actual remote head+CI, fix any realPG regression, then patch the
+two public pacing keys and observe worker live/readiness/logs/continued pages.
+Measure before/after page/task throughput on the same job and record limitations;
+section counter advances only after a full day. Actual upstream batch acceptance,
+provider429 frequency and small-plan memory are still to verify. Larger history
+partitioning, collection latency/progress UI and populated reports remain pending.
