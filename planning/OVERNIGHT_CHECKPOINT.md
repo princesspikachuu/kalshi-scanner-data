@@ -927,3 +927,46 @@ may be lifted specifically to create independent private API/research DB passwor
 and store the corresponding runtime connections ONLY in Render. Do not generate
 those credentials or perform the credential cutover without resolving that boundary.
 This is an existing user instruction, not a requirement inferred from a skill.
+
+## Authorized credential isolation cutover preparation (October 27, 2026)
+
+Owner explicitly approved the prior question to create separate private API and
+research DB passwords, keep corresponding connections only in Render, and switch
+staging services to limited direct-login users. This lifts the original no-new-
+credentials boundary only for these two staging DB roles. Collection stays false;
+no paid upgrade, main merge, live Cloudflare change or trading is authorized.
+
+Resumed actual remote 52c4dc9; CI 40556899902 passed. Existing API 4fdc898 and worker
+96f59f3 were live, no deployment in progress. Fresh pocket-credentials worktree
+preserves all prior dirty/saved worktrees; no other branch writer observed.
+
+Added one-time activate-roles-v1 disabled-worker operator action accepting only
+private libpq SCRAM verifiers for the two prepared NOLOGIN roles. Matching schema,
+DB ownership, dedicated staging/test name, fixed role attributes/no memberships/
+ownership are checked under the migration lock. Both LOGIN changes are atomic;
+already-active or partially-active roles reject the entire action, with no rotation.
+Plaintext passwords never enter SQL/logs. Flags are exclusive with collection and
+diagnostics; output/failure messages contain no secret values. No hosted activation
+has occurred at this preparation checkpoint; verify actual-PG CI before mutation.
+
+PreDeploy compatibility: manage migrate with RUNTIME_DB_PROFILE=api/research now
+performs the same read-only strict direct-role/checksum audit and NEVER calls the
+migrator. The paused Blueprint source instead uses explicit verify-runtime commands,
+private sync:false DATABASE_URLs and strict API gate, removing fromDatabase operator
+references. Existing hosted command is safe only after the explicit profile merge;
+future Blueprint sync remains paused, sync:false does not overwrite existing URLs.
+Future migrations must use an isolated explicit operator context, not app runtime.
+
+Exact resume after passing CI: create independent high-entropy passwords privately,
+use libpq to calculate SCRAM verifiers, persist each pending runtime connection on
+its own existing Render service before activation, with private host/TLS required.
+Merge temporary verifier JSON/operator flag only on the still-disabled worker;
+inspect nonsecret activation receipt. Then replace API DATABASE_URL and enable its
+strict API/profile gates, inspect read-only preDeploy audit and health. Replace
+worker DATABASE_URL/profile, clear temporary verifiers/pending fields and restore
+flags off; inspect research profile audit and live disabled startup. Do not print
+secrets or raw env responses; do not reopen public DB or rerun role preparation.
+If activation receipt is uncertain, inspect it before any retry/credential generation.
+Finish with verified deploy IDs/results, CI and limitations in a new checkpoint.
+Owner must retest real browser login after cutover; representative performance,
+complete history/research shell and separately authorized tiny collection remain.

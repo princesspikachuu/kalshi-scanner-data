@@ -139,3 +139,38 @@ unsafe settings. Keep Blueprint sync paused. A sync:false field does not prompt
 again when updating an existing Blueprint; private values require explicit edits.
 Do not hide an operator URL in a second service env variable or just SET ROLE.
 Owner-only secure password/connection setup must finish before collection.
+
+## Authorized runtime credential cutover
+
+Owner explicitly authorized separate private API/research passwords, Render-only
+runtime connection storage, and service cutover. Collection remains false. The
+prepared roles already exist; never rerun preparation or blindly rotate credentials.
+
+`STAGING_OPERATOR_ACTION=activate-roles-v1` consumes temporary private
+`STAGING_RUNTIME_VERIFIERS` JSON, exactly the two fixed role names and independent
+libpq SCRAM-SHA-256/4096 verifiers. Raw passwords never enter SQL or app logs.
+Activation checks staging/test DB, operator ownership, migration checksums, prepared
+NOLOGIN role attributes/no memberships/object ownership under the migration lock;
+both LOGIN/password changes commit atomically. A replay after success fails closed.
+Only a nonsecret activation receipt is logged. Store pending runtime URLs privately
+in each service before activation so interruption never loses the credentials.
+Never print env update responses, passwords, verifiers or connection strings.
+
+Cutover requires replacing DATABASE_URL on each existing service, setting
+RUNTIME_DB_PROFILE=api/research and REQUIRE_API_RUNTIME_DB=true on API. The existing
+hosted `manage migrate` preDeploy command then performs read-only runtime verification
+only. Source Blueprint uses explicit `verify-runtime --profile ...`, independent
+sync:false URLs, and no operator URL references. Leave Blueprint sync paused; its
+future manual reconciliation must retain private runtime URLs. A profile mismatch,
+unsafe privileges or changed/missing migration fails deployment before pool startup.
+Future schema migrations require a separate explicit operator session; retrieve the
+managed DB operator credential only there, never in long-lived app configuration.
+
+After activation/cutover, clear temporary verifier and pending-URL values, restore
+operator/acceptance flags off and confirm live deploys/read-only profile receipts.
+Do not restore operator DATABASE_URL just to make a failed runtime deploy pass.
+If activation result is uncertain, inspect role status/receipts first; do not
+regenerate passwords or rerun activation. Verify health and owner login after API
+cutover; still require representative performance and separately authorized tiny
+collection before enabling collection. New runtime URLs should use private Render
+host and sslmode=require; public DB access remains disabled.

@@ -15,6 +15,13 @@ for project in blueprint['projects']:
     for environment in project['environments']:
         for service in environment.get('services',[]):
             assert service['autoDeployTrigger']=='off','Automatic deployments must remain disabled'
+            config={v['key']:v for v in service['envVars'] if 'key' in v}
+            profile='research' if service['type']=='worker' else 'api'
+            assert config['DATABASE_URL']=={'key':'DATABASE_URL','sync':False},'Runtime URL must be a private independent credential'
+            assert config['RUNTIME_DB_PROFILE']['value']==profile
+            assert service['preDeployCommand']=='python -m services.api.manage verify-runtime --profile '+profile
+            if profile=='api':assert config['REQUIRE_API_RUNTIME_DB']['value']=='true'
+
         workers=[s for s in environment.get('services',[]) if s['type']=='worker']
         assert len(workers)==1,'Staging requires exactly one research worker'
         worker=workers[0]

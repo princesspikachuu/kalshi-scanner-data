@@ -38,6 +38,7 @@ class WorkerSettings:
     enabled:bool=False
     acceptance:str='off'
     operator_action:str='off'
+    runtime_verifiers:dict=field(default_factory=dict,repr=False)
 
     @classmethod
     def from_env(cls,env=None):
@@ -63,9 +64,18 @@ class WorkerSettings:
         if acceptance not in ('off','r2-v1','database-v1') or (enabled=='true' and acceptance!='off'):
             raise ConfigurationError('Invalid STAGING_ACCEPTANCE or collection must be disabled')
         operator=env.get('STAGING_OPERATOR_ACTION','off')
-        if operator not in ('off','prepare-roles-v1') or (operator!='off' and (enabled=='true' or acceptance!='off')):
+        if operator not in ('off','prepare-roles-v1','activate-roles-v1') or (operator!='off' and (enabled=='true' or acceptance!='off')):
             raise ConfigurationError('Invalid STAGING_OPERATOR_ACTION or disable collection and diagnostics')
-        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance,operator)
+        verifiers={}
+        if operator=='activate-roles-v1':
+            from services.api.operations import validate_runtime_verifiers
+            try:
+                verifiers=json.loads(env.get('STAGING_RUNTIME_VERIFIERS',''))
+                validate_runtime_verifiers(verifiers)
+            except Exception:raise ConfigurationError('Invalid private runtime verifier configuration') from None
+        elif env.get('STAGING_RUNTIME_VERIFIERS',''):
+            raise ConfigurationError('Clear private runtime verifiers outside activation')
+        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance,operator,verifiers)
 
 
 @contextmanager
@@ -84,9 +94,11 @@ def run(settings,stop):
     # Disabled staging deploys do not construct SDK/DB clients or schedule/fetch work.
     if not settings.enabled:
         if settings.operator_action!='off':
-            from services.api.operations import prepare_runtime_roles
+            from services.api.operations import prepare_runtime_roles,activate_runtime_roles
             try:
-                print(json.dumps(prepare_runtime_roles(settings.database_url),sort_keys=True),flush=True)
+                receipt=(activate_runtime_roles(settings.database_url,settings.runtime_verifiers)
+                         if settings.operator_action=='activate-roles-v1' else prepare_runtime_roles(settings.database_url))
+                print(json.dumps(receipt,sort_keys=True),flush=True)
             except Exception:
                 print('Staging operator action failed; no retry; collection remains disabled',file=sys.stderr,flush=True)
         if settings.acceptance!='off':
@@ -105,7 +117,7 @@ def run(settings,stop):
         pool=ConnectionPool(settings.database_url,min_size=1,max_size=2,open=False,timeout=5,
             kwargs={'row_factory':dict_row,'connect_timeout':5,'options':'-c statement_timeout=30000'})
         stack.callback(pool.close);pool.open(wait=True,timeout=5)
-        # API and worker pre-deploy commands apply migrations explicitly, never here.
+        # Runtime pre-deploy commands verify an operator-applied schema, never migrate.
         with pool.connection() as c:
             if not c.execute("SELECT to_regclass('research_campaign_result') IS NOT NULL AS ready").fetchone()['ready']:
                 raise ConfigurationError('Apply the committed migrations before starting collection')

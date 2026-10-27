@@ -20,16 +20,38 @@ def migrate(url,directory=None):
             c.execute('INSERT INTO schema_migration(name,checksum) VALUES(%s,%s)',(file.name,checksum))
 
 
+def verify_runtime(url,profile):
+    from .db_privileges import audit_database
+    receipt=audit_database(url,profile)
+    if not receipt['privilege_boundary_ready']:
+        raise RuntimeError('Runtime database privileges or migrations do not match')
+    return receipt
+
+
+def deployment_check(url,profile=None):
+    # Compatibility for the existing hosted preDeploy command during cutover.
+    # Once a profile is configured, this path executes read-only checks only.
+    if profile is not None:return verify_runtime(url,profile)
+    migrate(url)
+    return dict(contract='operator-migration-v1',migrations_applied=True)
+
+
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['migrate','prepare-runtime-roles']);args=parser.parse_args()
+    import json
+    parser=argparse.ArgumentParser()
+    parser.add_argument('action',choices=['migrate','verify-runtime','prepare-runtime-roles'])
+    parser.add_argument('--profile',choices=['api','research'])
+    args=parser.parse_args()
     try:
         if args.action=='migrate':
-            migrate(os.environ['DATABASE_URL']);print('Migrations applied')
+            receipt=deployment_check(os.environ['DATABASE_URL'],os.environ.get('RUNTIME_DB_PROFILE'))
+        elif args.action=='verify-runtime':
+            receipt=verify_runtime(os.environ['DATABASE_URL'],args.profile or os.environ['RUNTIME_DB_PROFILE'])
         else:
             if os.environ.get('COLLECTION_ENABLED','false')!='false':
                 raise ValueError('Disable collection before operator actions')
             from .operations import prepare_runtime_roles
-            import json
-            print(json.dumps(prepare_runtime_roles(os.environ['DATABASE_URL']),sort_keys=True))
+            receipt=prepare_runtime_roles(os.environ['DATABASE_URL'])
+        print(json.dumps(receipt,sort_keys=True))
     except Exception:raise SystemExit('Database operation failed; inspect private configuration and database availability') from None

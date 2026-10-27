@@ -162,3 +162,37 @@ class RuntimePrivilegesTests(unittest.TestCase):
         finally:
             with psycopg.connect(URL,autocommit=True) as c:
                 c.execute('ALTER ROLE pocket_api_saved_test RENAME TO pocket_api_runtime')
+
+    def test_atomic_activation_direct_login_and_readonly_predeploy(self):
+        from services.api.operations import activate_runtime_roles,RUNTIME_ROLES
+        from services.api.manage import deployment_check
+        passwords={role:uuid4().hex+uuid4().hex for role in RUNTIME_ROLES}
+        with psycopg.connect(URL) as c:
+            verifiers={role:c.pgconn.encrypt_password(password.encode(),role.encode(),algorithm=b'scram-sha-256').decode() for role,password in passwords.items()}
+        try:
+            receipt=activate_runtime_roles(URL,verifiers)
+            self.assertTrue(receipt['activated']);self.assertFalse(receipt['passwords_returned'])
+            for profile,role in zip(('api','research'),RUNTIME_ROLES):
+                direct=urlsplit(URL)._replace(netloc=role+':'+passwords[role]+'@'+urlsplit(URL).netloc.rsplit('@',1)[-1]).geturl()
+                self.assertTrue(deployment_check(direct,profile)['privilege_boundary_ready'])
+                # Replay cannot rotate either active credential, even with new verifiers.
+                with self.assertRaises(ValueError):activate_runtime_roles(URL,verifiers)
+                self.assertTrue(audit_database(direct,profile)['privilege_boundary_ready'])
+                with self.assertRaises(RuntimeError):deployment_check(direct,'research' if profile=='api' else 'api')
+            with psycopg.connect(URL) as c:
+                self.assertEqual(c.execute('SELECT count(*) FROM public.schema_migration').fetchone()[0],9)
+        finally:
+            with psycopg.connect(URL,autocommit=True) as c:
+                for role in RUNTIME_ROLES:c.execute(sql.SQL('ALTER ROLE {} NOLOGIN PASSWORD NULL').format(sql.Identifier(role)))
+
+    def test_activation_refuses_partial_existing_login_without_changing_first_role(self):
+        from services.api.operations import activate_runtime_roles,RUNTIME_ROLES
+        with psycopg.connect(URL,autocommit=True) as c:
+            verifiers={role:c.pgconn.encrypt_password(uuid4().hex.encode(),role.encode(),algorithm=b'scram-sha-256').decode() for role in RUNTIME_ROLES}
+            c.execute('ALTER ROLE pocket_research_runtime LOGIN')
+        try:
+            with self.assertRaises(ValueError):activate_runtime_roles(URL,verifiers)
+            with psycopg.connect(URL) as c:
+                self.assertFalse(c.execute("SELECT rolcanlogin FROM pg_roles WHERE rolname='pocket_api_runtime'").fetchone()[0])
+        finally:
+            with psycopg.connect(URL,autocommit=True) as c:c.execute('ALTER ROLE pocket_research_runtime NOLOGIN PASSWORD NULL')
