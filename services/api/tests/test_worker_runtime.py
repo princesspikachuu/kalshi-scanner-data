@@ -72,3 +72,26 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(runtime.signal,'signal',side_effect=install):
             with runtime.termination(stop):handlers[signal.SIGTERM](None,None);self.assertTrue(stop.is_set())
         self.assertEqual(set(handlers.values()),{'previous'})
+
+
+    def test_explicit_acceptance_is_once_then_idle_and_never_starts_collection(self):
+        from services.research import acceptance
+        for action in ('r2-v1','database-v1'):
+            settings=runtime.WorkerSettings.from_env({**environment(),'STAGING_ACCEPTANCE':action})
+            stop=Mock();stop.is_set.side_effect=[False,True]
+            with patch.object(acceptance,'run_check',return_value={'verified':True}) as check, \
+                 patch.object(runtime,'serve') as serve,patch('sys.stdout',new_callable=StringIO):
+                runtime.run(settings,stop)
+                check.assert_called_once_with(settings,action);serve.assert_not_called()
+        for values in ({'STAGING_ACCEPTANCE':'typo'},{'STAGING_ACCEPTANCE':'r2-v1','COLLECTION_ENABLED':'true'}):
+            with self.assertRaises(runtime.ConfigurationError):
+                runtime.WorkerSettings.from_env({**environment(),**values})
+
+    def test_acceptance_failure_is_sanitized_then_idles_without_retries(self):
+        from services.research import acceptance
+        settings=runtime.WorkerSettings.from_env({**environment(),'STAGING_ACCEPTANCE':'r2-v1'})
+        stop=Mock();stop.is_set.return_value=True
+        with patch.object(acceptance,'run_check',side_effect=RuntimeError('private-sentinel')) as check, \
+             patch('sys.stderr',new_callable=StringIO) as errors:
+            runtime.run(settings,stop);check.assert_called_once()
+            self.assertNotIn('sentinel',errors.getvalue())

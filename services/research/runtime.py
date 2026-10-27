@@ -2,6 +2,7 @@
 from contextlib import ExitStack,contextmanager
 from dataclasses import dataclass,field
 import math
+import json
 import os
 import re
 import signal
@@ -35,6 +36,7 @@ class WorkerSettings:
     read_capacity:int
     endpoint_cost:int
     enabled:bool=False
+    acceptance:str='off'
 
     @classmethod
     def from_env(cls,env=None):
@@ -56,7 +58,10 @@ class WorkerSettings:
         except ValueError:raise ConfigurationError('Invalid Kalshi application read budget') from None
         enabled=env.get('COLLECTION_ENABLED','false')
         if enabled not in ('true','false'):raise ConfigurationError('COLLECTION_ENABLED must be true or false')
-        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true')
+        acceptance=env.get('STAGING_ACCEPTANCE','off')
+        if acceptance not in ('off','r2-v1','database-v1') or (enabled=='true' and acceptance!='off'):
+            raise ConfigurationError('Invalid STAGING_ACCEPTANCE or collection must be disabled')
+        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance)
 
 
 @contextmanager
@@ -74,6 +79,13 @@ def termination(stop):
 def run(settings,stop):
     # Disabled staging deploys do not construct SDK/DB clients or schedule/fetch work.
     if not settings.enabled:
+        if settings.acceptance!='off':
+            from .acceptance import run_check
+            try:
+                print(json.dumps(run_check(settings,settings.acceptance),sort_keys=True),flush=True)
+            except Exception:
+                # One bounded attempt per process, then idle rather than a crash/retry loop.
+                print('Staging acceptance failed; collection remains disabled',file=sys.stderr,flush=True)
         while not stop.is_set():stop.wait(30)
         return
     with ExitStack() as stack:

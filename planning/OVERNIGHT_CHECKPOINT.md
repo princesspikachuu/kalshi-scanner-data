@@ -746,3 +746,47 @@ with this staging app, but browser security/access rules still apply to new step
 Never store callback URLs, tokens, cookies, private email or proxy values in git.
 Collection remains disabled; hosted roles/R2 integrity/performance acceptance remain
 pending, with no changes to paid plans, automatic deploy settings or the live app.
+
+## Owner login acceptance and private diagnostic preparation
+
+Owner independently confirmed Google login, persistence after refresh and logout.
+Record these as owner-verified acceptance, not an agent-observed cookie test. Latest
+remote dfe1aad CI 40549661422 passed. Fresh pocket-acceptance worktree preserves
+older dirty/saved worktrees. No other remote work observed.
+
+Render connector's read-only SQL query was blocked by the intentionally empty DB
+external allowlist. Kept it private. Browser recovery also timed out before Render
+worker interaction. Prepared services/research/acceptance.py and a default-off
+STAGING_ACCEPTANCE runtime gate: database-v1 performs one read-only catalog/checksum
+privilege audit; r2-v1 performs two conditional PUTs/two bounded GETs of ONE fixed
+non-market staging marker under 1 KiB, retained immutably. No Kalshi request, DB
+write or collection. Errors sanitized; disabled worker idles after one attempt,
+not an application retry loop. SDK retries remain bounded. Reset flag off after
+recording a result because process restarts can repeat the idempotent test.
+
+Prepared infra/runtime-roles.sql explicit transaction, NOT a migration/deploy hook:
+fresh separate NOLOGIN API/research roles with explicit object grants. No history
+update/delete/truncate/trigger-alter/ownership; worker cannot access auth state.
+API owner-subject/session-material updates blocked. Revoke PUBLIC CREATE on public
+schema and TEMP on database to prevent temporary-table shadowing of guard lookups.
+No role/password/configuration changes have been applied to hosted DB. Separate
+LOGIN credentials and runtime-only URLs, plus splitting operator migrations from
+runtime configuration, remain mandatory before claiming actual privilege isolation.
+Do not just SET ROLE on an operator URL; original credentials can regain ownership.
+
+infra/STAGING_ACCEPTANCE.md contains exact diagnostic flags/commands, costs/scope,
+permission boundary and remaining owner credential steps. Unit cases cover fixed
+R2 probe/reuse/corruption, explicit write gate, disabled collection requirement,
+cleanup and sanitization. New real-PG cases cover auth/campaign/queue/budget and
+publication with limited roles, denied history mutations and read-only operator
+recognition. Local actual-PG cases require a disposable DB; verify them in CI.
+
+Next: inspect this commit's CI, fix any grant failures before deployment. Then
+manually deploy ONLY the existing disabled research worker at the tested head,
+set temporary STAGING_ACCEPTANCE=database-v1 and read JSON audit; repeat with r2-v1
+for tiny already-authorized archive acceptance. Restore off and verify final worker
+live with collection false. Never expose DB or create paid resources for the audit.
+Record actual receipts/findings; successful deploy does not prove a test passed.
+Only after owner-controlled credential/migration separation, privilege audit and
+R2 acceptance should a tiny real collection be separately enabled. Preserve full
+cohort/loss-prevention behavior; no live app changes, merge or trading.
