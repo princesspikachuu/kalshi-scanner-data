@@ -134,6 +134,20 @@ class ResearchQueue:
             return c.execute('SELECT page_key,object_key,checkpoint,completed_at FROM collection_page WHERE job_id=%s ORDER BY completed_at,page_key',
                              (UUID(str(job_id)),)).fetchall()
 
+    def page_evidence(self, job_id):
+        """Read committed pages with receipts; no lease or mutable job writes.
+
+        Consumers must still verify archive bytes and envelope identity. A receipt
+        from this join is a reference, not a claim that the object still exists.
+        """
+        with self.pool.connection() as c:
+            return c.execute('''SELECT p.page_key,p.object_key,p.checkpoint,p.completed_at,
+                jsonb_build_object('object_key',a.object_key,'sha256',a.sha256,
+                    'provider',a.provider,'content_type',a.content_type,
+                    'byte_length',a.byte_length,'metadata',a.metadata) AS receipt
+                FROM collection_page p JOIN raw_archive a ON a.object_key=p.object_key
+                WHERE p.job_id=%s ORDER BY p.page_key''', (UUID(str(job_id)),)).fetchall()
+
     def finish(self, job_id, token):
         """Worker signals completion; dataset publication is a separate transaction."""
         with self.pool.connection() as c:

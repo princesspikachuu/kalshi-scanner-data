@@ -251,3 +251,66 @@ Official references checked October 27, 2026:
 - https://www.python-httpx.org/advanced/timeouts/
 - https://www.python-httpx.org/quickstart/#streaming-responses
 - https://www.python-httpx.org/environment_variables/
+
+## Verified settled-candidate normalization
+
+`normalize.py` builds a versioned `CandidateBatch` from explicitly selected queue
+jobs and committed archive receipts. Call `normalize_inventory(series, utc_day,
+generation, [(job, queue.page_evidence(job_id)), ...], archive_store)`. The new
+queue read method joins committed page references to archive metadata; it does
+not mutate a job, create coverage or prove the object still exists.
+
+Both recent-day and historical-series inventory are required for each requested
+series/generation. Missing, unfinished, failed/cancelled or unavailable inputs
+produce a non-ready batch with explicit input states and **no candidate cohort**.
+A succeeded job alone is insufficient: its terminal cursor chain must be complete.
+A complete listing with no eligible candidates is a ready empty candidate batch,
+which remains distinct from missing evidence and from a future empty quote sample.
+
+Multiple successful complete jobs for the same scope require the caller to select
+explicit membership; the normalizer never silently picks a refresh or merges
+separate run versions. Failed earlier attempts cannot overwrite complete immutable
+evidence. Other scopes/generations are not mixed into the requested batch.
+
+For every selected page the normalizer reads through ArchiveStore, re-verifying
+SHA-256, compressed length and bounded JSON decoding. It checks the archive's
+scope and checkpoint against the committed DB page, including cursor and item
+count. An object with a valid hash but the wrong envelope is still rejected.
+Missing/corrupt evidence, page gaps, conflicting outcomes, mismatched market
+identity/series or safety limits raise before returning any usable batch.
+
+Candidates use the current collector's eligibility rule: result exactly yes/no
+and close time in `[00:00 UTC, next 00:00 UTC)`. Offsets and fractional seconds are
+handled exactly; current live collector code is untouched. There is no separate
+status filter, horizon selection, stratified sampling, quote conversion, fill
+simulation, loss prevention, ROI or observation metric in this layer.
+
+Tickers deduplicate across pages and recent/historical sources. Close time, series
+and event identity must agree across all scanned appearances, including those
+outside the requested day; settled yes/no conflicts block the batch. A pending
+appearance may later agree with a settled one, but only settled rows become
+outcome evidence. Different price snapshots are retained as distinct references;
+the normalizer does not select a listing quote or turn it into a maker fill.
+
+Each candidate carries all its confirming job/scope/page/object/checksum/row-index
+references. Original provider fields and decimal price strings stay in immutable
+archives, without conversion. To inspect a variant, read `archive_store.read(
+reference.receipt())['response']['markets'][reference.row_index]`. The candidate
+and its references are frozen records; batches have a deterministic fingerprint
+including normalization version, target day/generation, input membership and all
+confirming references. Input order does not affect the fingerprint.
+
+Default scan ceilings are 250,000 rows and 10,000 pages (configurable up to
+1,000,000 rows / 10,000 pages). Limits count duplicate and out-of-day inventory;
+they fail rather than truncate. The normalizer keeps a bounded identity map in
+memory and performs no SQL publication or persistence of its derived batch.
+Large historical series may require a future indexed normalization implementation.
+No speedup, provider snapshot consistency or complete quote coverage is claimed.
+
+Twelve pure normalization tests and two additional actual-PG pipeline tests cover
+UTC boundaries, source deduplication, original-price provenance, incomplete source
+rejection, conflicts, hash/envelope integrity, deterministic membership and limits.
+No live provider/object-store traffic is required. Reviewed existing
+`scripts/collect_backtest.py` and current official market schemas on October 27,
+2026: https://docs.kalshi.com/api-reference/market/get-markets and
+https://docs.kalshi.com/api-reference/historical/get-historical-market.

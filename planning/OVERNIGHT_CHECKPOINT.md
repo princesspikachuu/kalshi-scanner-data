@@ -180,33 +180,60 @@ strict response assumptions, cooperative deadline limitations and shared-budget
 scope. No runner, schedule, deployment, resource, hosted migration, owner email,
 credentials, Google setup, infrastructure mutation or trading was introduced.
 
+## Sixth milestone: verified settled-candidate normalization
+
+Started from remote `0e919bd810d3204ccc988647612a6c664dc75208`;
+**CI 40471155065 passed**. Checkpoint reported no active worker. Used fresh
+`pocket-normalize` worktree without overwriting prior saved dirty worktrees.
+
+Added `normalize.py` and `ResearchQueue.page_evidence()` (read-only committed
+page/archive receipt join). Normalization requires complete succeeded recent and
+historical inventory for each requested series/generation. Gaps remain explicit
+and return NO candidate cohort. All selected objects are checksum/length verified
+and their scope/checkpoint/cursor/count are checked against DB page evidence.
+Cross-source/page duplicates retain confirming object/job/page/row references;
+conflicting outcomes or market identities reject the whole batch. Multiple
+complete jobs for a scope require explicit run membership selection.
+
+Reviewed current collector and official current schemas. Eligibility preserves
+result exactly yes/no and half-open UTC close day; offsets/fractional seconds are
+handled exactly. No sampling, price conversion, quote selection, fill simulation,
+ROI, dataset publication or dashboard change occurred. Original price strings and
+other provider fields stay in immutable archives. Frozen records include a stable
+versioned membership/provenance fingerprint. Row/page limits fail, never truncate.
+README records integration, gap semantics and bounded in-memory scan limitations.
+
+Local: 64 API/research, 7 owner-policy and 14 gateway/client tests passed; 30 PG
+cases skipped without a disposable local database. Blueprint, compile, dependency
+and diff checks passed. Added 12 pure and 2 real-PG cases. Full 115-test result
+awaits this commit's remote CI; inspect it before claiming actual-PG success.
+No hosted requests/resources/credentials/owner email, deployment, live infra
+mutation, Google setup or trading. No worker remains active after this run.
+
 ## Next independent milestones (complete in order, adjust to evidence)
 
-1. Inspect newest head and CI. Queue/archive/R2, planner/worker, shared budget and
-   HTTP inventory adapter exist; do not redo them. Fix any CI failures first.
-   This run finishes after checkpoint/CI inspection; no background process remains.
-2. Normalize archived inventory into settled yes/no candidates by exact half-open
-   UTC close day. Read/verify immutable objects and scope/checkpoint identity;
-   deduplicate cross-source tickers with immutable provenance, reject conflicting
-   outcomes rather than silently favoring a source. Preserve inventory gap states
-   and original raw price strings. Review current collector rules before changing.
-3. Add resumable candle/trade evidence scopes and bounded read adapters with
-   <=1-day strategy horizons. Keep bid/ask price units, settled-only filtering and
-   maker-fill provenance rules. Inventory complete/empty is never full-sample ROI.
-4. Versioned dataset/run membership and precomputed research summary storage.
-   Atomically publish complete datasets, retain previous runs, never mix latest
-   with cumulative or replace full-sample counts with an observed subset.
-5. Authenticated read-only historical run/date queries with indexed SQL/keyset
-   pagination and tests. Owner mutations remain session+CSRF protected. Update
-   gateway allowlists deliberately when routes are added.
-6. React/TypeScript shell/history browser after stable API contract. Preserve
-   familiar table behavior. Measure representative local performance later;
-   make no speedup claim from structure or tiny synthetic samples.
+1. Inspect newest remote head and CI; fix failures first. Existing queue/archive,
+   R2, planner/worker, HTTP inventory transport and normalization are implemented.
+   Do not redo them or overwrite newer work. Read research README contracts.
+2. Add resumable candle/trade evidence scopes and bounded read adapters, using
+   normalized candidate references and <=1-day strategy horizons. Preserve both
+   source routing/fallback evidence, bid/ask price units, settled-only selection
+   and maker-fill provenance rules. Review existing collector/execution model
+   and current official API docs. Use stubs; no live collection is required.
+3. Versioned dataset/run membership and precomputed research summary storage.
+   Atomically publish complete datasets; retain prior runs. Never mix latest with
+   cumulative or replace full-sample counts with an observed/execution subset.
+   Normalize outputs are in-memory only; design durable schema/publication here.
+4. Authenticated read-only historical run/date queries with indexed SQL, keyset
+   pagination and tests. Owner mutations remain session+CSRF protected. Deliberately
+   update gateway allowlists when routes are added. No hosting needed.
+5. React/TypeScript research shell/history browser after stable API contract;
+   preserve familiar current table. Measure representative local performance later,
+   without promising speedups from structure or tiny synthetic samples.
 
-Save code/checkpoint to the remote draft branch; inspect PR diff and CI. Main has
-later live table fixes and automated data updates: reconcile only before a future
-authorized integration. Do not merge or deploy during this build. Test fixtures
-are not evidence of real Kalshi/R2 compatibility, retention or throughput.
+Save independent code/checkpoint milestones to draft PR #9 and inspect CI. Main
+has later live table fixes/automated data updates; reconcile only for a future
+explicitly authorized integration. Do not merge, deploy, provision or trade.
 
 ## Owner-only items to leave pending
 

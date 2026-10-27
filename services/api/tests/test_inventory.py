@@ -281,3 +281,48 @@ class InventoryPostgresTests(unittest.TestCase):
             self.assertEqual(self.queue.pages(job['id']),[])
             self.assertEqual(self.row(job)['status'],'failed')
             self.assertEqual(self.row(job)['error_code'],'provider_invalid')
+
+    def test_postgres_receipts_normalize_both_sources_without_publishing_or_mutation(self):
+        from services.research.normalize import normalize_inventory
+        from test_kalshi import MARKET
+        recent = self.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[MARKET], 'cursor':''}))),recent)
+        first = self.row(recent)
+        evidence = self.queue.page_evidence(recent['id'])
+        partial = normalize_inventory([SCOPE.series],SCOPE.day,SCOPE.generation,[(first,evidence)],self.archives)
+        self.assertFalse(partial.ready)
+        self.assertEqual(partial.candidates,())
+        history_scope = Scope(SCOPE.series,'historical',None,SCOPE.generation)
+        self.queue.enqueue('btc',history_scope.parameters(),'historical-normalization')
+        historical = self.queue.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[MARKET], 'cursor':''}))),historical)
+        attempts = [(self.row(j),self.queue.page_evidence(j['id'])) for j in (recent,historical)]
+        normalized = normalize_inventory([SCOPE.series],SCOPE.day,SCOPE.generation,attempts,self.archives)
+        self.assertTrue(normalized.ready)
+        self.assertEqual((len(normalized.candidates),normalized.rows_scanned),(1,2))
+        self.assertEqual({e.source for e in normalized.candidates[0].evidence},{'recent','historical'})
+        self.assertEqual(self.row(recent),first)
+        self.assertEqual(evidence,self.queue.page_evidence(recent['id']))
+        for ref in normalized.candidates[0].evidence:
+            row = self.archives.read(ref.receipt())['response']['markets'][ref.row_index]
+            self.assertEqual(row['yes_bid_dollars'],'0.8800')
+        with self.store.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM ingestion_cursor').fetchone()['n'],0)
+
+    def test_postgres_receipt_integrity_rechecked_after_collection(self):
+        from services.research.normalize import normalize_inventory
+        from services.research.archive import ArchiveInvalid
+        from test_kalshi import MARKET
+        recent = self.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[MARKET], 'cursor':''}))),recent)
+        history_scope = Scope(SCOPE.series,'historical',None,SCOPE.generation)
+        self.queue.enqueue('btc',history_scope.parameters(),'historical-normalization')
+        historical = self.queue.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[], 'cursor':''}))),historical)
+        attempts = [(self.row(j),self.queue.page_evidence(j['id'])) for j in (recent,historical)]
+        receipt = attempts[0][1][0]['receipt']
+        self.archives.objects.data[receipt['object_key']] = b'corrupt-after-collection'
+        with self.assertRaises(ArchiveInvalid):
+            normalize_inventory([SCOPE.series],SCOPE.day,SCOPE.generation,attempts,self.archives)
+        self.assertEqual(self.row(recent)['status'],'succeeded')
+        self.assertEqual(len(self.queue.page_evidence(recent['id'])),1)
