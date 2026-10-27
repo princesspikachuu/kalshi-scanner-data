@@ -1,5 +1,17 @@
 # Google sign-in setup — owner console step
 
+Latest live acceptance: the proxy connection is verified, but Google returned
+**403 org_internal** for the owner account. In the existing Pocket Analytics
+project, open Google Auth Platform > Audience and select Make external. Keep
+Testing if offered, save, then retry staging with a fresh challenge. Add the
+chosen owner as a test user if applicable; Google exempts basic openid/email/
+profile Sign in with Google from mandatory trusted test-user listing. No new
+client ID/secret or production publishing is needed. API owner authorization
+remains enforced independently. Stop if organization policy prevents the change.
+
+Reference: https://support.google.com/cloud/answer/15549945
+
+
 Current setup status: the owner supplied the public Web client ID and Render
 API is deployed. Do not create duplicate credentials. Confirm the existing
 client has the exact staging JavaScript origin below. Staging gateway deploy

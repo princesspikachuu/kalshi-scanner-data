@@ -688,3 +688,34 @@ works, existing Google JavaScript origin matches, then owner popup/cookie/logout
 acceptance. Investigate client-specific smoke 403 without weakening protections;
 new labeled diagnostics identify the exact failed check on a future authorized run.
 Keep collection off, API/worker auto deploy off and Blueprint sync paused.
+
+
+## Proxy binding verified; Google audience blocks owner login
+
+Owner reports completing the Cloudflare secret binding. Browser root now displays
+Google sign-in button using the expected public client ID; /api/auth/me visibly
+returns Sign in required instead of connection-not-configured. This verifies the
+gateway/API challenge connection without inspecting or recording the private key.
+Actual sign-in launched Google popup. Owner selected the existing Google account
+via secure browserAuth. Google then returned 403 org_internal: Pocket Analytics
+can only be used within its organization. No login session was established; no
+cookie/logout acceptance claimed. Do not retry the same Google flow until the
+owner fixes the OAuth audience setting; this is a specific configuration error,
+not evidence of bot detection. No application code/auth boundary was weakened.
+
+Owner-only next step: in the EXISTING Pocket Analytics Google Cloud project,
+Google Auth Platform > Audience, change Internal to External (Make external), keep
+Testing if offered, save. Add the chosen owner account to Test users if applicable;
+Google documents that basic openid/email/profile Sign in with Google does not
+require trusted test-user listing. Do not create duplicate OAuth credentials,
+request Gmail/Drive scopes, or publish the app to production. The API independently
+remains owner-only even with Google's audience External. If an organization policy
+blocks this setting, stop and record it instead of changing org policy.
+Official reference: https://support.google.com/cloud/answer/15549945
+
+After owner reports saved: start a fresh login challenge from staging root, verify
+Google popup success, refreshed current-user session and logout, then continue
+least-privilege DB/R2 acceptance before explicitly enabling collection. Credentials,
+owner email and callback URLs/tokens are excluded from public source. Render sizes,
+collection-off, automatic-deploy-off and live Cloudflare app remain unchanged.
+CI 40544709439 passed on 6401c6f; only documentation updated in this checkpoint.
