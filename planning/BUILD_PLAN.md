@@ -2,7 +2,7 @@
 
 **Draft for review. Planning only: no application deployment, account provisioning, paid subscription, database migration, or live trading is authorized by this document.**
 
-This expands [the product plan](../APP_PLAN.md). Existing source code remains unchanged by this planning branch.
+This expands [the product plan](../APP_PLAN.md). The [setup, access, and Google-only login runbook](SETUP_AND_ACCESS.md) assigns concrete account-side and development steps. The [loss-risk redesign](LOSS_RISK_REDESIGN.md) replaces the fixed-stop optimizer as the way to estimate when losing becomes likely. Existing source code remains unchanged by this planning branch.
 
 ## 1. Outcome and boundaries
 
@@ -141,7 +141,7 @@ Owner-configured limits include position/order size, committed funds, pending-or
 | Performance | Separate historical, paper and actual results; fees, drawdowns, non-fills, recovery/exit costs, category/strategy breakdowns |
 | Activity/settings | Searchable decisions/errors, alerts, connections, risk limits, authentication and persistent view preferences |
 
-Preserve mobile usability, named navigation, selected views and filters, and clearly visible mode/connection state. Show operational information that helps a decision; keep debugging internals in the activity/details views. Use authenticated owner sessions before adding private account data or execution controls; the present public research endpoints must never become public trading controls.
+Preserve mobile usability, named navigation, selected views and filters, and clearly visible mode/connection state. Show operational information that helps a decision; keep debugging internals in the activity/details views. Use **Sign in with Google only**, with backend owner authorization and server-managed sessions, before adding private account data or execution controls; the present public research endpoints must never become public trading controls.
 
 ## 10. Speed and observability
 
@@ -163,7 +163,7 @@ Measure feed-event age, queue depth, processing/submit/ack timing, reconnects, r
 | --- | --- | --- |
 | A. Data contracts | Units, SQL schema, collection/run membership, strategy and API schemas | Existing CSV/path inputs import without altering counts or historical holding P/L; invalid units/duplicates rejected |
 | B. Durable research | PostgreSQL/R2 ingestion, job checkpoints, coherent dataset versions | Retry/restart is idempotent; latest/cumulative/previous-run results are reproducible; incomplete jobs do not overwrite published data |
-| C. Structured app | React screens and private FastAPI, keeping the existing app usable during migration | Mobile core flows work; saved view state persists; no cross-run data mixing; private data requires owner authentication |
+| C. Structured app | Google-only owner login, React screens and private FastAPI, keeping the existing app usable during migration | Mobile core flows work; saved view state persists; no cross-run data mixing; private data requires owner authentication |
 | D. Live recorder | Feed client, snapshot/gap recovery, account read reconciliation and archived live evidence | Forced disconnects recover correctly; stale data is visible; research load does not stall the recorder |
 | E. Shared strategy + paper engine | Rule evaluation, order simulation, position/risk accounting, loss-exit comparison | No lookahead; deterministic replay; duplicate/restart/cancel/partial-fill cases pass; paper results separate from historical estimates |
 | F. Controlled live mode | Authenticated execution adapter and owner controls | Applicable account/market constraints verified, risk limits explicitly configured, reconciliation/failure controls demonstrated, and live activation explicitly selected |
@@ -173,7 +173,7 @@ Do not set a profitability target or a number of paper days as a substitute for 
 
 ## 12. Concrete first backlog
 
-1. Specify price/quantity/time units, immutable dataset IDs, and identifiers for current source files.
+1. Confirm the Google owner account, service connections and staging origins using the setup runbook. Specify identity/session contracts alongside price/quantity/time units, immutable dataset IDs, and identifiers for current source files.
 2. Draft SQL migrations for catalog, collections, observations, run membership and artifact references.
 3. Specify a versioned strategy configuration with entry, maker execution, downside-exit and risk policies.
 4. Build an import/reconciliation specification using a small real category/date fixture, including current raw paths and latest-run scope.

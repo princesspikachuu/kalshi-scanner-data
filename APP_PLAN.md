@@ -4,6 +4,8 @@ Status: working product plan. Planned features below are not claims about the cu
 
 Draft expansion: [remaining app build plan](planning/BUILD_PLAN.md), including SQL/data design, continuous engine, paper/live phases, screens, failure behavior, acceptance gates and the first backlog. This planning branch is not a deployment.
 
+Setup companion: [where we build, service connections, and Google-only sign-in](planning/SETUP_AND_ACCESS.md).
+
 ## Product goal
 
 Run trading strategies automatically, with historical research supporting strategy selection and evaluation. The intended workflow is research → strategy testing → paper trading → live automation → performance review. The engine must keep operating when the phone app or browser is closed.
@@ -62,6 +64,10 @@ Initial implementation: the current dashboard now integrates the on/off downside
 | Activity and settings | Decision logs, job progress/errors, connections, notifications, and preferences |
 
 Remember the selected page, category, strategy, dataset, metric, and filters across reloads. Every background job should identify what it is running and what it added when finished.
+
+## Login
+
+Sign in with Google is the only planned login method. The backend verifies Google identity, authorizes only approved app accounts (initially the owner), and manages secure sessions. Do not enroll the first visitor automatically, expose account controls through public API routes, or treat existing Google Drive/Gmail connections as Google Cloud administration. See the setup runbook for client IDs, origins and account-side steps.
 
 ## Strategy and execution requirements
 
