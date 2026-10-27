@@ -1,49 +1,64 @@
-# Conditional loss prevention
+# Loss prevention in the return table
 
-The published loss study now uses schema version 2, model `conditional-outcome-v1`.
-It estimates settlement-loss probability from current bid and time remaining,
-within the original entry category and contract series. It does not publish the
-legacy constant-stop optimizer as a probability boundary or a sale instruction.
+The loss-prevention switch keeps the normal P/L, ROI and win-rate table. With it
+on, each cell adds its sell threshold and applies only the measured paired change
+from a simulated exit replay. With it off, the original dataset and values are
+unchanged. Sample sizes never shrink to a smaller exit-study cohort.
 
-`python scripts/loss_prevention.py` builds `backtests/LOSS_PREVENTION.json`.
-`python scripts/sync_dashboard.py` copies it to the dashboard fallback asset.
-The normal research workflow already runs both steps. Deployment also builds the report from source before uploading the app. A legacy remote schema falls back to that newly built same-origin asset. No additional provider
-requests are needed for this analysis.
+If the original group's loss rate exceeds 50%, the cell says **Trade not
+recommended** instead of displaying the sell threshold. Exactly 50% does not
+trigger this label. This warning does not remove trades from the return dataset.
 
-Decision evidence is either a fresh saved minute bid or a later saved checkpoint
-quote for the same contract and side. Complete subsequent paths are unnecessary.
-Older checkpoint archives only retain 50–100-cent bids; missing lower quotes are
-not inferred from complementary bids. Do not interpret missing evidence as safe
-holding. Zero bids count as outcome evidence but cannot establish executable sales.
+## Research policy
 
-Counts use one outcome-blind event representative per original entry category,
-chosen before examining later quote availability. Repeated dates and correlated
-contracts within that event cannot inflate a bin's count. Different categories
-and checkpoints still reuse events. Wilson 95% intervals reflect binomial sample
-uncertainty; they do not cover regime shifts, cross-event correlation or missing-data
-bias. A descriptive estimate is displayed even with one observation, accompanied
-by its wide interval. There is no minimum seven-day display gate.
+Fit the category's conditional 50% loss boundary from earlier event representatives
+using weighted decreasing isotonic regression over current-price bins. Interpolate
+only between adjacent observed price bins; never bridge a missing band or invent
+an above-entry threshold. Display a descriptive estimate even if a frozen replay
+is not available yet, but do not change returns without a replay.
 
-The table now shows a single approximate threshold directly in each cell when
-loss prevention is enabled. There is no decision-time picker, tap prompt or risk
-detail panel. Turning it off restores the unchanged P/L/ROI/win-rate view.
+Freeze that threshold on earlier events (approximately 70% chronological training).
+Evaluate one checkpoint at or before half the original entry window on later
+events, only when the decision occurs after every training event's close. No
+minimum seven-day gate is imposed. This is a checkpoint policy, not a claim to
+have simulated the first crossing over an unobserved full minute path.
 
-The display pools event counts across series within the selected market category
-at an automatic checkpoint at or before half the original entry time. Weighted
-isotonic regression fits loss probability as decreasing with current bid; this
-is an explicit modeling assumption, not a claim that the raw bins are monotonic.
-The displayed integer is the interpolated 50% crossing between adjacent observed
-price bins, marked approximate. No crossing, a missing adjacent bin, zero-bid
-interpolation or a crossing above the original average entry price yields a dash.
-It does not average selected series thresholds or extrapolate across missing bins.
+A qualifying below-entry positive bid at that checkpoint is the simulated sale
+price. Never assume a fill at the threshold when the observed bid gaps below it.
+Zero bids cannot execute. Incremental exit cost uses a 2-cent stress assumption,
+not verified exchange fees. A missed recovering winner counts against the policy.
+All adverse as well as favorable measured differences are retained.
 
-Both historical and latest use all saved history for threshold estimation while
-the original return datasets and counts remain separate and unchanged. These
-numbers estimate loss likelihood, not validated sell-versus-hold policies. No
-live orders are placed. Later-event replay and paper validation remain separate.
+For one $1-payout contract, paired sale-minus-hold change in cents is:
 
-Legacy scenario/replay helpers remain in `scripts/loss_prevention.py` for
-reproducibility and existing collector integration. They are no longer used by
-the published report. Algorithm and dashboard regression tests cover quote timing,
-side alignment, no future leakage, event deduplication, zero bids, uncertainty,
-price gaps, series separation and preservation of the original table returns.
+`observed sale bid - 2-cent exit cost - 100 * eventual win`
+
+The entry price and common entry fees cancel. Apply the sum of these paired
+changes over the original full cell count for average P/L; recompute ROI over the
+original total entry cost. Uncovered, training-only and unavailable positions
+retain their original holding result. This is a partial research overlay, not a
+validated live strategy or verified order-fill history.
+
+## Latest and historical views
+
+Historical replay uses the whole saved history. Latest replay is restricted to
+exact run membership and uses only historical events up to the last relevant
+latest event. Thus loading an older period never borrows future historical
+outcomes. Latest and historical retain their own original returns and counts.
+
+New collections persist membership in `backtests/LATEST_MEMBERSHIP.json`, bound
+to the latest run ID. An older run is recovered only when its complete saved date
+range matches metadata and all published entry-cell counts, wins and prices.
+Otherwise its ROI stays unchanged until a fresh collection saves exact membership.
+
+## Build and validation
+
+Run `python scripts/loss_prevention.py` and `python scripts/sync_dashboard.py`.
+The normal collection and deployment workflows already build this report. The
+compact published schema is version 2 with `roi_policy_version: 1`; older schemas
+fall back to the freshly built same-origin report. No new provider calls are
+needed. The raw decision-risk analyzer remains available for research tests.
+
+Tests cover chronological fitting, future-label exclusion, older latest runs,
+actual sale bids, zero bids, costs, missed recoveries, adverse deltas, event
+deduplication, full-sample return preservation and the >50% loss warning.

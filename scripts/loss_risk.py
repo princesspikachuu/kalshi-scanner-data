@@ -63,7 +63,7 @@ def summarize(items):
     return bins
 
 
-def analyze_risk(rows, paths, asset):
+def analyze_risk(rows, paths, asset, include_snapshots=False):
     from loss_prevention import canonical
     saved = canonical(rows)
     representatives = {}
@@ -145,7 +145,8 @@ def analyze_risk(rows, paths, asset):
             if not isinstance(bid, (int, float)) or not math.isfinite(bid) or not 0 <= bid <= 100:
                 continue
             grid[group].append({'event': event, 'bid': bid, 'won': int(r['won']),
-                                'entry': 100*float(r['maker_bid']), 'source': source})
+                                'entry': 100*float(r['maker_bid']), 'source': source,
+                                'key': (r['date'], r['ticker'], minute), 'close_ts': close, 'decision_ts': target})
             covered.add(key)
     records = []
     for (family, minute, band, decision), count in sorted(requested.items()):
@@ -156,21 +157,101 @@ def analyze_risk(rows, paths, asset):
                         'eligible_events': count, 'observed_events': len(items),
                         'saved_checkpoint_events': sum(x['source'] == 'saved_checkpoint' for x in items),
                         'bins': bins, 'boundary': boundary(bins)})
-    return {'records': records, 'saved_observations': len(saved),
+    result = {'records': records, 'saved_observations': len(saved),
             'eligible_entry_observations': eligible, 'event_entry_groups': len(representatives),
             'covered_event_entry_groups': len(covered),
             'note': 'Counts are distinct event representatives within each entry category/checkpoint; rows reuse events. Older checkpoint-only archives save 50–100-cent quotes, so their lower-price coverage is incomplete. No opposite-side bid is converted into a sale bid. Missing quotes are excluded, not interpreted as safe holding.'}
+
+    if include_snapshots:
+        result['_snapshot_groups'] = grid
+    return result
+
+
+def latest_membership(asset, rows):
+    """Use exact saved run membership; never assign historical exits to a new run."""
+    import os
+    from loss_prevention import canonical
+    from build_report import read_rows
+    stage = Path(os.environ.get('POCKET_COLLECTION_STAGE', '.run-collection')) / asset
+    target = Path('backtests/LATEST_MEMBERSHIP.json')
+    membership = json.loads(target.read_text()) if target.exists() else {}
+    meta_path = Path('backtests/LATEST_METADATA.json')
+    meta = json.loads(meta_path.read_text()).get(asset, {}) if meta_path.exists() else {}
+    run_id = meta.get('run_id')
+    if stage.exists():
+        keys = sorted((r['date'], r['ticker'], int(r['minutes_before_close'])) for r in canonical(read_rows(stage)))
+        membership[asset] = {'run_id': run_id, 'keys': keys}
+        target.write_text(json.dumps(membership, separators=(',', ':'))+'\n')
+        return {tuple(k) for k in keys}
+    cached = membership.get(asset, {})
+    if isinstance(cached, dict) and run_id and cached.get('run_id') == run_id:
+        return {tuple(k) for k in cached['keys']}
+    # Recover an older full-date run only when its complete saved rows match
+    # both run metadata and every published entry cell. Otherwise leave unknown.
+    meta_path = Path('backtests/LATEST_METADATA.json')
+    grid_path = Path('backtests/LATEST_BY_CATEGORY.csv')
+    if not meta_path.exists() or not grid_path.exists():
+        return None
+    import csv
+    from build_report import distinct_markets_at_time, metrics
+    meta = json.loads(meta_path.read_text()).get(asset, {})
+    dates = (meta.get('first_date'), meta.get('last_date'))
+    if not all(dates):
+        return None
+    selected = [r for r in rows if dates[0] <= r['date'] <= dates[1]]
+    if len(selected) != meta.get('total_observations') or len({(r['date'],r['ticker']) for r in selected}) != meta.get('markets_sampled_total'):
+        return None
+    with grid_path.open() as stream:
+        expected = [r for r in csv.DictReader(stream) if r['asset'] == asset]
+    if not expected:
+        return None
+    for r in expected:
+        subset = [x for x in distinct_markets_at_time(selected, int(r['minutes_before_close'])) if x['price_band'] == r['price_band_cents']]
+        m = metrics(subset)
+        if not m or m['n'] != int(r['sampled_markets']) or m['wins'] != int(r['wins']) or abs(m['avg_price_cents']-float(r['average_purchase_price_cents'])) > .00011:
+            return None
+    keys = {(r['date'],r['ticker'],int(r['minutes_before_close'])) for r in canonical(selected)}
+    membership[asset] = {'run_id': run_id, 'keys': sorted(keys)}
+    target.write_text(json.dumps(membership, separators=(',', ':'))+'\n')
+    return keys
 
 
 def build_risk_report():
     from build_report import ASSETS, read_rows
     from loss_prevention import read_paths
-    report = {'version': 2, 'model': 'conditional-outcome-v1',
+    report = {'version': 2, 'model': 'conditional-outcome-v2', 'roi_policy_version': 1,
               'published_at': dt.datetime.now(dt.timezone.utc).isoformat(),
               'exit_cost_stress_cents': EXIT_COST_STRESS_CENTS,
-              'historical': {},
-              'method': 'Observed settlement-loss rates by series, original entry category, current bid and remaining time. One event representative per category; Wilson 95% intervals. Descriptive, not an optimized or validated exit policy. Complete future paths are not required. The 2-cent sale cost is a stress assumption, not verified fees.'}
+              'historical': {}, 'latest': {},
+              'method': 'Category-level 50% conditional-loss threshold from an event-weighted monotone fit. Freeze on earlier events and replay one later checkpoint on later nonoverlapping events. Paired actual-bid sale-minus-hold differences only; missed recoveries and a 2-cent exit-cost stress included. Full original sample retained. Exploratory simulated results, not verified fills or a validated live edge. Remaining-time checkpoint is automatically at or before half the original entry window. No full-future-path requirement.'}
     for asset, _, folder, _, _ in ASSETS:
-        report['historical'][asset] = analyze_risk(read_rows(folder), read_paths(folder), asset)
+        rows = read_rows(folder)
+        scope = analyze_risk(rows, read_paths(folder), asset, include_snapshots=True)
+        from loss_policy import policy_cells
+        latest_keys = latest_membership(asset, rows)
+        historical_cells, latest_cells = policy_cells(scope.pop('_snapshot_groups'), latest_keys)
+        # Publish compact table summaries, not thousands of unused bin details.
+        scope.pop('records')
+        from build_report import distinct_markets_at_time, metrics
+        for cell in historical_cells:
+            selected = [r for r in distinct_markets_at_time(rows, cell['minutes_before_close']) if r['price_band'] == cell['price_band_cents']]
+            m = metrics(selected)
+            if m:
+                cell.update(base_n=m['n'], base_wins=m['wins'], base_price_cents=round(m['avg_price_cents'],4))
+        import csv
+        latest_grid = Path('backtests/LATEST_BY_CATEGORY.csv')
+        latest_base = {}
+        if latest_grid.exists():
+            with latest_grid.open() as stream:
+                latest_base = {(int(r['minutes_before_close']), r['price_band_cents']): r for r in csv.DictReader(stream) if r['asset'] == asset}
+        for cell in latest_cells:
+            base = latest_base.get((cell['minutes_before_close'],cell['price_band_cents']))
+            if base:
+                cell.update(base_n=int(base['sampled_markets']), base_wins=int(base['wins']), base_price_cents=float(base['average_purchase_price_cents']))
+        meta_path = Path('backtests/LATEST_METADATA.json')
+        latest_meta = json.loads(meta_path.read_text()).get(asset,{}) if meta_path.exists() else {}
+        scope['policy_cells'] = historical_cells
+        report['historical'][asset] = scope
+        report['latest'][asset] = {'policy_cells': latest_cells, 'run_id': latest_meta.get('run_id'), 'latest_membership_known': latest_keys is not None}
     Path('backtests/LOSS_PREVENTION.json').write_text(json.dumps(report, separators=(',', ':'), allow_nan=False) + '\n')
-    print('Published conditional loss risk; original holding results are unchanged.')
+    print('Published conditional loss thresholds and later-event paired exit results.')
