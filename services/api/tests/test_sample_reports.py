@@ -83,7 +83,7 @@ class SampleReportPostgresTests(unittest.TestCase):
                                (stream,)).fetchone()
             members = c.execute('''SELECT dataset_id FROM research_result_dataset WHERE result_id=%s ORDER BY dataset_id''',
                                 (latest['id'],)).fetchall()
-            other = c.execute("SELECT count(*) AS n FROM research_result WHERE stream_key LIKE 'category-%' OR stream_key=%s",
+            other = c.execute("SELECT count(*) AS n FROM research_result WHERE stream_key LIKE 'category-%%' OR stream_key=%s",
                               ('campaign-' + self.campaign.replace('-', ''),)).fetchone()['n']
             category_jobs = c.execute("SELECT count(*) AS n FROM research_job WHERE parameters->>'collector'='category-report-v1'").fetchone()['n']
         self.assertEqual([r['dataset_id'] for r in members], [first, second])
