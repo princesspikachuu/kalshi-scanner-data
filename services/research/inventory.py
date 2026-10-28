@@ -212,7 +212,7 @@ class InventoryWorker:
         # The lease fences this job's page writer. Reuse one committed-page
         # snapshot for both cursor recovery and next-page chain validation;
         # checkpoint() still checks the live lease and rejects conflicting rows.
-        committed = self.queue.pages(job_id)
+        committed = self.queue.pages_owned(job_id,token)
         state = inspect_pages(scope, committed)
         if state.state != 'partial':
             self.queue.finish(job_id, token)

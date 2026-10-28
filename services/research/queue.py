@@ -192,6 +192,17 @@ class ResearchQueue:
                 (SELECT count(*) FROM collection_page WHERE job_id=%s)) WHERE id=%s''', (job_id, job_id))
             return saved
 
+    def pages_owned(self,job_id,token):
+        """One read verifies current ownership and returns the page chain."""
+        with self.pool.connection() as c:
+            rows=c.execute('''SELECT p.page_key,p.object_key,p.checkpoint,p.completed_at
+                FROM research_job j LEFT JOIN collection_page p ON p.job_id=j.id
+                WHERE j.id=%s AND j.lease_token=%s AND j.status='running'
+                    AND j.lease_expires_at>clock_timestamp() ORDER BY p.completed_at,p.page_key''',
+                (UUID(str(job_id)),UUID(str(token)))).fetchall()
+        if not rows:raise LeaseLost('Page owner expired, replaced or cancelled')
+        return [r for r in rows if r['page_key'] is not None]
+
     def pages(self, job_id):
         with self.pool.connection() as c:
             return c.execute('SELECT page_key,object_key,checkpoint,completed_at FROM collection_page WHERE job_id=%s ORDER BY completed_at,page_key',
