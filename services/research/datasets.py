@@ -5,6 +5,8 @@ No observations, ROI, loss policy, provider requests or trading are computed her
 from .telemetry import timed,timing,count
 
 from dataclasses import asdict, dataclass
+from concurrent.futures import ThreadPoolExecutor
+from itertools import groupby
 from decimal import Decimal
 import json
 import math
@@ -121,7 +123,7 @@ def _canonical(resource,row):
 
 
 @timed('dataset.prepare')
-def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
+def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=2):
     """inventory_loader(id) -> (DB job, committed pages with receipts).
 
     Rebuild normalized membership from transitive inventory, then require every
@@ -129,6 +131,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
     Missing/failed/partial evidence cannot be published as a complete version.
     """
     if type(max_rows) is not int or not 1 <= max_rows <= 1000000: raise ValueError('Invalid row limit')
+    if type(archive_parallelism) is not int or not 1<=archive_parallelism<=2:raise ValueError('Invalid archive parallelism')
     manifest_receipt = plan.manifest_receipt()
     manifest = archives.read(manifest_receipt)
     artifacts = {}
@@ -189,25 +192,33 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
     # already fenced and inspected above; final records and provenance sort
     # independently of this read order.
     ordered_pages=_ordered_evidence_pages(selected)
+    groups=[]
+    for object_key,items in groupby(ordered_pages,key=lambda item:item[2]['receipt'].get('object_key')):
+        pages=list(items)
+        for offset in range(0,len(pages),8):groups.append((object_key,pages[offset:offset+8]))
     merged,scanned = {},0
-    for scope,jid,page in ordered_pages:
-        receipt = page['receipt']
-        if receipt['object_key']!=page['object_key'] or receipt['provider']!='kalshi': raise EvidenceConflict('Wrong evidence reference')
-        rows,cursor,selectors = resolve_evidence(scope,page,archives)
-        retain(receipt)
-        for index,row in enumerate(rows):
-            scanned += 1
-            if scanned>max_rows: raise ValueError('Evidence row limit exceeded; no truncated dataset')
-            identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
-            key = (scope.resource,scope.ticker,identity)
-            canonical = _canonical(scope.resource,row)
-            ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
-            if selectors[index] is not None:ref['projection']=selectors[index]
-            if key in merged:
-                saved = merged[key]
-                saved['record'] = _merge(saved['record'],canonical)
-                if ref not in saved['provenance']: saved['provenance'].append(ref)
-            else: merged[key] = dict(resource=scope.resource,ticker=scope.ticker,identity=identity,record=canonical,provenance=[ref])
+    with ThreadPoolExecutor(max_workers=archive_parallelism) as executor:
+        i=0
+        while i<len(groups):
+            pair=groups[i:i+2] if archive_parallelism==2 and i+1<len(groups) and groups[i][0]!=groups[i+1][0] else groups[i:i+1]
+            futures=[executor.submit(_resolve_evidence_group,pages,archives) for _,pages in pair]
+            for future in futures:
+                for scope,jid,page,rows,selectors in future.result():
+                    receipt=page['receipt'];retain(receipt)
+                    for index,row in enumerate(rows):
+                        scanned += 1
+                        if scanned>max_rows: raise ValueError('Evidence row limit exceeded; no truncated dataset')
+                        identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
+                        key = (scope.resource,scope.ticker,identity)
+                        canonical = _canonical(scope.resource,row)
+                        ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
+                        if selectors[index] is not None:ref['projection']=selectors[index]
+                        if key in merged:
+                            saved = merged[key]
+                            saved['record'] = _merge(saved['record'],canonical)
+                            if ref not in saved['provenance']: saved['provenance'].append(ref)
+                        else: merged[key] = dict(resource=scope.resource,ticker=scope.ticker,identity=identity,record=canonical,provenance=[ref])
+            i+=len(pair)
     records = []
     for key,value in sorted(merged.items()):
         value['provenance'].sort(key=digest); records.append(value)
@@ -231,7 +242,18 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
 
 def _ordered_evidence_pages(selected):
     return sorted(((scope,jid,page) for scope,jid,pages in selected for page in pages),
-        key=lambda item:(item[2]['receipt']['object_key'],item[0].key,item[2]['page_key']))
+        key=lambda item:(item[2]['receipt'].get('object_key',''),item[0].key,item[2]['page_key']))
+
+
+def _resolve_evidence_group(pages,archives):
+    result=[]
+    for scope,jid,page in pages:
+        receipt=page['receipt']
+        if receipt.get('object_key')!=page['object_key'] or receipt.get('provider')!='kalshi':
+            raise EvidenceConflict('Wrong evidence reference')
+        rows,_,selectors=resolve_evidence(scope,page,archives)
+        result.append((scope,jid,page,rows,selectors))
+    return result
 
 
 class DatasetStore:

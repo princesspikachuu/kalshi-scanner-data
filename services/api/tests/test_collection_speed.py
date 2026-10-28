@@ -1,6 +1,8 @@
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime,timezone
+from threading import Barrier,Lock
+import time
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +24,31 @@ import test_normalize as norm
 from test_normalize import RECENT,HISTORY,MARKET,DAY,GENERATION
 
 class CollectionSpeedTests(unittest.TestCase):
+    def test_bounded_archive_reads_overlap_and_keep_exact_dataset(self):
+        fixture=Fixture();objects=fixture.archives.objects
+        fixture.archives=ArchiveStore(objects)
+        baseline=fixture.prepare(archive_parallelism=1)
+        evidence_keys={page['object_key'] for _,pages in fixture.attempts for page in pages}
+        original_get=objects.get;gate=Barrier(2,timeout=3);lock=Lock();active=peak=0;first=[]
+        def get(key,max_bytes):
+            nonlocal active,peak
+            if key not in evidence_keys:return original_get(key,max_bytes)
+            with lock:
+                active+=1;peak=max(peak,active)
+                if len(first)<2:first.append(key);wait=len(first)<=2
+                else:wait=False
+            if wait:gate.wait()
+            time.sleep(.005)
+            try:return original_get(key,max_bytes)
+            finally:
+                with lock:active-=1
+        fixture.archives=ArchiveStore(objects)
+        with patch.object(objects,'get',side_effect=get):
+            parallel=fixture.prepare(archive_parallelism=2)
+        self.assertGreaterEqual(peak,2)
+        self.assertEqual((parallel.fingerprint,parallel.payload_json),(baseline.fingerprint,baseline.payload_json))
+        with self.assertRaises(ValueError):fixture.prepare(archive_parallelism=3)
+
     def test_shared_batch_pages_are_read_together_without_changing_dataset(self):
         import services.research.datasets as datasets
         fixture=Fixture();objects=fixture.archives.objects
