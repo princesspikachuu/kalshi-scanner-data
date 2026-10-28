@@ -619,3 +619,21 @@ class CampaignPostgresTests(unittest.TestCase):
         # counted repeatedly as newly collected days.
         progress.last=float('-inf');progress.emit()
         self.assertEqual(events[-1]['collections'],[])
+
+
+    def test_crash_exhausted_request_resumes_once_but_user_pause_stays_paused(self):
+        identifier=self.create(key='crash-recovery')
+        paused=self.create(key='user-paused')
+        self.store.control(paused,'pause')
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(identifier,)).fetchone()['job_id']
+            c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted',finished_at=clock_timestamp(),attempts=max_attempts WHERE id=%s",(parent,))
+        self.worker.run_once(deadline=time.monotonic()+30)
+        recovered=self.queue.get(parent)
+        self.assertIn(recovered['status'],('queued','running'))
+        self.assertEqual(recovered['progress']['recovery_version'],'2026-10-28-collection-v3')
+        self.assertEqual(self.store.get(paused)['status'],'cancelled')
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted',lease_token=NULL,lease_expires_at=NULL,finished_at=clock_timestamp() WHERE id=%s",(parent,))
+        self.worker=self.make_worker();self.worker.run_once(deadline=time.monotonic()+30)
+        self.assertEqual(self.queue.get(parent)['status'],'failed')

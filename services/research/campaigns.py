@@ -565,6 +565,7 @@ class CampaignWorker:
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
             progress=owned['progress'];progress.setdefault('candle_previews',{})[key]=dataset
+            progress['last_price_day_at']=datetime.now(UTC).isoformat()
             c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(progress),parent['id']))
             from .progressive import ProgressiveReports
             ProgressiveReports.enqueue(c,campaign['id'],campaign['asset'])
@@ -584,7 +585,8 @@ class CampaignWorker:
                 ORDER BY CASE WHEN EXISTS(SELECT 1 FROM research_campaign_day d
                     WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
                     AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text))
-                    THEN 0 ELSE 1 END,r.created_at,r.id LIMIT 1)
+                    THEN 0 ELSE 1 END,
+                    coalesce((j.progress->>'last_price_day_at')::timestamptz,r.created_at),r.created_at,r.id LIMIT 1)
                 SELECT id FROM oldest WHERE
                     (status='queued' AND available_at<=clock_timestamp()) OR
                     (status='running' AND lease_expires_at<=clock_timestamp())''').fetchone()
@@ -594,14 +596,23 @@ class CampaignWorker:
         from .progressive import ProgressiveReports
         from .sample_reports import SampleReports
         if not self._bootstrapped:
-            # Retry only the deterministic dataset-size failures addressed by
-            # partitioning. User-paused/removed and other failed jobs stay intact.
+            # One-time recovery of crash-exhausted requests after the fixes.
+            # Cancelled/removed requests are never resumed; durable pages stay.
             with self.pool.connection() as c:
-                c.execute("""UPDATE research_job SET status='queued',attempts=0,error_code=NULL,
-                    finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp()
-                    WHERE status='failed' AND error_code='campaign_dataset_limit'
+                recovered=c.execute('''UPDATE research_job SET status='queued',attempts=0,error_code=NULL,
+                    finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp(),
+                    progress=progress||jsonb_build_object('recovery_version','2026-10-28-collection-v3')
+                    WHERE status='failed' AND error_code IN ('campaign_dataset_limit','attempts_exhausted','campaign_step_failed')
                     AND parameters->>'collector'='campaign-v1'
-                    AND NOT coalesce((progress->>'removed_from_queue')::boolean,false)""")
+                    AND progress->>'recovery_version' IS DISTINCT FROM '2026-10-28-collection-v3'
+                    AND NOT coalesce((progress->>'removed_from_queue')::boolean,false)
+                    RETURNING id''').fetchall()
+                if recovered:
+                    c.execute('''UPDATE research_job SET status='queued',attempts=0,error_code=NULL,
+                        finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp()
+                        WHERE status='failed' AND error_code='attempts_exhausted' AND id IN (
+                            SELECT w.job_id FROM research_campaign_work w JOIN research_campaign r ON r.id=w.campaign_id
+                            WHERE r.job_id=ANY(%s::uuid[]))''',([r['id'] for r in recovered],))
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
         if SampleReports(self.pool).run_once():return True
         if ProgressiveReports(self.pool).run_once():return True
