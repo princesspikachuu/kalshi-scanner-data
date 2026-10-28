@@ -9,6 +9,7 @@ on:
       - 'docs/icon.svg'
       - 'worker/**'
       - 'wrangler.jsonc'
+      - 'scripts/check_staging_gateway.mjs'
       - '.github/workflows/deploy-pocket-app.yml'
 permissions:
   contents: read
