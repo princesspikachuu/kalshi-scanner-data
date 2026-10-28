@@ -83,6 +83,61 @@ class ResearchQueue:
                 started_at=COALESCE(started_at,clock_timestamp()),finished_at=NULL,error_code=NULL
                 FROM candidate WHERE j.id=candidate.id RETURNING j.*''', (job_id,job_id,collector,collector,uuid4(), seconds)).fetchone()
 
+    def claim_many(self,job_ids,seconds=120):
+        seconds=lease_seconds(seconds);ids=[UUID(str(i)) for i in job_ids]
+        if not 1<=len(ids)<=100 or len(set(ids))!=len(ids):raise ValueError('Invalid claim batch')
+        with self.pool.connection() as c:
+            return c.execute('''WITH chosen AS (
+                SELECT id FROM research_job WHERE id=ANY(%s::uuid[]) AND attempts<max_attempts
+                AND ((status='queued' AND available_at<=clock_timestamp()) OR
+                     (status='running' AND lease_expires_at<=clock_timestamp()))
+                ORDER BY id FOR UPDATE SKIP LOCKED)
+                UPDATE research_job j SET status='running',attempts=attempts+1,lease_token=gen_random_uuid(),
+                lease_expires_at=clock_timestamp()+%s*interval '1 second',
+                started_at=coalesce(started_at,clock_timestamp()),finished_at=NULL,error_code=NULL
+                FROM chosen WHERE j.id=chosen.id RETURNING j.*''',(ids,seconds)).fetchall()
+
+    @timed('queue.cached_batch')
+    def complete_cached(self,entries):
+        """Atomically fence and save already-verified terminal candle projections."""
+        if not 1<=len(entries)<=100:raise ValueError('Invalid checkpoint batch')
+        ids=[UUID(str(e['job']['id'])) for e in entries]
+        if len(set(ids))!=len(ids):raise EvidenceConflict('Duplicate batch job')
+        artifacts={};pages=[]
+        for e in entries:
+            receipt=e['receipt'];cp=e['checkpoint'];job=e['job']
+            if (cp.get('sequence')!=0 or cp.get('cursor_in')!='' or cp.get('cursor_out')!=''
+                    or cp.get('availability')!='available'
+                    or cp.get('projection',{}).get('format')!='candle-batch-projection-v1'):
+                raise EvidenceConflict('Nonterminal cached projection')
+            bounded_json(cp);text_key(e['page_key'])
+            row={k:receipt[k] for k in ('object_key','sha256','provider','content_type','byte_length')}
+            row.update(job_id=str(job['id']),metadata=receipt.get('metadata',{}))
+            previous=artifacts.setdefault(row['object_key'],row)
+            if any(previous[k]!=row[k] for k in ('sha256','provider','content_type','byte_length')):
+                raise EvidenceConflict('Conflicting batch archive')
+            pages.append(dict(job_id=str(job['id']),page_key=e['page_key'],object_key=receipt['object_key'],checkpoint=cp))
+        with self.pool.connection() as c:
+            owned=c.execute('''SELECT id,lease_token FROM research_job WHERE id=ANY(%s::uuid[])
+                AND status='running' AND lease_expires_at>clock_timestamp() ORDER BY id FOR UPDATE''',(ids,)).fetchall()
+            tokens={str(r['id']):str(r['lease_token']) for r in owned}
+            if tokens!={str(e['job']['id']):str(e['job']['lease_token']) for e in entries}:raise LeaseLost('Cached batch lease changed')
+            c.execute('''INSERT INTO raw_archive(object_key,sha256,provider,job_id,content_type,byte_length,metadata)
+                SELECT object_key,sha256,provider,job_id::uuid,content_type,byte_length,metadata
+                FROM jsonb_to_recordset(%s) AS a(object_key text,sha256 text,provider text,job_id text,content_type text,byte_length bigint,metadata jsonb)
+                ON CONFLICT(object_key) DO NOTHING''',(Jsonb(list(artifacts.values())),))
+            saved=c.execute('SELECT object_key,sha256,provider,content_type,byte_length FROM raw_archive WHERE object_key=ANY(%s::text[])',(list(artifacts),)).fetchall()
+            fields=('object_key','sha256','provider','content_type','byte_length')
+            if {r['object_key']:r for r in saved}!={k:{f:v[f] for f in fields} for k,v in artifacts.items()}:raise EvidenceConflict('Archive registry conflict')
+            c.execute('''INSERT INTO collection_page(job_id,page_key,object_key,checkpoint)
+                SELECT job_id::uuid,page_key,object_key,checkpoint FROM jsonb_to_recordset(%s)
+                AS p(job_id text,page_key text,object_key text,checkpoint jsonb) ON CONFLICT(job_id,page_key) DO NOTHING''',(Jsonb(pages),))
+            saved=c.execute('SELECT job_id,page_key,object_key,checkpoint FROM collection_page WHERE job_id=ANY(%s::uuid[])',(ids,)).fetchall()
+            actual={str(r['job_id']):{**r,'job_id':str(r['job_id'])} for r in saved}
+            if len(saved)!=len(pages) or actual!={p['job_id']:p for p in pages}:raise EvidenceConflict('Cached checkpoint conflict')
+            c.execute('''UPDATE research_job SET status='succeeded',progress=jsonb_build_object('completed_pages',1),
+                finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE id=ANY(%s::uuid[])''',(ids,))
+
     @staticmethod
     def _owned(c, job_id, token):
         row = c.execute('''SELECT * FROM research_job WHERE id=%s AND lease_token=%s

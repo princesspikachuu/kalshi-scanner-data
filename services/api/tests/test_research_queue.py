@@ -166,3 +166,18 @@ class QueuePostgresTests(unittest.TestCase):
         with self.store.pool.connection() as c:
             self.assertEqual(c.execute('SELECT count(*) AS n FROM ingestion_cursor').fetchone()['n'], 0)
         with self.assertRaises(LeaseLost): self.queue.finish(job['id'], job['lease_token'])
+
+
+    def test_grouped_cached_checkpoint_is_atomic_and_fences_cancelled_member(self):
+        jobs=[self.job('bulk-'+str(i)) for i in range(3)]
+        claimed=self.queue.claim_many([j['id'] for j in jobs])
+        self.assertEqual(len({j['lease_token'] for j in claimed}),3)
+        def entry(j):
+            return dict(job=j,page_key='one',receipt=self.archive(),checkpoint=dict(sequence=0,cursor_in='',cursor_out='',availability='available',items=0,projection={'format':'candle-batch-projection-v1'}))
+        entries=[entry(j) for j in claimed]
+        self.queue.cancel(claimed[0]['id'])
+        with self.assertRaises(LeaseLost):self.queue.complete_cached(entries)
+        self.assertTrue(all(not self.queue.pages(j['id']) for j in claimed))
+        self.queue.complete_cached(entries[1:])
+        self.assertTrue(all(self.row(j)['status']=='succeeded' for j in claimed[1:]))
+        self.assertTrue(all(len(self.queue.pages(j['id']))==1 for j in claimed[1:]))

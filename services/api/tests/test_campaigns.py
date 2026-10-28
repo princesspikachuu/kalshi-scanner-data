@@ -244,9 +244,16 @@ class CampaignPostgresTests(unittest.TestCase):
             nonlocal writes
             if cp.get('projection',{}).get('format')=='candle-batch-projection-v1':
                 with lock:writes+=1;ordinal=writes
-                if 2<=ordinal<=5:gate.wait(timeout=5)
+                # Grouped cached saves are fenced atomically, rather than
+                # executing one checkpoint transaction per projection.
             return original_checkpoint(job_id,token,key,receipt,cp)
         self.queue.checkpoint=checkpoint
+        original_bulk=self.queue.complete_cached
+        def grouped(entries):
+            nonlocal writes
+            writes+=len(entries)
+            return original_bulk(entries)
+        self.queue.complete_cached=grouped
         identifier=self.create(start='2026-10-25',end='2026-10-25');self.drive(identifier)
         self.assertEqual(writes,5)
         self.assertEqual(sum(r.url.path.endswith('/markets/candlesticks') for r in calls),1)

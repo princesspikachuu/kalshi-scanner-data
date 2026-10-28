@@ -37,6 +37,7 @@ class InventoryTests(unittest.TestCase):
         job = {'id': 'job', 'lease_token': 'fenced-token', 'parameters': SCOPE.parameters()}
         self.assertEqual(worker.step(job, deadline=time.monotonic() + 30)['state'], 'empty')
         queue.pages.assert_called_once_with('job')
+        queue.heartbeat.assert_not_called()
         queue.checkpoint.assert_called_once()
         queue.finish.assert_called_once_with('job', 'fenced-token')
 
