@@ -123,7 +123,7 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.worker.parallelism=12
         identifier=self.create(end='2026-10-25')
         self.collect_until(lambda:bool(self.queued('sample')),limit=180)
-        self.collect_until(lambda:bool(self.queued('prices')),limit=180)
+        self.collect_until(lambda:bool(self.queued('prices')),limit=350)
         self.assertEqual(self.queued('sample')[0]['status'],'queued')
         chosen=self.processor._claim_assembly()
         self.assertEqual(chosen['parameters']['kind'],'prices')

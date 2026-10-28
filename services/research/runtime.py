@@ -154,7 +154,7 @@ def run(settings,stop):
         def tick():
             heartbeat.beat();progress.emit()
         worker.on_work_tick=tick
-        try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=campaigns.next_wait,schedule=settings.role!='processor',on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=(lambda:1) if settings.role=='processor' else campaigns.next_wait,schedule=settings.role!='processor',on_error=lambda code:print(code,file=sys.stderr,flush=True))
         finally:
             meter.flush(force=True);configure()
 
