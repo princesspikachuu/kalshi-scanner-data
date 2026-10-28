@@ -717,13 +717,15 @@ class CampaignWorker:
                     progress=progress||jsonb_build_object('planning_recovery_version','bounded-plan-v1')
                     WHERE p.status='failed' AND p.error_code IN ('attempts_exhausted','campaign_step_failed')
                     AND p.parameters->>'collector'='campaign-v1'
+                    AND p.progress->>'recovery_version'='2026-10-28-collection-v3'
                     AND p.progress->>'planning_recovery_version' IS DISTINCT FROM 'bounded-plan-v1'
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
                     AND NOT EXISTS(SELECT 1 FROM research_campaign r JOIN research_campaign_work w ON w.campaign_id=r.id
                         JOIN research_job j ON j.id=w.job_id WHERE r.job_id=p.id AND j.status IN ('failed','cancelled'))''')
                 recovered=c.execute('''UPDATE research_job SET status='queued',attempts=0,error_code=NULL,
                     finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp(),
-                    progress=progress||jsonb_build_object('recovery_version','2026-10-28-collection-v3')
+                    progress=progress||jsonb_build_object('recovery_version','2026-10-28-collection-v3',
+                        'planning_recovery_version','bounded-plan-v1')
                     WHERE status='failed' AND error_code IN ('campaign_dataset_limit','attempts_exhausted','campaign_step_failed')
                     AND parameters->>'collector'='campaign-v1'
                     AND progress->>'recovery_version' IS DISTINCT FROM '2026-10-28-collection-v3'
