@@ -1,0 +1,10 @@
+{
+  "asset": "weather_daily",
+  "days_sampled": 0,
+  "markets_sampled_total": 0,
+  "total_observations": 0,
+  "first_date": null,
+  "last_date": null,
+  "hourly_types": [],
+  "latest_run_status": {}
+}

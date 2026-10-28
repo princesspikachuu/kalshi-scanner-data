@@ -1,0 +1,96 @@
+asset,market_type,minutes_before_close,price_band_cents,sampled_markets,wins,win_rate_percent,average_purchase_price_cents,average_profit_loss_cents_per_contract,hypothetical_roi_percent,sampled_days
+weather,Hourly weather,45,50-60,58,39,67.2414,54.1724,13.069,24.1248,7
+weather,Hourly weather,45,60-70,75,51,68.0,64.7067,3.2933,5.0896,7
+weather,Hourly weather,45,70-80,80,57,71.25,74.8625,-3.6125,-4.8255,7
+weather,Hourly weather,45,80-90,128,117,91.4062,84.8594,6.5469,7.715,7
+weather,Hourly weather,45,90-100,1223,1213,99.1823,96.6803,2.502,2.588,7
+weather,Hourly weather,30,50-60,52,33,63.4615,54.3077,9.1538,16.8555,7
+weather,Hourly weather,30,60-70,48,32,66.6667,64.6458,2.0208,3.126,7
+weather,Hourly weather,30,70-80,70,53,75.7143,74.4286,1.2857,1.7274,7
+weather,Hourly weather,30,80-90,121,108,89.2562,85.0331,4.2231,4.9665,7
+weather,Hourly weather,30,90-100,1083,1074,99.169,96.7313,2.4377,2.52,7
+weather,Hourly weather,20,50-60,42,25,59.5238,54.9762,4.5476,8.272,7
+weather,Hourly weather,20,60-70,46,27,58.6957,64.5652,-5.8696,-9.0909,7
+weather,Hourly weather,20,70-80,56,44,78.5714,74.4821,4.0893,5.4903,7
+weather,Hourly weather,20,80-90,94,81,86.1702,85.2234,0.9468,1.111,7
+weather,Hourly weather,20,90-100,1236,1228,99.3528,97.1618,2.1909,2.2549,7
+weather,Hourly weather,15,50-60,44,23,52.2727,54.8409,-2.5682,-4.683,7
+weather,Hourly weather,15,60-70,39,27,69.2308,64.7692,4.4615,6.8884,7
+weather,Hourly weather,15,70-80,52,40,76.9231,75.0577,1.8654,2.4853,7
+weather,Hourly weather,15,80-90,85,72,84.7059,85.1529,-0.4471,-0.525,7
+weather,Hourly weather,15,90-100,1222,1216,99.509,97.2201,2.2889,2.3543,7
+weather,Hourly weather,10,50-60,35,19,54.2857,55.6286,-1.3429,-2.414,7
+weather,Hourly weather,10,60-70,38,28,73.6842,64.3947,9.2895,14.4258,7
+weather,Hourly weather,10,70-80,51,37,72.549,74.6667,-2.1176,-2.8361,7
+weather,Hourly weather,10,80-90,77,66,85.7143,85.1818,0.5325,0.6251,7
+weather,Hourly weather,10,90-100,1129,1124,99.5571,97.2507,2.3065,2.3717,7
+weather,Hourly weather,5,50-60,28,15,53.5714,54.4643,-0.8929,-1.6393,7
+weather,Hourly weather,5,60-70,36,26,72.2222,64.3056,7.9167,12.311,7
+weather,Hourly weather,5,70-80,51,38,74.5098,74.9804,-0.4706,-0.6276,7
+weather,Hourly weather,5,80-90,69,59,85.5072,85.1014,0.4058,0.4768,7
+weather,Hourly weather,5,90-100,1200,1197,99.75,97.3483,2.4017,2.4671,7
+weather,Hourly weather,3,50-60,21,14,66.6667,55.3333,11.3333,20.4819,7
+weather,Hourly weather,3,60-70,37,28,75.6757,65.2703,10.4054,15.942,7
+weather,Hourly weather,3,70-80,46,34,73.913,74.7826,-0.8696,-1.1628,7
+weather,Hourly weather,3,80-90,77,70,90.9091,85.4026,5.5065,6.4477,7
+weather,Hourly weather,3,90-100,1291,1288,99.7676,97.3579,2.4098,2.4752,7
+weather,Hourly weather,1,50-60,23,17,73.913,54.2609,19.6522,36.2179,7
+weather,Hourly weather,1,60-70,31,24,77.4194,65.2258,12.1935,18.6944,7
+weather,Hourly weather,1,70-80,48,43,89.5833,74.8125,14.7708,19.7438,7
+weather,Hourly weather,1,80-90,103,94,91.2621,85.4466,5.8155,6.806,7
+weather,Hourly weather,1,90-100,1586,1584,99.8739,96.7087,3.1652,3.2729,7
+crypto,Crypto (pooled 15-minute),10,50-60,464,243,52.3707,54.5172,-2.1466,-3.9374,7
+crypto,Crypto (pooled 15-minute),10,60-70,450,297,66.0,64.5222,1.4778,2.2903,7
+crypto,Crypto (pooled 15-minute),10,70-80,480,367,76.4583,74.2646,2.1938,2.954,7
+crypto,Crypto (pooled 15-minute),10,80-90,464,401,86.4224,84.1466,2.2759,2.7046,7
+crypto,Crypto (pooled 15-minute),10,90-100,226,215,95.1327,92.7695,2.3633,2.5475,7
+crypto,Crypto (pooled 15-minute),5,50-60,228,132,57.8947,54.9825,2.9123,5.2967,7
+crypto,Crypto (pooled 15-minute),5,60-70,247,164,66.3968,64.8502,1.5466,2.3848,7
+crypto,Crypto (pooled 15-minute),5,70-80,277,216,77.9783,74.5957,3.3827,4.5347,7
+crypto,Crypto (pooled 15-minute),5,80-90,363,318,87.6033,84.4408,3.1625,3.7453,7
+crypto,Crypto (pooled 15-minute),5,90-100,973,953,97.9445,96.0284,1.9161,1.9954,7
+crypto,Crypto (pooled 15-minute),3,50-60,160,95,59.375,54.7625,4.6125,8.4227,7
+crypto,Crypto (pooled 15-minute),3,60-70,144,100,69.4444,65.0417,4.4028,6.7692,7
+crypto,Crypto (pooled 15-minute),3,70-80,173,144,83.237,74.7283,8.5087,11.3861,7
+crypto,Crypto (pooled 15-minute),3,80-90,264,229,86.7424,84.9583,1.7841,2.1,7
+crypto,Crypto (pooled 15-minute),3,90-100,1353,1327,98.0783,97.1001,0.9782,1.0074,7
+crypto,Crypto (pooled 15-minute),1,50-60,55,30,54.5455,54.3273,0.2182,0.4016,7
+crypto,Crypto (pooled 15-minute),1,60-70,54,38,70.3704,64.9259,5.4444,8.3856,7
+crypto,Crypto (pooled 15-minute),1,70-80,64,55,85.9375,75.2188,10.7188,14.2501,7
+crypto,Crypto (pooled 15-minute),1,80-90,97,83,85.567,84.8144,0.7526,0.8873,7
+crypto,Crypto (pooled 15-minute),1,90-100,1826,1814,99.3428,98.9791,0.3637,0.3675,7
+sports,Sports (game/match winners),360,50-60,169,94,55.6213,54.4675,1.1538,2.1184,7
+sports,Sports (game/match winners),360,60-70,106,71,66.9811,63.3962,3.5849,5.6548,7
+sports,Sports (game/match winners),360,70-80,63,57,90.4762,74.6825,15.7937,21.1477,7
+sports,Sports (game/match winners),360,80-90,52,48,92.3077,84.1154,8.1923,9.7394,3
+sports,Sports (game/match winners),360,90-100,101,99,98.0198,95.6139,2.4059,2.5163,3
+sports,Sports (game/match winners),180,50-60,166,96,57.8313,54.1867,3.6446,6.726,7
+sports,Sports (game/match winners),180,60-70,109,81,74.3119,63.9725,10.3394,16.1623,6
+sports,Sports (game/match winners),180,70-80,93,82,88.172,74.5376,13.6344,18.292,7
+sports,Sports (game/match winners),180,80-90,45,39,86.6667,84.7778,1.8889,2.228,5
+sports,Sports (game/match winners),180,90-100,116,116,100.0,96.25,3.75,3.8961,4
+sports,Sports (game/match winners),120,50-60,85,48,56.4706,54.3059,2.1647,3.9861,7
+sports,Sports (game/match winners),120,60-70,96,78,81.25,64.7917,16.4583,25.4019,6
+sports,Sports (game/match winners),120,70-80,92,71,77.1739,74.8804,2.2935,3.0629,6
+sports,Sports (game/match winners),120,80-90,87,71,81.6092,84.7701,-3.1609,-3.7288,7
+sports,Sports (game/match winners),120,90-100,155,153,98.7097,96.0516,2.6581,2.7673,6
+sports,Sports (game/match winners),60,50-60,73,35,47.9452,54.4521,-6.5068,-11.9497,7
+sports,Sports (game/match winners),60,60-70,56,47,83.9286,64.1429,19.7857,30.8463,5
+sports,Sports (game/match winners),60,70-80,59,49,83.0508,74.5254,8.5254,11.4396,5
+sports,Sports (game/match winners),60,80-90,79,69,87.3418,85.0127,2.3291,2.7397,7
+sports,Sports (game/match winners),60,90-100,247,237,95.9514,96.3563,-0.4049,-0.4202,6
+sports,Sports (game/match winners),30,50-60,47,31,65.9574,54.8936,11.0638,20.155,6
+sports,Sports (game/match winners),30,60-70,29,22,75.8621,63.8276,12.0345,18.8547,5
+sports,Sports (game/match winners),30,70-80,50,40,80.0,74.48,5.52,7.4114,6
+sports,Sports (game/match winners),30,80-90,67,55,82.0896,85.209,-3.1194,-3.6609,7
+sports,Sports (game/match winners),30,90-100,307,301,98.0456,97.127,0.9186,0.9457,7
+sports,Sports (game/match winners),15,50-60,12,6,50.0,53.4167,-3.4167,-6.3963,5
+sports,Sports (game/match winners),15,60-70,13,6,46.1538,65.0,-18.8462,-28.9941,5
+sports,Sports (game/match winners),15,70-80,33,26,78.7879,74.6061,4.1818,5.6052,6
+sports,Sports (game/match winners),15,80-90,74,70,94.5946,84.9054,9.6892,11.4117,5
+sports,Sports (game/match winners),15,90-100,356,352,98.8764,97.4298,1.4466,1.4848,7
+sports,Sports (game/match winners),5,50-60,6,3,50.0,56.5,-6.5,-11.5044,3
+sports,Sports (game/match winners),5,60-70,2,0,0.0,64.0,-64.0,-100.0,2
+sports,Sports (game/match winners),5,70-80,11,8,72.7273,74.8182,-2.0909,-2.7947,4
+sports,Sports (game/match winners),5,80-90,17,17,100.0,85.0588,14.9412,17.5657,5
+sports,Sports (game/match winners),5,90-100,391,391,100.0,98.3325,1.6675,1.6958,7

@@ -1,0 +1,245 @@
+{
+  "published_at": "2026-10-27T01:40:29.866457+00:00",
+  "dataset_rows": 135,
+  "assets": {
+    "weather": {
+      "asset": "weather",
+      "days_sampled": 15,
+      "markets_sampled_total": 4202,
+      "total_observations": 26431,
+      "first_date": "2026-09-29",
+      "last_date": "2026-10-23",
+      "hourly_types": [
+        "index"
+      ],
+      "latest_run_status": {
+        "asset": "weather",
+        "date": "2026-09-29",
+        "markets_available": 960,
+        "markets_sampled": 300,
+        "sampling_truncated": true,
+        "observations": 1573,
+        "total_observations": 26431,
+        "execution_attempts": 734,
+        "execution_through_proxies": 30,
+        "execution_markets_checked": 30,
+        "execution_markets_skipped": 0,
+        "execution_rate_limited": false,
+        "execution_subsample_limit": 60,
+        "execution_time_budget_seconds": 45,
+        "days_sampled": 15,
+        "sampled_by_series": {
+          "KXTEMPCHIH": 0,
+          "KXTEMPCHIHS": 84,
+          "KXTEMPDCH": 0,
+          "KXTEMPLAH": 0,
+          "KXTEMPLAXHS": 72,
+          "KXTEMPMIAH": 72,
+          "KXTEMPNYCH": 0,
+          "KXTEMPNYCHS": 72
+        },
+        "hourly_types": [
+          "index"
+        ],
+        "sampled_subtypes": [
+          "Chicago",
+          "Coastal Los Angeles",
+          "Miami",
+          "New York City"
+        ],
+        "requested_markets": 300,
+        "markets_shortfall": 0,
+        "unavailable_series": [],
+        "historical_endpoint": false,
+        "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
+        "updated_at": "2026-10-26T02:42:54.554611+00:00"
+      }
+    },
+    "btc": {
+      "asset": "btc",
+      "days_sampled": 19,
+      "markets_sampled_total": 1800,
+      "total_observations": 7200,
+      "first_date": "2026-10-05",
+      "last_date": "2026-10-23",
+      "hourly_types": [],
+      "latest_run_status": {
+        "asset": "btc",
+        "date": "2026-10-17",
+        "markets_available": 96,
+        "markets_sampled": 96,
+        "sampling_truncated": false,
+        "observations": 384,
+        "total_observations": 7200,
+        "days_sampled": 19,
+        "sampled_by_series": {
+          "KXBTC15M": 96
+        },
+        "hourly_types": [
+          "crypto"
+        ],
+        "historical_endpoint": false,
+        "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+        "updated_at": "2026-10-25T19:15:52.265386+00:00"
+      }
+    },
+    "eth": {
+      "asset": "eth",
+      "days_sampled": 12,
+      "markets_sampled_total": 1136,
+      "total_observations": 4541,
+      "first_date": "2026-10-12",
+      "last_date": "2026-10-23",
+      "hourly_types": [],
+      "latest_run_status": {
+        "asset": "eth",
+        "date": "2026-10-12",
+        "markets_available": 96,
+        "markets_sampled": 96,
+        "sampling_truncated": false,
+        "observations": 384,
+        "total_observations": 4541,
+        "days_sampled": 12,
+        "sampled_by_series": {
+          "KXETH15M": 96
+        },
+        "hourly_types": [
+          "crypto"
+        ],
+        "historical_endpoint": false,
+        "method": "simulated maker bid entry; fills not observed; 100-contract fee stress illustration",
+        "updated_at": "2026-10-25T20:30:46.087698+00:00"
+      }
+    },
+    "crypto": {
+      "asset": "crypto",
+      "days_sampled": 21,
+      "markets_sampled_total": 6300,
+      "total_observations": 25080,
+      "first_date": "2026-09-20",
+      "last_date": "2026-10-24",
+      "hourly_types": [],
+      "latest_run_status": {
+        "asset": "crypto",
+        "date": "2026-09-20",
+        "markets_available": 864,
+        "markets_sampled": 300,
+        "sampling_truncated": true,
+        "observations": 1193,
+        "total_observations": 25080,
+        "execution_attempts": 223,
+        "execution_through_proxies": 128,
+        "execution_markets_checked": 26,
+        "execution_markets_skipped": 25,
+        "execution_rate_limited": false,
+        "execution_subsample_limit": 60,
+        "execution_time_budget_seconds": 45,
+        "execution_elapsed_seconds": 45.21,
+        "collection_elapsed_seconds": 57.19,
+        "days_sampled": 21,
+        "sampled_by_series": {
+          "KXBNB15M": 34,
+          "KXBTC15M": 34,
+          "KXDOGE15M": 34,
+          "KXETH15M": 33,
+          "KXHYPE15M": 33,
+          "KXNEAR15M": 33,
+          "KXSOL15M": 33,
+          "KXXRP15M": 33,
+          "KXZEC15M": 33
+        },
+        "hourly_types": [
+          "crypto15m"
+        ],
+        "sampled_subtypes": [
+          "BNB",
+          "BTC",
+          "DOGE",
+          "ETH",
+          "HYPE",
+          "NEAR",
+          "SOL",
+          "XRP",
+          "ZEC"
+        ],
+        "requested_markets": 300,
+        "markets_shortfall": 0,
+        "unavailable_series": [],
+        "historical_endpoint": false,
+        "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
+        "updated_at": "2026-10-26T05:06:32.824917+00:00"
+      }
+    },
+    "sports": {
+      "asset": "sports",
+      "days_sampled": 41,
+      "markets_sampled_total": 4443,
+      "total_observations": 27386,
+      "first_date": "2026-09-09",
+      "last_date": "2026-10-24",
+      "hourly_types": [],
+      "latest_run_status": {
+        "asset": "sports",
+        "date": "2026-09-09",
+        "markets_available": 50,
+        "markets_sampled": 50,
+        "sampling_truncated": false,
+        "observations": 350,
+        "total_observations": 27386,
+        "execution_attempts": 30,
+        "execution_through_proxies": 0,
+        "execution_markets_checked": 1,
+        "execution_markets_skipped": 48,
+        "execution_rate_limited": false,
+        "execution_subsample_limit": 60,
+        "execution_time_budget_seconds": 45,
+        "execution_elapsed_seconds": 45.18,
+        "collection_elapsed_seconds": 57.32,
+        "days_sampled": 41,
+        "sampled_by_series": {
+          "KXATPMATCH": 4,
+          "KXMLBGAME": 40,
+          "KXNBAGAME": 0,
+          "KXNCAAFGAME": 0,
+          "KXNFLGAME": 0,
+          "KXNHLGAME": 0,
+          "KXWTAMATCH": 6
+        },
+        "hourly_types": [
+          "game_winner"
+        ],
+        "sampled_subtypes": [
+          "ATP Tennis",
+          "MLB",
+          "WTA Tennis"
+        ],
+        "requested_markets": 300,
+        "markets_shortfall": 250,
+        "unavailable_series": [],
+        "historical_endpoint": false,
+        "method": "simulated maker bid entry relative to listed close_time; fills not observed; sports close_time can differ from game end",
+        "updated_at": "2026-10-27T01:40:25.656574+00:00"
+      }
+    },
+    "weather_daily": {
+      "asset": "weather_daily",
+      "days_sampled": 0,
+      "markets_sampled_total": 0,
+      "total_observations": 0,
+      "first_date": null,
+      "last_date": null,
+      "hourly_types": [],
+      "latest_run_status": {}
+    },
+    "financial_daily": {
+      "asset": "financial_daily",
+      "days_sampled": 0,
+      "markets_sampled_total": 0,
+      "total_observations": 0,
+      "first_date": null,
+      "last_date": null,
+      "hourly_types": [],
+      "latest_run_status": {}
+    }
+  }
+}

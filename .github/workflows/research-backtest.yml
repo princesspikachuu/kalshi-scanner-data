@@ -1,0 +1,75 @@
+name: Kalshi historical research (weather + crypto)
+run-name: "${{ inputs.asset }} | ${{ inputs.days_to_collect }} day(s) × ${{ inputs.max_markets }} markets/day | starting ${{ inputs.days_ago }} days ago"
+on:
+  workflow_dispatch:
+    inputs:
+      asset:
+        description: Select market group
+        required: true
+        type: choice
+        options: [btc, eth, crypto, weather, sports, weather_daily, financial_daily]
+        default: btc
+      days_ago:
+        description: Completed UTC day offset (1-3650; older coverage varies)
+        required: true
+        default: '2'
+      max_markets:
+        description: Max markets per day (1-300)
+        required: true
+        default: '100'
+      days_to_collect:
+        description: Number of past UTC days to fetch (1-7)
+        required: true
+        default: '1'
+permissions:
+  contents: write
+concurrency:
+  group: kalshi-historical-research
+  cancel-in-progress: false
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate execution model before collecting
+        run: |
+          python3 -m unittest discover -s tests -v
+          node tests/test_dashboard_views.mjs
+      - name: Collect historical quotes and outcomes
+        env:
+          ASSET: ${{ inputs.asset }}
+          DAYS_AGO: ${{ inputs.days_ago }}
+          MAX_MARKETS: ${{ inputs.max_markets }}
+          DAYS_TO_COLLECT: ${{ inputs.days_to_collect }}
+          POCKET_COLLECTION_STAGE: .run-collection
+          POCKET_HISTORY_INDEX: .run-collection/history-index
+        run: |
+          if [ "$DAYS_TO_COLLECT" -lt 1 ] || [ "$DAYS_TO_COLLECT" -gt 7 ]; then echo "days_to_collect must be 1-7"; exit 1; fi
+          if [ "$DAYS_AGO" -lt 1 ] || [ $((DAYS_AGO + DAYS_TO_COLLECT - 1)) -gt 3650 ]; then echo "Entire range must fit within the last 3650 days"; exit 1; fi
+          for offset in $(seq 0 $((DAYS_TO_COLLECT - 1))); do
+            day=$((DAYS_AGO + offset))
+            python3 scripts/collect_backtest.py --asset "$ASSET" --days-ago "$day" --max-markets "$MAX_MARKETS"
+          done
+      - name: Publish latest collection snapshot
+        env:
+          ASSET: ${{ inputs.asset }}
+          DAYS_AGO: ${{ inputs.days_ago }}
+          DAYS_TO_COLLECT: ${{ inputs.days_to_collect }}
+          MAX_MARKETS: ${{ inputs.max_markets }}
+          POCKET_COLLECTION_STAGE: .run-collection
+        run: python3 scripts/publish_latest.py
+      - name: Build plain-English reports
+        run: python3 scripts/build_report.py
+      - name: Publish dashboard files
+        run: python3 scripts/sync_dashboard.py
+      - name: Commit research dataset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backtests/ docs/data.csv docs/dataset-meta.json docs/status-*.json docs/latest-data.csv docs/latest-meta.json docs/loss-prevention.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Kalshi historical analysis"
+            git pull --rebase
+            git push
+          fi
