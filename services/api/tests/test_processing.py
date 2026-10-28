@@ -132,3 +132,12 @@ class ProcessingPostgresTests(unittest.TestCase):
             parent=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()
         self.assertEqual(len(parent['progress']['candle_previews']),1)
         self.assertEqual(len(parent['progress']['sample_tickers']['2026-10-25']),100)
+
+    def test_empty_day_passes_price_lane_before_enrichment(self):
+        self.inventory.empty=True
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        self.assertEqual(self.evidence.calls,[])
+        state=self.finish(identifier)
+        self.assertEqual(state['completed_sections'],1)
+        self.assertEqual(state['reported_sections'],1)
