@@ -287,7 +287,7 @@ class CampaignStore:
 class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None):
-        if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
+        if type(parallelism) is not int or not 1<=parallelism<=16:raise ValueError('Invalid evidence concurrency')
         self.parallelism=parallelism;self._bootstrapped=False
         self.cancelled=stop.is_set if stop is not None else lambda:False
         self.pool,self.archives=pool,archives
@@ -365,7 +365,7 @@ class CampaignWorker:
             worker.prepare_batch([job]+nearby)
         jobs=[job]
         # Batch-capable recent candles use the single HTTP path above. Other
-        # evidence (including archived candles) overlaps I/O for at most 4 jobs.
+        # evidence (including archived candles) overlaps I/O for at most 16 jobs.
         recent_candle=lambda j:(j['parameters']['scope']['resource'],j['parameters']['scope']['source'])==('candles','recent')
         if (phase=='evidence' and self.parallelism>1 and recent_candle(job) and hasattr(worker,'prepare_batch')
                 and hasattr(worker.provider,'cached') and worker.provider.cached(worker.scope_loader(job),'') is not None):
@@ -569,16 +569,19 @@ class CampaignWorker:
         return True
 
     def _claim_parent(self):
-        # Finish the oldest unfinished collection before moving to the next.
-        # A delayed retry keeps its place, so a provider cooldown cannot make
-        # the visible queue silently switch to another collection.
+        # Prefer collections still missing full-cohort price dates. Exhaustive
+        # trade enrichment cannot monopolize the queue after its price dates
+        # are published. Keep oldest-first order within each lane.
         with self.pool.connection() as c:
             row=c.execute('''WITH oldest AS (
                 SELECT j.id,j.status,j.available_at,j.lease_expires_at
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
                     AND j.status IN ('queued','running')
-                ORDER BY r.created_at,r.id LIMIT 1)
+                ORDER BY CASE WHEN EXISTS(SELECT 1 FROM research_campaign_day d
+                    WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
+                    AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text))
+                    THEN 0 ELSE 1 END,r.created_at,r.id LIMIT 1)
                 SELECT id FROM oldest WHERE
                     (status='queued' AND available_at<=clock_timestamp()) OR
                     (status='running' AND lease_expires_at<=clock_timestamp())''').fetchone()

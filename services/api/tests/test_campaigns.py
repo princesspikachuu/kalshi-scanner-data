@@ -565,3 +565,33 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertNotIn('trades',resources)
         self.drive(identifier)
         self.assertEqual(self.store.get(identifier)['completed_sections'],2)
+
+    def test_twelve_inventory_reads_overlap_without_losing_restart_checkpoints(self):
+        from threading import Barrier,Lock
+        gate=Barrier(12);lock=Lock();calls=[]
+        def fetch(scope,cursor,timeout):
+            with lock:calls.append((scope.series,scope.source,cursor));ordinal=len(calls)
+            if ordinal<=12:gate.wait(timeout=5)
+            return ProviderPage(dict(markets=[],cursor=''))
+        self.inventory.fetch=fetch;self.worker.parallelism=12
+        identifier=self.store.create('crypto','2026-10-25','2026-10-25','twelve-parallel-inventory',now=NOW)
+        self.assertTrue(self.worker.run_once(deadline=time.monotonic()+30))
+        self.assertEqual(self.store.get(identifier)['saved_pages'],12)
+        self.worker=self.make_worker();self.drive(identifier)
+        self.assertEqual(self.store.get(identifier)['status'],'succeeded')
+        self.assertEqual(len(calls),18);self.assertEqual(len(set(calls)),18)
+        self.assertEqual(self.store.get(identifier)['saved_pages'],18)
+
+
+    def test_price_ready_collection_cannot_block_another_collections_price_days(self):
+        older=self.create(key='price-ready-older')
+        for _ in range(150):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(older,)).fetchone()['progress']
+            if len(progress.get('candle_previews',{}))==2:break
+        else:self.fail('Price dates did not publish')
+        newer=self.create(key='price-pending-newer')
+        claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['parameters']['campaign_id'],newer)
+        self.queue.yield_job(claimed['id'],claimed['lease_token'])
