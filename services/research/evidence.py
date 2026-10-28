@@ -7,7 +7,7 @@ import math
 import json
 import re
 
-from .inventory import InventoryWorker, ProviderPage, ProviderFailure, ProviderDeferred, digest, valid_cursor
+from .inventory import InventoryWorker, page_key, ProviderPage, ProviderFailure, ProviderDeferred, digest, valid_cursor
 from .kalshi import KalshiInventory, invalid, parse_json
 from .normalize import CandidateBatch, VERSION, _closed
 from .queue import EvidenceConflict, text_key
@@ -350,3 +350,17 @@ class EvidenceWorker(InventoryWorker):
     def prepare_batch(self,jobs):
         if hasattr(self.provider,'plan_batch'):
             self.provider.plan_batch([self.scope_loader(job) for job in jobs])
+
+
+    def complete_cached(self,jobs):
+        entries=[];scopes=[]
+        for job in jobs:
+            scope=self.scope_loader(job);response=self.provider.cached(scope,'')
+            if response is None or job['progress'].get('completed_pages',0):return False
+            rows,cursor=evidence_page(scope,response.payload,response.availability)
+            cp=dict(scope=scope.key,sequence=0,cursor_in='',cursor_out=cursor,items=len(rows),availability=response.availability)
+            receipt,cp=self.archive_page(scope,cp,response)
+            entries.append(dict(job=job,page_key=page_key(scope,0),receipt=receipt,checkpoint=cp));scopes.append(scope)
+        self.queue.complete_cached(entries)
+        for scope in scopes:self.provider.acknowledge(scope)
+        return True

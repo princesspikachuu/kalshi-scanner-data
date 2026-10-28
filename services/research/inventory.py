@@ -206,11 +206,13 @@ class InventoryWorker:
             raise ValueError('Invalid monotonic deadline')
         scope = self.scope_loader(job)
         job_id, token = job['id'], job['lease_token']
-        self.queue.heartbeat(job_id, token)
+        # The freshly claimed page lease is 120 seconds; this step has a
+        # 30-second deadline. Checkpoint/finish still fence every write.
+        # Renewing it twice per page adds needless serialized DB writes.
         # The lease fences this job's page writer. Reuse one committed-page
         # snapshot for both cursor recovery and next-page chain validation;
         # checkpoint() still checks the live lease and rejects conflicting rows.
-        committed = self.queue.pages(job_id)
+        committed = self.queue.pages_owned(job_id,token)
         state = inspect_pages(scope, committed)
         if state.state != 'partial':
             self.queue.finish(job_id, token)
@@ -237,7 +239,6 @@ class InventoryWorker:
             # Validate continuation/cycles before upload or checkpoint.
             try: next_state = inspect_pages(scope, committed + [page])
             except EvidenceConflict: raise ProviderFailure('provider_invalid', retry=False) from None
-            self.queue.heartbeat(job_id, token)
             receipt,cp = self.archive_page(scope,cp,response)
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             self.queue.checkpoint(job_id, token, page['page_key'], receipt, cp)

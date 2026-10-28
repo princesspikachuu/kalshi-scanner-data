@@ -27,7 +27,7 @@ def page(scope=SCOPE, seq=0, cursor_in='', cursor_out='', items=0, availability=
 class InventoryTests(unittest.TestCase):
     def test_fenced_step_reads_committed_page_chain_once(self):
         queue = Mock()
-        queue.pages.return_value = []
+        queue.pages_owned.return_value = []
         budget = Mock()
         budget.take.return_value = 0
         provider = Mock()
@@ -36,7 +36,9 @@ class InventoryTests(unittest.TestCase):
         worker = InventoryWorker(queue, ArchiveStore(MemoryObjects()), provider, budget, endpoint_cost=1)
         job = {'id': 'job', 'lease_token': 'fenced-token', 'parameters': SCOPE.parameters()}
         self.assertEqual(worker.step(job, deadline=time.monotonic() + 30)['state'], 'empty')
-        queue.pages.assert_called_once_with('job')
+        queue.pages_owned.assert_called_once_with('job','fenced-token')
+        queue.pages.assert_not_called()
+        queue.heartbeat.assert_not_called()
         queue.checkpoint.assert_called_once()
         queue.finish.assert_called_once_with('job', 'fenced-token')
 

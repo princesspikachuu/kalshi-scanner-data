@@ -375,12 +375,13 @@ class CampaignWorker:
             # The batch HTTP request and its immutable receipt already exist.
             # Overlap only cached projections: no concurrent batch mutation or
             # unbudgeted provider call, while PUT/readback/checkpoints still run.
+            to_claim=[]
             for neighbor in nearby:
-                if len(jobs)>=self.parallelism:break
+                if len(to_claim)>=self.parallelism-1:break
                 scope=worker.scope_loader(neighbor)
                 if worker.provider.cached(scope,'') is None:continue
-                child=self.queue.claim(job_id=neighbor['id'])
-                if child is not None:jobs.append(child)
+                to_claim.append(neighbor['id'])
+            if to_claim:jobs.extend(self.queue.claim_many(to_claim))
         if self.parallelism>1 and (phase=='inventory' or not recent_candle(job)):
             with self.pool.connection() as c:
                 nearby=c.execute('''SELECT j.id FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
@@ -390,9 +391,9 @@ class CampaignWorker:
                     AND (%s::text[] IS NULL OR j.parameters->'scope'->>'ticker'=ANY(%s::text[]))
                     AND (%s='inventory' OR NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent'))
                     ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,*priority,phase,self.parallelism-1)).fetchall()
-            for row in nearby:
-                child=self.queue.claim(job_id=row['id'])
-                if child is not None:jobs.append(child)
+            if nearby:jobs.extend(self.queue.claim_many([row['id'] for row in nearby]))
+        if (len(jobs)>1 and phase=='evidence' and recent_candle(job)
+                and hasattr(worker,'complete_cached') and worker.complete_cached(jobs)):return 0
         def process(child):
             result=worker.step(child,deadline=deadline)
             if result['state'] in ('partial','throttled'):
