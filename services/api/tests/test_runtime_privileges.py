@@ -108,7 +108,7 @@ class RuntimePrivilegesTests(unittest.TestCase):
 
     def test_catalog_audit_identifies_operator_and_does_not_mutate_database(self):
         result = audit_database(URL)
-        self.assertTrue(result['migrations_match']); self.assertEqual(result['migration_count'],9)
+        self.assertTrue(result['migrations_match']); self.assertEqual(result['migration_count'],10)
         self.assertEqual(result['history_flags']['found'],len(HISTORY))
         self.assertFalse(result['privilege_boundary_ready'])
         with psycopg.connect(URL) as c:
