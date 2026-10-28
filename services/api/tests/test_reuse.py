@@ -81,6 +81,7 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         target = replace(source, generation='second-generation')
         first = self.attach('btc', 'source-exact', source)
         provider = Mock()
+        provider.cached.return_value = None
         provider.fetch.return_value = ProviderPage({'markets': [], 'cursor': ''})
         worker = InventoryWorker(self.queue, self.archives, provider, self.budget, endpoint_cost=1)
         worker.reuse = self.reuse
@@ -89,6 +90,7 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         second = self.attach('crypto', 'target-exact', target)
         restarted = ArchiveStore(self.archives.objects, cache_bytes=1024 * 1024)
         provider2 = Mock()
+        provider2.cached.return_value = None
         provider2.fetch.side_effect = AssertionError('Exact verified request must be reused')
         worker2 = InventoryWorker(self.queue, restarted, provider2, self.budget, endpoint_cost=1)
         worker2.reuse = VerifiedReads(self.db.pool, restarted)
@@ -107,7 +109,9 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         scope = Scope('KXBTC15M', 'recent', self.day, 'old')
         source = self.attach('btc', 'safety-source', scope)
         response = ProviderPage({'markets': [], 'cursor': ''})
-        worker = InventoryWorker(self.queue, self.archives, Mock(fetch=Mock(return_value=response)), self.budget, endpoint_cost=1)
+        provider = Mock(fetch=Mock(return_value=response))
+        provider.cached.return_value = None
+        worker = InventoryWorker(self.queue, self.archives, provider, self.budget, endpoint_cost=1)
         worker.reuse = self.reuse
         worker.step(self.queue.claim(job_id=source['id']), deadline=time.monotonic() + 30)
         for name, kwargs in [('explicit-refresh', {'refresh': True}), ('rolling', {'rolling': True})]:
@@ -126,6 +130,7 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         source = Scope('KXBTC15M', 'recent', self.day, 'source')
         first = self.attach('btc', 'integrity-source', source)
         provider = Mock()
+        provider.cached.return_value = None
         provider.fetch.return_value = ProviderPage({'markets': [], 'cursor': ''})
         worker = InventoryWorker(self.queue, self.archives, provider, self.budget, endpoint_cost=1)
         worker.reuse = self.reuse
@@ -188,6 +193,7 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         scope = Scope('KXTEMPLAH', 'recent', self.day, 'weather-one')
         source = self.attach('weather', 'calendar-source', scope)
         provider = Mock()
+        provider.cached.return_value = None
         provider.fetch.return_value = ProviderPage({'markets': [], 'cursor': ''})
         worker = InventoryWorker(self.queue, self.archives, provider, self.budget, endpoint_cost=1)
         worker.reuse = self.reuse
