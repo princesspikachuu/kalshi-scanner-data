@@ -183,27 +183,31 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
         coverage.append(dict(scope=key,job_id=jid,state=state.state,resource=scope.resource,source=scope.source))
         selected.append((scope,jid,pages))
     if gaps: raise CoverageIncomplete(gaps)
+    # Adjacent scopes often point at the same verified candle-batch object.
+    # Visit that object's pages together so bounded archive/entry caches can
+    # serve them before unrelated objects evict the batch. All pages were
+    # already fenced and inspected above; final records and provenance sort
+    # independently of this read order.
+    ordered_pages=_ordered_evidence_pages(selected)
     merged,scanned = {},0
-    for scope,jid,pages in selected:
-        for page in sorted(pages,key=lambda p:p['page_key']):
-            receipt = page['receipt']
-            if receipt['object_key']!=page['object_key'] or receipt['provider']!='kalshi': raise EvidenceConflict('Wrong evidence reference')
-            cp = page['checkpoint']
-            rows,cursor,selectors = resolve_evidence(scope,page,archives)
-            retain(receipt)
-            for index,row in enumerate(rows):
-                scanned += 1
-                if scanned>max_rows: raise ValueError('Evidence row limit exceeded; no truncated dataset')
-                identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
-                key = (scope.resource,scope.ticker,identity)
-                canonical = _canonical(scope.resource,row)
-                ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
-                if selectors[index] is not None:ref['projection']=selectors[index]
-                if key in merged:
-                    saved = merged[key]
-                    saved['record'] = _merge(saved['record'],canonical)
-                    if ref not in saved['provenance']: saved['provenance'].append(ref)
-                else: merged[key] = dict(resource=scope.resource,ticker=scope.ticker,identity=identity,record=canonical,provenance=[ref])
+    for scope,jid,page in ordered_pages:
+        receipt = page['receipt']
+        if receipt['object_key']!=page['object_key'] or receipt['provider']!='kalshi': raise EvidenceConflict('Wrong evidence reference')
+        rows,cursor,selectors = resolve_evidence(scope,page,archives)
+        retain(receipt)
+        for index,row in enumerate(rows):
+            scanned += 1
+            if scanned>max_rows: raise ValueError('Evidence row limit exceeded; no truncated dataset')
+            identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
+            key = (scope.resource,scope.ticker,identity)
+            canonical = _canonical(scope.resource,row)
+            ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
+            if selectors[index] is not None:ref['projection']=selectors[index]
+            if key in merged:
+                saved = merged[key]
+                saved['record'] = _merge(saved['record'],canonical)
+                if ref not in saved['provenance']: saved['provenance'].append(ref)
+            else: merged[key] = dict(resource=scope.resource,ticker=scope.ticker,identity=identity,record=canonical,provenance=[ref])
     records = []
     for key,value in sorted(merged.items()):
         value['provenance'].sort(key=digest); records.append(value)
@@ -223,6 +227,11 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
     encoded = json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
     if len(encoded.encode())>64*1024*1024: raise ValueError('Dataset too large; explicit partitioning required')
     return PreparedDataset(encoded,digest(payload),json.dumps(summary,sort_keys=True),json.dumps(artifact_list))
+
+
+def _ordered_evidence_pages(selected):
+    return sorted(((scope,jid,page) for scope,jid,pages in selected for page in pages),
+        key=lambda item:(item[2]['receipt']['object_key'],item[0].key,item[2]['page_key']))
 
 
 class DatasetStore:

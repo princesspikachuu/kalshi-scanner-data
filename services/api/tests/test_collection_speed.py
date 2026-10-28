@@ -11,11 +11,61 @@ from services.research.normalize import normalize_inventory,batch_from_dict
 from services.research.evidence import build_scopes
 from services.research.datasets import prepare_dataset
 from services.research.queue import EvidenceConflict
+from services.research.projections import archive_evidence
+from services.research.inventory import Scope,page_key
+from services.research.evidence import build_scopes
+from test_datasets import Fixture
+from test_evidence import trade
+from test_shared_projections import batch_response,checkpoint
 from test_archives import MemoryObjects
 import test_normalize as norm
 from test_normalize import RECENT,HISTORY,MARKET,DAY,GENERATION
 
 class CollectionSpeedTests(unittest.TestCase):
+    def test_shared_batch_pages_are_read_together_without_changing_dataset(self):
+        import services.research.datasets as datasets
+        fixture=Fixture();objects=fixture.archives.objects
+        markets=[{**MARKET,'ticker':f'KXBTC15M-LOCAL-{i}',
+                  'event_ticker':f'LOCAL-E-{i}'} for i in range(12)]
+        fixture.inventory={}
+        for source in ('recent','historical'):
+            scope=Scope('KXBTC15M',source,DAY if source=='recent' else None,GENERATION)
+            attempt=fixture.attempt(scope,{'markets':markets,'cursor':''},len(markets),jid='inventory-'+source)
+            fixture.inventory[attempt[0]['id']]=attempt
+        fixture.batch=normalize_inventory(['KXBTC15M'],DAY,GENERATION,list(fixture.inventory.values()),fixture.archives)
+        fixture.plan=build_scopes(fixture.batch,fixture.archives,lookback_seconds=60)
+        recent=[s for s in fixture.plan.scopes if (s.resource,s.source)==('candles','recent')]
+        _,receipt,responses=batch_response(fixture.archives,recent)
+        fixture.attempts=[]
+        for scope in fixture.plan.scopes:
+            if (scope.resource,scope.source)==('candles','recent'):
+                response=responses[scope.key]
+                shared,cp=archive_evidence(scope,checkpoint(scope,1),response,fixture.archives)
+                self.assertEqual(shared,receipt)
+                page=dict(page_key=page_key(scope,0),object_key=shared['object_key'],receipt=shared,checkpoint=cp)
+                fixture.attempts.append((dict(id=scope.key,parameters=scope.parameters(),status='succeeded'),[page]))
+            elif scope.resource=='candles':
+                payload=dict(ticker=scope.ticker,candlesticks=[dict(end_period_ts=scope.end_ts,yes_bid={'close':'0.8800'})])
+                fixture.attempts.append(fixture.attempt(scope,payload,1,jid=scope.key))
+            else:fixture.attempts.append(fixture.attempt(scope,dict(trades=[trade(scope)],cursor=''),1,jid=scope.key))
+        # A cache holding the batch but not all the other objects exposes the
+        # repeated R2 GETs caused by hash-ordered, interleaved scopes.
+        capacity=max(p[0]['receipt']['byte_length'] for _,p in fixture.attempts)
+        original=lambda selected:[(s,j,p) for s,j,pages in selected for p in sorted(pages,key=lambda p:p['page_key'])]
+        fixture.archives=ArchiveStore(objects,cache_bytes=capacity)
+        fixture.archives.batch_indexes=ByteCache(0)
+        before=objects.gets
+        with patch.object(datasets,'_ordered_evidence_pages',side_effect=original):
+            old=fixture.prepare()
+        old_gets=objects.gets-before
+        fixture.archives=ArchiveStore(objects,cache_bytes=capacity)
+        fixture.archives.batch_indexes=ByteCache(0)
+        before=objects.gets
+        grouped=fixture.prepare()
+        grouped_gets=objects.gets-before
+        self.assertEqual((grouped.fingerprint,grouped.payload_json),(old.fingerprint,old.payload_json))
+        self.assertLess(grouped_gets,old_gets)
+
     def test_verified_prelaunch_proofs_skip_only_certified_series_and_preserve_boundary(self):
         utc=timezone.utc
         included,proof=eligible_series(['KXTEMPNYCH','KXTEMPNYCHS','KXTEMPLAH'],datetime(2025,12,22,tzinfo=utc))
