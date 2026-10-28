@@ -69,6 +69,12 @@ class ResearchQueue:
         campaign_id=None if campaign_id is None else str(UUID(str(campaign_id)))
         if asset is not None and asset not in ASSETS:raise ValueError("Invalid asset")
         with self.pool.connection() as c:
+            # The coordinator only schedules independently fenced child work.
+            # Losing its process/DB connection is not a failed evidence attempt.
+            c.execute('''UPDATE research_job SET status='queued',attempts=greatest(0,attempts-1),
+                lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp()
+                WHERE status='running' AND lease_expires_at<=clock_timestamp()
+                AND parameters->>'collector'='campaign-v1' ''')
             # Expired attempts at the limit become terminal instead of being stranded.
             c.execute('''UPDATE research_job SET status='failed',finished_at=clock_timestamp(),
                 error_code='attempts_exhausted',lease_token=NULL,lease_expires_at=NULL

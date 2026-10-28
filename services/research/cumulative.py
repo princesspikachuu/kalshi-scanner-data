@@ -79,6 +79,16 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
 class CategoryReports:
     def __init__(self,pool):self.pool=pool;self.queue=ResearchQueue(pool)
 
+    def recover_latest(self,asset):
+        # A failed old category job must not hide already-published campaign
+        # data. Create a new fenced build; never rewrite its frozen snapshot.
+        with self.pool.connection() as c:
+            row=c.execute('''SELECT max((SELECT id FROM research_result
+                WHERE stream_key='campaign-'||replace(r.id::text,'-','') ORDER BY id DESC LIMIT 1)) AS revision
+                FROM research_campaign r WHERE asset=%s''',(asset,)).fetchone()
+            if row['revision']:
+                self.enqueue(c,asset,'bounded-publication-v1/'+asset,source_revision=row['revision'])
+
     @staticmethod
     def enqueue(c,asset,campaign_id,*,source_revision=None,urgent=True):
         c.execute('''INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)
@@ -113,15 +123,18 @@ class CategoryReports:
                 c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
                     (Jsonb({'category_snapshot':snapshot}),job['id']))
         ids=sorted({r['dataset_id'] for r in snapshot['windows']})
+        days=set()
         def inputs():
             for identifier in ids:
                 with self.pool.connection() as c:
                     row=c.execute("SELECT COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                     if not row or row['bytes']>64*1024*1024:raise EvidenceConflict('Category input missing or too large')
-                    data=c.execute("SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
+                    data=c.execute("SELECT id,fingerprint,payload,day FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
+                days.add(str(data['day']))
                 yield data
         self.queue.heartbeat(job['id'],job['lease_token'],600)
         prepared=prepare_category(job['asset'],inputs(),snapshot['windows'],snapshot['revision'],publication_complete=snapshot.get('complete',True))
+        self.queue.heartbeat(job['id'],job['lease_token'],600)
         # _save serializes each stream and refuses an older frozen revision.
         ReportStore(self.pool)._save('category-'+job['asset'],job['asset'],prepared,
                                     minimum_revision=snapshot['revision'])
@@ -129,10 +142,14 @@ class CategoryReports:
             self.queue._owned(c,job['id'],job['lease_token'])
             report_jobs.coalesce(c,job,snapshot['revision'])
         self.queue.finish(job['id'],job['lease_token'])
+        print(json.dumps(dict(event='category_days_published',asset=job['asset'],days=len(days),
+            revision=snapshot['revision'],complete=snapshot.get('complete',True))),flush=True)
 
     def run_once(self,*,campaign_id=None,asset=None):
         job=self.queue.claim(seconds=600,collector='category-report-v1',campaign_id=campaign_id,asset=asset)
         if job is None:return False
         try:self.step(job)
-        except ValueError:self.queue.fail(job['id'],job['lease_token'],'category_report_blocked',retry=False)
+        except ValueError as error:
+            print(json.dumps(dict(event='category_publication_blocked',asset=job['asset'],reason=str(error)[:200])),flush=True)
+            self.queue.fail(job['id'],job['lease_token'],'category_report_blocked',retry=False)
         return True
