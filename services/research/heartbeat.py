@@ -54,7 +54,7 @@ class DayProgress:
                 jobs=c.execute("""SELECT parameters->>'collector' AS collector,asset,status,error_code,attempts,
                     greatest(0,extract(epoch FROM(available_at-clock_timestamp())))::integer AS wait_seconds,
                     greatest(0,extract(epoch FROM(lease_expires_at-clock_timestamp())))::integer AS lease_seconds
-                    FROM research_job WHERE status IN ('running','failed')
+                    FROM research_job WHERE status IN ('running','failed') OR (status='queued' AND error_code IS NOT NULL)
                     ORDER BY created_at DESC LIMIT 20""").fetchall()
             self.sink(dict(event='collection_days_status_v1',collections=rows,jobs=jobs))
         except Exception:pass  # Diagnostics cannot stop or mutate collection.

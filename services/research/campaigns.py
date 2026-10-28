@@ -581,7 +581,8 @@ class CampaignWorker:
                 SELECT j.id,j.status,j.available_at,j.lease_expires_at
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
-                    AND j.status IN ('queued','running')
+                    AND ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
+                         (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
                 ORDER BY CASE WHEN EXISTS(SELECT 1 FROM research_campaign_day d
                     WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
                     AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text))

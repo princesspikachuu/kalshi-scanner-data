@@ -356,6 +356,25 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertNotIn('snapshot',saved['progress']);self.assertEqual(saved['attempts'],0)
         self.assertGreater((saved['available_at']-datetime.now(UTC)).total_seconds(),25)
 
+    def test_new_report_builder_can_publish_while_crashed_builder_lease_expires(self):
+        from services.research.progressive import ProgressiveReports
+        identifier=self.create(key='crashed-report-lease')
+        for _ in range(60):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+            if progress.get('candle_previews'):break
+        else:self.fail('No preview')
+        stranded=self.queue.claim(seconds=600,collector='campaign-preview-v1')
+        previews=ProgressiveReports(self.db.pool);previews.bootstrap()
+        self.assertTrue(previews.run_once())
+        self.assertEqual(self.queue.get(stranded['id'])['lease_token'],stranded['lease_token'])
+        with self.db.pool.connection() as c:
+            repaired=c.execute("SELECT status FROM research_job WHERE idempotency_key LIKE 'checkpoint-repair-v1/%'").fetchall()
+        self.assertEqual(repaired,[{'status':'succeeded'}])
+        previews.bootstrap()
+        self.assertFalse(previews.run_once())
+
     def test_blocked_progress_report_retries_once_preserving_frozen_membership(self):
         from services.research.progressive import ProgressiveReports
         identifier=self.create(key='report-recovery')
@@ -378,7 +397,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(self.queue.get(failed['id'])['error_code'],'progress_path_limit')
         previews.bootstrap();self.assertEqual(self.queue.get(failed['id'])['status'],'failed')
 
-    def test_oldest_collection_keeps_turn_until_it_stops_even_during_retry(self):
+    def test_oldest_ready_collection_keeps_turn_but_retry_does_not_idle_others(self):
         original=self.evidence.fetch;page=0
         def streaming(scope,cursor,timeout):
             nonlocal page
@@ -399,7 +418,9 @@ class CampaignPostgresTests(unittest.TestCase):
             self.queue.yield_job(claimed['id'],claimed['lease_token'])
         claimed=self.worker._claim_parent()
         self.queue.yield_job(claimed['id'],claimed['lease_token'],60)
-        self.assertIsNone(self.worker._claim_parent())
+        ready=self.worker._claim_parent()
+        self.assertEqual(ready['parameters']['campaign_id'],fresh)
+        self.queue.yield_job(ready['id'],ready['lease_token'])
         self.assertEqual(self.store.get(fresh)['saved_pages'],0)
         self.queue.cancel(claimed['id'])
         claimed=self.worker._claim_parent()
