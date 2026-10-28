@@ -13,7 +13,7 @@ from psycopg.types.json import Jsonb
 
 from .datasets import FORMAT,decoded_dataset
 from .inventory import digest
-from .models.conditional_v2 import SOURCE_COMMIT, analyze_risk, policy_cells
+from .models.conditional_v2 import SOURCE_COMMIT, CHECKPOINTS, analyze_risk, policy_cells
 from .normalize import _closed
 from .queue import EvidenceConflict, text_key
 
@@ -114,8 +114,6 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
         bars=defaultdict(list)
         for record in payload['records']:
             if record['resource']=='candles' and (candidate_filter is None or record['ticker'] in tickers):
-                bar_count+=1
-                if bar_count>MAX_PATH_BARS:raise ValueError('Report path limit exceeded; split the range')
                 bars[record['ticker']].append(record['record'])
         for candidate in candidates:
             ticker,day=candidate['ticker'],payload['day']
@@ -128,9 +126,17 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
             close=int(_closed(candidate['close_time']).timestamp())
             candles=sorted(bars[ticker],key=lambda b:b['end_period_ts'])
             times=[b['end_period_ts'] for b in candles]
+            # The pinned policy examines only its fixed decision checkpoints.
+            # Keep the exact latest source bar for each checkpoint, including
+            # explicit nulls. Full minute evidence stays in the raw dataset.
+            selected_indices={bisect_right(times,close-60*t)-1 for t in CHECKPOINTS}
+            selected_indices.discard(-1)
+            retained=[candles[i] for i in sorted(selected_indices)]
+            bar_count+=len(retained)
+            if bar_count>MAX_PATH_BARS:raise ValueError('Report path limit exceeded; split the range')
             paths[key]={'close_ts':close,'bars':[[b['end_period_ts'],
                 float(_bid(b,'yes')*100) if _bid(b,'yes') is not None else None,
-                float(_bid(b,'no')*100) if _bid(b,'no') is not None else None] for b in candles]}
+                float(_bid(b,'no')*100) if _bid(b,'no') is not None else None] for b in retained]}
             for minute in MINUTES[asset]:
                 target=close-minute*60
                 index=bisect_right(times,target)-1

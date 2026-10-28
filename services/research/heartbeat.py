@@ -51,5 +51,10 @@ class DayProgress:
                                 coalesce(r.progress->'candle_previews','{}'::jsonb) ? day::text)::integer AS price_days_saved
                         FROM research_campaign_day WHERE campaign_id=r.id) d
                     ORDER BY r.created_at,r.id''').fetchall()
-            self.sink(dict(event='collection_days_status_v1',collections=rows))
+                jobs=c.execute("""SELECT parameters->>'collector' AS collector,asset,status,error_code,attempts,
+                    greatest(0,extract(epoch FROM(available_at-clock_timestamp())))::integer AS wait_seconds,
+                    greatest(0,extract(epoch FROM(lease_expires_at-clock_timestamp())))::integer AS lease_seconds
+                    FROM research_job WHERE status IN ('running','failed')
+                    ORDER BY created_at DESC LIMIT 20""").fetchall()
+            self.sink(dict(event='collection_days_status_v1',collections=rows,jobs=jobs))
         except Exception:pass  # Diagnostics cannot stop or mutate collection.

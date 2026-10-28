@@ -1,5 +1,6 @@
 """Immutable candle-complete report snapshots while full enrichment continues."""
 from uuid import UUID,uuid4
+import json
 from psycopg.types.json import Jsonb
 from .queue import ResearchQueue
 from .reports import ReportStore
@@ -18,7 +19,11 @@ class ProgressiveReports:
         revision=row['revision']
         if not revision:return
         c.execute('''INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)
-            VALUES(%s,%s,%s,%s,5) ON CONFLICT(idempotency_key) DO NOTHING''',
+            VALUES(%s,%s,%s,%s,5) ON CONFLICT(idempotency_key) DO UPDATE SET status='queued',attempts=0,error_code=NULL,
+                finished_at=NULL,available_at=clock_timestamp(),progress=research_job.progress||jsonb_build_object('report_recovery_version','checkpoint-path-v1')
+                WHERE research_job.status='failed' AND research_job.error_code='progress_report_blocked'
+                AND research_job.progress->>'report_recovery_version' IS DISTINCT FROM 'checkpoint-path-v1'
+            ''',
             (uuid4(),f'progress/{identifier}/{revision}',asset,Jsonb(dict(collector='campaign-preview-v1',campaign_id=str(identifier),revision=revision))))
 
     def bootstrap(self):
@@ -59,5 +64,11 @@ class ProgressiveReports:
         job=self.queue.claim(seconds=600,collector='campaign-preview-v1')
         if job is None:return False
         try:self.step(job)
-        except ValueError:self.queue.fail(job['id'],job['lease_token'],'progress_report_blocked',retry=False)
+        except ValueError as error:
+            codes={'Report path limit exceeded; split the range':'progress_path_limit',
+                   'Report entry limit exceeded; split the range':'progress_entry_limit',
+                   'Research result too large; explicit partitions required':'progress_size_limit'}
+            code=codes.get(str(error),'progress_report_blocked')
+            print(json.dumps(dict(event='report_publication_blocked',asset=job['asset'],code=code)),flush=True)
+            self.queue.fail(job['id'],job['lease_token'],code,retry=False)
         return True

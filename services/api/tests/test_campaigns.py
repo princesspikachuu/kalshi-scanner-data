@@ -356,6 +356,28 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertNotIn('snapshot',saved['progress']);self.assertEqual(saved['attempts'],0)
         self.assertGreater((saved['available_at']-datetime.now(UTC)).total_seconds(),25)
 
+    def test_blocked_progress_report_retries_once_preserving_frozen_membership(self):
+        from services.research.progressive import ProgressiveReports
+        identifier=self.create(key='report-recovery')
+        for _ in range(60):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+            if progress.get('candle_previews'):break
+        else:self.fail('No preview')
+        previews=ProgressiveReports(self.db.pool)
+        with patch('services.research.progressive.ReportStore.publish_campaign',side_effect=ValueError('legacy guard')):
+            self.assertTrue(previews.run_once())
+        with self.db.pool.connection() as c:
+            failed=c.execute("SELECT * FROM research_job WHERE parameters->>'collector'='campaign-preview-v1' AND status='failed'").fetchone()
+        snapshot=failed['progress']['snapshot']
+        previews.bootstrap();recovered=self.queue.get(failed['id'])
+        self.assertEqual(recovered['status'],'queued');self.assertEqual(recovered['progress']['snapshot'],snapshot)
+        with patch('services.research.progressive.ReportStore.publish_campaign',side_effect=ValueError('Report path limit exceeded; split the range')):
+            self.assertTrue(previews.run_once())
+        self.assertEqual(self.queue.get(failed['id'])['error_code'],'progress_path_limit')
+        previews.bootstrap();self.assertEqual(self.queue.get(failed['id'])['status'],'failed')
+
     def test_oldest_collection_keeps_turn_until_it_stops_even_during_retry(self):
         original=self.evidence.fetch;page=0
         def streaming(scope,cursor,timeout):
