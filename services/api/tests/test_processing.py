@@ -205,7 +205,7 @@ class ProcessingPostgresTests(unittest.TestCase):
 
     def test_expired_coordinator_does_not_exhaust_oldest_request(self):
         first=self.create(key='expired-oldest',end='2026-10-25')
-        self.create(key='waiting-newer',end='2026-10-26')
+        newer=self.create(key='waiting-newer',end='2026-10-26')
         parent=self.worker._claim_parent()
         with self.db.pool.connection() as c:
             c.execute("UPDATE research_job SET attempts=max_attempts,lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(parent['id'],))
@@ -217,6 +217,15 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.assertNotEqual(reclaimed['lease_token'],parent['lease_token'])
         with self.assertRaises(LeaseLost):self.queue.yield_job(parent['id'],parent['lease_token'])
         self.queue.yield_job(reclaimed['id'],reclaimed['lease_token'])
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted' WHERE id=%s",(parent['id'],))
+        self.queue.enqueue('btc',dict(collector='campaign-assembly-v1',campaign_id=str(newer),
+            day='2026-10-26',kind='prices',tickers=[]),f'assembly/{newer}/2026-10-26/prices')
+        self.assertEqual(str(self.worker.oldest_request()['id']),first)
+        self.assertIsNone(self.worker._claim_parent())
+        self.assertIsNone(self.processor._claim_assembly())
+        self.store.control(first,'remove')
+        self.assertEqual(str(self.worker.oldest_request()['id']),newer)
 
     def test_finishes_and_publishes_a_date_before_opening_the_eighth_unfinished_date(self):
         identifier=self.create(key='bounded-window',start='2026-10-20',end='2026-10-27')

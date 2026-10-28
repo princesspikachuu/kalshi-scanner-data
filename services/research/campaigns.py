@@ -672,7 +672,8 @@ class CampaignWorker:
     def oldest_request(self):
         with self.pool.connection() as c:
             return c.execute("""SELECT r.id,r.job_id,r.asset FROM research_campaign r
-                JOIN research_job j ON j.id=r.job_id WHERE j.status IN ('queued','running')
+                JOIN research_job j ON j.id=r.job_id WHERE (j.status IN ('queued','running') OR
+                    (j.status='failed' AND j.error_code IN ('attempts_exhausted','campaign_step_failed')))
                 AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
                 ORDER BY r.created_at,r.id LIMIT 1""").fetchone()
 

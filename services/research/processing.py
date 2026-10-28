@@ -37,7 +37,9 @@ class ProcessingWorker(CampaignWorker):
                 WHERE a.idempotency_key>='assembly/' AND a.idempotency_key<'assemblz'
                     AND a.parameters->>'collector'='campaign-assembly-v1'
                     AND r.id=(SELECT cr.id FROM research_campaign cr JOIN research_job cp ON cp.id=cr.job_id
-                        WHERE cp.status IN ('queued','running') AND NOT coalesce((cp.progress->>'removed_from_queue')::boolean,false)
+                        WHERE (cp.status IN ('queued','running') OR
+                            (cp.status='failed' AND cp.error_code IN ('attempts_exhausted','campaign_step_failed')))
+                        AND NOT coalesce((cp.progress->>'removed_from_queue')::boolean,false)
                         ORDER BY cr.created_at,cr.id LIMIT 1)
                     AND a.attempts<a.max_attempts AND p.status IN ('queued','running')
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
