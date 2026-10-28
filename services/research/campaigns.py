@@ -4,6 +4,7 @@ No service, scheduler or network request starts on import. Publication means RAW
 coverage, not quote eligibility, research completion or a trading recommendation.
 """
 from .telemetry import timed,timing,count
+import json
 
 from datetime import date,datetime,time,timedelta,timezone
 from dataclasses import replace
@@ -24,6 +25,9 @@ from .sample import select_preview_candidates
 
 UTC=timezone.utc
 MAX_DAYS=3660
+ACTIVE_DAYS=7
+JOB_BATCH_ROWS=64
+JOB_BATCH_BYTES=128*1024
 
 
 def utc(value):
@@ -313,24 +317,43 @@ class CampaignWorker:
             if self.cancelled():return True
             now=clock()
             if now-last>=30:
-                self.queue.heartbeat(parent['id'],parent['lease_token'],600)
+                self.queue.heartbeat(parent['id'],parent['lease_token'],120 if self.role=='collector' else 600)
                 self.on_work_tick()
                 last=now
             return False
         return check
 
-    def _jobs(self,campaign,day,phase,scopes,parent):
-        rows=[dict(id=str(uuid5(campaign['id'],s.key)),asset=campaign['asset'],parameters=s.parameters(),
-            key=f"campaign/{campaign['id']}/{s.key}") for s in scopes]
+    def _insert_job_batch(self,campaign,day,phase,rows,parent):
+        # Each bounded batch commits independently. A crash leaves reusable
+        # immutable jobs/membership, never an incorrectly complete plan.
         with self.pool.connection() as c:
             self.queue._owned(c,parent['id'],parent['lease_token'])
             c.execute('''INSERT INTO research_job(id,asset,parameters,idempotency_key,max_attempts)
                 SELECT id::uuid,asset,parameters,key,5 FROM jsonb_to_recordset(%s) AS r(id text,asset text,parameters jsonb,key text)
                 ON CONFLICT(idempotency_key) DO NOTHING''',(Jsonb(rows),))
             c.execute('''INSERT INTO research_campaign_work(campaign_id,day,phase,job_id)
-                SELECT %s,%s,%s,id::uuid FROM jsonb_to_recordset(%s) AS r(id text)
-                ON CONFLICT DO NOTHING''',(campaign['id'],day['day'],phase,Jsonb(rows)))
+                SELECT %s,%s,%s,unnest(%s::uuid[]) ON CONFLICT DO NOTHING''',
+                (campaign['id'],day['day'],phase,[row['id'] for row in rows]))
+
+    @timed('campaign.plan')
+    def _jobs(self,campaign,day,phase,scopes,parent):
+        rows=[dict(id=str(uuid5(campaign['id'],s.key)),asset=campaign['asset'],parameters=s.parameters(),
+            key=f"campaign/{campaign['id']}/{s.key}") for s in scopes]
+        batch=[];size=0;guard=self._work_guard(parent)
+        for row in rows:
+            length=len(json.dumps(row,separators=(',',':')).encode())
+            if length>JOB_BATCH_BYTES:raise DatasetLimit('Single collection job exceeds planning bound')
+            if batch and (len(batch)>=JOB_BATCH_ROWS or size+length>JOB_BATCH_BYTES):
+                if guard():raise CollectionInterrupted()
+                self._insert_job_batch(campaign,day,phase,batch,parent);batch=[];size=0
+            batch.append(row);size+=length
+        if batch:
+            if guard():raise CollectionInterrupted()
+            self._insert_job_batch(campaign,day,phase,batch,parent)
+        with self.pool.connection() as c:
+            self.queue._owned(c,parent['id'],parent['lease_token'])
             if phase=='evidence':c.execute('UPDATE research_campaign_day SET evidence_planned=true WHERE campaign_id=%s AND day=%s',(campaign['id'],day['day']))
+        print(json.dumps(dict(event='collection_plan_saved',asset=campaign['asset'],day=str(day['day']),phase=phase,jobs=len(rows))),flush=True)
 
     def _attempts(self,campaign,day,phase):
         # Bulk metadata reads only at a stage boundary, not once per HTTP page.
@@ -443,24 +466,25 @@ class CampaignWorker:
     @timed('campaign.step')
     def step(self,parent,*,deadline):
         identifier=UUID(parent['parameters']['campaign_id'])
-        self.queue.heartbeat(parent['id'],parent['lease_token'],600)
+        self.queue.heartbeat(parent['id'],parent['lease_token'],120 if self.role=='collector' else 600)
         with self.pool.connection() as c:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
             if campaign is None:raise EvidenceConflict('Unknown collection campaign')
-            # Publish full-cohort price days across the range before detailed trades.
-            # A day with a full candle report must not monopolize the worker
-            # while every other requested date waits behind trade enrichment.
+            # Finish a bounded window, including detailed trades, before opening
+            # more dates. A year of previews must not starve completed days.
             day=c.execute('''WITH pending_assembly AS MATERIALIZED (
                 SELECT parameters->>'day' AS day FROM research_job
                 WHERE idempotency_key>=%s AND idempotency_key<%s
                     AND parameters->>'collector'='campaign-assembly-v1'
-                    AND (parameters->>'kind' IN ('prices','enriched') OR (%s=300 AND parameters->>'kind'='sample')) AND status IN ('queued','running'))
-                SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
-                AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=research_campaign_day.day::text))
+                    AND (parameters->>'kind' IN ('prices','enriched') OR (%s=300 AND parameters->>'kind'='sample')) AND status IN ('queued','running')),
+                active_days AS MATERIALIZED (SELECT * FROM research_campaign_day
+                    WHERE campaign_id=%s AND dataset_id IS NULL ORDER BY day DESC LIMIT %s)
+                SELECT * FROM active_days
+                AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=active_days.day::text))
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
                               WHEN %s::jsonb ? day::text THEN %s ELSE %s END,
                     day DESC LIMIT 1''',
-                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',self.preview_limit,identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
+                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',self.preview_limit,identifier,ACTIVE_DAYS if self.role=='collector' else MAX_DAYS,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
                     Jsonb(parent['progress'].get('sample_previews',{})),1 if self.preview_limit==300 else 0,0 if self.preview_limit==300 else 1)).fetchone()
         if day is None:
             if self.role=='collector':
@@ -654,7 +678,7 @@ class CampaignWorker:
     def _claim_parent(self):
         if self.role=='collector':
             oldest=self.oldest_request()
-            return self.queue.claim(seconds=600,job_id=oldest['job_id']) if oldest else None
+            return self.queue.claim(seconds=120,job_id=oldest['job_id']) if oldest else None
         # A rate-limit wait on price work must not open a lane for a minutes-long
         # trade assembly. Publish every requested price date before enrichment.
         with self.pool.connection() as c:
@@ -685,6 +709,17 @@ class CampaignWorker:
             # One-time recovery of crash-exhausted requests after the fixes.
             # Cancelled/removed requests are never resumed; durable pages stay.
             with self.pool.connection() as c:
+                # One-time recovery of coordinator crashes under the former
+                # unbounded planner. Explicit evidence failures stay stopped.
+                c.execute('''UPDATE research_job p SET status='queued',attempts=0,error_code=NULL,
+                    finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp(),
+                    progress=progress||jsonb_build_object('planning_recovery_version','bounded-plan-v1')
+                    WHERE p.status='failed' AND p.error_code IN ('attempts_exhausted','campaign_step_failed')
+                    AND p.parameters->>'collector'='campaign-v1'
+                    AND p.progress->>'planning_recovery_version' IS DISTINCT FROM 'bounded-plan-v1'
+                    AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
+                    AND NOT EXISTS(SELECT 1 FROM research_campaign r JOIN research_campaign_work w ON w.campaign_id=r.id
+                        JOIN research_job j ON j.id=w.job_id WHERE r.job_id=p.id AND j.status IN ('failed','cancelled'))''')
                 recovered=c.execute('''UPDATE research_job SET status='queued',attempts=0,error_code=NULL,
                     finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp(),
                     progress=progress||jsonb_build_object('recovery_version','2026-10-28-collection-v3')

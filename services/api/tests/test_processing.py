@@ -2,6 +2,7 @@
 import os
 import time
 import unittest
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from unittest.mock import patch
@@ -176,6 +177,66 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.assertEqual(parent['attempts'],1)
         self.assertEqual(self.store.get(newer)['saved_pages'],0)
         self.queue.yield_job(parent['id'],parent['lease_token'])
+
+    def test_planning_batches_commit_and_recover_without_marking_partial_plan_complete(self):
+        identifier=self.create(key='bounded-plan',end='2026-10-25')
+        parent=self.worker._claim_parent()
+        with self.db.pool.connection() as c:
+            campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s',(identifier,)).fetchone()
+            day=c.execute('SELECT * FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()
+        scopes=[SimpleNamespace(key=f'bounded-scope-{i}',parameters=lambda i=i:dict(collector='planner-fixture',item=i)) for i in range(150)]
+        original=self.worker._insert_job_batch;batch_sizes=[]
+        def interrupted(*args):
+            batch_sizes.append(len(args[3]))
+            if len(batch_sizes)==2:raise RuntimeError('Simulated database interruption')
+            return original(*args)
+        with patch.object(self.worker,'_insert_job_batch',side_effect=interrupted):
+            with self.assertRaises(RuntimeError):self.worker._jobs(campaign,day,'evidence',scopes,parent)
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchone()['n'],64)
+            self.assertFalse(c.execute('SELECT evidence_planned FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()['evidence_planned'])
+        with patch.object(self.worker,'_insert_job_batch',wraps=original) as saved:
+            self.worker._jobs(campaign,day,'evidence',scopes,parent)
+            self.assertEqual([len(call.args[3]) for call in saved.call_args_list],[64,64,22])
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchone()['n'],150)
+            self.assertTrue(c.execute('SELECT evidence_planned FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()['evidence_planned'])
+        self.queue.yield_job(parent['id'],parent['lease_token'])
+
+    def test_expired_coordinator_does_not_exhaust_oldest_request(self):
+        first=self.create(key='expired-oldest',end='2026-10-25')
+        self.create(key='waiting-newer',end='2026-10-26')
+        parent=self.worker._claim_parent()
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET attempts=max_attempts,lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(parent['id'],))
+        # Even another role's claim must not terminally fail the coordinator.
+        self.queue.claim(collector='campaign-preview-v1')
+        self.assertEqual(self.store.get(first)['status'],'queued')
+        reclaimed=self.worker._claim_parent()
+        self.assertEqual(reclaimed['id'],parent['id'])
+        self.assertNotEqual(reclaimed['lease_token'],parent['lease_token'])
+        with self.assertRaises(LeaseLost):self.queue.yield_job(parent['id'],parent['lease_token'])
+        self.queue.yield_job(reclaimed['id'],reclaimed['lease_token'])
+
+    def test_finishes_and_publishes_a_date_before_opening_the_eighth_unfinished_date(self):
+        identifier=self.create(key='bounded-window',start='2026-10-20',end='2026-10-27')
+        self.worker.preview_limit=300
+        for _ in range(600):
+            self.available();self.worker.run_once(deadline=time.monotonic()+30)
+            self.processor.run_once(deadline=time.monotonic()+30)
+            state=self.store.get(identifier)
+            self.assertNotEqual(state['status'],'failed',state)
+            if state['completed_sections']:break
+        else:self.fail('A date never finished within the bounded window')
+        with self.db.pool.connection() as c:
+            oldest=c.execute("SELECT manifest FROM research_campaign_day WHERE campaign_id=%s AND day='2026-10-20'",(identifier,)).fetchone()
+            finished=c.execute('SELECT dataset_id FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NOT NULL',(identifier,)).fetchone()['dataset_id']
+        self.assertIsNone(oldest['manifest'])
+        # The next full campaign/category publications precede more assembly.
+        for _ in range(3):self.available();self.processor.run_once(deadline=time.monotonic()+30)
+        with self.db.pool.connection() as c:
+            report=c.execute("SELECT report FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()['report']
+        self.assertIn(finished,[d['id'] for d in report['datasets']])
 
     def test_oldest_finishes_enrichment_and_final_report_while_newer_waits(self):
         first=self.create(key='finish-oldest',end='2026-10-25')

@@ -9,7 +9,7 @@ from datetime import datetime,timezone
 import json
 from uuid import UUID
 from psycopg.types.json import Jsonb
-from .campaigns import CampaignWorker
+from .campaigns import CampaignWorker,ACTIVE_DAYS
 from .datasets import prepare_dataset,CollectionInterrupted,DatasetLimit,CoverageIncomplete
 from .queue import EvidenceConflict,LeaseLost
 from .reports import ReportStore
@@ -41,16 +41,20 @@ class ProcessingWorker(CampaignWorker):
                         ORDER BY cr.created_at,cr.id LIMIT 1)
                     AND a.attempts<a.max_attempts AND p.status IN ('queued','running')
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
+                    AND (a.parameters->>'kind'='final' OR a.parameters->>'day' IN (
+                        SELECT day::text FROM research_campaign_day WHERE campaign_id=r.id AND dataset_id IS NULL
+                        ORDER BY day DESC LIMIT %s))
                     AND ((a.status='queued' AND a.available_at<=clock_timestamp()) OR
                          (a.status='running' AND a.lease_expires_at<=clock_timestamp()))
                     AND (a.parameters->>'kind'<>'enriched' OR NOT EXISTS(
                         SELECT 1 FROM research_campaign cr JOIN research_job cp ON cp.id=cr.job_id
-                        JOIN research_campaign_day d ON d.campaign_id=cr.id
+                        JOIN LATERAL (SELECT * FROM research_campaign_day WHERE campaign_id=cr.id
+                            AND dataset_id IS NULL ORDER BY day DESC LIMIT %s) d ON true
                         WHERE cr.id=r.id AND cp.status IN ('queued','running')
                         AND NOT coalesce((cp.progress->>'removed_from_queue')::boolean,false)
                         AND d.dataset_id IS NULL AND NOT(coalesce(cp.progress->'candle_previews','{}'::jsonb) ? d.day::text)))
                 ORDER BY CASE a.parameters->>'kind' WHEN 'prices' THEN 0 WHEN 'sample' THEN 1
-                    WHEN 'final' THEN 2 ELSE 3 END,a.created_at,a.id LIMIT 1""").fetchone()
+                    WHEN 'final' THEN 2 ELSE 3 END,a.created_at,a.id LIMIT 1""",(ACTIVE_DAYS,ACTIVE_DAYS)).fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
     def _publish(self,job):
@@ -121,9 +125,11 @@ class ProcessingWorker(CampaignWorker):
         scope=dict(campaign_id=oldest['id']) if oldest else {}
         if ProgressiveReports(self.pool).run_once(**scope):return True
         if SampleReports(self.pool).run_once(**scope):return True
+        # A finished date must reach the category page before more assembly.
+        if CategoryReports(self.pool).run_once(**(dict(asset=oldest['asset']) if oldest else {})):return True
         job=self._claim_assembly()
         if job is None:
-            return CategoryReports(self.pool).run_once(**(dict(asset=oldest['asset']) if oldest else {}))
+            return False
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)
         try:self._publish(job)
         except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'])

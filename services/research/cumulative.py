@@ -113,15 +113,18 @@ class CategoryReports:
                 c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
                     (Jsonb({'category_snapshot':snapshot}),job['id']))
         ids=sorted({r['dataset_id'] for r in snapshot['windows']})
+        days=set()
         def inputs():
             for identifier in ids:
                 with self.pool.connection() as c:
                     row=c.execute("SELECT COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                     if not row or row['bytes']>64*1024*1024:raise EvidenceConflict('Category input missing or too large')
-                    data=c.execute("SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
+                    data=c.execute("SELECT id,fingerprint,payload,day FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
+                days.add(str(data['day']))
                 yield data
         self.queue.heartbeat(job['id'],job['lease_token'],600)
         prepared=prepare_category(job['asset'],inputs(),snapshot['windows'],snapshot['revision'],publication_complete=snapshot.get('complete',True))
+        self.queue.heartbeat(job['id'],job['lease_token'],600)
         # _save serializes each stream and refuses an older frozen revision.
         ReportStore(self.pool)._save('category-'+job['asset'],job['asset'],prepared,
                                     minimum_revision=snapshot['revision'])
@@ -129,6 +132,8 @@ class CategoryReports:
             self.queue._owned(c,job['id'],job['lease_token'])
             report_jobs.coalesce(c,job,snapshot['revision'])
         self.queue.finish(job['id'],job['lease_token'])
+        print(json.dumps(dict(event='category_days_published',asset=job['asset'],days=len(days),
+            revision=snapshot['revision'],complete=snapshot.get('complete',True))),flush=True)
 
     def run_once(self,*,campaign_id=None,asset=None):
         job=self.queue.claim(seconds=600,collector='category-report-v1',campaign_id=campaign_id,asset=asset)
