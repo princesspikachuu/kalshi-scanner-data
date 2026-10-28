@@ -79,6 +79,16 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
 class CategoryReports:
     def __init__(self,pool):self.pool=pool;self.queue=ResearchQueue(pool)
 
+    def recover_latest(self,asset):
+        # A failed old category job must not hide already-published campaign
+        # data. Create a new fenced build; never rewrite its frozen snapshot.
+        with self.pool.connection() as c:
+            row=c.execute('''SELECT max((SELECT id FROM research_result
+                WHERE stream_key='campaign-'||replace(r.id::text,'-','') ORDER BY id DESC LIMIT 1)) AS revision
+                FROM research_campaign r WHERE asset=%s''',(asset,)).fetchone()
+            if row['revision']:
+                self.enqueue(c,asset,'bounded-publication-v1/'+asset,source_revision=row['revision'])
+
     @staticmethod
     def enqueue(c,asset,campaign_id,*,source_revision=None,urgent=True):
         c.execute('''INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)

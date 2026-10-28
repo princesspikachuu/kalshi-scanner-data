@@ -247,6 +247,20 @@ class ProcessingPostgresTests(unittest.TestCase):
             report=c.execute("SELECT report FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()['report']
         self.assertIn(finished,[d['id'] for d in report['datasets']])
 
+    def test_recovery_publishes_saved_campaign_data_after_old_category_job_failed(self):
+        from services.research.progressive import ProgressiveReports
+        identifier=self.create(key='category-recovery',end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        self.processor._publish(self.processor._claim_assembly())
+        self.assertTrue(ProgressiveReports(self.db.pool).run_once(campaign_id=identifier))
+        with self.db.pool.connection() as c:
+            old=c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted' WHERE parameters->>'collector'='category-report-v1' RETURNING id").fetchone()['id']
+        replacement=ProcessingWorker(self.db.pool,self.archives)
+        self.assertTrue(replacement.run_once(deadline=time.monotonic()+30))
+        with self.db.pool.connection() as c:
+            self.assertIsNotNone(c.execute("SELECT id FROM research_result WHERE stream_key='category-btc'").fetchone())
+        self.assertEqual(self.queue.get(old)['status'],'failed')
+
     def test_oldest_finishes_enrichment_and_final_report_while_newer_waits(self):
         first=self.create(key='finish-oldest',end='2026-10-25')
         newer=self.create(key='hold-newer',end='2026-10-26')

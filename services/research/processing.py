@@ -21,6 +21,7 @@ from .cumulative import CategoryReports
 class ProcessingWorker(CampaignWorker):
     def __init__(self,pool,archives,*,stop=None):
         super().__init__(pool,archives,None,None,stop=stop)
+        self._category_recovered=set()
 
     @staticmethod
     def _active(c,identifier,*,lock=False):
@@ -124,6 +125,9 @@ class ProcessingWorker(CampaignWorker):
         if not self._bootstrapped:
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
         oldest=self.oldest_request()
+        if oldest and oldest['asset'] not in self._category_recovered:
+            CategoryReports(self.pool).recover_latest(oldest['asset'])
+            self._category_recovered.add(oldest['asset'])
         scope=dict(campaign_id=oldest['id']) if oldest else {}
         if ProgressiveReports(self.pool).run_once(**scope):return True
         if SampleReports(self.pool).run_once(**scope):return True
