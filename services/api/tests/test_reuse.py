@@ -207,3 +207,16 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         with patch('services.research.reuse.weather_snapshot', side_effect=lambda s: weather_snapshot(s, next_day)):
             self.assertIsNone(self.reuse.lookup(target, target_scope, ''))
         self.assertEqual(provider.fetch.call_count, 1)
+
+    def test_known_campaign_day_context_preserves_key_and_cannot_forge_membership(self):
+        source=Scope('KXBTC15M','recent',self.day,'context-source')
+        job=self.attach('btc','context-source',source)
+        with self.db.pool.connection() as c:
+            link=c.execute('SELECT campaign_id,day FROM research_campaign_work WHERE job_id=%s',(job['id'],)).fetchone()
+        expected=self.reuse._key(job,source,'')
+        contextual={**job,'_campaign_context':(str(link['campaign_id']),link['day'].isoformat())}
+        self.assertEqual(self.reuse._key(contextual,source,''),expected)
+        from uuid import uuid4
+        self.assertIsNone(self.reuse._key({**job,'_campaign_context':(str(uuid4()),self.day)},source,''))
+        previous=(datetime.fromisoformat(self.day).date()-timedelta(days=1)).isoformat()
+        self.assertIsNone(self.reuse._key({**job,'_campaign_context':(str(link['campaign_id']),previous)},source,''))

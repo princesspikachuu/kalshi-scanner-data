@@ -418,6 +418,9 @@ class CampaignWorker:
         if (len(jobs)>1 and phase=='evidence' and recent_candle(job)
                 and hasattr(worker,'complete_cached') and worker.complete_cached(jobs)):return 0
         def process(child):
+            # A verified queue link still establishes membership. Supplying its
+            # known PK prefix avoids scanning every collection's history per page.
+            child['_campaign_context']=(str(campaign['id']),day['day'].isoformat())
             result=worker.step(child,deadline=deadline)
             if result['state'] in ('partial','throttled'):
                 self.queue.yield_job(child['id'],child['lease_token'],min(3600,result['retry_after']))
