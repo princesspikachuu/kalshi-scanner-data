@@ -141,8 +141,8 @@ $('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{a
 function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
  $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last issue: '+c.last_work_error.replaceAll('_',' '):''}`;
- $('completion').max=c.total_sections;$('completion').value=c.completed_sections;if($('reportScope').value==='load')void loadReport(c,revision);
- $('counts').textContent=`${c.completed_sections} of ${c.total_sections} date windows processed${c.reported_sections?' · '+c.reported_sections+' windows included in the report':''} · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
+ $('completion').max=c.total_sections;$('completion').value=c.reported_sections||0;if($('reportScope').value==='load')void loadReport(c,revision);
+ $('counts').textContent=`${c.reported_sections||0} of ${c.total_sections} days available in the research report · ${c.report_days_last_five_minutes||0} new days in the last 5 minutes · ${c.completed_sections} days also have complete trade details · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
  $('pause').hidden=!['queued','running'].includes(c.status);$('resume').hidden=!['failed','cancelled'].includes(c.status);
  if(!append)$('sections').replaceChildren();

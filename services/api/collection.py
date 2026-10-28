@@ -37,6 +37,7 @@ class Campaign(Closed):
     result_id:str|None
     sample_result_id:str|None=None
     sample_reported_sections:int=Field(default=0,ge=0,le=3661)
+    report_days_last_five_minutes:int=Field(default=0,ge=0,le=3661)
     reported_sections:int=Field(default=0,ge=0,le=3661)
     report_complete:bool=Field(default=False,strict=True)
     error_code:str|None=Field(max_length=64)

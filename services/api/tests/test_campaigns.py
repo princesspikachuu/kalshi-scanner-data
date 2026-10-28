@@ -550,3 +550,18 @@ class CampaignPostgresTests(unittest.TestCase):
         f=Fixture();original=f.batch.fingerprint
         rebuilt=normalize_inventory(f.batch.series,f.batch.day,f.batch.generation,list(f.inventory.values()),f.archives)
         self.assertEqual(rebuilt.fingerprint,original);self.assertNotIn('window_start',asdict(rebuilt))
+
+    def test_all_price_days_publish_before_trade_enrichment(self):
+        identifier=self.create();resources=[];original=self.evidence.fetch
+        def traced(scope,cursor,timeout):
+            resources.append(scope.resource);return original(scope,cursor,timeout)
+        self.evidence.fetch=traced
+        for _ in range(150):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+            if len(progress.get('candle_previews',{}))==2:break
+        else:self.fail('Both price dates did not publish')
+        self.assertNotIn('trades',resources)
+        self.drive(identifier)
+        self.assertEqual(self.store.get(identifier)['completed_sections'],2)

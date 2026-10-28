@@ -177,6 +177,12 @@ class CampaignStore:
                     row['reported_sections']=publication['reported_sections'];row['report_complete']=publication['complete']
                 sample=c.execute('''SELECT id::text AS id,report->'publication' AS publication FROM research_result
                     WHERE stream_key=%s ORDER BY id DESC LIMIT 1''',('campaign-sample-'+UUID(str(identifier)).hex,)).fetchone()
+                speed=c.execute('''SELECT greatest(0,
+                    coalesce(max((report->'publication'->>'reported_sections')::integer),0)-
+                    coalesce(max((report->'publication'->>'reported_sections')::integer)
+                        FILTER(WHERE published_at<=clock_timestamp()-interval '5 minutes'),0)) AS days
+                    FROM research_result WHERE stream_key=%s''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
+                row['report_days_last_five_minutes']=speed['days']
                 row['sample_result_id']=sample['id'] if sample else None
                 row['sample_reported_sections']=sample['publication'].get('reported_sections',0) if sample else 0
                 detail=c.execute('''SELECT count(*)::integer AS work_items,
@@ -408,13 +414,12 @@ class CampaignWorker:
         with self.pool.connection() as c:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
             if campaign is None:raise EvidenceConflict('Unknown collection campaign')
-            # Finish the most advanced unfinished date before starting another.
-            # Existing partial previews are resumed first after a deploy; a new
-            # campaign still starts with its newest date. A 100-market preview
-            # and candle report can publish while this same date continues.
+            # Publish full-cohort price days across the range before detailed trades.
+            # A day with a full candle report must not monopolize the worker
+            # while every other requested date waits behind trade enrichment.
             day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
-                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 0
-                              WHEN %s::jsonb ? day::text THEN 1 ELSE 2 END,
+                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
+                              WHEN %s::jsonb ? day::text THEN 0 ELSE 1 END,
                     day DESC LIMIT 1''',
                 (identifier,Jsonb(parent['progress'].get('candle_previews',{})),
                     Jsonb(parent['progress'].get('sample_previews',{})))).fetchone()
@@ -487,6 +492,7 @@ class CampaignWorker:
                     c.execute('UPDATE research_campaign_day SET dataset_id=%s WHERE campaign_id=%s AND day=%s',(dataset,identifier,day['day']))
                     from .progressive import ProgressiveReports
                     ProgressiveReports.enqueue(c,identifier,campaign['asset'])
+                count('campaign.enriched_day_saved.'+campaign['asset'],1)
             self.queue.yield_job(parent['id'],parent['lease_token']);return 0
         except DatasetLimit:
             count('dataset.limit',1)
@@ -558,6 +564,7 @@ class CampaignWorker:
             c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(progress),parent['id']))
             from .progressive import ProgressiveReports
             ProgressiveReports.enqueue(c,campaign['id'],campaign['asset'])
+        count('campaign.price_day_saved.'+campaign['asset'],1)
         return True
 
     def _claim_parent(self):
@@ -580,6 +587,14 @@ class CampaignWorker:
         from .progressive import ProgressiveReports
         from .sample_reports import SampleReports
         if not self._bootstrapped:
+            # Retry only the deterministic dataset-size failures addressed by
+            # partitioning. User-paused/removed and other failed jobs stay intact.
+            with self.pool.connection() as c:
+                c.execute("""UPDATE research_job SET status='queued',attempts=0,error_code=NULL,
+                    finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp()
+                    WHERE status='failed' AND error_code='campaign_dataset_limit'
+                    AND parameters->>'collector'='campaign-v1'
+                    AND NOT coalesce((progress->>'removed_from_queue')::boolean,false)""")
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
         if SampleReports(self.pool).run_once():return True
         if ProgressiveReports(self.pool).run_once():return True
