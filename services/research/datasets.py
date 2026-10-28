@@ -14,6 +14,9 @@ import base64
 import gzip
 import hashlib
 import zlib
+import sqlite3
+import tempfile
+from contextlib import closing
 
 from psycopg.types.json import Jsonb
 
@@ -84,8 +87,82 @@ def _merge(left,right):
         out = dict(left)
         for key,value in right.items(): out[key] = _merge(out[key],value) if key in out else value
         return out
+    # Canonical scalar values need no JSON serialization or SHA allocation.
+    # Keep JSON distinctions (including bool/int and int/float) exact.
+    if type(left) is type(right) and (left is None or type(left) in (str,int,bool)):
+        if left != right:raise EvidenceConflict('Conflicting duplicate evidence')
+        return left
     if digest(left) != digest(right): raise EvidenceConflict('Conflicting duplicate evidence')
     return left
+
+
+class DatasetLimit(ValueError):
+    """A deterministic size bound; retrying the same evidence cannot help."""
+
+
+class RecordBuffer:
+    """Disk-backed merge: expanded quote/provenance dictionaries stay page-sized.
+
+    The anonymous SQLite database is deleted on close, including on exceptions.
+    It is scratch space only; fenced raw archives remain the recovery source.
+    """
+    def __init__(self):
+        self.db=sqlite3.connect('')
+        self.db.execute('PRAGMA cache_size=-2048')
+        self.db.execute('PRAGMA journal_mode=OFF')
+        self.db.execute('CREATE TABLE records(resource TEXT,ticker TEXT,identity TEXT,record TEXT,provenance TEXT,PRIMARY KEY(resource,ticker,identity)) WITHOUT ROWID')
+
+    def close(self):self.db.close()
+
+    def add(self,key,canonical,ref):
+        old=self.db.execute('SELECT record,provenance FROM records WHERE resource=? AND ticker=? AND identity=?',key).fetchone()
+        provenance=[] if old is None else json.loads(old[1])
+        if old is not None:canonical=_merge(json.loads(old[0]),canonical)
+        if ref not in provenance:provenance.append(ref)
+        self.db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?,?,?)',
+            (*key,json.dumps(canonical,separators=(',',':'),allow_nan=False),json.dumps(provenance,separators=(',',':'))))
+
+    def records(self):
+        for resource,ticker,identity,record,provenance in self.db.execute('SELECT * FROM records ORDER BY resource,ticker,identity'):
+            refs=json.loads(provenance);refs.sort(key=digest)
+            yield dict(resource=resource,ticker=ticker,identity=identity,record=json.loads(record),provenance=refs)
+
+    def counts(self,resource):
+        return self.db.execute('SELECT count(*),count(DISTINCT ticker) FROM records WHERE resource=?',(resource,)).fetchone()
+
+
+def _encode_dataset(payload,records):
+    """Canonical v1 bytes, one record at a time, with an early byte bound."""
+    encoder=json.JSONEncoder(sort_keys=True,separators=(',',':'),allow_nan=False)
+    def chunks():
+        yield '{'
+        for index,key in enumerate(sorted([*payload,'records'])):
+            if index:yield ','
+            yield json.dumps(key)+':'
+            if key!='records':
+                yield from encoder.iterencode(payload[key]);continue
+            yield '['
+            for n,record in enumerate(records):
+                if n:yield ','
+                # A single record is small; C's encoder is faster than iterencode.
+                yield encoder.encode(record)
+            yield ']'
+        yield '}'
+    fingerprint=hashlib.sha256();size=0
+    with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as output:
+        for chunk in chunks():
+            raw=chunk.encode();size+=len(raw)
+            if size>MAX_DATASET_BYTES:raise DatasetLimit('Dataset too large; explicit partitioning required')
+            fingerprint.update(raw);output.write(chunk)
+        output.seek(0)
+        return output.read(),fingerprint.hexdigest()
+
+
+def _dataset_digest(payload):
+    fingerprint=hashlib.sha256()
+    for chunk in json.JSONEncoder(sort_keys=True,separators=(',',':'),allow_nan=False).iterencode(payload):
+        fingerprint.update(chunk.encode())
+    return fingerprint.hexdigest()
 
 
 def _number(value): return format(Decimal(value).normalize(),'f')
@@ -210,49 +287,42 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     for object_key,items in groupby(ordered_pages,key=lambda item:item[2]['receipt'].get('object_key')):
         pages=list(items)
         for offset in range(0,len(pages),8):groups.append((object_key,pages[offset:offset+8]))
-    merged,scanned = {},0
-    with ThreadPoolExecutor(max_workers=archive_parallelism) as executor:
-        i=0
-        while i<len(groups):
-            pair=groups[i:i+2] if archive_parallelism==2 and i+1<len(groups) and groups[i][0]!=groups[i+1][0] else groups[i:i+1]
-            futures=[executor.submit(_resolve_evidence_group,pages,archives) for _,pages in pair]
-            for future in futures:
-                for scope,jid,page,rows,selectors in future.result():
-                    receipt=page['receipt'];retain(receipt)
-                    for index,row in enumerate(rows):
-                        scanned += 1
-                        if scanned>max_rows: raise ValueError('Evidence row limit exceeded; no truncated dataset')
-                        identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
-                        key = (scope.resource,scope.ticker,identity)
-                        canonical = _canonical(scope.resource,row)
-                        ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
-                        if selectors[index] is not None:ref['projection']=selectors[index]
-                        if key in merged:
-                            saved = merged[key]
-                            saved['record'] = _merge(saved['record'],canonical)
-                            if ref not in saved['provenance']: saved['provenance'].append(ref)
-                        else: merged[key] = dict(resource=scope.resource,ticker=scope.ticker,identity=identity,record=canonical,provenance=[ref])
-            i+=len(pair)
-    records = []
-    for key,value in sorted(merged.items()):
-        value['provenance'].sort(key=digest); records.append(value)
-    states = {state:sum(c['state']==state for c in coverage) for state in ('complete','empty','unavailable')}
-    candle_tickers = {r['ticker'] for r in records if r['resource']=='candles'}
-    trade_tickers = {r['ticker'] for r in records if r['resource']=='trades'}
-    summary = dict(version='evidence-coverage-v1',candidate_count=len(candidates),
-        candle_records=sum(r['resource']=='candles' for r in records),trade_records=sum(r['resource']=='trades' for r in records),
-        candidates_with_candles=len(candle_tickers),candidates_without_candles=len(candidates)-len(candle_tickers),
-        candidates_with_trades=len(trade_tickers),candidates_without_trades=len(candidates)-len(trade_tickers),
-        scope_states=states,resources=list(resources),raw_rows_scanned=scanned)
-    artifact_list = sorted(artifacts.values(),key=lambda a:a['object_key'])
-    payload = dict(format=FORMAT,artifacts=artifact_list,manifest=manifest_receipt,batch_fingerprint=rebuilt.fingerprint,day=rebuilt.day,
-        candidates=[asdict(c) for c in candidates],scopes=[asdict(s) for s in wanted.values()],coverage=coverage,records=records,summary=summary)
-    if preview is not None:payload['preview']=preview
-    if raw.get('exclusions'):payload['exclusions']=raw['exclusions']
-    if window is not None:payload['close_window']=dict(start=rebuilt.window_start,end=rebuilt.window_end)
-    encoded = json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
-    if len(encoded.encode())>64*1024*1024: raise ValueError('Dataset too large; explicit partitioning required')
-    return PreparedDataset(encoded,digest(payload),json.dumps(summary,sort_keys=True),json.dumps(artifact_list))
+    scanned = 0
+    with closing(RecordBuffer()) as merged:
+        with ThreadPoolExecutor(max_workers=archive_parallelism) as executor:
+            i=0
+            while i<len(groups):
+                pair=groups[i:i+2] if archive_parallelism==2 and i+1<len(groups) and groups[i][0]!=groups[i+1][0] else groups[i:i+1]
+                futures=[executor.submit(_resolve_evidence_group,pages,archives) for _,pages in pair]
+                for future in futures:
+                    for scope,jid,page,rows,selectors in future.result():
+                        receipt=page['receipt'];retain(receipt)
+                        for index,row in enumerate(rows):
+                            scanned += 1
+                            if scanned>max_rows: raise DatasetLimit('Evidence row limit exceeded; no truncated dataset')
+                            identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
+                            key = (scope.resource,scope.ticker,identity)
+                            canonical = _canonical(scope.resource,row)
+                            ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
+                            if selectors[index] is not None:ref['projection']=selectors[index]
+                            merged.add(key,canonical,ref)
+                i+=len(pair)
+        states = {state:sum(c['state']==state for c in coverage) for state in ('complete','empty','unavailable')}
+        candle_records,candle_tickers=merged.counts('candles')
+        trade_records,trade_tickers=merged.counts('trades')
+        summary = dict(version='evidence-coverage-v1',candidate_count=len(candidates),
+            candle_records=candle_records,trade_records=trade_records,
+            candidates_with_candles=candle_tickers,candidates_without_candles=len(candidates)-candle_tickers,
+            candidates_with_trades=trade_tickers,candidates_without_trades=len(candidates)-trade_tickers,
+            scope_states=states,resources=list(resources),raw_rows_scanned=scanned)
+        artifact_list = sorted(artifacts.values(),key=lambda a:a['object_key'])
+        payload = dict(format=FORMAT,artifacts=artifact_list,manifest=manifest_receipt,batch_fingerprint=rebuilt.fingerprint,day=rebuilt.day,
+            candidates=[asdict(c) for c in candidates],scopes=[asdict(s) for s in wanted.values()],coverage=coverage,summary=summary)
+        if preview is not None:payload['preview']=preview
+        if raw.get('exclusions'):payload['exclusions']=raw['exclusions']
+        if window is not None:payload['close_window']=dict(start=rebuilt.window_start,end=rebuilt.window_end)
+        encoded,fingerprint = _encode_dataset(payload,merged.records())
+        return PreparedDataset(encoded,fingerprint,json.dumps(summary,sort_keys=True),json.dumps(artifact_list))
 
 
 def _ordered_evidence_pages(selected):
@@ -279,9 +349,12 @@ class DatasetStore:
     def publish(self,stream_key,prepared):
         text_key(stream_key,128)
         payload,summary,artifacts = map(json.loads,(prepared.payload_json,prepared.summary_json,prepared.artifacts_json))
-        if (payload.get('format')!=FORMAT or digest(payload)!=prepared.fingerprint or payload['summary']!=summary
+        if (payload.get('format')!=FORMAT or _dataset_digest(payload)!=prepared.fingerprint or payload['summary']!=summary
                 or payload.get('artifacts')!=artifacts or summary.get('version')!='evidence-coverage-v1'):
             raise EvidenceConflict('Prepared dataset integrity mismatch')
+        day=payload['day']
+        # Release the expanded record graph before compression/JSONB adaptation.
+        del payload
         stored=storage_payload(prepared.payload_json,prepared.fingerprint)
         count('dataset.raw_bytes',len(prepared.payload_json.encode()))
         count('dataset.stored_bytes',len(json.dumps(stored).encode()))
@@ -298,7 +371,7 @@ class DatasetStore:
             if {a['object_key']:a for a in saved}!={a['object_key']:a for a in artifacts}:
                 raise EvidenceConflict('Artifact registry conflict')
             row = c.execute('''INSERT INTO research_dataset(stream_key,fingerprint,day,payload)
-                VALUES(%s,%s,%s,%s) RETURNING id''',(stream_key,prepared.fingerprint,payload['day'],Jsonb(stored))).fetchone()
+                VALUES(%s,%s,%s,%s) RETURNING id''',(stream_key,prepared.fingerprint,day,Jsonb(stored))).fetchone()
             dataset_id = row['id']
             c.execute('INSERT INTO research_summary(dataset_id,version,summary) VALUES(%s,%s,%s)',(dataset_id,summary['version'],Jsonb(summary)))
             c.execute('INSERT INTO research_dataset_artifact(dataset_id,object_key) SELECT %s,unnest(%s::text[])',(dataset_id,keys))

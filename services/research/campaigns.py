@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Jsonb
 from .availability import eligible_series
-from .datasets import DatasetStore,prepare_dataset
+from .datasets import DatasetStore,DatasetLimit,prepare_dataset
 from .evidence import build_scopes,plan_from_receipt
 from .inventory import digest,scopes_for_days
 from .normalize import Candidate,Input,Evidence,WindowBatch,normalize_inventory,batch_from_dict
@@ -488,6 +488,9 @@ class CampaignWorker:
                     from .progressive import ProgressiveReports
                     ProgressiveReports.enqueue(c,identifier,campaign['asset'])
             self.queue.yield_job(parent['id'],parent['lease_token']);return 0
+        except DatasetLimit:
+            count('dataset.limit',1)
+            self.queue.fail(parent['id'],parent['lease_token'],'campaign_dataset_limit',retry=False);return 0
         except EvidenceConflict:
             self.queue.fail(parent['id'],parent['lease_token'],'campaign_evidence_blocked',retry=False);return 0
 
@@ -584,5 +587,12 @@ class CampaignWorker:
         if CategoryReports(self.pool).run_once():return True
         parent=self._claim_parent()
         if parent is None:return False
-        self.step(parent,deadline=deadline)
+        try:self.step(parent,deadline=deadline)
+        except LeaseLost:raise
+        except Exception:
+            # Release an owned failed attempt immediately. Waiting for the full
+            # ten-minute crash lease repeats expensive preparation silently.
+            self.queue.fail(parent['id'],parent['lease_token'],'campaign_step_failed',
+                delay_seconds=min(300,5*2**min(parent['attempts'],5)))
+            raise
         return True
