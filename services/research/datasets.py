@@ -19,6 +19,7 @@ from .evidence import EvidenceScope, evidence_page, plan_from_receipt
 from .inventory import digest, inspect_pages
 from .normalize import _closed, normalize_inventory
 from .queue import EvidenceConflict, text_key
+from .projections import resolve_evidence
 
 FORMAT = 'raw-evidence-dataset-v1'
 STORAGE = 'raw-evidence-gzip-v1'
@@ -187,12 +188,8 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
         for page in sorted(pages,key=lambda p:p['page_key']):
             receipt = page['receipt']
             if receipt['object_key']!=page['object_key'] or receipt['provider']!='kalshi': raise EvidenceConflict('Wrong evidence reference')
-            envelope = archives.read(receipt)
-            if envelope.get('scope')!=asdict(scope) or envelope.get('checkpoint')!=page['checkpoint']:
-                raise EvidenceConflict('Evidence envelope does not match committed progress')
             cp = page['checkpoint']
-            rows,cursor = evidence_page(scope,envelope['response'],cp['availability'])
-            if len(rows)!=cp['items'] or cursor!=cp['cursor_out']: raise EvidenceConflict('Evidence response does not match progress')
+            rows,cursor,selectors = resolve_evidence(scope,page,archives)
             retain(receipt)
             for index,row in enumerate(rows):
                 scanned += 1
@@ -201,6 +198,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000):
                 key = (scope.resource,scope.ticker,identity)
                 canonical = _canonical(scope.resource,row)
                 ref = dict(job_id=jid,scope=scope.key,page_key=page['page_key'],object_key=receipt['object_key'],row_index=index)
+                if selectors[index] is not None:ref['projection']=selectors[index]
                 if key in merged:
                     saved = merged[key]
                     saved['record'] = _merge(saved['record'],canonical)

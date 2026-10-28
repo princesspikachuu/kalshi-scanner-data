@@ -197,7 +197,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(sum(cell['hold']['sampled_markets'] for cell in report['historical']['cells']),20)
         self.assertTrue(all(cell['hold']['sampled_markets']==cell['loss_prevention']['sampled_markets'] for cell in report['historical']['cells']))
 
-    def test_cached_batch_projections_overlap_verified_archive_writes_without_extra_http(self):
+    def test_cached_batch_projections_overlap_fenced_checkpoints_without_extra_http(self):
         import gzip,httpx
         from threading import Barrier,Lock
         from services.research.evidence import KalshiEvidence
@@ -217,15 +217,14 @@ class CampaignPostgresTests(unittest.TestCase):
             return reply(payload=dict(ticker=request.url.path.split('/')[-2],candlesticks=bars))
         provider=KalshiEvidence(archives=self.archives,transport=httpx.MockTransport(http));self.addCleanup(provider.close)
         self.worker.evidence_worker=EvidenceWorker(self.queue,self.archives,provider,self.budget,endpoint_cost=1)
-        original_put=self.archives.objects.put_if_absent
-        def put(key,body,content_type):
+        original_checkpoint=self.queue.checkpoint
+        def checkpoint(job_id,token,key,receipt,cp):
             nonlocal writes
-            scope=json.loads(gzip.decompress(body)).get('scope',{})
-            if (scope.get('resource'),scope.get('source'))==('candles','recent'):
+            if cp.get('projection',{}).get('format')=='candle-batch-projection-v1':
                 with lock:writes+=1;ordinal=writes
                 if 2<=ordinal<=5:gate.wait(timeout=5)
-            return original_put(key,body,content_type)
-        self.archives.objects.put_if_absent=put
+            return original_checkpoint(job_id,token,key,receipt,cp)
+        self.queue.checkpoint=checkpoint
         identifier=self.create(start='2026-10-25',end='2026-10-25');self.drive(identifier)
         self.assertEqual(writes,5)
         self.assertEqual(sum(r.url.path.endswith('/markets/candlesticks') for r in calls),1)

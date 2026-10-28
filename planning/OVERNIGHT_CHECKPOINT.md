@@ -2096,3 +2096,37 @@ empty dates/report291 retained. Screenshot `pocket-existing-hourly-1793153044736
 credentials. pxk58 early memory samples101.3..126.8MB of536.9MB; not a peak/large-report
 capacity claim. Follow-up is checkpoint-only and may have no CI due path filters.
 Resume from actual remote head; preserve this saved dirty worktree and earlier ones.
+
+## Five ordered speed milestones — milestone1: shared verified batch archives
+
+User explicitly requested all five, in order, and a second agent. Isolated worktree
+`pocket-five-speed` starts at remote464f7a5; CI40618835079 was verified successful.
+Second agent throughput_review independently reviewed source and owns the new
+shared-projection tests. No other owner collection or infrastructure was changed.
+
+Milestone1 runtime now checkpoints every recent-candle market against the ONE
+verified immutable candle-batch object instead of uploading a redundant envelope
+per market. New candle-batch-projection-v1 checkpoint markers bind request digest
+and batch entry; record provenance additionally locates ORIGINAL batch row indices.
+Legacy envelopes/versions remain readable unchanged. Decoder validates receipt,
+request/ticker/window membership, structure, truncation/duplicates, candle bounds,
+prices and checkpoint agreement. A bounded8MiB immutable batch-entry index avoids
+repeated full-batch JSON decoding; restart/eviction re-verifies the archive.
+
+Tests prove one batch PUT+verifiedGET for five market checkpoints, correct original
+row selectors, mixed legacy/shared full-cohort metrics, malformed/forged/corrupt/
+missing data rejection and restart reconstruction. The actual-PG fixture requires
+five independently fenced checkpoints referencing one raw_archive row. Existing
+four-way fixture now synchronizes shared-page checkpoints rather than removed
+redundant per-market uploads, retaining all25 observations. Local269 API/research
+checks pass with87PG skipped (no local PostgreSQL); remote PG CI pending. No deploy
+claim yet. Milestone2 is tighter time-local request packing; then3 exact verified
+cross-campaign read reuse,4 verified weather interval coverage,5 daily derived
+research caching with unchanged GLOBAL loss-policy reduction. Never average daily
+cell averages or change denominators, selection, full sample or frozen old reports.
+
+Resume from actual remote/checkpoint; preserve all saved dirty worktrees. Owner-only
+steps absent. Keep existing staging resources/plans/credentials/private networking/
+grants/schema, original production app, main and trading untouched. Each milestone
+must save code+checkpoint and inspect CI. Deploy only existing staging worker after
+green validation and inspect actual instance progress before claiming improvement.

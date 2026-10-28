@@ -304,6 +304,10 @@ class EvidenceWorker(InventoryWorker):
         super().__init__(queue,archives,provider,budget,endpoint_cost=endpoint_cost,
             scope_loader=lambda job:scope_for_job(job,manifests),page_parser=evidence_page,**kwargs)
 
+    def archive_page(self,scope,checkpoint,response):
+        from .projections import archive_evidence
+        return archive_evidence(scope,checkpoint,response,self.archives)
+
     def prepare_batch(self,jobs):
         if hasattr(self.provider,'plan_batch'):
             self.provider.plan_batch([self.scope_loader(job) for job in jobs])

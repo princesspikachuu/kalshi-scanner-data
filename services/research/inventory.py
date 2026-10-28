@@ -193,6 +193,9 @@ class InventoryWorker:
         self.cost, self.max_pages, self.clock = endpoint_cost, max_pages, clock
         self.scope_loader, self.page_parser = scope_loader, page_parser
 
+    def archive_page(self,scope,checkpoint,response):
+        return self.archives.upload('kalshi', {'scope': asdict(scope), 'checkpoint': checkpoint, 'response': response.payload}),checkpoint
+
     def step(self, job, *, deadline):
         if type(deadline) not in (int, float) or not math.isfinite(deadline):
             raise ValueError('Invalid monotonic deadline')
@@ -225,7 +228,7 @@ class InventoryWorker:
             try: next_state = inspect_pages(scope, self.queue.pages(job_id) + [page])
             except EvidenceConflict: raise ProviderFailure('provider_invalid', retry=False) from None
             self.queue.heartbeat(job_id, token)
-            receipt = self.archives.upload('kalshi', {'scope': asdict(scope), 'checkpoint': cp, 'response': payload})
+            receipt,cp = self.archive_page(scope,cp,response)
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             self.queue.checkpoint(job_id, token, page['page_key'], receipt, cp)
             getattr(self.provider,'acknowledge',lambda *_:None)(scope)

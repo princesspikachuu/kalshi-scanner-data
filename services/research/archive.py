@@ -150,6 +150,7 @@ class ArchiveStore:
         self.cache=ByteCache(cache_bytes)
         self.inventory_pages=ByteCache(min(cache_bytes,8*1024*1024))
         self.normalized_cache=ByteCache(min(cache_bytes,2*1024*1024))
+        self.batch_indexes=ByteCache(min(cache_bytes,8*1024*1024))
 
     @timed('archive.upload')
     def upload(self, provider, payload):
