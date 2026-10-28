@@ -100,7 +100,7 @@ class VerifiedReadPostgresTests(unittest.TestCase):
         self.assertEqual(pages1[0]['object_key'], pages2[0]['object_key'])
         self.assertNotEqual(pages1[0]['page_key'], pages2[0]['page_key'])
         self.assertEqual(pages2[0]['checkpoint']['projection']['format'], 'provider-page-reference-v1')
-        self.assertEqual(_payload(target, pages2[0], restarted), {'markets': [], 'cursor': ''})
+        self.assertEqual(_payload(target, pages2[0], restarted), [])
         with self.db.pool.connection() as c:
             self.assertEqual(c.execute('SELECT count(*) AS n FROM raw_archive').fetchone()['n'], 1)
             self.assertEqual(c.execute('SELECT count(*) AS n FROM collection_page').fetchone()['n'], 2)
