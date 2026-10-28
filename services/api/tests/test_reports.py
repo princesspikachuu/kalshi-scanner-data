@@ -53,6 +53,33 @@ class ReportTests(unittest.TestCase):
         payload=json.loads(compact.payload_json);rows=json.loads(compact.observations_json)
         self.assertEqual(compact.fingerprint,digest(dict(report=payload,observations=rows)))
 
+    def test_checkpoint_projection_preserves_dense_paths_nulls_and_report(self):
+        import services.research.reports as model
+        from services.research.models.conditional_v2 import CHECKPOINTS
+        selected=[dataset(i,day=i,won=i%2==0) for i in range(1,21)]
+        for d in selected:
+            close=int(datetime.fromisoformat(d['payload']['candidates'][0]['close_time']).timestamp())
+            d['payload']['records']=[dict(resource='candles',ticker=d['payload']['candidates'][0]['ticker'],
+                record=dict(end_period_ts=close-60*m,yes_bid={'close':None if m==5 else '.95' if m>=10 else '.55'}))
+                for m in range(370,0,-1) if m not in (3,20)]
+            d['fingerprint']=digest(d['payload'])
+        expected=prepare_report('btc',selected,latest_ids=[19,20])
+        def full_paths(asset,inputs,*,candidate_filter=None):
+            inputs=list(inputs)
+            rows,paths,origin,coverage=model._raw_observations(asset,inputs,candidate_filter=candidate_filter)
+            paths=dict(paths)
+            for d in inputs:
+                key=(d['payload']['day'],d['payload']['candidates'][0]['ticker'])
+                paths[key]['bars']=[[r['record']['end_period_ts'],
+                    float(model._bid(r['record'],'yes')*100) if model._bid(r['record'],'yes') is not None else None,None]
+                    for r in d['payload']['records']]
+            return rows,paths,dict(origin),{k:v for k,v in coverage.items() if k!='_path_bars'}
+        with patch.object(model,'_observations',side_effect=full_paths):
+            self.assertEqual(expected,prepare_report('btc',selected,latest_ids=[19,20]))
+        _,paths,_,coverage=model._raw_observations('btc',selected)
+        self.assertLessEqual(coverage['_path_bars'],len(selected)*len(CHECKPOINTS))
+        self.assertTrue(any(b[1] is None for p in dict(paths).values() for b in p['bars']))
+
     def test_hold_denominator_does_not_shrink_to_exit_coverage_or_missing_trades(self):
         rows=[row(str(i),int(i==0)) for i in range(4)]
         p=dict(minutes_before_close=10,price_band_cents='90-100',threshold_cents=60,
