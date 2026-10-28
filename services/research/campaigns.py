@@ -480,7 +480,7 @@ class CampaignWorker:
                 active_days AS MATERIALIZED (SELECT * FROM research_campaign_day
                     WHERE campaign_id=%s AND dataset_id IS NULL ORDER BY day DESC LIMIT %s)
                 SELECT * FROM active_days
-                AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=active_days.day::text))
+                WHERE (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=active_days.day::text))
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
                               WHEN %s::jsonb ? day::text THEN %s ELSE %s END,
                     day DESC LIMIT 1''',
