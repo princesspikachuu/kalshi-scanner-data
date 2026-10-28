@@ -186,3 +186,37 @@ class FailureDiagnosticsTests(unittest.TestCase):
         worker.queue.fail.assert_called_once_with(parent['id'],parent['lease_token'],'campaign_dataset_limit',retry=False)
         worker.datasets.publish.assert_not_called()
         worker.queue.yield_job.assert_not_called()
+
+
+class SplitRuntimeTests(unittest.TestCase):
+    def test_roles_are_explicit_and_bad_role_is_rejected(self):
+        for role in ('combined','split','collector','processor'):
+            self.assertEqual(runtime.WorkerSettings.from_env({**environment(),'WORKER_ROLE':role}).role,role)
+        with self.assertRaises(runtime.ConfigurationError):
+            runtime.WorkerSettings.from_env({**environment(),'WORKER_ROLE':'typo'})
+
+    def test_processor_constructs_no_provider_or_budget_and_does_not_schedule(self):
+        settings=runtime.WorkerSettings.from_env({**environment(),'COLLECTION_ENABLED':'true','WORKER_ROLE':'processor'})
+        pool=MagicMock();pool.connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value={'ready':True}
+        objects=Mock()
+        with patch('services.research.acceptance.audit_database',return_value={'privilege_boundary_ready':True}), \
+             patch.object(runtime,'ConnectionPool',return_value=pool) as factory, \
+             patch.object(runtime.R2Objects,'connect',return_value=objects), \
+             patch.object(runtime,'KalshiInventory') as inventory,patch.object(runtime,'KalshiEvidence') as evidence, \
+             patch.object(runtime,'ReadBudget') as budget,patch.object(runtime,'serve') as serve:
+            runtime.run(settings,Event())
+        inventory.assert_not_called();evidence.assert_not_called();budget.assert_not_called()
+        self.assertEqual(factory.call_args.kwargs['max_size'],2)
+        self.assertFalse(serve.call_args.kwargs['schedule'])
+        self.assertEqual(type(serve.call_args.args[1]).__name__,'ProcessingWorker')
+
+    def test_split_spawns_both_roles_and_shuts_them_down_together(self):
+        settings=runtime.WorkerSettings.from_env({**environment(),'COLLECTION_ENABLED':'true','WORKER_ROLE':'split'})
+        context=Mock();children=[Mock(),Mock()];context.Process.side_effect=children
+        stop=Mock();stop.is_set.side_effect=[False,True]
+        with patch('multiprocessing.get_context',return_value=context) as get_context:
+            runtime.run_split(settings,stop)
+        get_context.assert_called_once_with('spawn')
+        self.assertEqual([c.kwargs['args'][0].role for c in context.Process.call_args_list],['collector','processor'])
+        for child in children:child.start.assert_called_once();self.assertTrue(child.join.called)
+        context.Event.return_value.set.assert_called_once()
