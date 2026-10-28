@@ -139,5 +139,7 @@ class CategoryReports:
         job=self.queue.claim(seconds=600,collector='category-report-v1',campaign_id=campaign_id,asset=asset)
         if job is None:return False
         try:self.step(job)
-        except ValueError:self.queue.fail(job['id'],job['lease_token'],'category_report_blocked',retry=False)
+        except ValueError as error:
+            print(json.dumps(dict(event='category_publication_blocked',asset=job['asset'],reason=str(error)[:200])),flush=True)
+            self.queue.fail(job['id'],job['lease_token'],'category_report_blocked',retry=False)
         return True

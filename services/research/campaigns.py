@@ -339,6 +339,7 @@ class CampaignWorker:
     def _jobs(self,campaign,day,phase,scopes,parent):
         rows=[dict(id=str(uuid5(campaign['id'],s.key)),asset=campaign['asset'],parameters=s.parameters(),
             key=f"campaign/{campaign['id']}/{s.key}") for s in scopes]
+        print(json.dumps(dict(event='collection_plan_started',asset=campaign['asset'],day=str(day['day']),phase=phase,jobs=len(rows))),flush=True)
         batch=[];size=0;guard=self._work_guard(parent)
         for row in rows:
             length=len(json.dumps(row,separators=(',',':')).encode())
