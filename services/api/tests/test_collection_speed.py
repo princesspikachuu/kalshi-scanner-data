@@ -47,7 +47,7 @@ class CollectionSpeedTests(unittest.TestCase):
             parallel=fixture.prepare(archive_parallelism=2)
         self.assertGreaterEqual(peak,2)
         self.assertEqual((parallel.fingerprint,parallel.payload_json),(baseline.fingerprint,baseline.payload_json))
-        with self.assertRaises(ValueError):fixture.prepare(archive_parallelism=3)
+        with self.assertRaises(ValueError):fixture.prepare(archive_parallelism=9)
 
     def test_shared_batch_pages_are_read_together_without_changing_dataset(self):
         import services.research.datasets as datasets

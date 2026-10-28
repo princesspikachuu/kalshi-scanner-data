@@ -35,11 +35,12 @@ class DayProgress:
         try:
             with self.pool.connection() as c:
                 rows=c.execute('''WITH chosen AS MATERIALIZED (
-                    SELECT r.*,j.status,j.error_code,j.progress,j.lease_expires_at FROM research_campaign r
+                    SELECT r.*,j.status,j.error_code,j.progress,j.lease_expires_at,j.attempts,j.max_attempts,j.available_at FROM research_campaign r
                     JOIN research_job j ON j.id=r.job_id WHERE j.status IN ('queued','running','failed')
                     AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
                     ORDER BY r.created_at,r.id LIMIT 20)
-                    SELECT r.asset,r.start_at,r.end_at,r.status,r.error_code,
+                    SELECT r.asset,r.start_at,r.end_at,r.status,r.error_code,r.attempts,r.max_attempts,
+                        greatest(0,extract(epoch FROM(r.available_at-clock_timestamp())))::integer AS retry_seconds,
                         greatest(0,extract(epoch FROM(r.lease_expires_at-clock_timestamp())))::integer AS lease_seconds,
                         d.total_days,d.enriched_days,d.price_days_saved,
                         coalesce((SELECT (rr.report->'publication'->>'reported_sections')::integer
