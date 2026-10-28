@@ -4,7 +4,7 @@ from io import StringIO
 from threading import Event
 import signal
 import unittest
-from unittest.mock import Mock,patch
+from unittest.mock import MagicMock,Mock,patch
 from services.research import runtime
 
 
@@ -137,3 +137,52 @@ class RunnerWaitTests(unittest.TestCase):
             campaigns=Mock();worker=Mock();worker.run_once.return_value=False
             serve(campaigns,worker,stop,idle_wait=lambda:value)
             campaigns.schedule_due.assert_called_once();stop.wait.assert_called_once_with(expected)
+
+
+class FailureDiagnosticsTests(unittest.TestCase):
+    def test_unexpected_failure_reports_type_and_code_locations_without_message(self):
+        import json
+        from services.research.runner import serve
+        stop=Mock();stop.is_set.side_effect=[False,True]
+        worker=Mock();worker.run_once.side_effect=ValueError('password=secret-sentinel https://private/path')
+        errors=[]
+        serve(Mock(),worker,stop,on_error=errors.append)
+        self.assertNotIn('sentinel',errors[0]);self.assertNotIn('private',errors[0])
+        diagnostic=json.loads(errors[0])
+        self.assertEqual(diagnostic['event'],'collection_step_failed')
+        self.assertEqual(diagnostic['error_type'],'ValueError')
+        self.assertTrue(diagnostic['frames'])
+        stop.wait.assert_called_once_with(5)
+
+    def test_failed_parent_is_released_without_waiting_ten_minutes(self):
+        from services.research.campaigns import CampaignWorker
+        worker=CampaignWorker(Mock(),Mock(),Mock(),Mock())
+        worker._bootstrapped=True
+        parent={'id':'id','lease_token':'token','attempts':1}
+        worker._claim_parent=Mock(return_value=parent)
+        worker.step=Mock(side_effect=OSError('secret-sentinel'))
+        worker.queue=Mock()
+        with patch('services.research.sample_reports.SampleReports.run_once',return_value=False), \
+             patch('services.research.progressive.ProgressiveReports.run_once',return_value=False), \
+             patch('services.research.cumulative.CategoryReports.run_once',return_value=False):
+            with self.assertRaises(OSError):worker.run_once(deadline=1)
+        worker.queue.fail.assert_called_once_with('id','token','campaign_step_failed',delay_seconds=10)
+
+    def test_deterministic_dataset_limit_fails_once_without_publication(self):
+        from datetime import date
+        from uuid import uuid4
+        from services.research.campaigns import CampaignWorker
+        from services.research.datasets import DatasetLimit
+        pool=MagicMock();connection=pool.connection.return_value.__enter__.return_value
+        parent={'id':uuid4(),'lease_token':uuid4(),'parameters':{'campaign_id':str(uuid4())},'progress':{}}
+        campaign={'id':uuid4(),'asset':'btc','config':{},'mode':'backfill'}
+        day={'day':date(2026,10,27),'manifest':{'object_key':'manifest'},'evidence_planned':True}
+        connection.execute.return_value.fetchone.side_effect=[campaign,day]
+        worker=CampaignWorker(pool,Mock(),Mock(),Mock());worker.queue=Mock();worker.datasets=Mock()
+        worker._sample_tickers=Mock(return_value=());worker._candle_preview=Mock(return_value=False)
+        worker._one=Mock(return_value=None);worker._plan=Mock();worker._attempts=Mock(return_value=[])
+        with patch('services.research.campaigns.prepare_dataset',side_effect=DatasetLimit('too large')):
+            self.assertEqual(worker.step(parent,deadline=1),0)
+        worker.queue.fail.assert_called_once_with(parent['id'],parent['lease_token'],'campaign_dataset_limit',retry=False)
+        worker.datasets.publish.assert_not_called()
+        worker.queue.yield_job.assert_not_called()
