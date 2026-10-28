@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Jsonb
 from .availability import eligible_series
-from .datasets import DatasetStore,DatasetLimit,prepare_dataset
+from .datasets import DatasetStore,DatasetLimit,CollectionInterrupted,prepare_dataset
 from .evidence import build_scopes,plan_from_receipt
 from .inventory import digest,scopes_for_days
 from .normalize import Candidate,Input,Evidence,WindowBatch,normalize_inventory,batch_from_dict
@@ -286,9 +286,10 @@ class CampaignStore:
 
 class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
-    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1):
+    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None):
         if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
         self.parallelism=parallelism;self._bootstrapped=False
+        self.cancelled=stop.is_set if stop is not None else lambda:False
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
@@ -484,7 +485,7 @@ class CampaignWorker:
                 plan=self._plan(campaign,day)
                 attempts=self._attempts(campaign,day,'evidence')
                 def inventory_loader(jid):return self.queue.get(jid),self.queue.page_evidence(jid)
-                prepared=prepare_dataset(plan,attempts,self.archives,inventory_loader)
+                prepared=prepare_dataset(plan,attempts,self.archives,inventory_loader,cancelled=self.cancelled)
                 self.queue.heartbeat(parent['id'],parent['lease_token'],600)
                 dataset=self.datasets.publish(f"campaign-{identifier.hex}",prepared)
                 with self.pool.connection() as c:
@@ -533,7 +534,7 @@ class CampaignWorker:
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence')
             if j['parameters']['scope']['resource']=='candles']
         prepared=prepare_dataset(candles,attempts,self.archives,
-            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers))
+            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers),cancelled=self.cancelled)
         dataset=self.datasets.publish('campaign-sample-'+campaign['id'].hex,prepared)
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
@@ -556,7 +557,7 @@ class CampaignWorker:
         plan=self._plan(campaign,day)
         candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence') if j['parameters']['scope']['resource']=='candles']
-        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)))
+        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),cancelled=self.cancelled)
         dataset=self.datasets.publish('campaign-candles-'+campaign['id'].hex,prepared)
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
@@ -603,6 +604,8 @@ class CampaignWorker:
         parent=self._claim_parent()
         if parent is None:return False
         try:self.step(parent,deadline=deadline)
+        except CollectionInterrupted:
+            self.queue.yield_job(parent['id'],parent['lease_token']);return True
         except LeaseLost:raise
         except Exception:
             # Release an owned failed attempt immediately. Waiting for the full
