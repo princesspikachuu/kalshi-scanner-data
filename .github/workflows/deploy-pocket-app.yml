@@ -8,6 +8,7 @@ on:
       - 'docs/manifest.webmanifest'
       - 'docs/icon.svg'
       - 'worker/**'
+      - 'apps/web/**'
       - 'wrangler.jsonc'
       - 'scripts/check_staging_gateway.mjs'
       - '.github/workflows/deploy-pocket-app.yml'

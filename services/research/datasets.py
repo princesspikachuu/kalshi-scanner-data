@@ -30,6 +30,8 @@ FORMAT = 'raw-evidence-dataset-v1'
 STORAGE = 'raw-evidence-gzip-v1'
 MAX_DATASET_BYTES = 64*1024*1024
 COMPACT_THRESHOLD = 256*1024
+TRADE_PARTITION_THRESHOLD = 10000
+TRADE_PARTITION_BYTES = 1024*1024
 
 
 def storage_payload(encoded, fingerprint):
@@ -122,13 +124,43 @@ class RecordBuffer:
         self.db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?,?,?)',
             (*key,json.dumps(canonical,separators=(',',':'),allow_nan=False),json.dumps(provenance,separators=(',',':'))))
 
-    def records(self):
-        for resource,ticker,identity,record,provenance in self.db.execute('SELECT * FROM records ORDER BY resource,ticker,identity'):
+    def records(self,resource=None):
+        query='SELECT * FROM records'
+        args=()
+        if resource is not None:query+=' WHERE resource=?';args=(resource,)
+        for resource,ticker,identity,record,provenance in self.db.execute(query+' ORDER BY resource,ticker,identity',args):
             refs=json.loads(provenance);refs.sort(key=digest)
             yield dict(resource=resource,ticker=ticker,identity=identity,record=json.loads(record),provenance=refs)
 
     def counts(self,resource):
         return self.db.execute('SELECT count(*),count(DISTINCT ticker) FROM records WHERE resource=?',(resource,)).fetchone()
+
+
+def _trade_partitions(records,archives,retain):
+    """Preserve every merged trade/provenance row in verified bounded objects."""
+    result=[];rows=[];size=0
+    def save():
+        receipt=archives.upload('research',dict(format='trade-record-partition-v1',records=rows))
+        retain(receipt);result.append(dict(resource='trades',row_count=len(rows),receipt=receipt))
+    for row in records:
+        length=len(json.dumps(row,separators=(',',':'),allow_nan=False).encode())
+        if rows and (size+length>TRADE_PARTITION_BYTES or len(rows)>=1000):save();rows=[];size=0
+        if length>TRADE_PARTITION_BYTES:raise DatasetLimit('Single trade record exceeds partition size')
+        rows.append(row);size+=length
+    if rows:save()
+    return result
+
+
+def iter_dataset_records(payload,archives):
+    """Materialize all evidence, including explicitly stored trade partitions."""
+    yield from payload['records']
+    for part in payload.get('record_partitions',[]):
+        value=archives.read(part['receipt'])
+        if (part.get('resource')!='trades' or value.get('format')!='trade-record-partition-v1'
+                or not isinstance(value.get('records'),list) or len(value['records'])!=part['row_count']
+                or any(r.get('resource')!='trades' for r in value['records'])):
+            raise EvidenceConflict('Invalid trade record partition')
+        yield from value['records']
 
 
 def _encode_dataset(payload,records):
@@ -277,6 +309,12 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
         coverage.append(dict(scope=key,job_id=jid,state=state.state,resource=scope.resource,source=scope.source))
         selected.append((scope,jid,pages))
     if gaps: raise CoverageIncomplete(gaps)
+    trade_items=sum(page['checkpoint']['items'] for scope,_,pages in selected if scope.resource=='trades' for page in pages)
+    partition_trades=trade_items>TRADE_PARTITION_THRESHOLD and max_rows>=TRADE_PARTITION_THRESHOLD
+    bounded_items=sum(page['checkpoint']['items'] for scope,_,pages in selected
+        if not partition_trades or scope.resource!='trades' for page in pages)
+    # Reject a known bound before spending minutes downloading its archives.
+    if bounded_items>max_rows:raise DatasetLimit('Evidence row limit exceeded; no truncated dataset')
     # Adjacent scopes often point at the same verified candle-batch object.
     # Visit that object's pages together so bounded archive/entry caches can
     # serve them before unrelated objects evict the batch. All pages were
@@ -287,7 +325,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     for object_key,items in groupby(ordered_pages,key=lambda item:item[2]['receipt'].get('object_key')):
         pages=list(items)
         for offset in range(0,len(pages),8):groups.append((object_key,pages[offset:offset+8]))
-    scanned = 0
+    scanned = bounded_scanned = 0
     with closing(RecordBuffer()) as merged:
         with ThreadPoolExecutor(max_workers=archive_parallelism) as executor:
             i=0
@@ -299,7 +337,8 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
                         receipt=page['receipt'];retain(receipt)
                         for index,row in enumerate(rows):
                             scanned += 1
-                            if scanned>max_rows: raise DatasetLimit('Evidence row limit exceeded; no truncated dataset')
+                            if not partition_trades or scope.resource!='trades':bounded_scanned+=1
+                            if bounded_scanned>max_rows: raise DatasetLimit('Evidence row limit exceeded; no truncated dataset')
                             identity = str(row['end_period_ts']) if scope.resource=='candles' else row['trade_id']
                             key = (scope.resource,scope.ticker,identity)
                             canonical = _canonical(scope.resource,row)
@@ -315,13 +354,15 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
             candidates_with_candles=candle_tickers,candidates_without_candles=len(candidates)-candle_tickers,
             candidates_with_trades=trade_tickers,candidates_without_trades=len(candidates)-trade_tickers,
             scope_states=states,resources=list(resources),raw_rows_scanned=scanned)
+        partitions=_trade_partitions(merged.records('trades'),archives,retain) if partition_trades else []
         artifact_list = sorted(artifacts.values(),key=lambda a:a['object_key'])
         payload = dict(format=FORMAT,artifacts=artifact_list,manifest=manifest_receipt,batch_fingerprint=rebuilt.fingerprint,day=rebuilt.day,
             candidates=[asdict(c) for c in candidates],scopes=[asdict(s) for s in wanted.values()],coverage=coverage,summary=summary)
+        if partitions:payload['record_partitions']=partitions
         if preview is not None:payload['preview']=preview
         if raw.get('exclusions'):payload['exclusions']=raw['exclusions']
         if window is not None:payload['close_window']=dict(start=rebuilt.window_start,end=rebuilt.window_end)
-        encoded,fingerprint = _encode_dataset(payload,merged.records())
+        encoded,fingerprint = _encode_dataset(payload,merged.records('candles') if partition_trades else merged.records())
         return PreparedDataset(encoded,fingerprint,json.dumps(summary,sort_keys=True),json.dumps(artifact_list))
 
 
