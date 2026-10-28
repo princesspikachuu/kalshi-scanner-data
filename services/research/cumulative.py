@@ -130,8 +130,8 @@ class CategoryReports:
             report_jobs.coalesce(c,job,snapshot['revision'])
         self.queue.finish(job['id'],job['lease_token'])
 
-    def run_once(self):
-        job=self.queue.claim(seconds=600,collector='category-report-v1')
+    def run_once(self,*,campaign_id=None,asset=None):
+        job=self.queue.claim(seconds=600,collector='category-report-v1',campaign_id=campaign_id,asset=asset)
         if job is None:return False
         try:self.step(job)
         except ValueError:self.queue.fail(job['id'],job['lease_token'],'category_report_blocked',retry=False)

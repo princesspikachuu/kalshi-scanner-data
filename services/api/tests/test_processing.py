@@ -141,3 +141,33 @@ class ProcessingPostgresTests(unittest.TestCase):
         state=self.finish(identifier)
         self.assertEqual(state['completed_sections'],1)
         self.assertEqual(state['reported_sections'],1)
+
+    def test_oldest_request_holds_both_roles_through_waits_and_releases_on_pause(self):
+        first=self.create(key='fifo-first',end='2026-10-25')
+        newer=self.create(key='fifo-newer',end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        oldest_job=self.queued('prices')[0]
+        newer_job=self.queue.enqueue('btc',dict(collector='campaign-assembly-v1',campaign_id=str(newer),
+            day='2026-10-25',kind='prices',tickers=[]),f'assembly/{newer}/2026-10-25/prices')
+        claimed=self.processor._claim_assembly()
+        self.assertEqual(claimed['id'],oldest_job['id'])
+        self.queue.yield_job(claimed['id'],claimed['lease_token'],60)
+        self.assertIsNone(self.processor._claim_assembly())
+        parent=self.worker._claim_parent()
+        self.assertEqual(parent['parameters']['campaign_id'],str(first))
+        self.queue.yield_job(parent['id'],parent['lease_token'],60)
+        self.assertIsNone(self.worker._claim_parent())
+        self.store.control(first,'pause')
+        next_parent=self.worker._claim_parent()
+        self.assertEqual(next_parent['parameters']['campaign_id'],str(newer))
+        self.queue.yield_job(next_parent['id'],next_parent['lease_token'])
+        self.assertEqual(self.processor._claim_assembly()['id'],newer_job['id'])
+
+    def test_oldest_finishes_enrichment_and_final_report_while_newer_waits(self):
+        first=self.create(key='finish-oldest',end='2026-10-25')
+        newer=self.create(key='hold-newer',end='2026-10-26')
+        self.assertEqual(self.finish(first)['status'],'succeeded')
+        waiting=self.store.get(newer)
+        self.assertEqual(waiting['status'],'queued')
+        self.assertEqual(waiting['saved_pages'],0)
+        self.assertEqual(waiting['completed_sections'],0)

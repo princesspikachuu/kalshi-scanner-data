@@ -104,8 +104,8 @@ class SampleReports:
             report_jobs.coalesce(c, job, snapshot['publication']['revision'], campaign=True)
         self.queue.finish(job['id'], job['lease_token'])
 
-    def run_once(self):
-        job = self.queue.claim(seconds=600, collector=COLLECTOR)
+    def run_once(self,*,campaign_id=None,asset=None):
+        job = self.queue.claim(seconds=600, collector=COLLECTOR,campaign_id=campaign_id,asset=asset)
         if job is None:
             return False
         try:
