@@ -1,6 +1,7 @@
 """Resumable raw candle/trade evidence bound to archived normalized membership."""
 from dataclasses import asdict, dataclass
 from collections import OrderedDict
+from threading import RLock
 from decimal import Decimal, InvalidOperation
 import math
 import json
@@ -124,16 +125,19 @@ def scope_for_job(job,archives):
     if not isinstance(p,dict) or set(p) != {'collector','scope'} or p['collector'] != 'evidence-v1':
         raise ValueError('Not an evidence job')
     scope = EvidenceScope(**p['scope'])
-    manifest = archives.read(scope.manifest_receipt())
-    if not isinstance(manifest,dict) or manifest.get('format') != 'candidate-manifest-v1':
-        raise EvidenceConflict('Invalid candidate manifest')
-    batch = manifest.get('batch')
-    if (not isinstance(batch,dict) or digest(batch) != manifest.get('fingerprint') or batch.get('version') != VERSION
-            or not batch.get('inputs') or any(v.get('state') not in ('complete','empty') for v in batch['inputs'])):
-        raise EvidenceConflict('Candidate manifest is incomplete or mismatched')
-    candidates = [c for c in batch['candidates'] if digest(c)==scope.candidate_key]
-    if len(candidates) != 1: raise EvidenceConflict('Candidate not in selected immutable membership')
-    candidate = candidates[0]
+    if hasattr(archives,'validated_candidate'):
+        candidate=archives.validated_candidate(scope)
+    else:
+        manifest = archives.read(scope.manifest_receipt())
+        if not isinstance(manifest,dict) or manifest.get('format') != 'candidate-manifest-v1':
+            raise EvidenceConflict('Invalid candidate manifest')
+        batch = manifest.get('batch')
+        if (not isinstance(batch,dict) or digest(batch) != manifest.get('fingerprint') or batch.get('version') != VERSION
+                or not batch.get('inputs') or any(v.get('state') not in ('complete','empty') for v in batch['inputs'])):
+            raise EvidenceConflict('Candidate manifest is incomplete or mismatched')
+        candidates = [c for c in batch['candidates'] if digest(c)==scope.candidate_key]
+        if len(candidates) != 1: raise EvidenceConflict('Candidate not in selected immutable membership')
+        candidate = candidates[0]
     if (not candidate.get('evidence') or any(candidate[k] != getattr(scope,k) for k in ('ticker','series','result','close_time'))):
         raise EvidenceConflict('Evidence scope does not match candidate')
     return scope
@@ -193,7 +197,7 @@ def evidence_page(scope,payload,availability):
 
 class ManifestCache:
     """Bounded process-local cache of verified immutable manifests only."""
-    def __init__(self,archives):self.archives=archives;self.values=OrderedDict();self.bytes=0
+    def __init__(self,archives):self.archives=archives;self.values=OrderedDict();self.bytes=0;self.indexes={};self.lock=RLock()
     def read(self,receipt):
         key=(receipt['object_key'],receipt['sha256'],receipt['byte_length'])
         if key in self.values:
@@ -201,9 +205,31 @@ class ManifestCache:
         value=self.archives.read(receipt);size=len(json.dumps(value).encode())
         if size<=8*1024*1024:
             while self.values and self.bytes+size>8*1024*1024:
-                _,(_,old)=self.values.popitem(last=False);self.bytes-=old
+                old_key,(_,old)=self.values.popitem(last=False);self.bytes-=old;self.indexes.pop(old_key,None)
             self.values[key]=(value,size);self.bytes+=size
         return value
+
+    def validated_candidate(self,scope):
+        receipt=scope.manifest_receipt();key=(receipt['object_key'],receipt['sha256'],receipt['byte_length'])
+        with self.lock:
+            index=self.indexes.get(key)
+            if index is None:
+                manifest=self.read(receipt);batch=manifest.get('batch') if isinstance(manifest,dict) else None
+                if (not isinstance(manifest,dict) or manifest.get('format')!='candidate-manifest-v1'
+                        or not isinstance(batch,dict) or digest(batch)!=manifest.get('fingerprint')
+                        or batch.get('version')!=VERSION or not batch.get('inputs')
+                        or any(v.get('state') not in ('complete','empty') for v in batch['inputs'])):
+                    raise EvidenceConflict('Candidate manifest is incomplete or mismatched')
+                index={}
+                for candidate in batch['candidates']:
+                    candidate_key=digest(candidate)
+                    if candidate_key in index:raise EvidenceConflict('Duplicate candidate membership')
+                    index[candidate_key]=candidate
+                # Indexes reference the already bounded manifest; evict together.
+                if key in self.values:self.indexes[key]=index
+            candidate=index.get(scope.candidate_key)
+            if candidate is None:raise EvidenceConflict('Candidate not in selected immutable membership')
+            return candidate
 
 
 class KalshiEvidence(KalshiInventory):
@@ -216,6 +242,8 @@ class KalshiEvidence(KalshiInventory):
         # Separate immutable bytes per exact manifest-bound scope. Callers get
         # fresh objects, so concurrent acknowledgement cannot mutate their page.
         return None if raw is None else ProviderPage(json.loads(raw))
+
+    def cached_scope_keys(self):return self.responses.keys()
 
     def acknowledge(self,scope):
         self.responses.pop(scope.key)

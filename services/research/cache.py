@@ -11,6 +11,8 @@ class ByteCache:
             value=self.values.get(key)
             if value is not None:self.values.move_to_end(key)
             return value
+    def keys(self):
+        with self.lock:return tuple(self.values)
     def __len__(self):
         with self.lock:return len(self.values)
     def pop(self,key):
