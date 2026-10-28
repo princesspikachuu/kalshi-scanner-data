@@ -70,7 +70,7 @@ projects:
           - name: pocket-db-staging
             databaseName: pocket_staging
             user: pocket_staging
-            plan: 0.1c-256mb
+            plan: 0.5c-1g
             region: oregon
             postgresMajorVersion: '17'
             diskSizeGB: 5
