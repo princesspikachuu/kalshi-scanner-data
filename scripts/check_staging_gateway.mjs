@@ -15,7 +15,7 @@ assert.deepEqual(config.vars,{
 assert.deepEqual(Object.keys(config).sort(),['assets','compatibility_date','keep_vars','main','name','preview_urls','vars','workers_dev']);
 const workflow=fs.readFileSync('.github/workflows/deploy-pocket-app.yml','utf8');
 assert.match(workflow,/deploy:\n    if: github.ref == 'refs\/heads\/main'/);
-assert.match(workflow,/staging:\n    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs\/heads\/build\/google-auth-foundation'/);
+assert.match(workflow,/staging:\n    if: github.ref == 'refs\/heads\/build\/google-auth-foundation'/);
 assert.match(workflow,/wrangler@4\.153\.0 deploy --config infra\/wrangler\.staging\.json/);
 assert.doesNotMatch(workflow.split('\n  staging:')[1],/secret put|GITHUB_ACTIONS_TOKEN|wrangler\.jsonc/);
-console.log('Staging target, public origins, secret preservation and manual branch gates passed');
+console.log('Staging target, public origins, secret preservation and branch gates passed');
