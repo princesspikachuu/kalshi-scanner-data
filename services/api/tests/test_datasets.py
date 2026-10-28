@@ -49,6 +49,31 @@ class Fixture:
         return prepare_dataset(self.plan,self.attempts,self.archives,self.inventory.__getitem__,**kwargs)
 
 
+class ArchiveReadWaveTests(unittest.TestCase):
+    def test_wave_bounds_decoded_bytes_unknown_inputs_and_shared_objects(self):
+        from services.research.datasets import _evidence_wave
+        def group(key,size=None):
+            return (key,[(None,None,{'receipt':{'metadata':{} if size is None else {'decoded_bytes':size}}})])
+        small=[group(str(i),1024) for i in range(10)]
+        self.assertEqual(len(_evidence_wave(small,0,8)),8)
+        self.assertEqual(len(_evidence_wave([group('a',6*1024*1024),group('b',6*1024*1024)],0,8)),1)
+        self.assertEqual(len(_evidence_wave([group('a'),group('b',1024)],0,8)),1)
+        self.assertEqual(len(_evidence_wave([group('a',1024),group('a',1024)],0,8)),1)
+
+    def test_parallel_archive_reads_preserve_exact_dataset_and_all_provenance(self):
+        import services.research.datasets as model
+        from threading import Barrier
+        from unittest.mock import patch
+        f=Fixture();serial=f.prepare(archive_parallelism=1)
+        barrier=Barrier(len(f.attempts));original=model._resolve_evidence_group
+        def overlapping(pages,archives):
+            barrier.wait(timeout=5)
+            return original(pages,archives)
+        with patch.object(model,'_resolve_evidence_group',side_effect=overlapping):
+            parallel=f.prepare(archive_parallelism=8)
+        self.assertEqual(serial,parallel)
+
+
 class DatasetTests(unittest.TestCase):
     def test_merge_both_sources_keeps_provenance_and_full_cohort_separate_from_trade_counts(self):
         f = Fixture(); prepared = f.prepare()
