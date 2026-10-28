@@ -171,3 +171,25 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.assertEqual(waiting['status'],'queued')
         self.assertEqual(waiting['saved_pages'],0)
         self.assertEqual(waiting['completed_sections'],0)
+
+    def test_three_hundred_market_preview_publishes_with_explicit_limit(self):
+        from services.research.inventory import ProviderPage
+        from services.research.sample_reports import SampleReports
+        markets=[dict(ticker=f'KXBTC15M-FAST-{i:03d}',event_ticker=f'EV-{i:03d}',series_ticker='KXBTC15M',
+            close_time='2026-10-25T12:00:00Z',result='yes') for i in range(450)]
+        self.inventory.fetch=lambda scope,cursor,timeout:ProviderPage(dict(markets=markets,cursor=''))
+        self.worker.preview_limit=300;self.worker.parallelism=12
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('sample')),limit=450)
+        job=self.processor._claim_assembly()
+        self.assertEqual(len(job['parameters']['tickers']),300)
+        self.processor._publish(job)
+        self.assertTrue(SampleReports(self.db.pool).run_once(campaign_id=identifier))
+        state=self.store.get(identifier)
+        self.assertEqual(state['completed_sections'],0)
+        self.assertEqual(state['sample_reported_sections'],1)
+        with self.db.pool.connection() as c:
+            report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['sample_result_id'],)).fetchone()['report']
+        self.assertTrue(report['publication']['sampled_preview'])
+        self.assertEqual(report['publication']['sample_limit'],300)
+        self.assertEqual(report['historical']['candidate_count'],300)

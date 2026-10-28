@@ -16,8 +16,8 @@ def select_preview_candidates(candidates, *, limit=100):
     The result depends only on immutable candidate fields, not input order or
     Python's process-randomized hash seed. Returned objects are the originals.
     """
-    if type(limit) is not int or not 1 <= limit <= 100:
-        raise ValueError('Preview limit must be 1..100 markets per day')
+    if type(limit) is not int or not 1 <= limit <= 300:
+        raise ValueError('Preview limit must be 1..300 markets per day')
     events = defaultdict(list)
     tickers = set()
     for candidate in candidates:

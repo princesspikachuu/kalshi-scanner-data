@@ -35,7 +35,7 @@ function clearReport(){report=null;reportKey=null;reportContext=null;reportReque
 function showReport(data,context){
  report=data;reportContext=context;sourcesLoaded=null;sourceNext=null;windowNext=null;$('provenance').open=false;
  $('sourceList').replaceChildren();$('windowList').replaceChildren();$('sourcesMore').hidden=true;$('windowsMore').hidden=true;
- $('reportStamp').textContent=(data.sampled_preview?'100-market preview':$('reportScope').value==='category'?'All saved history':'This load')+(data.collection_complete===false?' · In progress':'')+' · Saved '+new Date(data.published_at).toLocaleString();
+ $('reportStamp').textContent=(data.sampled_preview?`${data.sample_limit}-market preview`:$('reportScope').value==='category'?'All saved history':'This load')+(data.collection_complete===false?' · In progress':'')+' · Saved '+new Date(data.published_at).toLocaleString();
  $('candidates').textContent=data.summary.candidate_count===null?'Unknown':data.summary.candidate_count.toLocaleString();
  $('observations').textContent=data.summary.observation_count.toLocaleString();
  $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';

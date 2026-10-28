@@ -154,7 +154,7 @@ class Detail(Metadata):
     exit_cost_stress_cents:Literal[2]
     collection_complete:bool=Field(default=True,strict=True)
     sampled_preview:bool=Field(default=False,strict=True)
-    sample_limit:int|None=Field(default=None,ge=1,le=100)
+    sample_limit:int|None=Field(default=None,ge=1,le=300)
     reported_sections:int|None=Field(default=None,ge=0,le=3661)
     total_sections:int|None=Field(default=None,ge=1,le=3661)
     selection_version:Literal['category-window-selection-v1']|None=None

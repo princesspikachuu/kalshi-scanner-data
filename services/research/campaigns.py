@@ -292,9 +292,11 @@ class CampaignStore:
 
 class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
-    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None,role='combined'):
+    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None,role='combined',preview_limit=100):
         if type(parallelism) is not int or not 1<=parallelism<=16:raise ValueError('Invalid evidence concurrency')
         if role not in ('combined','collector'):raise ValueError('Invalid campaign worker role')
+        if preview_limit not in (100,300):raise ValueError("Invalid preview size")
+        self.preview_limit=preview_limit
         self.role=role
         self.parallelism=parallelism;self._bootstrapped=False
         self.on_work_tick=lambda:None
@@ -452,14 +454,14 @@ class CampaignWorker:
                 SELECT parameters->>'day' AS day FROM research_job
                 WHERE idempotency_key>=%s AND idempotency_key<%s
                     AND parameters->>'collector'='campaign-assembly-v1'
-                    AND parameters->>'kind' IN ('prices','enriched') AND status IN ('queued','running'))
+                    AND (parameters->>'kind' IN ('prices','enriched') OR (%s=300 AND parameters->>'kind'='sample')) AND status IN ('queued','running'))
                 SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
                 AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=research_campaign_day.day::text))
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
-                              WHEN %s::jsonb ? day::text THEN 0 ELSE 1 END,
+                              WHEN %s::jsonb ? day::text THEN %s ELSE %s END,
                     day DESC LIMIT 1''',
-                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
-                    Jsonb(parent['progress'].get('sample_previews',{})))).fetchone()
+                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',self.preview_limit,identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
+                    Jsonb(parent['progress'].get('sample_previews',{})),1 if self.preview_limit==300 else 0,0 if self.preview_limit==300 else 1)).fetchone()
         if day is None:
             if self.role=='collector':
                 with self.pool.connection() as c:
@@ -580,7 +582,7 @@ class CampaignWorker:
         if manifest.get('format')!='candidate-manifest-v1' or digest(manifest['batch'])!=manifest.get('fingerprint'):
             raise EvidenceConflict('Invalid preview manifest')
         candidates=batch_from_dict(manifest['batch']).candidates
-        selected=select_preview_candidates(candidates) if len(candidates)>100 else ()
+        selected=select_preview_candidates(candidates,limit=self.preview_limit) if len(candidates)>self.preview_limit else ()
         tickers=[c.ticker for c in selected]
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
