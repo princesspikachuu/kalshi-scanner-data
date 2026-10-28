@@ -644,8 +644,34 @@ class CampaignPostgresTests(unittest.TestCase):
         newer=self.create(key='price-pending-newer')
         claimed=self.worker._claim_parent()
         self.assertEqual(claimed['parameters']['campaign_id'],newer)
-        self.queue.yield_job(claimed['id'],claimed['lease_token'])
+        self.queue.yield_job(claimed['id'],claimed['lease_token'],60)
+        # The earlier collection has all prices and can begin slow trade
+        # packaging. A brief price retry must NOT make that work eligible.
+        self.assertIsNone(self.worker._claim_parent())
+        self.queue.cancel(claimed['id'])
+        enrichment=self.worker._claim_parent()
+        self.assertEqual(enrichment['parameters']['campaign_id'],older)
+        self.queue.yield_job(enrichment['id'],enrichment['lease_token'])
 
+
+    def test_long_preparation_renews_owner_and_liveness_but_stale_owner_cannot(self):
+        identifier=self.create(key='long-preparation')
+        parent=self.worker._claim_parent()
+        self.assertEqual(parent['parameters']['campaign_id'],identifier)
+        ticks=iter((100,131,162));seen=[]
+        self.worker.on_work_tick=lambda:seen.append('alive')
+        check=self.worker._work_guard(parent,clock=lambda:next(ticks))
+        self.assertFalse(check())
+        renewed=self.queue.get(parent['id'])
+        self.assertEqual(renewed['lease_token'],parent['lease_token'])
+        self.assertGreater((renewed['lease_expires_at']-datetime.now(UTC)).total_seconds(),590)
+        self.assertEqual(seen,['alive'])
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(parent['id'],))
+        with self.assertRaises(LeaseLost):check()
+        self.assertEqual(seen,['alive'])
+        self.worker.cancelled=lambda:True
+        self.assertTrue(check())
 
     def test_day_status_reports_real_saved_days_and_is_paced(self):
         from services.research.heartbeat import DayProgress

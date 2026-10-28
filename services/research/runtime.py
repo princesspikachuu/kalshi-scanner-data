@@ -142,6 +142,7 @@ def run(settings,stop):
         progress=DayProgress(pool,lambda data:print(json.dumps(data,default=str,sort_keys=True),flush=True))
         def tick():
             heartbeat.beat();progress.emit()
+        worker.on_work_tick=tick
         try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
         finally:
             meter.flush(force=True);configure()

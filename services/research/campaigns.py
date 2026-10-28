@@ -10,6 +10,7 @@ from dataclasses import replace
 from uuid import UUID,uuid4,uuid5
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
 
 from psycopg.types.json import Jsonb
 from .availability import eligible_series
@@ -288,10 +289,25 @@ class CampaignWorker:
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None):
         if type(parallelism) is not int or not 1<=parallelism<=16:raise ValueError('Invalid evidence concurrency')
         self.parallelism=parallelism;self._bootstrapped=False
+        self.on_work_tick=lambda:None
         self.cancelled=stop.is_set if stop is not None else lambda:False
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
+
+    def _work_guard(self,parent,*,clock=monotonic):
+        """Renew ownership and liveness during long verified local preparation."""
+        last=clock()
+        def check():
+            nonlocal last
+            if self.cancelled():return True
+            now=clock()
+            if now-last>=30:
+                self.queue.heartbeat(parent['id'],parent['lease_token'],600)
+                self.on_work_tick()
+                last=now
+            return False
+        return check
 
     def _jobs(self,campaign,day,phase,scopes,parent):
         rows=[dict(id=str(uuid5(campaign['id'],s.key)),asset=campaign['asset'],parameters=s.parameters(),
@@ -488,7 +504,7 @@ class CampaignWorker:
                 plan=self._plan(campaign,day)
                 attempts=self._attempts(campaign,day,'evidence')
                 def inventory_loader(jid):return self.queue.get(jid),self.queue.page_evidence(jid)
-                prepared=prepare_dataset(plan,attempts,self.archives,inventory_loader,cancelled=self.cancelled)
+                prepared=prepare_dataset(plan,attempts,self.archives,inventory_loader,cancelled=self._work_guard(parent))
                 self.queue.heartbeat(parent['id'],parent['lease_token'],600)
                 dataset=self.datasets.publish(f"campaign-{identifier.hex}",prepared)
                 with self.pool.connection() as c:
@@ -537,7 +553,7 @@ class CampaignWorker:
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence')
             if j['parameters']['scope']['resource']=='candles']
         prepared=prepare_dataset(candles,attempts,self.archives,
-            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers),cancelled=self.cancelled)
+            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers),cancelled=self._work_guard(parent))
         dataset=self.datasets.publish('campaign-sample-'+campaign['id'].hex,prepared)
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
@@ -560,7 +576,7 @@ class CampaignWorker:
         plan=self._plan(campaign,day)
         candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence') if j['parameters']['scope']['resource']=='candles']
-        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),cancelled=self.cancelled)
+        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),cancelled=self._work_guard(parent))
         dataset=self.datasets.publish('campaign-candles-'+campaign['id'].hex,prepared)
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
@@ -573,24 +589,24 @@ class CampaignWorker:
         return True
 
     def _claim_parent(self):
-        # Prefer collections still missing full-cohort price dates. Exhaustive
-        # trade enrichment cannot monopolize the queue after its price dates
-        # are published. Keep oldest-first order within each lane.
+        # A rate-limit wait on price work must not open a lane for a minutes-long
+        # trade assembly. Publish every requested price date before enrichment.
         with self.pool.connection() as c:
-            row=c.execute('''WITH oldest AS (
-                SELECT j.id,j.status,j.available_at,j.lease_expires_at
+            row=c.execute('''WITH candidates AS MATERIALIZED (
+                SELECT j.id,j.status,j.available_at,j.lease_expires_at,r.created_at,r.id AS campaign_id,
+                    coalesce((j.progress->>'last_price_day_at')::timestamptz,r.created_at) AS turn_at,
+                    EXISTS(SELECT 1 FROM research_campaign_day d
+                        WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
+                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)) AS price_pending
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
-                    AND ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
-                         (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
-                ORDER BY CASE WHEN EXISTS(SELECT 1 FROM research_campaign_day d
-                    WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
-                    AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text))
-                    THEN 0 ELSE 1 END,
-                    coalesce((j.progress->>'last_price_day_at')::timestamptz,r.created_at),r.created_at,r.id LIMIT 1)
-                SELECT id FROM oldest WHERE
-                    (status='queued' AND available_at<=clock_timestamp()) OR
-                    (status='running' AND lease_expires_at<=clock_timestamp())''').fetchone()
+                    AND j.status IN ('queued','running')
+                    AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false))
+                SELECT id FROM candidates
+                WHERE ((status='queued' AND available_at<=clock_timestamp()) OR
+                       (status='running' AND lease_expires_at<=clock_timestamp()))
+                    AND (price_pending OR NOT EXISTS(SELECT 1 FROM candidates WHERE price_pending))
+                ORDER BY CASE WHEN price_pending THEN 0 ELSE 1 END,turn_at,created_at,campaign_id LIMIT 1''').fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
     def run_once(self,*,deadline):
