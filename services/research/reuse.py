@@ -4,7 +4,8 @@ Uses the existing indexed job registry, not new infrastructure or schema. Rollin
 explicit rechecks and partial/current-day requests always obtain fresh evidence.
 """
 from dataclasses import asdict
-from uuid import uuid4
+from uuid import UUID,uuid4
+from datetime import date
 from psycopg.types.json import Jsonb
 from .inventory import ProviderPage,digest
 from .queue import EvidenceConflict
@@ -16,16 +17,24 @@ class VerifiedReads:
     def __init__(self,pool,archives):self.pool,self.archives=pool,archives
 
     def _key(self,job,scope,cursor):
+        context=job.get('_campaign_context')
+        # Internal hints narrow an existing verified FK join, never replace it.
+        # The query still requires this job's immutable campaign-work membership.
+        restriction='';args=(job['id'],)
+        if context is not None:
+            identifier,day=context
+            restriction=' AND w.campaign_id=%s AND w.day=%s'
+            args+=(UUID(str(identifier)),date.fromisoformat(day))
         with self.pool.connection() as c:
             row=c.execute('''SELECT d.end_at FROM research_campaign_work w
                 JOIN research_campaign r ON r.id=w.campaign_id
                 JOIN research_campaign_day d ON d.campaign_id=w.campaign_id AND d.day=w.day
-                WHERE w.job_id=%s AND r.mode='backfill'
+                WHERE w.job_id=%s'''+restriction+''' AND r.mode='backfill'
                     AND NOT coalesce((r.request_spec->>'refresh_existing')::boolean,false)
                     AND d.start_at=date_trunc('day',d.start_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                     AND d.end_at=d.start_at+interval '1 day'
                     AND d.end_at<=date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-                ORDER BY d.end_at DESC LIMIT 1''',(job['id'],)).fetchone()
+                ORDER BY d.end_at DESC LIMIT 1''',args).fetchone()
         if not row:return None
         path,args=scope.request(cursor)
         calendar=weather_snapshot(scope)
