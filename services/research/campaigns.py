@@ -177,12 +177,11 @@ class CampaignStore:
                     row['reported_sections']=publication['reported_sections'];row['report_complete']=publication['complete']
                 sample=c.execute('''SELECT id::text AS id,report->'publication' AS publication FROM research_result
                     WHERE stream_key=%s ORDER BY id DESC LIMIT 1''',('campaign-sample-'+UUID(str(identifier)).hex,)).fetchone()
-                speed=c.execute('''SELECT greatest(0,
-                    coalesce(max((report->'publication'->>'reported_sections')::integer),0)-
-                    coalesce(max((report->'publication'->>'reported_sections')::integer)
-                        FILTER(WHERE published_at<=clock_timestamp()-interval '5 minutes'),0)) AS days
-                    FROM research_result WHERE stream_key=%s''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
-                row['report_days_last_five_minutes']=speed['days']
+                prior=c.execute('''SELECT (report->'publication'->>'reported_sections')::integer AS days
+                    FROM research_result WHERE stream_key=%s
+                    AND published_at<=clock_timestamp()-interval '5 minutes'
+                    ORDER BY id DESC LIMIT 1''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
+                row['report_days_last_five_minutes']=max(0,row['reported_sections']-(prior['days'] or 0 if prior else 0))
                 row['sample_result_id']=sample['id'] if sample else None
                 row['sample_reported_sections']=sample['publication'].get('reported_sections',0) if sample else 0
                 detail=c.execute('''SELECT count(*)::integer AS work_items,
