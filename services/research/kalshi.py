@@ -16,21 +16,21 @@ BASE = 'https://external-api.kalshi.com/trade-api/v2'
 MAX_RESPONSE = 8 * 1024 * 1024
 
 
-def retry_after(value, now):
-    """Shared cooldown: bounded 1..2**40 seconds, 30-second fallback."""
+def retry_after(value, now, *, default=30):
+    """Shared cooldown: bounded 1..2**40 seconds, caller-selected fallback."""
     if not isinstance(value, str) or len(value) > 128:
-        return 30
+        return default
     value = value.strip()
     try:
         if value.isascii() and value.isdigit():
             delay = int(value)
         else:
             stamp = parsedate_to_datetime(value)
-            if stamp.tzinfo is None: return 30
+            if stamp.tzinfo is None: return default
             delay = math.ceil(stamp.timestamp() - now)
         return max(1, min(2**40, delay))
     except (ValueError, OverflowError, TypeError):
-        return 30
+        return default
 
 
 def invalid():
@@ -134,7 +134,7 @@ class KalshiInventory:
             response = self.client.send(request, stream=True, follow_redirects=False)
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if response.status_code == 429:
-                cooldown = retry_after(response.headers.get('retry-after'), self.wall_clock())
+                cooldown = retry_after(response.headers.get('retry-after'), self.wall_clock(), default=1)
                 raise ProviderFailure('provider_rate_limit', delay=min(3600,cooldown), cooldown=cooldown)
             if response.status_code in (408, 500, 502, 503, 504):
                 cooldown = retry_after(response.headers.get('retry-after'), self.wall_clock())
