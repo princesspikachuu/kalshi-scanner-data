@@ -163,6 +163,20 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.queue.yield_job(next_parent['id'],next_parent['lease_token'])
         self.assertEqual(self.processor._claim_assembly()['id'],newer_job['id'])
 
+    def test_child_lease_loss_releases_parent_without_advancing_to_newer_request(self):
+        first=self.create(key='child-lease-first',end='2026-10-25')
+        newer=self.create(key='child-lease-newer',end='2026-10-26')
+        with patch.object(self.worker,'step',side_effect=LeaseLost('Child lease replaced')):
+            with self.assertRaises(LeaseLost):
+                self.worker.run_once(deadline=time.monotonic()+30)
+        self.assertEqual(self.store.get(first)['status'],'queued')
+        self.available()
+        parent=self.worker._claim_parent()
+        self.assertEqual(parent['parameters']['campaign_id'],str(first))
+        self.assertEqual(parent['attempts'],1)
+        self.assertEqual(self.store.get(newer)['saved_pages'],0)
+        self.queue.yield_job(parent['id'],parent['lease_token'])
+
     def test_oldest_finishes_enrichment_and_final_report_while_newer_waits(self):
         first=self.create(key='finish-oldest',end='2026-10-25')
         newer=self.create(key='hold-newer',end='2026-10-26')

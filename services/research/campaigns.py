@@ -733,7 +733,13 @@ class CampaignWorker:
         try:self.step(parent,deadline=deadline)
         except CollectionInterrupted:
             self.queue.yield_job(parent['id'],parent['lease_token']);return True
-        except LeaseLost:raise
+        except LeaseLost:
+            # A child can lose its lease while this parent is still owned.
+            # Release that reservation so the collector does not idle for ten
+            # minutes. A replaced/paused parent remains protected by its token.
+            try:self.queue.yield_job(parent['id'],parent['lease_token'],1)
+            except LeaseLost:pass
+            raise
         except Exception:
             # Release an owned failed attempt immediately. Waiting for the full
             # ten-minute crash lease repeats expensive preparation silently.
