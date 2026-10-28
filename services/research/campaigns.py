@@ -277,7 +277,7 @@ class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1):
         if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
-        self.parallelism=parallelism;self._bootstrapped=False;self._turn=0
+        self.parallelism=parallelism;self._bootstrapped=False
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
@@ -493,20 +493,19 @@ class CampaignWorker:
         return True
 
     def _claim_parent(self):
-        # Logical lanes share the same bounded worker/memory budget. Candle work
-        # leads across campaigns; one turn in nine lets enrichment keep advancing.
-        self._turn+=1;enrichment_turn=self._turn%9==0
+        # Finish the oldest unfinished collection before moving to the next.
+        # A delayed retry keeps its place, so a provider cooldown cannot make
+        # the visible queue silently switch to another collection.
         with self.pool.connection() as c:
-            row=c.execute('''WITH ready AS (
-                SELECT j.id,j.available_at,j.created_at,EXISTS(
-                    SELECT 1 FROM research_campaign_day d WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
-                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)) AS candle_work
+            row=c.execute('''WITH oldest AS (
+                SELECT j.id,j.status,j.available_at,j.lease_expires_at
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
-                WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts AND
-                    ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
-                    (j.status='running' AND j.lease_expires_at<=clock_timestamp())))
-                SELECT id FROM ready ORDER BY CASE WHEN candle_work<>%s THEN 0 ELSE 1 END,available_at,created_at,id LIMIT 1''',
-                (enrichment_turn,)).fetchone()
+                WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
+                    AND j.status IN ('queued','running')
+                ORDER BY r.created_at,r.id LIMIT 1)
+                SELECT id FROM oldest WHERE
+                    (status='queued' AND available_at<=clock_timestamp()) OR
+                    (status='running' AND lease_expires_at<=clock_timestamp())''').fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
     def run_once(self,*,deadline):

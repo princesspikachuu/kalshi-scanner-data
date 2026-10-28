@@ -321,7 +321,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertNotIn('snapshot',saved['progress']);self.assertEqual(saved['attempts'],0)
         self.assertGreater((saved['available_at']-datetime.now(UTC)).total_seconds(),25)
 
-    def test_global_candle_lane_leads_but_enrichment_gets_a_reserved_turn(self):
+    def test_oldest_collection_keeps_turn_until_it_stops_even_during_retry(self):
         original=self.evidence.fetch;page=0
         def streaming(scope,cursor,timeout):
             nonlocal page
@@ -336,11 +336,17 @@ class CampaignPostgresTests(unittest.TestCase):
             if len(progress.get('candle_previews',{}))==2:break
         else:self.fail('Candle lane did not progress')
         fresh=self.create(key='priority-new')
-        self.worker._turn=0;claimed=self.worker._claim_parent()
+        for _ in range(12):
+            claimed=self.worker._claim_parent()
+            self.assertEqual(claimed['parameters']['campaign_id'],older)
+            self.queue.yield_job(claimed['id'],claimed['lease_token'])
+        claimed=self.worker._claim_parent()
+        self.queue.yield_job(claimed['id'],claimed['lease_token'],60)
+        self.assertIsNone(self.worker._claim_parent())
+        self.assertEqual(self.store.get(fresh)['saved_pages'],0)
+        self.queue.cancel(claimed['id'])
+        claimed=self.worker._claim_parent()
         self.assertEqual(claimed['parameters']['campaign_id'],fresh)
-        self.queue.yield_job(claimed['id'],claimed['lease_token'])
-        self.worker._turn=8;claimed=self.worker._claim_parent()
-        self.assertEqual(claimed['parameters']['campaign_id'],older)
         self.queue.yield_job(claimed['id'],claimed['lease_token'])
 
     def test_campaign_history_keyset_is_category_scoped_and_survives_new_inserts(self):
