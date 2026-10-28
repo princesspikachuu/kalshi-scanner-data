@@ -270,7 +270,9 @@ class CampaignStore:
             row=c.execute('SELECT j.* FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s FOR UPDATE OF j',(UUID(str(identifier)),)).fetchone()
             if row is None:return False
             if action in ('pause','remove') and row['status'] in ('queued','running'):
-                ids=c.execute('SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchall()
+                ids=c.execute("""SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s
+                    UNION SELECT id AS job_id FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
+                        AND parameters->>'campaign_id'=%s""",(identifier,str(identifier))).fetchall()
                 c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('queued','running')""",([row['id']]+[r['job_id'] for r in ids],))
             if action=='remove' and row['status']!='succeeded':
@@ -278,7 +280,9 @@ class CampaignStore:
             if action=='resume':
                 c.execute("UPDATE research_job SET progress=progress-'removed_from_queue' WHERE id=%s",(row['id'],))
             if action=='resume' and row['status'] in ('cancelled','failed'):
-                ids=c.execute('SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchall()
+                ids=c.execute("""SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s
+                    UNION SELECT id AS job_id FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
+                        AND parameters->>'campaign_id'=%s""",(identifier,str(identifier))).fetchall()
                 c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,error_code=NULL,attempts=0,available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('cancelled','failed')""",([row['id']]+[r['job_id'] for r in ids],))
             return True
@@ -286,8 +290,10 @@ class CampaignStore:
 
 class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
-    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None):
+    def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None,role='combined'):
         if type(parallelism) is not int or not 1<=parallelism<=16:raise ValueError('Invalid evidence concurrency')
+        if role not in ('combined','collector'):raise ValueError('Invalid campaign worker role')
+        self.role=role
         self.parallelism=parallelism;self._bootstrapped=False
         self.on_work_tick=lambda:None
         self.cancelled=stop.is_set if stop is not None else lambda:False
@@ -438,12 +444,24 @@ class CampaignWorker:
             # A day with a full candle report must not monopolize the worker
             # while every other requested date waits behind trade enrichment.
             day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
+                AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM research_job a
+                    WHERE a.parameters->>'collector'='campaign-assembly-v1'
+                    AND a.parameters->>'campaign_id'=research_campaign_day.campaign_id::text
+                    AND a.parameters->>'day'=research_campaign_day.day::text
+                    AND a.parameters->>'kind' IN ('prices','enriched') AND a.status IN ('queued','running')))
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
                               WHEN %s::jsonb ? day::text THEN 0 ELSE 1 END,
                     day DESC LIMIT 1''',
-                (identifier,Jsonb(parent['progress'].get('candle_previews',{})),
+                (identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
                     Jsonb(parent['progress'].get('sample_previews',{})))).fetchone()
         if day is None:
+            if self.role=='collector':
+                with self.pool.connection() as c:
+                    missing=c.execute('SELECT 1 FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL LIMIT 1',(identifier,)).fetchone()
+                    complete=c.execute('SELECT 1 FROM research_campaign_result WHERE campaign_id=%s',(identifier,)).fetchone()
+                if complete:self.queue.finish(parent['id'],parent['lease_token']);return 0
+                if not missing:self._enqueue_assembly(parent,campaign,None,'final')
+                self.queue.yield_job(parent['id'],parent['lease_token'],1);return 1
             try:
                 with self.pool.connection() as c:
                     ids=[r['dataset_id'] for r in c.execute('SELECT dataset_id FROM research_campaign_day WHERE campaign_id=%s ORDER BY dataset_id',(identifier,)).fetchall()]
@@ -499,8 +517,12 @@ class CampaignWorker:
                     self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline,
                     resource=None if day['day'].isoformat() in parent['progress'].get('candle_previews',{}) else 'candles',
-                    priority_tickers=sample if sample and day['day'].isoformat() not in parent['progress'].get('sample_previews',{}) else None)
+                    priority_tickers=sample if sample and day['day'].isoformat() not in parent['progress'].get('sample_previews',{})
+                        and day['day'].isoformat() not in parent.get('_sample_assembly_pending',set()) else None)
                 if wait is not None:self.queue.yield_job(parent['id'],parent['lease_token'],wait);return wait
+                if self.role=='collector':
+                    self._enqueue_assembly(parent,campaign,day,'enriched')
+                    self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 plan=self._plan(campaign,day)
                 attempts=self._attempts(campaign,day,'evidence')
                 def inventory_loader(jid):return self.queue.get(jid),self.queue.page_evidence(jid)
@@ -519,6 +541,23 @@ class CampaignWorker:
             self.queue.fail(parent['id'],parent['lease_token'],'campaign_dataset_limit',retry=False);return 0
         except EvidenceConflict:
             self.queue.fail(parent['id'],parent['lease_token'],'campaign_evidence_blocked',retry=False);return 0
+
+    def _enqueue_assembly(self,parent,campaign,day,kind,*,tickers=()):
+        """One immutable handoff per date/kind. Never holds the parent during assembly."""
+        date_key=day['day'].isoformat() if day else 'final'
+        key=f"assembly/{campaign['id']}/{date_key}/{kind}"
+        parameters=dict(collector='campaign-assembly-v1',campaign_id=str(campaign['id']),day=date_key,kind=kind,tickers=list(tickers))
+        with self.pool.connection() as c:
+            self.queue._owned(c,parent['id'],parent['lease_token'])
+            row=c.execute("""INSERT INTO research_job(id,asset,parameters,idempotency_key,max_attempts)
+                VALUES(%s,%s,%s,%s,5) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id""",
+                (uuid5(campaign['id'],key),campaign['asset'],Jsonb(parameters),key)).fetchone()
+            saved=c.execute('SELECT status,parameters FROM research_job WHERE idempotency_key=%s',(key,)).fetchone()
+            if saved['parameters']!=parameters or saved['status'] in ('failed','cancelled'):
+                raise EvidenceConflict('Assembly handoff blocked')
+        if kind=='sample' and saved['status'] in ('queued','running'):
+            parent.setdefault('_sample_assembly_pending',set()).add(date_key)
+        return row is not None or saved['status']=='succeeded'
 
     def _sample_tickers(self,day,parent):
         key=day['day'].isoformat()
@@ -548,6 +587,7 @@ class CampaignWorker:
                     AND j.parameters->'scope'->>'ticker'=ANY(%s::text[])""",
                 (campaign['id'],day['day'],list(tickers))).fetchone()
         if not state['n'] or state['n']!=state['done']:return False
+        if self.role=='collector':return self._enqueue_assembly(parent,campaign,day,'sample',tickers=tickers)
         plan=self._plan(campaign,day)
         candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence')
@@ -573,6 +613,7 @@ class CampaignWorker:
                 WHERE w.campaign_id=%s AND w.day=%s AND w.phase='evidence'
                     AND j.parameters->'scope'->>'resource'='candles'""",(campaign['id'],day['day'])).fetchone()
         if not state['n'] or state['n']!=state['done']:return False
+        if self.role=='collector':return self._enqueue_assembly(parent,campaign,day,'prices')
         plan=self._plan(campaign,day)
         candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence') if j['parameters']['scope']['resource']=='candles']
@@ -597,7 +638,11 @@ class CampaignWorker:
                     coalesce((j.progress->>'last_price_day_at')::timestamptz,r.created_at) AS turn_at,
                     EXISTS(SELECT 1 FROM research_campaign_day d
                         WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
-                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)) AS price_pending
+                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)
+                        AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM research_job a
+                            WHERE a.parameters->>'collector'='campaign-assembly-v1'
+                            AND a.parameters->>'campaign_id'=r.id::text AND a.parameters->>'day'=d.day::text
+                            AND a.parameters->>'kind'='prices' AND a.status IN ('queued','running')))) AS price_pending
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
                     AND j.status IN ('queued','running')
@@ -606,7 +651,7 @@ class CampaignWorker:
                 WHERE ((status='queued' AND available_at<=clock_timestamp()) OR
                        (status='running' AND lease_expires_at<=clock_timestamp()))
                     AND (price_pending OR NOT EXISTS(SELECT 1 FROM candidates WHERE price_pending))
-                ORDER BY CASE WHEN price_pending THEN 0 ELSE 1 END,turn_at,created_at,campaign_id LIMIT 1''').fetchone()
+                ORDER BY CASE WHEN price_pending THEN 0 ELSE 1 END,turn_at,created_at,campaign_id LIMIT 1''',(self.role,)).fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
     def run_once(self,*,deadline):
@@ -654,10 +699,11 @@ class CampaignWorker:
                         JOIN research_job p ON p.id=r.job_id WHERE w.job_id=j.id AND p.status IN ('queued','running')
                         AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false))""")
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
-        if SampleReports(self.pool).run_once():return True
-        if ProgressiveReports(self.pool).run_once():return True
-        from .cumulative import CategoryReports
-        if CategoryReports(self.pool).run_once():return True
+        if self.role=='combined':
+            if SampleReports(self.pool).run_once():return True
+            if ProgressiveReports(self.pool).run_once():return True
+            from .cumulative import CategoryReports
+            if CategoryReports(self.pool).run_once():return True
         parent=self._claim_parent()
         if parent is None:return False
         try:self.step(parent,deadline=deadline)

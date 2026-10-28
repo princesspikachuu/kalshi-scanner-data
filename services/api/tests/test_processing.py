@@ -1,0 +1,134 @@
+"""Actual PostgreSQL handoffs, concurrent collection, cancellation and restart."""
+import os
+import time
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest.mock import patch
+from psycopg.types.json import Jsonb
+import test_campaigns as fixtures
+from services.research.campaigns import CampaignWorker
+from services.research.processing import ProcessingWorker
+from services.research.queue import LeaseLost
+from services.research.datasets import prepare_dataset
+
+
+@unittest.skipUnless(os.environ.get('POCKET_TEST_DATABASE_URL'),'Requires disposable pocket_test PostgreSQL')
+class ProcessingPostgresTests(unittest.TestCase):
+    setUpClass=classmethod(fixtures.CampaignPostgresTests.setUpClass.__func__)
+    tearDownClass=classmethod(fixtures.CampaignPostgresTests.tearDownClass.__func__)
+    make_worker=fixtures.CampaignPostgresTests.make_worker
+    available=fixtures.CampaignPostgresTests.available
+    create=fixtures.CampaignPostgresTests.create
+
+    def setUp(self):
+        fixtures.CampaignPostgresTests.setUp(self)
+        self.worker.role='collector'
+        self.processor=ProcessingWorker(self.db.pool,self.archives)
+
+    def queued(self,kind='prices'):
+        with self.db.pool.connection() as c:
+            return c.execute("""SELECT * FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
+                AND parameters->>'kind'=%s ORDER BY created_at,id""",(kind,)).fetchall()
+
+    def collect_until(self,predicate,limit=180):
+        with patch('services.research.campaigns.prepare_dataset',side_effect=AssertionError('collector expanded evidence')), \
+             patch('services.research.reports.ReportStore.publish_campaign',side_effect=AssertionError('collector built report')):
+            for _ in range(limit):
+                if predicate():return
+                self.available();self.worker.run_once(deadline=time.monotonic()+30)
+        self.fail('Collector failed to make durable handoff')
+
+    def finish(self,identifier,limit=450):
+        for _ in range(limit):
+            self.available()
+            self.worker.run_once(deadline=time.monotonic()+30)
+            self.processor.run_once(deadline=time.monotonic()+30)
+            state=self.store.get(identifier)
+            if state['status']=='succeeded':return state
+            self.assertNotEqual(state['status'],'failed',state)
+        self.fail('Split did not finish bounded fixture')
+
+    def test_collection_advances_while_processing_is_blocked_and_merges_latest_progress(self):
+        identifier=self.create(start='2026-10-25',end='2026-10-27')
+        self.collect_until(lambda:len(self.queued())==1)
+        job=self.processor._claim_assembly();entered=Event();release=Event()
+        def blocked(*args,**kwargs):
+            entered.set()
+            if not release.wait(10):raise AssertionError('processing release timed out')
+            return prepare_dataset(*args,**kwargs)
+        with patch('services.research.processing.prepare_dataset',side_effect=blocked),ThreadPoolExecutor(max_workers=1) as executor:
+            future=executor.submit(self.processor._publish,job)
+            try:
+                self.assertTrue(entered.wait(5))
+                # No processor completion is required to start the next date.
+                self.collect_until(lambda:len(self.queued())>=2)
+                self.assertEqual(self.queue.get(job['id'])['status'],'running')
+                with self.db.pool.connection() as c:
+                    parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(identifier,)).fetchone()['job_id']
+                    c.execute('UPDATE research_job SET progress=progress||%s WHERE id=%s',(Jsonb({'concurrent_collector_marker':True}),parent))
+            finally:release.set()
+            future.result(timeout=10)
+        self.assertTrue(self.queue.get(parent)['progress']['concurrent_collector_marker'])
+        self.assertEqual(len(self.queue.get(parent)['progress']['candle_previews']),1)
+        state=self.finish(identifier)
+        self.assertEqual(state['completed_sections'],3)
+        self.assertEqual(state['reported_sections'],3)
+
+    def test_pause_resume_cancels_assembly_without_losing_saved_pages(self):
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued()))
+        job=self.processor._claim_assembly()
+        pages=self.store.get(identifier)['saved_pages']
+        self.assertTrue(self.store.control(identifier,'pause'))
+        self.assertEqual(self.queue.get(job['id'])['status'],'cancelled')
+        with self.assertRaises(LeaseLost):self.processor._publish(job)
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_dataset').fetchone()['n'],0)
+        self.assertTrue(self.store.control(identifier,'resume'))
+        self.assertEqual(self.queue.get(job['id'])['status'],'queued')
+        self.assertEqual(self.store.get(identifier)['saved_pages'],pages)
+        self.processor=ProcessingWorker(self.db.pool,self.archives)
+        self.assertEqual(self.finish(identifier)['completed_sections'],1)
+
+    def test_expired_processor_cannot_publish_over_replacement(self):
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued()))
+        stale=self.processor._claim_assembly()
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(stale['id'],))
+        replacement=self.processor._claim_assembly()
+        self.assertEqual(stale['id'],replacement['id'])
+        self.assertNotEqual(stale['lease_token'],replacement['lease_token'])
+        with self.assertRaises(LeaseLost):self.processor._publish(stale)
+        self.processor._publish(replacement)
+        self.assertEqual(self.queue.get(stale['id'])['status'],'succeeded')
+        self.assertEqual(self.finish(identifier)['completed_sections'],1)
+
+    def test_failed_handoff_is_visible_and_resume_reuses_it(self):
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued()))
+        job=self.processor._claim_assembly()
+        self.queue.fail(job['id'],job['lease_token'],'campaign_assembly_blocked',retry=False)
+        self.collect_until(lambda:self.store.get(identifier)['status']=='failed')
+        self.store.control(identifier,'resume')
+        self.assertEqual(len(self.queued()),1)
+        self.assertEqual(self.finish(identifier)['completed_sections'],1)
+
+    def test_sample_handoff_does_not_block_full_candle_collection(self):
+        from services.research.inventory import ProviderPage
+        markets=[dict(ticker=f'KXBTC15M-SAMPLE-{i:03d}',event_ticker=f'EV-{i:03d}',series_ticker='KXBTC15M',
+            close_time='2026-10-25T12:00:00Z',result='yes') for i in range(300)]
+        self.inventory.fetch=lambda scope,cursor,timeout:ProviderPage(dict(markets=markets,cursor=''))
+        self.worker.parallelism=12
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('sample')),limit=180)
+        self.collect_until(lambda:bool(self.queued('prices')),limit=180)
+        self.assertEqual(self.queued('sample')[0]['status'],'queued')
+        chosen=self.processor._claim_assembly()
+        self.assertEqual(chosen['parameters']['kind'],'prices')
+        self.processor._publish(chosen)
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()
+        self.assertEqual(len(parent['progress']['candle_previews']),1)
+        self.assertEqual(len(parent['progress']['sample_tickers']['2026-10-25']),100)

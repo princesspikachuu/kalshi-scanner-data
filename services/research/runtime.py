@@ -1,6 +1,6 @@
 """Explicit deployment entry point. Import and --check-config perform no I/O."""
 from contextlib import ExitStack,contextmanager
-from dataclasses import dataclass,field
+from dataclasses import dataclass,field,replace
 import math
 import json
 import os
@@ -39,6 +39,7 @@ class WorkerSettings:
     acceptance:str='off'
     operator_action:str='off'
     runtime_verifiers:dict=field(default_factory=dict,repr=False)
+    role:str='combined'
 
     @classmethod
     def from_env(cls,env=None):
@@ -75,7 +76,9 @@ class WorkerSettings:
             except Exception:raise ConfigurationError('Invalid private runtime verifier configuration') from None
         elif env.get('STAGING_RUNTIME_VERIFIERS',''):
             raise ConfigurationError('Clear private runtime verifiers outside activation')
-        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance,operator,verifiers)
+        role=env.get('WORKER_ROLE','combined')
+        if role not in ('combined','split','collector','processor'):raise ConfigurationError('Invalid WORKER_ROLE')
+        return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance,operator,verifiers,role)
 
 
 @contextmanager
@@ -110,11 +113,12 @@ def run(settings,stop):
                 print('Staging acceptance failed; collection remains disabled',file=sys.stderr,flush=True)
         while not stop.is_set():stop.wait(30)
         return
+    if settings.role=='split':return run_split(settings,stop)
     from .acceptance import audit_database
     if not audit_database(settings.database_url)['privilege_boundary_ready']:
         raise ConfigurationError('Research runtime database privileges are not isolated')
     with ExitStack() as stack:
-        pool=ConnectionPool(settings.database_url,min_size=1,max_size=6,open=False,timeout=5,
+        pool=ConnectionPool(settings.database_url,min_size=1,max_size=6 if settings.role=='combined' else (4 if settings.role=='collector' else 2),open=False,timeout=5,
             kwargs={'row_factory':dict_row,'connect_timeout':5,'options':'-c statement_timeout=30000'})
         stack.callback(pool.close);pool.open(wait=True,timeout=5)
         # Runtime pre-deploy commands verify an operator-applied schema, never migrate.
@@ -124,18 +128,25 @@ def run(settings,stop):
         objects=R2Objects.connect(account_id=settings.account_id,bucket=settings.bucket,
             access_key_id=settings.access_key_id,secret_access_key=settings.secret_access_key)
         stack.callback(objects.client.close)
-        archives=ArchiveStore(objects,cache_bytes=16*1024*1024);queue=ResearchQueue(pool);budget=ReadBudget(pool)
-        budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)
-        inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence(archives=archives))
-        worker=CampaignWorker(pool,archives,
-            InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
-            EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=12,stop=stop)
-        from .reuse import VerifiedReads
-        worker.inventory_worker.reuse=worker.evidence_worker.reuse=VerifiedReads(pool,archives)
+        archives=ArchiveStore(objects,cache_bytes=(16 if settings.role=='combined' else 4)*1024*1024)
+        queue=ResearchQueue(pool)
+        if settings.role=='processor':
+            from .processing import ProcessingWorker
+            worker=ProcessingWorker(pool,archives,stop=stop)
+        else:
+            budget=ReadBudget(pool)
+            budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)
+            inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence(archives=archives))
+            worker=CampaignWorker(pool,archives,
+                InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
+                EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=12,stop=stop,
+                role=settings.role)
+            from .reuse import VerifiedReads
+            worker.inventory_worker.reuse=worker.evidence_worker.reuse=VerifiedReads(pool,archives)
         from .heartbeat import WorkerHeartbeat,DayProgress
         heartbeat=WorkerHeartbeat(pool)
-        print('Collection enabled; worker ready',flush=True)
-        print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 12',flush=True)
+        print(f'Collection enabled; {settings.role} worker ready',flush=True)
+        if settings.role!='processor':print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 12',flush=True)
         from .telemetry import configure
         meter=configure(lambda data:print(json.dumps(data,sort_keys=True,separators=(',',':')),flush=True))
         campaigns=CampaignStore(pool)
@@ -143,9 +154,45 @@ def run(settings,stop):
         def tick():
             heartbeat.beat();progress.emit()
         worker.on_work_tick=tick
-        try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=campaigns.next_wait,schedule=settings.role!='processor',on_error=lambda code:print(code,file=sys.stderr,flush=True))
         finally:
             meter.flush(force=True);configure()
+
+
+def _child(settings,stop):
+    # Spawned processes build independent SDK clients, caches and DB pools.
+    # No provider client is constructed in the processing role.
+    try:run(settings,stop)
+    except Exception:
+        print(f'{settings.role} worker exited; private error details suppressed',file=sys.stderr,flush=True)
+        raise SystemExit(1) from None
+
+
+def run_split(settings,stop):
+    """Two isolated processes on one instance; leases survive either one's exit.
+
+    The same role settings can also be run on independent Render services. Keep
+    the aggregate database pool at six connections for the initial split.
+    """
+    import multiprocessing
+    import time
+    context=multiprocessing.get_context('spawn');children=[];shared_stop=context.Event()
+    try:
+        for role in ('collector','processor'):
+            child=context.Process(target=_child,args=(replace(settings,role=role),shared_stop),name='research-'+role)
+            child.start();children.append(child)
+        print('Split enabled: independent collector and processor processes; shared durable queue',flush=True)
+        while not stop.is_set():
+            if any(not child.is_alive() for child in children):
+                raise RuntimeError('Split worker process exited')
+            stop.wait(1)
+    finally:
+        shared_stop.set()
+        deadline=time.monotonic()+100
+        for child in children:child.join(max(0,deadline-time.monotonic()))
+        for child in children:
+            if child.is_alive():child.terminate()
+        for child in children:child.join(5)
 
 
 def main(argv=None):
