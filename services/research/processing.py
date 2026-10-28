@@ -120,9 +120,9 @@ class ProcessingWorker(CampaignWorker):
         oldest=self.oldest_request()
         scope=dict(campaign_id=oldest['id']) if oldest else {}
         if ProgressiveReports(self.pool).run_once(**scope):return True
+        if SampleReports(self.pool).run_once(**scope):return True
         job=self._claim_assembly()
         if job is None:
-            if SampleReports(self.pool).run_once(**scope):return True
             return CategoryReports(self.pool).run_once(**(dict(asset=oldest['asset']) if oldest else {}))
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)
         try:self._publish(job)

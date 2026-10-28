@@ -3,6 +3,7 @@
 Only the campaign's explicit sample_previews dataset IDs enter this stream.
 Neither full campaign publication nor cumulative category reports read it.
 """
+import json
 from datetime import date
 from uuid import UUID, uuid4
 
@@ -106,6 +107,8 @@ class SampleReports:
             self.queue._owned(c, job['id'], job['lease_token'])
             report_jobs.coalesce(c, job, snapshot['publication']['revision'], campaign=True)
         self.queue.finish(job['id'], job['lease_token'])
+        print(json.dumps(dict(event='sample_days_published',asset=job['asset'],
+            days=snapshot['publication']['reported_sections'],sample_limit=snapshot['publication']['sample_limit'])),flush=True)
 
     def run_once(self,*,campaign_id=None,asset=None):
         job = self.queue.claim(seconds=600, collector=COLLECTOR,campaign_id=campaign_id,asset=asset)
