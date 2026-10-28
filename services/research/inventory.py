@@ -207,7 +207,11 @@ class InventoryWorker:
         scope = self.scope_loader(job)
         job_id, token = job['id'], job['lease_token']
         self.queue.heartbeat(job_id, token)
-        state = inspect_pages(scope, self.queue.pages(job_id))
+        # The lease fences this job's page writer. Reuse one committed-page
+        # snapshot for both cursor recovery and next-page chain validation;
+        # checkpoint() still checks the live lease and rejects conflicting rows.
+        committed = self.queue.pages(job_id)
+        state = inspect_pages(scope, committed)
         if state.state != 'partial':
             self.queue.finish(job_id, token)
             return {'state': state.state, 'retry_after': 0}
@@ -231,7 +235,7 @@ class InventoryWorker:
                   'cursor_out': cursor, 'items': len(rows), 'availability': response.availability}
             page = {'page_key': page_key(scope, state.pages), 'checkpoint': cp}
             # Validate continuation/cycles before upload or checkpoint.
-            try: next_state = inspect_pages(scope, self.queue.pages(job_id) + [page])
+            try: next_state = inspect_pages(scope, committed + [page])
             except EvidenceConflict: raise ProviderFailure('provider_invalid', retry=False) from None
             self.queue.heartbeat(job_id, token)
             receipt,cp = self.archive_page(scope,cp,response)

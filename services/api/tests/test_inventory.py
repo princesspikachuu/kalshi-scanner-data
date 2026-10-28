@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 import os
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import time
 import unittest
 from urllib.parse import urlsplit
@@ -25,6 +25,21 @@ def page(scope=SCOPE, seq=0, cursor_in='', cursor_out='', items=0, availability=
 
 
 class InventoryTests(unittest.TestCase):
+    def test_fenced_step_reads_committed_page_chain_once(self):
+        queue = Mock()
+        queue.pages.return_value = []
+        budget = Mock()
+        budget.take.return_value = 0
+        provider = Mock()
+        provider.cached.return_value = None
+        provider.fetch.return_value = ProviderPage({'markets': [], 'cursor': ''})
+        worker = InventoryWorker(queue, ArchiveStore(MemoryObjects()), provider, budget, endpoint_cost=1)
+        job = {'id': 'job', 'lease_token': 'fenced-token', 'parameters': SCOPE.parameters()}
+        self.assertEqual(worker.step(job, deadline=time.monotonic() + 30)['state'], 'empty')
+        queue.pages.assert_called_once_with('job')
+        queue.checkpoint.assert_called_once()
+        queue.finish.assert_called_once_with('job', 'fenced-token')
+
     def test_historical_index_reused_across_days_and_recent_ranges_are_utc(self):
         scopes = scopes_for_days(['KXBTC15M', 'KXBTC15M'], ['2026-10-24', '2026-10-25'], 'v1')
         self.assertEqual(len(scopes), 3)
