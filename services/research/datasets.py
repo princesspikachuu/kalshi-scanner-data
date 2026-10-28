@@ -25,6 +25,9 @@ from .inventory import digest, inspect_pages
 from .normalize import _closed, normalize_inventory
 from .queue import EvidenceConflict, text_key
 from .projections import resolve_evidence
+from .archive import MAX_DECODED
+
+MAX_ARCHIVE_INFLIGHT_BYTES=8*1024*1024
 
 FORMAT = 'raw-evidence-dataset-v1'
 STORAGE = 'raw-evidence-gzip-v1'
@@ -237,7 +240,7 @@ def _canonical(resource,row):
 
 
 @timed('dataset.prepare')
-def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=2,
+def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=8,
                     sampled_tickers=None,cancelled=lambda:False):
     """inventory_loader(id) -> (DB job, committed pages with receipts).
 
@@ -246,7 +249,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     Missing/failed/partial evidence cannot be published as a complete version.
     """
     if type(max_rows) is not int or not 1 <= max_rows <= 1000000: raise ValueError('Invalid row limit')
-    if type(archive_parallelism) is not int or not 1<=archive_parallelism<=2:raise ValueError('Invalid archive parallelism')
+    if type(archive_parallelism) is not int or not 1<=archive_parallelism<=8:raise ValueError('Invalid archive parallelism')
     manifest_receipt = plan.manifest_receipt()
     manifest = archives.read(manifest_receipt)
     artifacts = {}
@@ -336,7 +339,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
             i=0
             while i<len(groups):
                 if cancelled():raise CollectionInterrupted()
-                pair=groups[i:i+2] if archive_parallelism==2 and i+1<len(groups) and groups[i][0]!=groups[i+1][0] else groups[i:i+1]
+                pair=_evidence_wave(groups,i,archive_parallelism)
                 futures=[executor.submit(_resolve_evidence_group,pages,archives) for _,pages in pair]
                 for future in futures:
                     for scope,jid,page,rows,selectors in future.result():
@@ -375,6 +378,24 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
 def _ordered_evidence_pages(selected):
     return sorted(((scope,jid,page) for scope,jid,pages in selected for page in pages),
         key=lambda item:(item[2]['receipt'].get('object_key',''),item[0].key,item[2]['page_key']))
+
+
+def _evidence_wave(groups,index,parallelism):
+    """Overlap small verified archive reads, with a decoded-byte budget.
+
+    Unknown/large inputs run alone. Never decode the same shared batch object
+    concurrently; its following groups reuse the existing verified cache.
+    """
+    wave=[];keys=set();decoded=0
+    for key,pages in groups[index:index+parallelism]:
+        if key in keys:break
+        size=0
+        for _,_,page in pages:
+            estimate=page['receipt'].get('metadata',{}).get('decoded_bytes')
+            size+=estimate if type(estimate) is int and 0<estimate<=MAX_DECODED else MAX_DECODED
+        if wave and decoded+size>MAX_ARCHIVE_INFLIGHT_BYTES:break
+        wave.append((key,pages));keys.add(key);decoded+=size
+    return wave
 
 
 def _resolve_evidence_group(pages,archives):
