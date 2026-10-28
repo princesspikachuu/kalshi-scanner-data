@@ -35,12 +35,12 @@ function clearReport(){report=null;reportKey=null;reportContext=null;reportReque
 function showReport(data,context){
  report=data;reportContext=context;sourcesLoaded=null;sourceNext=null;windowNext=null;$('provenance').open=false;
  $('sourceList').replaceChildren();$('windowList').replaceChildren();$('sourcesMore').hidden=true;$('windowsMore').hidden=true;
- $('reportStamp').textContent=($('reportScope').value==='category'?'All saved history':'This load')+(data.collection_complete===false?' · In progress':'')+' · Saved '+new Date(data.published_at).toLocaleString();
+ $('reportStamp').textContent=(data.sampled_preview?'100-market preview':$('reportScope').value==='category'?'All saved history':'This load')+(data.collection_complete===false?' · In progress':'')+' · Saved '+new Date(data.published_at).toLocaleString();
  $('candidates').textContent=data.summary.candidate_count===null?'Unknown':data.summary.candidate_count.toLocaleString();
  $('observations').textContent=data.summary.observation_count.toLocaleString();
  $('reportDates').textContent=data.summary.first_date?data.summary.first_date+' – '+data.summary.last_date:'No eligible observations';
- $('scopeNote').textContent=$('reportScope').value==='category'?'Saved candle-complete sections combined, with the newest source version selected once for each covered close time.':data.collection_complete===false?`${data.reported_sections} of ${data.total_sections} date windows included. Remaining sections and trade details continue collecting; the table updates automatically.`:'All sections in this collection are combined.';
- $('reportStatus').textContent=data.cells.length?'Full sample · '+data.cells.length+' saved time/price cells.':data.summary.candidate_count===0?`No settled candidate markets in the ${data.reported_sections??'saved'} processed date windows (${data.summary.first_date} – ${data.summary.last_date}).${data.collection_complete===false?' Remaining dates are still collecting.':''}`:'Markets were found, but no quotes met the entry rules in the available sections. Check source coverage for missing candles.';
+ $('scopeNote').textContent=data.sampled_preview?`Preliminary stratified sample: at most ${data.sample_limit} markets per date, across ${data.reported_sections} of ${data.total_sections} dates. The full market collection continues and its verified reports update separately.`:$('reportScope').value==='category'?'Saved candle-complete sections combined, with the newest source version selected once for each covered close time.':data.collection_complete===false?`${data.reported_sections} of ${data.total_sections} date windows included. Remaining sections and trade details continue collecting; the table updates automatically.`:'All sections in this collection are combined.';
+ $('reportStatus').textContent=data.cells.length?(data.sampled_preview?'Preliminary sample':'Full sample')+' · '+data.cells.length+' saved time/price cells.':data.summary.candidate_count===0?`No settled candidate markets in the ${data.reported_sections??'saved'} processed date windows (${data.summary.first_date} – ${data.summary.last_date}).${data.collection_complete===false?' Remaining dates are still collecting.':''}`:'Markets were found, but no quotes met the entry rules in the available sections. Check source coverage for missing candles.';
  $('research').hidden=false;$('reportContent').hidden=false;$('exportCsv').hidden=false;drawReport();
 }
 async function loadCategory(version){
@@ -73,14 +73,14 @@ async function loadSources(kind,append=false){
 $('provenance').addEventListener('toggle',()=>{if($('provenance').open&&reportContext&&sourcesLoaded!==reportContext){sourcesLoaded=reportContext;void loadSources('sources');void loadSources('windows')}});
 $('sourcesMore').addEventListener('click',()=>loadSources('sources',true));
 $('windowsMore').addEventListener('click',()=>loadSources('windows',true));
-$('exportCsv').addEventListener('click',()=>{if(!report)return;const url=URL.createObjectURL(new Blob([reportCsv(report)],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='pocket-'+$('asset').value+'-report-'+report.id+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
+$('exportCsv').addEventListener('click',()=>{if(!report)return;const url=URL.createObjectURL(new Blob([reportCsv(report)],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='pocket-'+$('asset').value+(report.sampled_preview?'-sample-preview':'-report')+'-'+report.id+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 
 function drawReport(){
  if(!report)return;$('cellDetail').hidden=true;
  renderTable($('table'),report,{loss:$('loss').checked,metric:$('metric').value,minimum:Number($('minimum').value)},(cell,minutes,band)=>{
   const row=$('loss').checked?cell.loss_prevention:cell.hold,p=cell.loss_prevention,doc=document;
   const heading=doc.createElement('h3');heading.textContent=`${minutes} minutes before close · ${band}¢`;
-  const lines=[`Full original sample: ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days.`,
+  const lines=[`${report.sampled_preview?'Preliminary sampled cohort':'Full original sample'}: ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days.`,
    `Wins: ${row.wins} · Win rate: ${row.win_rate_percent.toFixed(2)}%`,
    `Average P/L: ${row.average_profit_loss_cents_per_contract.toFixed(2)}¢ · ROI: ${row.hypothetical_roi_percent.toFixed(2)}%`,
    `Exit coverage: ${p.exit_coverage} of ${cell.hold.sampled_markets} · Early exits: ${p.early_exits}`,
@@ -90,12 +90,14 @@ function drawReport(){
  });
 }
 async function loadReport(campaign,version){
- if(!campaign.result_id){clearReport();return}
- const identity=version+'/'+campaign.id+'/'+campaign.result_id;if(reportKey===identity)return;
+ const sampled=campaign.sample_result_id&&campaign.sample_reported_sections>campaign.reported_sections;
+ const identifier=sampled?campaign.sample_result_id:campaign.result_id;
+ if(!identifier){clearReport();return}
+ const identity=version+'/'+campaign.id+'/'+identifier+'/'+(sampled?'sample':'full');if(reportKey===identity)return;
  reportKey=identity;report=null;$('research').hidden=false;$('reportContent').hidden=true;$('reportStatus').textContent='Loading saved report…';
  try{
-  const data=await research.result(campaign.id,campaign.result_id);if(version!==revision||reportKey!==identity)return;
-  showReport(data,{stream:research.campaignStream(campaign.id),id:campaign.result_id});
+  const data=await (sampled?research.sampleResult:research.result)(campaign.id,identifier);if(version!==revision||reportKey!==identity)return;
+  showReport(data,{stream:sampled?research.campaignSampleStream(campaign.id):research.campaignStream(campaign.id),id:identifier});
  }catch(error){if(version===revision){reportKey=null;$('reportStatus').textContent=error.message;failure(error)}}
 }
 const queuePages={unfinished:{next:null,total:0},finished:{next:null,total:0}};

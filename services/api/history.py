@@ -153,6 +153,8 @@ class Detail(Metadata):
     baseline_fees_cents:Literal[0]
     exit_cost_stress_cents:Literal[2]
     collection_complete:bool=Field(default=True,strict=True)
+    sampled_preview:bool=Field(default=False,strict=True)
+    sample_limit:int|None=Field(default=None,ge=1,le=100)
     reported_sections:int|None=Field(default=None,ge=0,le=3661)
     total_sections:int|None=Field(default=None,ge=1,le=3661)
     selection_version:Literal['category-window-selection-v1']|None=None
@@ -162,6 +164,7 @@ class Detail(Metadata):
     cells:list[Cell]=Field(max_length=45)
     @model_validator(mode='after')
     def dimensions(self):
+        if self.sampled_preview!=(self.sample_limit is not None):raise ValueError('Invalid sampled preview label')
         keys=[(c.hold.minutes_before_close,c.hold.price_band_cents) for c in self.cells]
         if len(set(keys))!=len(keys) or any(c.hold.asset!=self.asset or c.hold.minutes_before_close not in self.entry_minutes or c.hold.price_band_cents not in self.price_bands for c in self.cells):
             raise ValueError('Invalid table dimensions')

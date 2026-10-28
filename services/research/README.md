@@ -622,3 +622,18 @@ Primary endpoint references:
 https://docs.kalshi.com/api-reference/market/batch-get-market-candlesticks
 https://docs.kalshi.com/api-reference/historical/get-historical-market-candlesticks
 https://docs.kalshi.com/getting_started/rate_limits
+
+# Bounded early market preview
+
+For a date with more than 100 eligible markets, a frozen, deterministic
+series/event/strike sample receives candle evidence first. Its verified
+sample-only dataset and report use the separate `campaign-sample-{id}` stream.
+The UI labels it as a preliminary 100-market preview and its CSV records that
+status. Sampled reports never enter the full campaign day association or the
+all-history category stream. The scheduler visits unsampled dates first so a
+seven-day request can show sampled dates while the full cohort and exhaustive
+trade pages continue. Once full candle coverage is published for the same
+number of dates, the ordinary full-cohort report takes precedence in the UI.
+This is a separate, smaller workload comparable in market count to the older
+collector's default cap; it is not proof of identical rows or a five-minute
+hosted completion time. Existing saved pages and source versions remain intact.

@@ -19,6 +19,7 @@ from .inventory import digest,scopes_for_days
 from .normalize import Candidate,Input,Evidence,WindowBatch,normalize_inventory,batch_from_dict
 from .queue import ResearchQueue,EvidenceConflict,LeaseLost
 from .reports import MINUTES,SERIES,ReportStore
+from .sample import select_preview_candidates
 
 UTC=timezone.utc
 MAX_DAYS=3660
@@ -174,6 +175,10 @@ class CampaignStore:
                     row['result_id']=row['result_id'] or result['id']
                     publication=result['publication'] or dict(complete=True,reported_sections=row['completed_sections'])
                     row['reported_sections']=publication['reported_sections'];row['report_complete']=publication['complete']
+                sample=c.execute('''SELECT id::text AS id,report->'publication' AS publication FROM research_result
+                    WHERE stream_key=%s ORDER BY id DESC LIMIT 1''',('campaign-sample-'+UUID(str(identifier)).hex,)).fetchone()
+                row['sample_result_id']=sample['id'] if sample else None
+                row['sample_reported_sections']=sample['publication'].get('reported_sections',0) if sample else 0
                 detail=c.execute('''SELECT count(*)::integer AS work_items,
                     count(*) FILTER(WHERE status='succeeded')::integer AS completed_work_items,
                     coalesce(sum((progress->>'completed_pages')::bigint),0)::bigint AS saved_pages,
@@ -311,8 +316,9 @@ class CampaignWorker:
         for page in pages:grouped[page['job_id']].append(page)
         return [(j,grouped[j['id']]) for j in jobs]
 
-    def _one(self,campaign,day,phase,worker,deadline,*,resource=None,eligible=None):
+    def _one(self,campaign,day,phase,worker,deadline,*,resource=None,eligible=None,priority_tickers=None):
         args=(campaign['id'],day['day'],phase,resource,resource,eligible,eligible)
+        priority=(priority_tickers,priority_tickers)
         with self.pool.connection() as c:
             failed=c.execute("""SELECT 1 FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
                 WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
@@ -327,7 +333,8 @@ class CampaignWorker:
                     AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND
                 ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
                  (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
-                ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT 1""",args).fetchone()
+                AND (%s::text[] IS NULL OR j.parameters->'scope'->>'ticker'=ANY(%s::text[]))
+                ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT 1""",args+priority).fetchone()
         if row is None:return 5
         job=self.queue.claim(job_id=row['id'])
         if job is None:return 5
@@ -341,10 +348,11 @@ class CampaignWorker:
                     AND j.parameters->'scope'->>'resource'='candles'
                     AND j.parameters->'scope'->>'source'='recent'
                     AND coalesce((j.progress->>'completed_pages')::integer,0)=0
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'ticker'=ANY(%s::text[]))
                     ORDER BY GREATEST((j.parameters->'scope'->>'end_ts')::bigint,%s::bigint)
                             -LEAST((j.parameters->'scope'->>'start_ts')::bigint,%s::bigint),
                         abs((j.parameters->'scope'->>'start_ts')::bigint+(j.parameters->'scope'->>'end_ts')::bigint-%s::bigint),
-                        j.available_at,j.id LIMIT 99''',(*args,job['parameters']['scope']['end_ts'],
+                    j.available_at,j.id LIMIT 99''',(*args,*priority,job['parameters']['scope']['end_ts'],
                         job['parameters']['scope']['start_ts'],
                         job['parameters']['scope']['start_ts']+job['parameters']['scope']['end_ts'])).fetchall()
             worker.prepare_batch([job]+nearby)
@@ -369,8 +377,9 @@ class CampaignWorker:
                     WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
                     AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND
                     j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
+                    AND (%s::text[] IS NULL OR j.parameters->'scope'->>'ticker'=ANY(%s::text[]))
                     AND (%s='inventory' OR NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent'))
-                    ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,phase,self.parallelism-1)).fetchall()
+                    ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,*priority,phase,self.parallelism-1)).fetchall()
             for row in nearby:
                 child=self.queue.claim(job_id=row['id'])
                 if child is not None:jobs.append(child)
@@ -400,8 +409,10 @@ class CampaignWorker:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
             if campaign is None:raise EvidenceConflict('Unknown collection campaign')
             day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
-                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,day DESC LIMIT 1''',
-                (identifier,Jsonb(parent['progress'].get('candle_previews',{})))).fetchone()
+                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,
+                    CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,day DESC LIMIT 1''',
+                (identifier,Jsonb(parent['progress'].get('sample_previews',{})),
+                    Jsonb(parent['progress'].get('candle_previews',{})))).fetchone()
         if day is None:
             try:
                 with self.pool.connection() as c:
@@ -451,9 +462,14 @@ class CampaignWorker:
                 if not day['evidence_planned']:
                     # Recover a crash between manifest persistence and job planning.
                     self._jobs(campaign,day,'evidence',self._plan(campaign,day).scopes,parent)
+                sample=self._sample_tickers(day,parent)
+                if sample and self._sample_preview(parent,campaign,day,sample):
+                    self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 if self._candle_preview(parent,campaign,day):
                     self.queue.yield_job(parent['id'],parent['lease_token']);return 0
-                wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline,resource=None if day['day'].isoformat() in parent['progress'].get('candle_previews',{}) else 'candles')
+                wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline,
+                    resource=None if day['day'].isoformat() in parent['progress'].get('candle_previews',{}) else 'candles',
+                    priority_tickers=sample if sample and day['day'].isoformat() not in parent['progress'].get('sample_previews',{}) else None)
                 if wait is not None:self.queue.yield_job(parent['id'],parent['lease_token'],wait);return wait
                 plan=self._plan(campaign,day)
                 attempts=self._attempts(campaign,day,'evidence')
@@ -469,6 +485,50 @@ class CampaignWorker:
             self.queue.yield_job(parent['id'],parent['lease_token']);return 0
         except EvidenceConflict:
             self.queue.fail(parent['id'],parent['lease_token'],'campaign_evidence_blocked',retry=False);return 0
+
+    def _sample_tickers(self,day,parent):
+        key=day['day'].isoformat()
+        saved=parent['progress'].get('sample_tickers',{})
+        if key in saved:return tuple(saved[key])
+        manifest=self.archives.read(day['manifest'])
+        if manifest.get('format')!='candidate-manifest-v1' or digest(manifest['batch'])!=manifest.get('fingerprint'):
+            raise EvidenceConflict('Invalid preview manifest')
+        candidates=batch_from_dict(manifest['batch']).candidates
+        selected=select_preview_candidates(candidates) if len(candidates)>100 else ()
+        tickers=[c.ticker for c in selected]
+        with self.pool.connection() as c:
+            owned=self.queue._owned(c,parent['id'],parent['lease_token'])
+            progress=owned['progress'];progress.setdefault('sample_tickers',{})[key]=tickers
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(progress),parent['id']))
+        parent['progress']=progress
+        return tuple(tickers)
+
+    def _sample_preview(self,parent,campaign,day,tickers):
+        key=day['day'].isoformat()
+        if key in parent['progress'].get('sample_previews',{}):return False
+        with self.pool.connection() as c:
+            state=c.execute("""SELECT count(*) AS n,count(*) FILTER(WHERE j.status='succeeded') AS done
+                FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
+                WHERE w.campaign_id=%s AND w.day=%s AND w.phase='evidence'
+                    AND j.parameters->'scope'->>'resource'='candles'
+                    AND j.parameters->'scope'->>'ticker'=ANY(%s::text[])""",
+                (campaign['id'],day['day'],list(tickers))).fetchone()
+        if not state['n'] or state['n']!=state['done']:return False
+        plan=self._plan(campaign,day)
+        candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
+        attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence')
+            if j['parameters']['scope']['resource']=='candles']
+        prepared=prepare_dataset(candles,attempts,self.archives,
+            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers))
+        dataset=self.datasets.publish('campaign-sample-'+campaign['id'].hex,prepared)
+        with self.pool.connection() as c:
+            owned=self.queue._owned(c,parent['id'],parent['lease_token'])
+            progress=owned['progress'];progress.setdefault('sample_previews',{})[key]=dataset
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(progress),parent['id']))
+            from .sample_reports import SampleReports
+            SampleReports.enqueue(c,campaign['id'],campaign['asset'])
+        parent['progress']=progress
+        return True
 
     def _candle_preview(self,parent,campaign,day):
         key=day['day'].isoformat()
@@ -510,8 +570,10 @@ class CampaignWorker:
 
     def run_once(self,*,deadline):
         from .progressive import ProgressiveReports
+        from .sample_reports import SampleReports
         if not self._bootstrapped:
-            ProgressiveReports(self.pool).bootstrap();self._bootstrapped=True
+            ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
+        if SampleReports(self.pool).run_once():return True
         if ProgressiveReports(self.pool).run_once():return True
         from .cumulative import CategoryReports
         if CategoryReports(self.pool).run_once():return True

@@ -28,6 +28,15 @@ test('empty cohorts stay empty and IDs stay exact strings in saved-report reads'
  assert.equal(sent.credentials,'same-origin');assert.equal(sent.redirect,'error');assert.equal(sent.body,undefined);
  const invalid=createResearchClient({fetcher:()=>assert.fail('must not fetch')});await assert.rejects(invalid.result('bad','1'));
 });
+test('sampled preview uses a separate saved stream and labels its CSV',async()=>{
+ const report={...fixture(),sampled_preview:true,sample_limit:100,collection_complete:false,reported_sections:1,total_sections:7};
+ let requested;
+ const client=createResearchClient({fetcher:async(url)=>{requested=url;return Response.json({contract:'research-history-v1',view:'historical',result:report})}});
+ assert.equal((await client.sampleResult(id,report.id)).sampled_preview,true);
+ assert.match(requested,/stream=campaign-sample-11111111111141118111111111111111/);
+ const {reportCsv}=await import('../apps/web/report-view.mjs');
+ const csv=reportCsv(report);assert.match(csv,/"sampled_preview","sample_limit"/);assert.match(csv,/"true","100"/);
+});
 test('saved-report errors never reveal server diagnostics or accept wrong result identity',async()=>{
  for(const status of [401,404,503]){
   const client=createResearchClient({fetcher:async()=>Response.json({detail:'private-sentinel'},{status})});
@@ -90,6 +99,29 @@ test('signed-in workspace displays progressive reports and restores category/dis
   nodes.metric.value='win';await nodes.metric.fire('change');assert.equal(JSON.parse(saved).metric,'win');
   assert.ok(!saved.includes('owner@example.test'));assert.ok(!saved.includes('__Host-pocket'));
   assert.ok(requests.every(url=>!url.includes('/auth/google')));
+ }finally{events.pagehide?.();Object.assign(globalThis,previous)}
+});
+test('workspace presents the bounded preview before full evidence and labels its scope',async()=>{
+ const {doc,nodes}=documentFixture(),previous={document:globalThis.document,window:globalThis.window,localStorage:globalThis.localStorage,fetch:globalThis.fetch};const events={},requests=[];
+ const campaign={id,asset:'btc',status:'queued',mode:'backfill',start_at:'2026-10-25T00:00:00Z',end_at:'2026-11-01T00:00:00Z',
+  result_id:null,reported_sections:0,sample_result_id:fixture().id,sample_reported_sections:1,completed_sections:0,total_sections:7};
+ try{
+  globalThis.document=doc;globalThis.window={addEventListener:(n,f)=>events[n]=f};globalThis.localStorage={getItem:()=>null,setItem(){}};
+  globalThis.fetch=async(url)=>{
+   requests.push(url);
+   if(url==='/api/auth/me')return Response.json({authenticated:true});
+   if(url==='/api/collection/status')return Response.json({contract:'collection-v1',worker:{state:'online'}});
+   if(url.includes('/refresh/'))return Response.json({contract:'collection-v1',refresh:{enabled:false,latest_campaign_id:null}});
+   if(url.includes('campaigns?'))return Response.json({contract:'collection-v1',items:[campaign],next_before:null});
+   if(url.includes('/campaigns/'+id))return Response.json({contract:'collection-v1',campaign,sections:[],next_after:null});
+   if(url.includes('/research/results/'))return Response.json({contract:'research-history-v1',view:'historical',result:{...fixture(),sampled_preview:true,sample_limit:100,collection_complete:false,reported_sections:1,total_sections:7}});
+   throw Error('Unexpected request '+url);
+  };
+  await import('../apps/web/collection.mjs?sample-workspace');await new Promise(r=>setImmediate(r));
+  assert.ok(requests.some(url=>url.includes('stream=campaign-sample-')));
+  assert.match(nodes.reportStamp.textContent,/100-market preview/);
+  assert.match(nodes.scopeNote.textContent,/at most 100 markets per date/);
+  assert.match(nodes.reportStatus.textContent,/Preliminary sample/);
  }finally{events.pagehide?.();Object.assign(globalThis,previous)}
 });
 test('signed-out workspace exposes a sign-in link and fetches no private history',async()=>{

@@ -109,6 +109,28 @@ class CampaignPostgresTests(unittest.TestCase):
             c.execute("UPDATE research_job SET available_at=clock_timestamp() WHERE status='queued'")
             c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()")
 
+    def test_sampled_day_preview_publishes_before_exhaustive_candles(self):
+        markets=[dict(ticker=f'KXBTC15M-SAMPLE-{i:03d}',event_ticker=f'EV-{i:03d}',
+            series_ticker='KXBTC15M',close_time='2026-10-25T12:00:00Z',result='yes')
+            for i in range(300)]
+        self.inventory.fetch=lambda scope,cursor,timeout:ProviderPage(dict(markets=markets,cursor=''))
+        self.worker.parallelism=4
+        identifier=self.store.create('btc','2026-10-25','2026-10-25','sample-first',now=NOW)
+        for _ in range(220):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            state=self.store.get(identifier)
+            if state['sample_result_id']:break
+        else:self.fail('Sampled preview did not publish before exhaustive work')
+        self.assertEqual(state['sample_reported_sections'],1)
+        self.assertEqual(state['completed_sections'],0)
+        self.assertIsNone(state['result_id'])
+        with self.db.pool.connection() as c:
+            row=c.execute('SELECT report FROM research_result WHERE id=%s',(state['sample_result_id'],)).fetchone()
+        self.assertTrue(row['report']['publication']['sampled_preview'])
+        self.assertEqual(row['report']['publication']['sample_limit'],100)
+        self.assertEqual(row['report']['historical']['candidate_count'],100)
+        self.assertEqual(state['status'],'queued')
+
     def test_inventory_pages_overlap_and_restart_keeps_every_scope_checkpoint(self):
         from threading import Barrier,Lock
         gate=Barrier(4);lock=Lock();calls=[]

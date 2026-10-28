@@ -123,7 +123,8 @@ def _canonical(resource,row):
 
 
 @timed('dataset.prepare')
-def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=2):
+def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=2,
+                    sampled_tickers=None):
     """inventory_loader(id) -> (DB job, committed pages with receipts).
 
     Rebuild normalized membership from transitive inventory, then require every
@@ -162,7 +163,18 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
         expected = plan_from_receipt(rebuilt,manifest_receipt,lookback,resources)
         if asdict(expected)!=asdict(plan): raise EvidenceConflict('Evidence plan is incomplete or altered')
     elif plan.scopes: raise EvidenceConflict('Empty cohort has unexpected scopes')
-    wanted = {s.key:s for s in plan.scopes}
+    candidates=rebuilt.candidates
+    preview=None
+    if sampled_tickers is not None:
+        from .sample import select_preview_candidates
+        sample=select_preview_candidates(candidates)
+        if len(candidates)<=100 or set(sampled_tickers)!={c.ticker for c in sample}:
+            raise EvidenceConflict('Invalid sampled preview membership')
+        candidates=sample
+        preview=dict(format='stratified-market-preview-v1',limit=100,
+                     selected_markets=len(sample),available_markets=len(rebuilt.candidates))
+    tickers={c.ticker for c in candidates}
+    wanted = {s.key:s for s in plan.scopes if s.ticker in tickers}
     if len(wanted)!=len(plan.scopes) or len(wanted)>100000: raise EvidenceConflict('Duplicate or oversized plan')
     grouped = {k:{} for k in wanted}
     for n,(job,pages) in enumerate(attempts):
@@ -225,14 +237,15 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     states = {state:sum(c['state']==state for c in coverage) for state in ('complete','empty','unavailable')}
     candle_tickers = {r['ticker'] for r in records if r['resource']=='candles'}
     trade_tickers = {r['ticker'] for r in records if r['resource']=='trades'}
-    summary = dict(version='evidence-coverage-v1',candidate_count=len(rebuilt.candidates),
+    summary = dict(version='evidence-coverage-v1',candidate_count=len(candidates),
         candle_records=sum(r['resource']=='candles' for r in records),trade_records=sum(r['resource']=='trades' for r in records),
-        candidates_with_candles=len(candle_tickers),candidates_without_candles=len(rebuilt.candidates)-len(candle_tickers),
-        candidates_with_trades=len(trade_tickers),candidates_without_trades=len(rebuilt.candidates)-len(trade_tickers),
+        candidates_with_candles=len(candle_tickers),candidates_without_candles=len(candidates)-len(candle_tickers),
+        candidates_with_trades=len(trade_tickers),candidates_without_trades=len(candidates)-len(trade_tickers),
         scope_states=states,resources=list(resources),raw_rows_scanned=scanned)
     artifact_list = sorted(artifacts.values(),key=lambda a:a['object_key'])
     payload = dict(format=FORMAT,artifacts=artifact_list,manifest=manifest_receipt,batch_fingerprint=rebuilt.fingerprint,day=rebuilt.day,
-        candidates=json.loads(json.dumps(asdict(rebuilt)))['candidates'],scopes=[asdict(s) for s in plan.scopes],coverage=coverage,records=records,summary=summary)
+        candidates=[asdict(c) for c in candidates],scopes=[asdict(s) for s in wanted.values()],coverage=coverage,records=records,summary=summary)
+    if preview is not None:payload['preview']=preview
     if raw.get('exclusions'):payload['exclusions']=raw['exclusions']
     if window is not None:payload['close_window']=dict(start=rebuilt.window_start,end=rebuilt.window_end)
     encoded = json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)

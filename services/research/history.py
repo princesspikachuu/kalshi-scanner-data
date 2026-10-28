@@ -40,6 +40,8 @@ class HistoryStore:
                 report->'baseline_fees_cents' AS baseline_fees_cents,
                 report->'exit_cost_stress_cents' AS exit_cost_stress_cents,
                 COALESCE((report->'publication'->>'complete')::boolean,true) AS collection_complete,
+                COALESCE((report->'publication'->>'sampled_preview')::boolean,false) AS sampled_preview,
+                (report->'publication'->>'sample_limit')::integer AS sample_limit,
                 (report->'publication'->>'reported_sections')::integer AS reported_sections,
                 (report->'publication'->>'total_sections')::integer AS total_sections,
                 report->'selection'->>'version' AS selection_version,

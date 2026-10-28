@@ -2,7 +2,7 @@
 const ASSETS=['btc','eth','crypto','weather','weather_daily','sports'];
 export function createResearchClient({fetcher=fetch}={}){
  const identifier=id=>{if(typeof id!=='string'||!/^[1-9][0-9]{0,18}$/.test(id))throw Error('Choose a saved report.');return id};
- const stream=value=>{if(!/^(?:campaign-[a-f0-9]{32}|category-(?:btc|eth|crypto|weather|weather_daily|sports))$/.test(value))throw Error('Choose a saved report.');return value};
+ const stream=value=>{if(!/^(?:campaign-(?:sample-)?[a-f0-9]{32}|category-(?:btc|eth|crypto|weather|weather_daily|sports))$/.test(value))throw Error('Choose a saved report.');return value};
  async function call(path){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
   try{
@@ -20,6 +20,7 @@ export function createResearchClient({fetcher=fetch}={}){
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(campaign))throw Error('Choose a saved report.');
   return 'campaign-'+campaign.replaceAll('-','');
  }
+ function campaignSampleStream(campaign){return campaignStream(campaign).replace('campaign-','campaign-sample-')}
  async function page(source,id,kind,cursor){
   if(!['datasets','coverage'].includes(kind))throw Error('Invalid saved source');
   if(cursor!==null&&!/^[A-Za-z0-9_-]{1,1024}$/.test(cursor))throw Error('Invalid saved source page');
@@ -28,6 +29,7 @@ export function createResearchClient({fetcher=fetch}={}){
  }
  return {
   result:async(campaign,id)=>resultInStream(campaignStream(campaign),id),campaignStream,
+  sampleResult:async(campaign,id)=>resultInStream(campaignSampleStream(campaign),id),campaignSampleStream,
   async category(asset){
    if(!ASSETS.includes(asset))throw Error('Choose a category.');
    const source='category-'+asset,data=await call('results?stream='+source+'&limit=1');
