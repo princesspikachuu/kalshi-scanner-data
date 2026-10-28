@@ -11,7 +11,8 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .datasets import FORMAT,decoded_dataset
+from .datasets import FORMAT
+from .report_inputs import report_dataset
 from .inventory import digest
 from .models.conditional_v2 import SOURCE_COMMIT, CHECKPOINTS, analyze_risk, policy_cells
 from .normalize import _closed
@@ -66,9 +67,9 @@ def _observations(asset,datasets,*,candidate_filter=None):
     for dataset in datasets:
         # Validate the immutable raw payload even on a cache hit. The cache is
         # only a derived-input accelerator, never a replacement for source proof.
-        decoded=decoded_dataset(dataset)
+        decoded=report_dataset(dataset)
         payload=decoded['payload']
-        if payload.get('format')!=FORMAT or digest(payload)!=dataset['fingerprint']:
+        if payload.get('format')!=FORMAT:
             raise EvidenceConflict('Published raw dataset integrity mismatch')
         key=f"{asset}/{dataset['id']}/{dataset['fingerprint']}"
         saved=_daily_inputs.get(key)
@@ -95,6 +96,7 @@ def _observations(asset,datasets,*,candidate_filter=None):
         bar_count+=daily_coverage['_path_bars']
         if bar_count>MAX_PATH_BARS:raise ValueError('Report path limit exceeded; split the range')
         if slots>250000:raise ValueError('Report entry limit exceeded; split the range')
+        del decoded,payload,dataset
     return rows,paths,origin,dict(candidate_count=candidate_count,requested_entry_slots=slots,
         missing_entry_slots=missing,observation_count=len(rows))
 
@@ -104,14 +106,15 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
     rows,paths,origin,seen,missing=[],{}, {},set(),[]
     candidate_count=0;bar_count=0
     for dataset in datasets:
-        payload=decoded_dataset(dataset)['payload']
-        if payload.get('format')!=FORMAT or digest(payload)!=dataset['fingerprint']:
+        payload=report_dataset(dataset)['payload']
+        if payload.get('format')!=FORMAT:
             raise EvidenceConflict('Published raw dataset integrity mismatch')
         if payload['candidates'] and 'candles' not in payload['summary']['resources']:
             raise EvidenceConflict('Candle membership is required for return summaries')
         candidates=[candidate for candidate in payload['candidates'] if candidate_filter is None or candidate_filter(dataset['id'],candidate)]
         tickers={candidate['ticker'] for candidate in candidates}
         bars=defaultdict(list)
+        candles=times=retained=None
         for record in payload['records']:
             if record['resource']=='candles' and (candidate_filter is None or record['ticker'] in tickers):
                 bars[record['ticker']].append(record['record'])
@@ -157,6 +160,7 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
                     maker_bid=str(bid),won=int(candidate['result']==side),quote_age_seconds=target-times[index],
                     dataset_id=dataset['id'],dataset_fingerprint=dataset['fingerprint'],quote_period_ts=times[index])
                 rows.append(row);origin[(day,ticker,minute)]=dataset['id']
+        del payload,dataset,bars,candles,times,retained,candidates
     coverage=dict(candidate_count=candidate_count,requested_entry_slots=candidate_count*len(MINUTES[asset]),
         missing_entry_slots=missing,observation_count=len(rows),_path_bars=bar_count)
     if candidate_filter is not None:return rows,paths,origin,{k:v for k,v in coverage.items() if k!='_path_bars'}
@@ -226,9 +230,10 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
         for d in datasets:
             if type(d['id']) is not int or d['id']<=previous or len(metadata)>=3661:raise ValueError('Select ascending unique dataset IDs, at most 3661')
             previous=d['id']
-            d=decoded_dataset(d)
+            d=report_dataset(d)
             metadata.append(dict(id=d['id'],fingerprint=d['fingerprint'],day=d['payload']['day'],candidate_count=sum(1 for candidate in d['payload']['candidates'] if candidate_filter is None or candidate_filter(d['id'],candidate))))
             yield d
+            del d
     rows,paths,origin,coverage=_observations(asset,inputs(),candidate_filter=candidate_filter)
     datasets=metadata;ids=[d['id'] for d in datasets]
     if not ids:raise ValueError('Select dataset versions')

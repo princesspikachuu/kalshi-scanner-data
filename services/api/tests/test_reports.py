@@ -53,6 +53,24 @@ class ReportTests(unittest.TestCase):
         payload=json.loads(compact.payload_json);rows=json.loads(compact.observations_json)
         self.assertEqual(compact.fingerprint,digest(dict(report=payload,observations=rows)))
 
+    def test_compressed_report_projection_verifies_source_and_preserves_full_result(self):
+        from services.research.datasets import storage_payload
+        from services.research.report_inputs import report_dataset
+        d=dataset();plain=deepcopy(d)
+        plain['payload']['records'] += [dict(resource='trades',ticker='KXBTC15M-D1',record={'trade_id':str(i),'details':'x'*1000},
+            provenance=[{'unused':'z'*1000}]) for i in range(2000)]
+        plain['fingerprint']=digest(plain['payload'])
+        encoded=json.dumps(plain['payload'],sort_keys=True,separators=(',',':'))
+        packed={**plain,'payload':storage_payload(encoded,plain['fingerprint'])}
+        projected=report_dataset(packed)
+        self.assertEqual(len(projected['payload']['records']),len(d['payload']['records']))
+        self.assertEqual(prepare_report('btc',[plain],latest_ids=[1]),prepare_report('btc',[packed],latest_ids=[1]))
+        self.assertEqual(len(plain['payload']['records']),2002)
+        corrupt=deepcopy(packed);corrupt['fingerprint']='0'*64
+        with self.assertRaises(EvidenceConflict):report_dataset(corrupt)
+        corrupt=deepcopy(plain);corrupt['payload']['candidates'][0]['result']='yes'
+        with self.assertRaises(EvidenceConflict):report_dataset(corrupt)
+
     def test_checkpoint_projection_preserves_dense_paths_nulls_and_report(self):
         import services.research.reports as model
         from services.research.models.conditional_v2 import CHECKPOINTS
