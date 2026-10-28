@@ -120,7 +120,17 @@ class CampaignPostgresTests(unittest.TestCase):
             self.worker.run_once(deadline=time.monotonic()+30)
             state=self.store.get(identifier)
             if state['sample_result_id']:break
-        else:self.fail('Sampled preview did not publish before exhaustive work')
+        else:
+            with self.db.pool.connection() as c:
+                progress=c.execute('''SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id
+                    WHERE r.id=%s''',(identifier,)).fetchone()['progress']
+                work=c.execute('''SELECT j.parameters->'scope'->>'resource' AS resource,
+                    j.parameters->'scope'->>'source' AS source,j.status,count(*) AS n
+                    FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
+                    WHERE w.campaign_id=%s AND w.phase='evidence'
+                    GROUP BY 1,2,3 ORDER BY 1,2,3''',(identifier,)).fetchall()
+                reports=c.execute("SELECT status,error_code FROM research_job WHERE parameters->>'collector'='campaign-sample-report-v1'").fetchall()
+            self.fail(f'Sampled preview did not publish: state={state!r}, progress={progress!r}, work={work!r}, reports={reports!r}')
         self.assertEqual(state['sample_reported_sections'],1)
         self.assertEqual(state['completed_sections'],0)
         self.assertIsNone(state['result_id'])
