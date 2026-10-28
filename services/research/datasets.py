@@ -177,7 +177,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     if len({s.key for s in plan.scopes})!=len(plan.scopes):
         raise EvidenceConflict('Duplicate evidence plan')
     wanted = {s.key:s for s in plan.scopes if s.ticker in tickers}
-    if not wanted or len(wanted)>100000: raise EvidenceConflict('Empty or oversized selected plan')
+    if len(wanted)>100000: raise EvidenceConflict('Oversized selected plan')
     grouped = {k:{} for k in wanted}
     for n,(job,pages) in enumerate(attempts):
         if n>=100000: raise ValueError('Too many evidence attempts')
