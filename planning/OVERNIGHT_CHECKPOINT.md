@@ -2085,3 +2085,14 @@ empty-day lookups without guessing across unknown gaps. Preserve old proof versi
 when extending the catalog. Optimize shared batch-object projection I/O next if
 profile still shows PUT/readback dominant. No owner-only step, paid upgrade,
 credentials, schema/grants, networking, production deploy, merge or trading needed.
+
+Final verification: test/checkpoint commit7b9184645d03bd96a32c041da800d0d10ef7b5f9
+passed CI40618643488/job122586987725, including the existing-unsealed-request fixture:
+262 API/research (86 actual PG) +34 JS +7 policy =303 tests, zero skips/failures.
+No runtime change after deployed5b56bad, so no repeat deploy. Original hourly
+request reached1655 saved pages/1568 completed tasks during acceptance;89 processed
+empty dates/report291 retained. Screenshot `pocket-existing-hourly-1793153044736.jpg`
+(83,296 bytes) verifies this same request and collapsed sections; no owner email or
+credentials. pxk58 early memory samples101.3..126.8MB of536.9MB; not a peak/large-report
+capacity claim. Follow-up is checkpoint-only and may have no CI due path filters.
+Resume from actual remote head; preserve this saved dirty worktree and earlier ones.
