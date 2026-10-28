@@ -217,3 +217,17 @@ class DatasetPostgresTests(unittest.TestCase):
                 tuple(poisoned[k] for k in ('object_key','sha256','provider','content_type','byte_length')))
         with self.assertRaises(EvidenceConflict): self.datasets.publish('btc-day',self.prepared)
         self.assertEqual(self.counts(),(0,0,1,0))
+
+
+class VerifiedNormalizationCacheTests(unittest.TestCase):
+    def test_repeated_preparation_reuses_proof_but_changed_membership_revalidates(self):
+        import services.research.datasets as model
+        from unittest.mock import patch
+        f=Fixture()
+        with patch.object(model,'normalize_inventory',wraps=model.normalize_inventory) as rebuild:
+            first=f.prepare();second=f.prepare()
+            self.assertEqual(first,second);self.assertEqual(rebuild.call_count,1)
+            job,pages=next(iter(f.inventory.values()))
+            job['status']='failed'
+            with self.assertRaises(EvidenceConflict):f.prepare()
+            self.assertEqual(rebuild.call_count,2)

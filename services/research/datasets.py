@@ -22,7 +22,8 @@ from psycopg.types.json import Jsonb
 
 from .evidence import EvidenceScope, evidence_page, plan_from_receipt
 from .inventory import digest, inspect_pages
-from .normalize import _closed, normalize_inventory
+from .normalize import _closed, normalize_inventory, batch_from_dict
+from .cache import ByteCache
 from .queue import EvidenceConflict, text_key
 from .projections import resolve_evidence
 from .archive import MAX_DECODED
@@ -268,9 +269,22 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
         inputs.append((job,pages))
         for page in pages: retain(page['receipt'])
     window=(raw['window_start'],raw['window_end']) if 'window_start' in raw else None
-    rebuilt = normalize_inventory(raw['series'],raw['day'],raw['generation'],inputs,archives,window=window,prelaunch=bool(raw.get('exclusions')))
+    # Cache only an already verified rebuild, bound to the exact immutable
+    # manifest AND current inventory job/page/receipt membership. A changed
+    # checkpoint or source identity must undergo full verification again.
+    proof_key=digest(dict(manifest=manifest_receipt,inputs=[
+        dict(id=str(j['id']),status=j['status'],parameters=j['parameters'],pages=[
+            {k:p[k] for k in ('page_key','object_key','checkpoint','receipt')} for p in pages])
+        for j,pages in inputs]))
+    cache=getattr(archives,'normalized_batches',None)
+    if cache is None:
+        cache=archives.normalized_batches=ByteCache(4*1024*1024)
+    cached=cache.get(proof_key)
+    rebuilt=(batch_from_dict(json.loads(cached)) if cached is not None else
+        normalize_inventory(raw['series'],raw['day'],raw['generation'],inputs,archives,window=window,prelaunch=bool(raw.get('exclusions'))))
     if not rebuilt.ready or rebuilt.fingerprint!=manifest.get('fingerprint') or rebuilt.fingerprint!=plan.batch_fingerprint:
         raise EvidenceConflict('Normalized membership no longer matches selected inputs')
+    if cached is None:cache.put(proof_key,json.dumps(asdict(rebuilt),sort_keys=True,separators=(',',':')).encode())
     resources = tuple(sorted({s.resource for s in plan.scopes}))
     if rebuilt.candidates:
         first = rebuilt.candidates[0]

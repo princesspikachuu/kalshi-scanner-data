@@ -10,7 +10,7 @@ import json
 from uuid import UUID
 from psycopg.types.json import Jsonb
 from .campaigns import CampaignWorker
-from .datasets import prepare_dataset,CollectionInterrupted,DatasetLimit
+from .datasets import prepare_dataset,CollectionInterrupted,DatasetLimit,CoverageIncomplete
 from .queue import EvidenceConflict,LeaseLost
 from .reports import ReportStore
 from .progressive import ProgressiveReports
@@ -36,6 +36,9 @@ class ProcessingWorker(CampaignWorker):
                 ON r.id::text=a.parameters->>'campaign_id' JOIN research_job p ON p.id=r.job_id
                 WHERE a.idempotency_key>='assembly/' AND a.idempotency_key<'assemblz'
                     AND a.parameters->>'collector'='campaign-assembly-v1'
+                    AND r.id=(SELECT cr.id FROM research_campaign cr JOIN research_job cp ON cp.id=cr.job_id
+                        WHERE cp.status IN ('queued','running') AND NOT coalesce((cp.progress->>'removed_from_queue')::boolean,false)
+                        ORDER BY cr.created_at,cr.id LIMIT 1)
                     AND a.attempts<a.max_attempts AND p.status IN ('queued','running')
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
                     AND ((a.status='queued' AND a.available_at<=clock_timestamp()) OR
@@ -43,7 +46,7 @@ class ProcessingWorker(CampaignWorker):
                     AND (a.parameters->>'kind'<>'enriched' OR NOT EXISTS(
                         SELECT 1 FROM research_campaign cr JOIN research_job cp ON cp.id=cr.job_id
                         JOIN research_campaign_day d ON d.campaign_id=cr.id
-                        WHERE cp.status IN ('queued','running')
+                        WHERE cr.id=r.id AND cp.status IN ('queued','running')
                         AND NOT coalesce((cp.progress->>'removed_from_queue')::boolean,false)
                         AND d.dataset_id IS NULL AND NOT(coalesce(cp.progress->'candle_previews','{}'::jsonb) ? d.day::text)))
                 ORDER BY CASE a.parameters->>'kind' WHEN 'prices' THEN 0 WHEN 'sample' THEN 1
@@ -114,16 +117,28 @@ class ProcessingWorker(CampaignWorker):
         # Publish ready full-cohort price reports ahead of sample/trade work.
         if not self._bootstrapped:
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
-        if ProgressiveReports(self.pool).run_once():return True
-        if CategoryReports(self.pool).run_once():return True
+        oldest=self.oldest_request()
+        scope=dict(campaign_id=oldest['id']) if oldest else {}
+        if ProgressiveReports(self.pool).run_once(**scope):return True
         job=self._claim_assembly()
-        if job is None:return SampleReports(self.pool).run_once()
+        if job is None:
+            if SampleReports(self.pool).run_once(**scope):return True
+            return CategoryReports(self.pool).run_once(**(dict(asset=oldest['asset']) if oldest else {}))
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)
         try:self._publish(job)
         except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'])
-        except LeaseLost:raise
-        except (DatasetLimit,EvidenceConflict):
-            self.queue.fail(job['id'],job['lease_token'],'campaign_assembly_blocked',retry=False)
+        except LeaseLost:
+            # Parent state can change after preparation. Do not leave an owned
+            # assembly falsely running until its ten-minute crash lease expires.
+            try:self.queue.yield_job(job['id'],job['lease_token'],1)
+            except LeaseLost:pass
+            raise
+        except (DatasetLimit,EvidenceConflict,CoverageIncomplete) as error:
+            code=('assembly_size_limit' if isinstance(error,DatasetLimit) else
+                'assembly_incomplete' if isinstance(error,CoverageIncomplete) else 'assembly_evidence_conflict')
+            print(json.dumps(dict(event='assembly_blocked',asset=job['asset'],day=job['parameters']['day'],
+                code=code,reason=str(error)[:200])),flush=True)
+            self.queue.fail(job['id'],job['lease_token'],code,retry=False)
         except Exception:
             self.queue.fail(job['id'],job['lease_token'],'campaign_assembly_retry',delay_seconds=10)
             raise

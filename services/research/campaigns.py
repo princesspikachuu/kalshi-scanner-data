@@ -465,7 +465,14 @@ class CampaignWorker:
                 with self.pool.connection() as c:
                     missing=c.execute('SELECT 1 FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL LIMIT 1',(identifier,)).fetchone()
                     complete=c.execute('SELECT 1 FROM research_campaign_result WHERE campaign_id=%s',(identifier,)).fetchone()
-                if complete:self.queue.finish(parent['id'],parent['lease_token']);return 0
+                if complete:
+                    with self.pool.connection() as c:
+                        category=c.execute('SELECT status FROM research_job WHERE idempotency_key=%s',('category/'+str(identifier),)).fetchone()
+                    if category and category['status']=='failed':
+                        self.queue.fail(parent['id'],parent['lease_token'],'campaign_category_blocked',retry=False);return 0
+                    if category and category['status']=='succeeded':
+                        self.queue.finish(parent['id'],parent['lease_token']);return 0
+                    self.queue.yield_job(parent['id'],parent['lease_token'],1);return 1
                 if not missing:self._enqueue_assembly(parent,campaign,None,'final')
                 self.queue.yield_job(parent['id'],parent['lease_token'],1);return 1
             try:
@@ -635,7 +642,17 @@ class CampaignWorker:
         count('campaign.price_day_saved.'+campaign['asset'],1)
         return True
 
+    def oldest_request(self):
+        with self.pool.connection() as c:
+            return c.execute("""SELECT r.id,r.job_id,r.asset FROM research_campaign r
+                JOIN research_job j ON j.id=r.job_id WHERE j.status IN ('queued','running')
+                AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
+                ORDER BY r.created_at,r.id LIMIT 1""").fetchone()
+
     def _claim_parent(self):
+        if self.role=='collector':
+            oldest=self.oldest_request()
+            return self.queue.claim(seconds=600,job_id=oldest['job_id']) if oldest else None
         # A rate-limit wait on price work must not open a lane for a minutes-long
         # trade assembly. Publish every requested price date before enrichment.
         with self.pool.connection() as c:

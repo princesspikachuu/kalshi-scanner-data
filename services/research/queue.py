@@ -62,10 +62,12 @@ class ResearchQueue:
                     raise EvidenceConflict('Idempotency key belongs to different job parameters')
             return row
 
-    def claim(self, seconds=120, *, job_id=None, collector=None):
+    def claim(self, seconds=120, *, job_id=None, collector=None, campaign_id=None, asset=None):
         seconds = lease_seconds(seconds)
         job_id=None if job_id is None else UUID(str(job_id))
         if collector is not None:text_key(collector,64)
+        campaign_id=None if campaign_id is None else str(UUID(str(campaign_id)))
+        if asset is not None and asset not in ASSETS:raise ValueError("Invalid asset")
         with self.pool.connection() as c:
             # Expired attempts at the limit become terminal instead of being stranded.
             c.execute('''UPDATE research_job SET status='failed',finished_at=clock_timestamp(),
@@ -74,14 +76,16 @@ class ResearchQueue:
             return c.execute('''WITH candidate AS (
                 SELECT id FROM research_job WHERE attempts<max_attempts
                 AND (%s::uuid IS NULL OR id=%s::uuid)
-                AND (%s::text IS NULL OR parameters->>'collector'=%s::text) AND
+                AND (%s::text IS NULL OR parameters->>'collector'=%s::text)
+                AND (%s::text IS NULL OR parameters->>'campaign_id'=%s::text)
+                AND (%s::text IS NULL OR asset=%s::text) AND
                 ((status='queued' AND available_at<=clock_timestamp()) OR
                  (status='running' AND lease_expires_at<=clock_timestamp()))
                 ORDER BY available_at,created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
                 ) UPDATE research_job j SET status='running',attempts=attempts+1,
                 lease_token=%s,lease_expires_at=clock_timestamp()+%s*interval '1 second',
                 started_at=COALESCE(started_at,clock_timestamp()),finished_at=NULL,error_code=NULL
-                FROM candidate WHERE j.id=candidate.id RETURNING j.*''', (job_id,job_id,collector,collector,uuid4(), seconds)).fetchone()
+                FROM candidate WHERE j.id=candidate.id RETURNING j.*''', (job_id,job_id,collector,collector,campaign_id,campaign_id,asset,asset,uuid4(), seconds)).fetchone()
 
     def claim_many(self,job_ids,seconds=120):
         seconds=lease_seconds(seconds);ids=[UUID(str(i)) for i in job_ids]
