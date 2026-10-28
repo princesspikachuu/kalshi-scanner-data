@@ -84,3 +84,23 @@ class DatasetMemoryTests(unittest.TestCase):
         from test_datasets import Fixture
         from services.research.datasets import CollectionInterrupted
         with self.assertRaises(CollectionInterrupted):Fixture().prepare(cancelled=lambda:True)
+
+    def test_verified_membership_is_indexed_once_for_repeated_scope_checks(self):
+        from services.research.evidence import ManifestCache,scope_for_job,build_scopes
+        from test_evidence import BATCH,CANDIDATE
+        from test_archives import MemoryObjects
+        from services.research.archive import ArchiveStore
+        from dataclasses import replace
+        import services.research.evidence as evidence
+        archives=ArchiveStore(MemoryObjects())
+        batch=replace(BATCH,candidates=tuple(replace(CANDIDATE,ticker='KXBTC15M-INDEX-'+str(i),event_ticker='INDEX-'+str(i)) for i in range(1000)))
+        plan=build_scopes(batch,archives,lookback_seconds=60,resources=('candles',))
+        cache=ManifestCache(archives);scope=plan.scopes[0]
+        job={'parameters':scope.parameters()}
+        with patch.object(evidence,'digest',wraps=evidence.digest) as hashing:
+            self.assertEqual(scope_for_job(job,cache),scope)
+            initial=hashing.call_count
+            for _ in range(100):self.assertEqual(scope_for_job(job,cache),scope)
+            self.assertEqual(hashing.call_count,initial)
+        wrong=replace(scope,candidate_key='f'*64)
+        with self.assertRaises(EvidenceConflict):scope_for_job({'parameters':wrong.parameters()},cache)

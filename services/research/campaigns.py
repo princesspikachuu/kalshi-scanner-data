@@ -326,6 +326,8 @@ class CampaignWorker:
     def _one(self,campaign,day,phase,worker,deadline,*,resource=None,eligible=None,priority_tickers=None):
         args=(campaign['id'],day['day'],phase,resource,resource,eligible,eligible)
         priority=(list(priority_tickers) if priority_tickers is not None else None,)*2
+        cached_ids=([uuid5(campaign['id'],key) for key in worker.provider.cached_scope_keys()]
+            if phase=='evidence' and hasattr(worker.provider,'cached_scope_keys') else [])
         with self.pool.connection() as c:
             failed=c.execute("""SELECT 1 FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
                 WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
@@ -341,7 +343,8 @@ class CampaignWorker:
                 ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
                  (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
                 AND (%s::text[] IS NULL OR j.parameters->'scope'->>'ticker'=ANY(%s::text[]))
-                ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT 1""",args+priority).fetchone()
+                ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,
+                    CASE WHEN j.id=ANY(%s::uuid[]) THEN 0 ELSE 1 END,j.available_at,j.id LIMIT 1""",args+priority+(cached_ids,)).fetchone()
         if row is None:return 5
         job=self.queue.claim(job_id=row['id'])
         if job is None:return 5
