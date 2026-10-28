@@ -615,7 +615,7 @@ class CampaignWorker:
                 FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
                 WHERE w.campaign_id=%s AND w.day=%s AND w.phase='evidence'
                     AND j.parameters->'scope'->>'resource'='candles'""",(campaign['id'],day['day'])).fetchone()
-        if not state['n'] or state['n']!=state['done']:return False
+        if state['n']!=state['done'] or (not state['n'] and self.role=='combined'):return False
         if self.role=='collector':return self._enqueue_assembly(parent,campaign,day,'prices')
         plan=self._plan(campaign,day)
         candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
