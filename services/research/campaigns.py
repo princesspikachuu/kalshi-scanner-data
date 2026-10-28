@@ -10,6 +10,7 @@ from dataclasses import replace
 from uuid import UUID,uuid4,uuid5
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
 
 from psycopg.types.json import Jsonb
 from .availability import eligible_series
@@ -288,10 +289,25 @@ class CampaignWorker:
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None):
         if type(parallelism) is not int or not 1<=parallelism<=16:raise ValueError('Invalid evidence concurrency')
         self.parallelism=parallelism;self._bootstrapped=False
+        self.on_work_tick=lambda:None
         self.cancelled=stop.is_set if stop is not None else lambda:False
         self.pool,self.archives=pool,archives
         self.queue=ResearchQueue(pool);self.datasets=DatasetStore(pool)
         self.inventory_worker,self.evidence_worker=inventory_worker,evidence_worker
+
+    def _work_guard(self,parent,*,clock=monotonic):
+        """Renew ownership and liveness during long verified local preparation."""
+        last=clock()
+        def check():
+            nonlocal last
+            if self.cancelled():return True
+            now=clock()
+            if now-last>=30:
+                self.queue.heartbeat(parent['id'],parent['lease_token'],600)
+                self.on_work_tick()
+                last=now
+            return False
+        return check
 
     def _jobs(self,campaign,day,phase,scopes,parent):
         rows=[dict(id=str(uuid5(campaign['id'],s.key)),asset=campaign['asset'],parameters=s.parameters(),
@@ -488,7 +504,7 @@ class CampaignWorker:
                 plan=self._plan(campaign,day)
                 attempts=self._attempts(campaign,day,'evidence')
                 def inventory_loader(jid):return self.queue.get(jid),self.queue.page_evidence(jid)
-                prepared=prepare_dataset(plan,attempts,self.archives,inventory_loader,cancelled=self.cancelled)
+                prepared=prepare_dataset(plan,attempts,self.archives,inventory_loader,cancelled=self._work_guard(parent))
                 self.queue.heartbeat(parent['id'],parent['lease_token'],600)
                 dataset=self.datasets.publish(f"campaign-{identifier.hex}",prepared)
                 with self.pool.connection() as c:
@@ -537,7 +553,7 @@ class CampaignWorker:
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence')
             if j['parameters']['scope']['resource']=='candles']
         prepared=prepare_dataset(candles,attempts,self.archives,
-            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers),cancelled=self.cancelled)
+            lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),sampled_tickers=set(tickers),cancelled=self._work_guard(parent))
         dataset=self.datasets.publish('campaign-sample-'+campaign['id'].hex,prepared)
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
@@ -560,7 +576,7 @@ class CampaignWorker:
         plan=self._plan(campaign,day)
         candles=replace(plan,scopes=tuple(s for s in plan.scopes if s.resource=='candles'))
         attempts=[(j,p) for j,p in self._attempts(campaign,day,'evidence') if j['parameters']['scope']['resource']=='candles']
-        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),cancelled=self.cancelled)
+        prepared=prepare_dataset(candles,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),cancelled=self._work_guard(parent))
         dataset=self.datasets.publish('campaign-candles-'+campaign['id'].hex,prepared)
         with self.pool.connection() as c:
             owned=self.queue._owned(c,parent['id'],parent['lease_token'])
