@@ -1872,3 +1872,117 @@ only cache-present distinctclaimed jobs enter this path, avoiding sharedbatch ra
 AddedactualPG four-way archivebarrier over5marketbatch, proves exactly1batchHTTP
 and full25observations; preserve separate4archivecandleconcurrency/cachelosstest.
 Run refinedCI before worker update; no extra request allowance/resources needed.
+
+## Verified throughput rollout — October 27, 2026, 5:02 p.m. PDT
+
+Final code: `3291b69bf5af4a83ceb325dd0e4619623fb03c4d`.
+CI **40605464848**, job **122543730905**, passed **298 tests without skips**:
+257 API/research (84 actual PostgreSQL), 34 JavaScript and 7 policy tests.
+Blueprint validation passed. Earlier failed draft c21fe0b was never deployed.
+
+Worker deploy **dep-dbgjl5p42hec73bnkcd0** became LIVE at
+2026-10-27T23:58:58.59649Z; instance **987vw** reported ready at 23:59:02.756984Z.
+The read-only privilege/checksum audit still passed nine migrations and twelve
+history tables. Existing pacing remains 5 HTTP reads/sec, burst 5, evidence
+concurrency 4 and shared cooldowns. No resource, secret, plan, schema or grant changes.
+
+The gateway remains c634522, version **ce2eb020-30ab-46b8-892e-0ec33e8c061f**.
+Final refinement changed only worker/tests/checkpoint, so no duplicate UI publication
+was needed. The API remains compatible a3a39e2 and was not redeployed unnecessarily.
+Main and the original production Worker remain unchanged; PR #9 is draft/unmerged.
+
+### Six implemented improvements
+
+1. Seven verified hourly series skip prelaunch inventory scopes. Immutable manifests
+   and datasets carry explicit filing URL/date/SHA-256 proofs, rechecked on publication.
+   Unknown KXTEMPLAH still queries normally. No fabricated provider pages or sampling.
+2. Each active campaign resumes its newest unfinished UTC date first. Saved dataset
+   associations, manifests and cursors remain intact. The queue display still lists
+   unfinished collections oldest first, as requested.
+3. Compression runs before the publication transaction. One actual 2,276,876-byte
+   dataset required 122,264 database-input bytes; its transaction took 0.150s at
+   23:50:39 UTC. No PostgreSQL signal-9 event was returned for 22:47 UTC through
+   2026-10-28T00:02:12Z, about 75 minutes after the last kill. This does not establish
+   capacity for the largest future combined reports.
+4. Partial reports publish at most once per 30 seconds per stream. Covered queued,
+   unfrozen jobs coalesce; frozen retry membership and old report versions remain.
+   Final campaign reports and urgent completed-category notifications bypass pacing.
+5. Verified byte caches are bounded: 16 MiB archive bodies, 8 MiB compressed inventory
+   projections and 2 MiB normalized batches, plus the existing 8 MiB manifest cache.
+   Projections preserve identity/outcome fields, original row order and provenance;
+   complete raw archives remain intact. Restart/eviction safely falls back to originals.
+6. Candle-only groups and a global candle-priority lane lead. One in nine parent turns
+   reserves enrichment work. Up to four ALREADY-CACHED recent batch projections can
+   archive/checkpoint concurrently without another HTTP request. The main job must
+   already be cached before claiming neighbors, preventing shared batch mutation races.
+   PUT and verified readback remain required before every checkpoint. These are logical
+   lanes within the existing bounded worker, not a new process or paid service.
+
+Actual-PG tests prove newest-first processing, cache/restart/full-cohort equivalence,
+proof rejection, report pacing/coalescing with frozen retries and lane fairness.
+The archive barrier test proves four simultaneous verified writes, one batch HTTP
+request and all five markets/25 observations. The independent archive-candle barrier
+and cache-loss test retains four-way concurrency and all four markets/20 observations.
+
+### Measured performance and hosted acceptance
+
+Instrumentation code 7fd37db passed CI40603383429/job122536782025 (291 tests) and was
+first deployed as dep-dbgjc8hsrm7s73emgsj0 at 23:40:00.39913Z. It established a real
+bottleneck: one preparation took 20.907s, including normalization 20.731s; 105 archive
+GETs totaled 13.859s and decoding 5.704s, versus a 0.059s publication transaction.
+Another window had 39 provider reads totaling 4.328s, PUTs 13.297s and readbacks 7.864s.
+Spans nest/overlap and must not be added as exclusive wall time.
+
+The first optimized cold instance had two normalizations totaling 8.937s/max 4.774s,
+then a different cold scope took 15.287s. Archive cache hits of 4 and 8 were observed.
+These are different scopes/phases, not a controlled speed comparison. Do NOT claim
+21 seconds became subsecond everywhere, a sustained speed factor, or seven days in
+under five minutes. Archive PUT/readback is still a major I/O cost.
+
+Signed-in acceptance on the SAME existing Bitcoin year collection:
+
+- Report253 still has 396 markets, 1,275 observations and 20 saved cells. Existing
+  full-sample metrics/table behavior were retained; no new collection/reset/removal.
+- Pages advanced 1381 -> 1413 -> 1444 -> 1459 -> 1468; tasks reached 1444/2335 during
+  rollouts. Counts depend on phase and eight collections share the worker: not a benchmark.
+- Expanded all 366 saved section rows through seven read-only metadata pages. October
+  27, 2026 is now in evidence while October23–26 are pending. This verifies recent-date
+  processing without discarding the old saved 2025 history. Restored collapsed sections.
+- UI now says date windows processed/included and labels configured hourly-temperature
+  cities accurately. This load, loss-off and daily03:00 Pacific/next October28 at10UTC
+  settings remain. Queue counts and removal controls remain available.
+- Screenshot `pocket-throughput-1793145691650.jpg` (95,156 bytes) shows the daily setting,
+  processed-window counter, 1468 saved pages and preserved report; no private email/secrets.
+- Final instance emitted timing windows at00:00:37,00:01:07,00:01:37UTC with 11/14/31
+  durable checkpoints and 7/14/32 provider reads, no errors in those windows. Earlier
+  provider errors/backoff remain real; UI retry-after4:59:47PDT was observed. Do not
+  reset cooldowns or assume the app's 5RPS is an upstream public entitlement.
+- c634522 worker samples were approximately134.5/163.9/163.9MB of536.9MB. Coarse
+  samples are not peak memory or large-report capacity acceptance.
+
+Gateway workflow40604891001 stagingjob122541815811 successfully published; production
+job122541817363 was skipped. The overall workflow still fails its known automated
+asset HTTP403 smoke. Actual signed-in access works; no access controls were weakened
+and no client/network workaround was attempted.
+
+### Exact resume and limits
+
+1. Fetch the actual branch and newest checkpoint before editing. Source worktree
+   `pocket-throughput-resume` starts at3291b69; its checkpoint append is saved remotely
+   next. Preserve earlier saved dirty throughput/verify/final worktrees. No local
+   collection process was started and no subagent was spawned.
+2. Inspect the final CI/deploy receipts, instance987vw-only aggregates, worker RSS,
+   DB kills and the same campaign's next report/source advancement. Newest October2026
+   evidence is in progress; a published October2026 report was not yet observed.
+3. Measure a comparable seven-day candle cohort while full trades continue, avoiding
+   another overlapping owner collection. Next candidates are less raw batch-projection
+   object overhead, inventory-index reuse and explicit cross-campaign deduplication
+   of BTC/ETH within All crypto, and large precomputed-history partitioning.
+4. Retain versioned certification semantics when evolving the availability catalog,
+   so frozen excluded manifests reconstruct their original proof membership. Never
+   reinterpret sealed datasets or guess bounds for an unknown series.
+
+Current limits remain 250k entries/1M bars/96MiB report, unverified largest live report
+RSS and automated gateway403 smoke. No owner action was required for this milestone.
+Skip future new credentials, Google setup, paid expansion or operator DDL until
+needed. Never merge, deploy the original production app, trade or contact others.
