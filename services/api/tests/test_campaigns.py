@@ -664,6 +664,25 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(events[-1]['collections'],[])
 
 
+    def test_rate_limit_blocked_parent_recovers_but_bad_evidence_stays_failed(self):
+        def blocked(key,code):
+            identifier=self.create(key=key)
+            child=self.queue.enqueue('btc',Scope('KXBTC15M','recent','2026-10-26',key).parameters(),'rate-child/'+key)
+            with self.db.pool.connection() as c:
+                c.execute("""INSERT INTO research_campaign_work(campaign_id,day,phase,job_id)
+                    SELECT campaign_id,day,'inventory',%s FROM research_campaign_day
+                    WHERE campaign_id=%s ORDER BY day DESC LIMIT 1""",(child['id'],identifier))
+                c.execute("UPDATE research_job SET status='failed',attempts=max_attempts,error_code=%s,finished_at=clock_timestamp() WHERE id=%s",(code,child['id']))
+                c.execute("""UPDATE research_job SET status='failed',error_code='campaign_evidence_blocked',finished_at=clock_timestamp()
+                    WHERE id=(SELECT job_id FROM research_campaign WHERE id=%s)""",(identifier,))
+            return identifier,child['id']
+        recover,child=blocked('rate-recovery','provider_rate_limit')
+        bad,_=blocked('bad-evidence','provider_invalid')
+        self.worker.run_once(deadline=time.monotonic()+30)
+        self.assertNotEqual(self.store.get(recover)['status'],'failed')
+        self.assertNotEqual(self.queue.get(child)['status'],'failed')
+        self.assertEqual(self.store.get(bad)['status'],'failed')
+
     def test_crash_exhausted_request_resumes_once_but_user_pause_stays_paused(self):
         identifier=self.create(key='crash-recovery')
         paused=self.create(key='user-paused')

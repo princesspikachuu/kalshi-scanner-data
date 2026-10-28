@@ -170,6 +170,22 @@ class InventoryPostgresTests(unittest.TestCase):
         self.assertEqual(self.step(worker,job)['state'], 'unavailable')
         self.assertEqual(plan([SCOPE],[(self.row(job),self.queue.pages(job['id']))])[0]['state'],'unavailable')
 
+    def test_repeated_rate_limits_back_off_without_exhausting_collection_attempts(self):
+        job=self.claim()
+        with self.store.pool.connection() as c:c.execute('UPDATE research_job SET max_attempts=1 WHERE id=%s',(job['id'],))
+        for expected in (1,2,4,8,16,30):
+            worker=self.worker(FakeProvider(ProviderFailure('provider_rate_limit',delay=1)))
+            self.assertEqual(self.step(worker,job)['retry_after'],expected)
+            saved=self.row(job);self.assertEqual(saved['status'],'queued');self.assertEqual(saved['attempts'],0)
+            self.assertEqual(self.queue.pages(job['id']),[])
+            with self.store.pool.connection() as c:
+                c.execute("UPDATE research_job SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second',tokens=100")
+            job=self.queue.claim()
+        self.step(self.worker(FakeProvider(ProviderPage({'markets':[],'cursor':''}))),job)
+        self.assertEqual(self.row(job)['status'],'succeeded')
+        self.assertNotIn('rate_limit_retries',self.row(job)['progress'])
+
     def test_rate_limit_cooldown_is_shared_and_failed_page_does_not_advance(self):
         job = self.claim(); provider = FakeProvider(ProviderFailure('provider_rate_limit', delay=60))
         self.assertEqual(self.step(self.worker(provider),job)['state'], 'failed')

@@ -250,7 +250,11 @@ class InventoryWorker:
             return {'state':'partial','retry_after':0}
         except ProviderFailure as error:
             count('provider.failure.'+error.code,1)
-            if error.code in ('provider_rate_limit', 'provider_unavailable'): self.budget.defer(error.cooldown)
+            if error.code=='provider_rate_limit' and error.retry:
+                delay=self.queue.defer_rate_limited(job_id,token,error.delay)
+                self.budget.defer(max(error.cooldown,delay))
+                return {'state':'failed','retry_after':delay}
+            if error.code=='provider_unavailable':self.budget.defer(error.cooldown)
             self.queue.fail(job_id, token, error.code, retry=error.retry, delay_seconds=error.delay)
             return {'state': 'failed', 'retry_after': error.delay if error.retry else 0}
         # All unexpected I/O/integrity errors propagate: no false success or unsafe

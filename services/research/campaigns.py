@@ -614,6 +614,29 @@ class CampaignWorker:
                         WHERE status='failed' AND error_code='attempts_exhausted' AND id IN (
                             SELECT w.job_id FROM research_campaign_work w JOIN research_campaign r ON r.id=w.campaign_id
                             WHERE r.job_id=ANY(%s::uuid[]))''',([r['id'] for r in recovered],))
+                # Resume only collections blocked exclusively by rate limits.
+                # Bad evidence, user pauses/removals, and other failures stay put.
+                c.execute("""UPDATE research_job p SET status='queued',attempts=0,error_code=NULL,
+                    finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp(),
+                    progress=progress||jsonb_build_object('rate_recovery_version','short-backoff-v1')
+                    WHERE p.status='failed' AND p.error_code='campaign_evidence_blocked'
+                    AND p.parameters->>'collector'='campaign-v1'
+                    AND p.progress->>'rate_recovery_version' IS DISTINCT FROM 'short-backoff-v1'
+                    AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
+                    AND EXISTS(SELECT 1 FROM research_campaign r JOIN research_campaign_work w ON w.campaign_id=r.id
+                        JOIN research_job j ON j.id=w.job_id WHERE r.job_id=p.id
+                        AND j.status='failed' AND j.error_code='provider_rate_limit')
+                    AND NOT EXISTS(SELECT 1 FROM research_campaign r JOIN research_campaign_work w ON w.campaign_id=r.id
+                        JOIN research_job j ON j.id=w.job_id WHERE r.job_id=p.id
+                        AND j.status='failed' AND j.error_code IS DISTINCT FROM 'provider_rate_limit')""")
+                c.execute("""UPDATE research_job j SET status='queued',attempts=0,error_code=NULL,
+                    finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,available_at=clock_timestamp(),
+                    progress=progress||jsonb_build_object('rate_recovery_version','short-backoff-v1')
+                    WHERE j.status='failed' AND j.error_code='provider_rate_limit'
+                    AND j.progress->>'rate_recovery_version' IS DISTINCT FROM 'short-backoff-v1'
+                    AND EXISTS(SELECT 1 FROM research_campaign_work w JOIN research_campaign r ON r.id=w.campaign_id
+                        JOIN research_job p ON p.id=r.job_id WHERE w.job_id=j.id AND p.status IN ('queued','running')
+                        AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false))""")
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
         if SampleReports(self.pool).run_once():return True
         if ProgressiveReports(self.pool).run_once():return True

@@ -246,6 +246,21 @@ class ResearchQueue:
                 finished_at=CASE WHEN %s THEN NULL ELSE clock_timestamp() END WHERE id=%s''',
                 ('queued' if requeue else 'failed', code, delay_seconds, requeue, job_id))
 
+    def defer_rate_limited(self,job_id,token,delay_seconds):
+        """A paced retry is not a failed collection attempt; preserve every page."""
+        if type(delay_seconds) is not int or not 1<=delay_seconds<=3600:raise ValueError('Invalid rate retry')
+        with self.pool.connection() as c:
+            row=self._owned(c,job_id,token)
+            progress=dict(row['progress'])
+            repeats=min(30,int(progress.get('rate_limit_retries',0)))
+            wait=max(delay_seconds,min(30,2**min(repeats,5)))
+            progress['rate_limit_retries']=repeats+1
+            c.execute("""UPDATE research_job SET status='queued',attempts=attempts-1,
+                error_code='provider_rate_limit',lease_token=NULL,lease_expires_at=NULL,
+                available_at=clock_timestamp()+%s*interval '1 second',progress=%s WHERE id=%s""",
+                (wait,Jsonb(progress),job_id))
+            return wait
+
     def cancel(self, job_id):
         with self.pool.connection() as c:
             return c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),

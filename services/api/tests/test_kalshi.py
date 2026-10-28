@@ -94,6 +94,13 @@ class KalshiTests(unittest.TestCase):
         self.assertEqual(stream.reads,0)
         self.assertTrue(stream.closed)
 
+    def test_rate_limit_without_server_retry_time_starts_at_one_second(self):
+        for headers in ({},{'retry-after':'invalid'}):
+            error=self.failure(self.provider(lambda _:reply(429,headers=headers)),'provider_rate_limit',True)
+            self.assertEqual((error.delay,error.cooldown),(1,1))
+        error=self.failure(self.provider(lambda _:reply(503)),'provider_unavailable',True)
+        self.assertEqual(error.delay,30)
+
     def test_server_failures_retry_and_no_response_body_is_exposed(self):
         for status in (408,500,502,503,504):
             p = self.provider(lambda _: reply(status,headers={'retry-after':'23'}))
