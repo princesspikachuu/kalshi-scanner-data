@@ -78,3 +78,9 @@ class DatasetMemoryTests(unittest.TestCase):
             return original(receipt)
         with patch.object(fixture.archives,'read',side_effect=read):
             with self.assertRaises(DatasetLimit):fixture.prepare(max_rows=3)
+
+
+    def test_deployment_cancel_never_returns_a_partial_dataset(self):
+        from test_datasets import Fixture
+        from services.research.datasets import CollectionInterrupted
+        with self.assertRaises(CollectionInterrupted):Fixture().prepare(cancelled=lambda:True)

@@ -98,6 +98,10 @@ def _merge(left,right):
     return left
 
 
+class CollectionInterrupted(RuntimeError):
+    """Cooperative deployment handoff, with no published partial dataset."""
+
+
 class DatasetLimit(ValueError):
     """A deterministic size bound; retrying the same evidence cannot help."""
 
@@ -136,13 +140,14 @@ class RecordBuffer:
         return self.db.execute('SELECT count(*),count(DISTINCT ticker) FROM records WHERE resource=?',(resource,)).fetchone()
 
 
-def _trade_partitions(records,archives,retain):
+def _trade_partitions(records,archives,retain,cancelled=lambda:False):
     """Preserve every merged trade/provenance row in verified bounded objects."""
     result=[];rows=[];size=0
     def save():
         receipt=archives.upload('research',dict(format='trade-record-partition-v1',records=rows))
         retain(receipt);result.append(dict(resource='trades',row_count=len(rows),receipt=receipt))
     for row in records:
+        if cancelled():raise CollectionInterrupted()
         length=len(json.dumps(row,separators=(',',':'),allow_nan=False).encode())
         if rows and (size+length>TRADE_PARTITION_BYTES or len(rows)>=1000):save();rows=[];size=0
         if length>TRADE_PARTITION_BYTES:raise DatasetLimit('Single trade record exceeds partition size')
@@ -233,7 +238,7 @@ def _canonical(resource,row):
 
 @timed('dataset.prepare')
 def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=2,
-                    sampled_tickers=None):
+                    sampled_tickers=None,cancelled=lambda:False):
     """inventory_loader(id) -> (DB job, committed pages with receipts).
 
     Rebuild normalized membership from transitive inventory, then require every
@@ -330,6 +335,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
         with ThreadPoolExecutor(max_workers=archive_parallelism) as executor:
             i=0
             while i<len(groups):
+                if cancelled():raise CollectionInterrupted()
                 pair=groups[i:i+2] if archive_parallelism==2 and i+1<len(groups) and groups[i][0]!=groups[i+1][0] else groups[i:i+1]
                 futures=[executor.submit(_resolve_evidence_group,pages,archives) for _,pages in pair]
                 for future in futures:
@@ -354,7 +360,7 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
             candidates_with_candles=candle_tickers,candidates_without_candles=len(candidates)-candle_tickers,
             candidates_with_trades=trade_tickers,candidates_without_trades=len(candidates)-trade_tickers,
             scope_states=states,resources=list(resources),raw_rows_scanned=scanned)
-        partitions=_trade_partitions(merged.records('trades'),archives,retain) if partition_trades else []
+        partitions=_trade_partitions(merged.records('trades'),archives,retain,cancelled) if partition_trades else []
         artifact_list = sorted(artifacts.values(),key=lambda a:a['object_key'])
         payload = dict(format=FORMAT,artifacts=artifact_list,manifest=manifest_receipt,batch_fingerprint=rebuilt.fingerprint,day=rebuilt.day,
             candidates=[asdict(c) for c in candidates],scopes=[asdict(s) for s in wanted.values()],coverage=coverage,summary=summary)
