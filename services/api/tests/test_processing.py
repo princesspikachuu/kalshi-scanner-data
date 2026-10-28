@@ -162,3 +162,12 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.assertEqual(next_parent['parameters']['campaign_id'],str(newer))
         self.queue.yield_job(next_parent['id'],next_parent['lease_token'])
         self.assertEqual(self.processor._claim_assembly()['id'],newer_job['id'])
+
+    def test_oldest_finishes_enrichment_and_final_report_while_newer_waits(self):
+        first=self.create(key='finish-oldest',end='2026-10-25')
+        newer=self.create(key='hold-newer',end='2026-10-26')
+        self.assertEqual(self.finish(first)['status'],'succeeded')
+        waiting=self.store.get(newer)
+        self.assertEqual(waiting['status'],'queued')
+        self.assertEqual(waiting['saved_pages'],0)
+        self.assertEqual(waiting['completed_sections'],0)
