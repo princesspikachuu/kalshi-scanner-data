@@ -2,7 +2,7 @@ name: Deploy Pocket Analytics dynamic Worker
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, build/google-auth-foundation]
     paths:
       - 'docs/index.html'
       - 'docs/manifest.webmanifest'
@@ -54,7 +54,7 @@ jobs:
 
 
   staging:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/build/google-auth-foundation'
+    if: github.ref == 'refs/heads/build/google-auth-foundation'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     concurrency:
