@@ -272,7 +272,8 @@ class CampaignStore:
             if action in ('pause','remove') and row['status'] in ('queued','running'):
                 ids=c.execute("""SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s
                     UNION SELECT id AS job_id FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
-                        AND parameters->>'campaign_id'=%s""",(identifier,str(identifier))).fetchall()
+                        AND idempotency_key>=%s AND idempotency_key<%s""",
+                    (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/~')).fetchall()
                 c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('queued','running')""",([row['id']]+[r['job_id'] for r in ids],))
             if action=='remove' and row['status']!='succeeded':
@@ -282,7 +283,8 @@ class CampaignStore:
             if action=='resume' and row['status'] in ('cancelled','failed'):
                 ids=c.execute("""SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s
                     UNION SELECT id AS job_id FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
-                        AND parameters->>'campaign_id'=%s""",(identifier,str(identifier))).fetchall()
+                        AND idempotency_key>=%s AND idempotency_key<%s""",
+                    (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/~')).fetchall()
                 c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,error_code=NULL,attempts=0,available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('cancelled','failed')""",([row['id']]+[r['job_id'] for r in ids],))
             return True
@@ -443,16 +445,17 @@ class CampaignWorker:
             # Publish full-cohort price days across the range before detailed trades.
             # A day with a full candle report must not monopolize the worker
             # while every other requested date waits behind trade enrichment.
-            day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
-                AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM research_job a
-                    WHERE a.parameters->>'collector'='campaign-assembly-v1'
-                    AND a.parameters->>'campaign_id'=research_campaign_day.campaign_id::text
-                    AND a.parameters->>'day'=research_campaign_day.day::text
-                    AND a.parameters->>'kind' IN ('prices','enriched') AND a.status IN ('queued','running')))
+            day=c.execute('''WITH pending_assembly AS MATERIALIZED (
+                SELECT parameters->>'day' AS day FROM research_job
+                WHERE idempotency_key>=%s AND idempotency_key<%s
+                    AND parameters->>'collector'='campaign-assembly-v1'
+                    AND parameters->>'kind' IN ('prices','enriched') AND status IN ('queued','running'))
+                SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
+                AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=research_campaign_day.day::text))
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
                               WHEN %s::jsonb ? day::text THEN 0 ELSE 1 END,
                     day DESC LIMIT 1''',
-                (identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
+                (f'assembly/{identifier}/',f'assembly/{identifier}/~',identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
                     Jsonb(parent['progress'].get('sample_previews',{})))).fetchone()
         if day is None:
             if self.role=='collector':
@@ -640,9 +643,8 @@ class CampaignWorker:
                         WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
                         AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)
                         AND (%s='combined' OR NOT EXISTS(SELECT 1 FROM research_job a
-                            WHERE a.parameters->>'collector'='campaign-assembly-v1'
-                            AND a.parameters->>'campaign_id'=r.id::text AND a.parameters->>'day'=d.day::text
-                            AND a.parameters->>'kind'='prices' AND a.status IN ('queued','running')))) AS price_pending
+                            WHERE a.idempotency_key='assembly/'||r.id::text||'/'||d.day::text||'/prices'
+                            AND a.status IN ('queued','running')))) AS price_pending
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
                     AND j.status IN ('queued','running')

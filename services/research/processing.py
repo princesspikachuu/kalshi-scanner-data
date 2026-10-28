@@ -34,7 +34,8 @@ class ProcessingWorker(CampaignWorker):
         with self.pool.connection() as c:
             row=c.execute("""SELECT a.id FROM research_job a JOIN research_campaign r
                 ON r.id::text=a.parameters->>'campaign_id' JOIN research_job p ON p.id=r.job_id
-                WHERE a.parameters->>'collector'='campaign-assembly-v1'
+                WHERE a.idempotency_key>='assembly/' AND a.idempotency_key<'assembly0'
+                    AND a.parameters->>'collector'='campaign-assembly-v1'
                     AND a.attempts<a.max_attempts AND p.status IN ('queued','running')
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
                     AND ((a.status='queued' AND a.available_at<=clock_timestamp()) OR
