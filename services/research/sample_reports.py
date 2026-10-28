@@ -92,8 +92,8 @@ class SampleReports:
                     WHERE campaign_id=%s ORDER BY day''', (identifier,)).fetchall()]
                 previews = campaign['progress'].get('sample_previews', {})
                 ids = list(previews.values()) if isinstance(previews, dict) else []
-                datasets = c.execute('''SELECT d.id,d.day,d.stream_key,CASE WHEN (s.summary->>'candidate_count')::integer<=100 THEN 100 ELSE (s.summary->>'candidate_count')::integer END AS preview_limit
-                    FROM research_dataset d JOIN research_summary s ON s.dataset_id=d.id
+                datasets = c.execute('''SELECT d.id,d.day,d.stream_key,COALESCE(CASE WHEN (s.summary->>'candidate_count')::integer<=100 THEN 100 ELSE (s.summary->>'candidate_count')::integer END,100) AS preview_limit
+                    FROM research_dataset d LEFT JOIN research_summary s ON s.dataset_id=d.id
                     WHERE d.id=ANY(%s::bigint[])''', (ids,)).fetchall()
                 snapshot = sample_snapshot(previews, days, datasets, stream)
                 if snapshot['publication']['revision'] < job['parameters']['revision']:
