@@ -408,11 +408,16 @@ class CampaignWorker:
         with self.pool.connection() as c:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
             if campaign is None:raise EvidenceConflict('Unknown collection campaign')
+            # Finish the most advanced unfinished date before starting another.
+            # Existing partial previews are resumed first after a deploy; a new
+            # campaign still starts with its newest date. A 100-market preview
+            # and candle report can publish while this same date continues.
             day=c.execute('''SELECT * FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL
-                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,
-                    CASE WHEN %s::jsonb ? day::text THEN 1 ELSE 0 END,day DESC LIMIT 1''',
-                (identifier,Jsonb(parent['progress'].get('sample_previews',{})),
-                    Jsonb(parent['progress'].get('candle_previews',{})))).fetchone()
+                ORDER BY CASE WHEN %s::jsonb ? day::text THEN 0
+                              WHEN %s::jsonb ? day::text THEN 1 ELSE 2 END,
+                    day DESC LIMIT 1''',
+                (identifier,Jsonb(parent['progress'].get('candle_previews',{})),
+                    Jsonb(parent['progress'].get('sample_previews',{})))).fetchone()
         if day is None:
             try:
                 with self.pool.connection() as c:

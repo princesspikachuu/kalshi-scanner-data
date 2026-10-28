@@ -255,7 +255,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(report['historical']['candidate_count'],5);self.assertEqual(report['historical']['observation_count'],25)
 
     @patch('services.research.datasets.COMPACT_THRESHOLD',0)
-    def test_candle_reports_arrive_before_trade_enrichment_and_grow_across_days(self):
+    def test_candle_report_arrives_while_one_date_finishes_before_the_next(self):
         original=self.evidence.fetch;trade_pages=0
         def streaming(scope,cursor,timeout):
             nonlocal trade_pages
@@ -267,19 +267,24 @@ class CampaignPostgresTests(unittest.TestCase):
         for _ in range(120):
             self.worker.run_once(deadline=time.monotonic()+30)
             state=self.store.get(identifier)
-            if state['reported_sections']==2:break
-        else:self.fail('Candle-complete sections were not published while enrichment continued')
-        self.assertFalse(state['report_complete']);self.assertLess(state['completed_sections'],2)
+            if state['reported_sections']==1:break
+        else:self.fail('Candle-complete date was not published while enrichment continued')
+        self.assertFalse(state['report_complete']);self.assertEqual(state['completed_sections'],0)
         self.assertIn(state['status'],('queued','running'))
+        with self.db.pool.connection() as c:
+            days=c.execute('''SELECT day,manifest FROM research_campaign_day WHERE campaign_id=%s ORDER BY day DESC''',
+                           (identifier,)).fetchall()
+        self.assertIsNotNone(days[0]['manifest'])
+        self.assertIsNone(days[1]['manifest'])
         with self.db.pool.connection() as c:
             report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['result_id'],)).fetchone()['report']
             observations=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(state['result_id'],)).fetchone()['n']
         with self.db.pool.connection() as c:
             formats=c.execute("SELECT DISTINCT payload->>'storage' AS storage FROM research_dataset").fetchall()
         self.assertEqual(formats,[dict(storage='raw-evidence-gzip-v1')])
-        self.assertEqual(report['historical']['candidate_count'],2)
-        self.assertEqual(report['historical']['observation_count'],10)
-        self.assertEqual(sum(x['hold']['sampled_markets'] for x in report['historical']['cells']),10)
+        self.assertEqual(report['historical']['candidate_count'],1)
+        self.assertEqual(report['historical']['observation_count'],5)
+        self.assertEqual(sum(x['hold']['sampled_markets'] for x in report['historical']['cells']),5)
         self.assertEqual(observations,0)  # Raw immutable inputs retain every row; no quadratic preview copies.
         before=state['result_id'];self.evidence.fetch=original
         self.worker=self.make_worker()
@@ -355,7 +360,7 @@ class CampaignPostgresTests(unittest.TestCase):
             self.worker.run_once(deadline=time.monotonic()+30)
             with self.db.pool.connection() as c:
                 progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(older,)).fetchone()['progress']
-            if len(progress.get('candle_previews',{}))==2:break
+            if len(progress.get('candle_previews',{}))==1:break
         else:self.fail('Candle lane did not progress')
         fresh=self.create(key='priority-new')
         for _ in range(12):
