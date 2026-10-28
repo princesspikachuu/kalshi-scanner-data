@@ -132,14 +132,17 @@ def run(settings,stop):
             EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=12,stop=stop)
         from .reuse import VerifiedReads
         worker.inventory_worker.reuse=worker.evidence_worker.reuse=VerifiedReads(pool,archives)
-        from .heartbeat import WorkerHeartbeat
+        from .heartbeat import WorkerHeartbeat,DayProgress
         heartbeat=WorkerHeartbeat(pool)
         print('Collection enabled; worker ready',flush=True)
         print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 12',flush=True)
         from .telemetry import configure
         meter=configure(lambda data:print(json.dumps(data,sort_keys=True,separators=(',',':')),flush=True))
         campaigns=CampaignStore(pool)
-        try:serve(campaigns,worker,stop,on_tick=heartbeat.beat,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        progress=DayProgress(pool,lambda data:print(json.dumps(data,default=str,sort_keys=True),flush=True))
+        def tick():
+            heartbeat.beat();progress.emit()
+        try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=campaigns.next_wait,on_error=lambda code:print(code,file=sys.stderr,flush=True))
         finally:
             meter.flush(force=True);configure()
 

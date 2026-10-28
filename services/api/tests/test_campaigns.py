@@ -602,3 +602,20 @@ class CampaignPostgresTests(unittest.TestCase):
         claimed=self.worker._claim_parent()
         self.assertEqual(claimed['parameters']['campaign_id'],newer)
         self.queue.yield_job(claimed['id'],claimed['lease_token'])
+
+
+    def test_day_status_reports_real_saved_days_and_is_paced(self):
+        from services.research.heartbeat import DayProgress
+        identifier=self.create();events=[]
+        progress=DayProgress(self.db.pool,events.append,clock=lambda:1)
+        progress.emit();progress.emit()
+        self.assertEqual(len(events),1)
+        row=events[0]['collections'][0]
+        self.assertEqual(row['total_days'],2)
+        self.assertEqual(row['price_days_saved'],0)
+        self.assertEqual(row['report_days'],0)
+        self.drive(identifier)
+        # Finished requests disappear from active diagnostics, rather than being
+        # counted repeatedly as newly collected days.
+        progress.last=float('-inf');progress.emit()
+        self.assertEqual(events[-1]['collections'],[])
