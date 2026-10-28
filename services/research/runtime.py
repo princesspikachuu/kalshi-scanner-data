@@ -114,7 +114,7 @@ def run(settings,stop):
     if not audit_database(settings.database_url)['privilege_boundary_ready']:
         raise ConfigurationError('Research runtime database privileges are not isolated')
     with ExitStack() as stack:
-        pool=ConnectionPool(settings.database_url,min_size=1,max_size=2,open=False,timeout=5,
+        pool=ConnectionPool(settings.database_url,min_size=1,max_size=6,open=False,timeout=5,
             kwargs={'row_factory':dict_row,'connect_timeout':5,'options':'-c statement_timeout=30000'})
         stack.callback(pool.close);pool.open(wait=True,timeout=5)
         # Runtime pre-deploy commands verify an operator-applied schema, never migrate.
@@ -129,13 +129,13 @@ def run(settings,stop):
         inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence(archives=archives))
         worker=CampaignWorker(pool,archives,
             InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
-            EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=4,stop=stop)
+            EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=12,stop=stop)
         from .reuse import VerifiedReads
         worker.inventory_worker.reuse=worker.evidence_worker.reuse=VerifiedReads(pool,archives)
         from .heartbeat import WorkerHeartbeat
         heartbeat=WorkerHeartbeat(pool)
         print('Collection enabled; worker ready',flush=True)
-        print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 4',flush=True)
+        print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 12',flush=True)
         from .telemetry import configure
         meter=configure(lambda data:print(json.dumps(data,sort_keys=True,separators=(',',':')),flush=True))
         campaigns=CampaignStore(pool)

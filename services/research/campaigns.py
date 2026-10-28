@@ -287,7 +287,7 @@ class CampaignStore:
 class CampaignWorker:
     """One child HTTP page or one local publication stage per claimed parent step."""
     def __init__(self,pool,archives,inventory_worker,evidence_worker,*,parallelism=1,stop=None):
-        if type(parallelism) is not int or not 1<=parallelism<=4:raise ValueError('Invalid evidence concurrency')
+        if type(parallelism) is not int or not 1<=parallelism<=16:raise ValueError('Invalid evidence concurrency')
         self.parallelism=parallelism;self._bootstrapped=False
         self.cancelled=stop.is_set if stop is not None else lambda:False
         self.pool,self.archives=pool,archives
@@ -365,7 +365,7 @@ class CampaignWorker:
             worker.prepare_batch([job]+nearby)
         jobs=[job]
         # Batch-capable recent candles use the single HTTP path above. Other
-        # evidence (including archived candles) overlaps I/O for at most 4 jobs.
+        # evidence (including archived candles) overlaps I/O for at most 16 jobs.
         recent_candle=lambda j:(j['parameters']['scope']['resource'],j['parameters']['scope']['source'])==('candles','recent')
         if (phase=='evidence' and self.parallelism>1 and recent_candle(job) and hasattr(worker,'prepare_batch')
                 and hasattr(worker.provider,'cached') and worker.provider.cached(worker.scope_loader(job),'') is not None):
