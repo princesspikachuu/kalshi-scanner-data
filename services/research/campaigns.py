@@ -569,16 +569,19 @@ class CampaignWorker:
         return True
 
     def _claim_parent(self):
-        # Finish the oldest unfinished collection before moving to the next.
-        # A delayed retry keeps its place, so a provider cooldown cannot make
-        # the visible queue silently switch to another collection.
+        # Prefer collections still missing full-cohort price dates. Exhaustive
+        # trade enrichment cannot monopolize the queue after its price dates
+        # are published. Keep oldest-first order within each lane.
         with self.pool.connection() as c:
             row=c.execute('''WITH oldest AS (
                 SELECT j.id,j.status,j.available_at,j.lease_expires_at
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
                     AND j.status IN ('queued','running')
-                ORDER BY r.created_at,r.id LIMIT 1)
+                ORDER BY CASE WHEN EXISTS(SELECT 1 FROM research_campaign_day d
+                    WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
+                    AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text))
+                    THEN 0 ELSE 1 END,r.created_at,r.id LIMIT 1)
                 SELECT id FROM oldest WHERE
                     (status='queued' AND available_at<=clock_timestamp()) OR
                     (status='running' AND lease_expires_at<=clock_timestamp())''').fetchone()

@@ -581,3 +581,17 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.get(identifier)['status'],'succeeded')
         self.assertEqual(len(calls),18);self.assertEqual(len(set(calls)),18)
         self.assertEqual(self.store.get(identifier)['saved_pages'],18)
+
+
+    def test_price_ready_collection_cannot_block_another_collections_price_days(self):
+        older=self.create(key='price-ready-older')
+        for _ in range(150):
+            self.worker.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(older,)).fetchone()['progress']
+            if len(progress.get('candle_previews',{}))==2:break
+        else:self.fail('Price dates did not publish')
+        newer=self.create(key='price-pending-newer')
+        claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['parameters']['campaign_id'],newer)
+        self.queue.yield_job(claimed['id'],claimed['lease_token'])
