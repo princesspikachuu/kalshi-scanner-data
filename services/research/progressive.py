@@ -30,7 +30,20 @@ class ProgressiveReports:
         with self.pool.connection() as c:
             rows=c.execute('''SELECT r.id,r.asset FROM research_campaign r JOIN research_job j ON j.id=r.job_id
                 WHERE j.status IN ('queued','running') ORDER BY r.created_at LIMIT 100''').fetchall()
-            for row in rows:self.enqueue(c,row['id'],row['asset'])
+            for row in rows:
+                self.enqueue(c,row['id'],row['asset'])
+                # A fresh immutable publication may run while a crashed old
+                # builder's lease expires. Never steal that lease or overwrite
+                # its frozen membership. The stream lock/revision fence seals
+                # at most one identical result and prevents older regressions.
+                c.execute("""INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)
+                    SELECT %s,'checkpoint-repair-v1/'||idempotency_key,asset,parameters,5
+                    FROM research_job WHERE idempotency_key LIKE %s
+                    AND status IN ('running','failed')
+                    AND parameters->>'revision'=(SELECT max((parameters->>'revision')::integer)::text
+                        FROM research_job WHERE idempotency_key LIKE %s)
+                    ORDER BY created_at DESC LIMIT 1 ON CONFLICT(idempotency_key) DO NOTHING""",
+                    (uuid4(),f"progress/{row['id']}/%",f"progress/{row['id']}/%"))
 
     def step(self,job):
         identifier=UUID(job['parameters']['campaign_id'])
