@@ -10,6 +10,8 @@ from .inventory import InventoryWorker, ProviderPage, ProviderFailure, ProviderD
 from .kalshi import KalshiInventory, invalid, parse_json
 from .normalize import CandidateBatch, VERSION, _closed
 from .queue import EvidenceConflict, text_key
+from .cache import ByteCache
+from .telemetry import count as count_metric
 
 
 @dataclass(frozen=True)
@@ -207,13 +209,16 @@ class ManifestCache:
 class KalshiEvidence(KalshiInventory):
     def __init__(self,*,archives=None,**kwargs):
         super().__init__(**kwargs)
-        self.archives=archives;self.batch=();self.responses={};self.single_only=OrderedDict()
+        self.archives=archives;self.batch=();self.responses=ByteCache(8*1024*1024);self.single_only=OrderedDict()
 
     def cached(self,scope,cursor):
-        return None if cursor else self.responses.get(scope.key)
+        raw=None if cursor else self.responses.get(scope.key)
+        # Separate immutable bytes per exact manifest-bound scope. Callers get
+        # fresh objects, so concurrent acknowledgement cannot mutate their page.
+        return None if raw is None else ProviderPage(json.loads(raw))
 
     def acknowledge(self,scope):
-        self.responses.pop(scope.key,None)
+        self.responses.pop(scope.key)
 
     def plan_batch(self,scopes):
         if self.archives is None:return
@@ -236,9 +241,12 @@ class KalshiEvidence(KalshiInventory):
         if len(self.single_only)>1000:self.single_only.popitem(last=False)
 
     def _batch_fetch(self,timeout_seconds):
-        scopes=self.batch;self.batch=();self.responses={}
+        # Keep unconsumed projections from OTHER campaigns. Fair scheduling
+        # must not turn one batched HTTP read into a refetch on every turn.
+        scopes=self.batch;self.batch=()
         args=dict(market_tickers=','.join(s.ticker for s in scopes),
             start_ts=min(s.start_ts for s in scopes),end_ts=max(s.end_ts for s in scopes),period_interval=1)
+        count_metric('provider.batch_http',1)
         response=self._read('/markets/candlesticks',args,timeout_seconds,parse_json,allow_missing=True,missing_statuses=(400,404,422))
         payload=response.payload
         if response.availability=='unavailable':
@@ -266,9 +274,14 @@ class KalshiEvidence(KalshiInventory):
         for scope in scopes:
             if scope.key not in projected:self._single_next(scope)
         receipt=self.archives.upload('kalshi',dict(format='candle-batch-v1',request=args,response=payload))
+        count_metric('provider.batch_markets',len(projected))
         for key,item in projected.items():
             item['batch_receipt']=receipt
-            self.responses[key]=ProviderPage(item)
+            self.responses.put(key,json.dumps(item,separators=(',',':'),allow_nan=False).encode())
+        for scope in scopes:
+            # Cache pressure is a safe single-read fallback, never an empty page
+            # or endless repeated batch. No checkpoint relies on this cache.
+            if self.cached(scope,'') is None:self._single_next(scope)
 
     def fetch(self,scope,cursor,timeout_seconds):
         if type(scope) is not EvidenceScope: raise ValueError('Validated evidence scope required')

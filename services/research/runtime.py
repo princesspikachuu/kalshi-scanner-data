@@ -133,7 +133,7 @@ def run(settings,stop):
         from .heartbeat import WorkerHeartbeat
         heartbeat=WorkerHeartbeat(pool)
         print('Collection enabled; worker ready',flush=True)
-        print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; recent candle batching enabled; evidence concurrency 4',flush=True)
+        print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 4',flush=True)
         from .telemetry import configure
         meter=configure(lambda data:print(json.dumps(data,sort_keys=True,separators=(',',':')),flush=True))
         campaigns=CampaignStore(pool)

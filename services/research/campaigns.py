@@ -358,14 +358,14 @@ class CampaignWorker:
                 if worker.provider.cached(scope,'') is None:continue
                 child=self.queue.claim(job_id=neighbor['id'])
                 if child is not None:jobs.append(child)
-        if phase=='evidence' and self.parallelism>1 and not recent_candle(job):
+        if self.parallelism>1 and (phase=='inventory' or not recent_candle(job)):
             with self.pool.connection() as c:
                 nearby=c.execute('''SELECT j.id FROM research_campaign_work w JOIN research_job j ON j.id=w.job_id
                     WHERE w.campaign_id=%s AND w.day=%s AND w.phase=%s AND (%s::text IS NULL OR j.parameters->'scope'->>'resource'=%s)
                     AND (%s::text[] IS NULL OR j.parameters->'scope'->>'series'=ANY(%s::text[])) AND
                     j.status='queued' AND j.available_at<=clock_timestamp() AND j.attempts<j.max_attempts
-                    AND NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent')
-                    ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,self.parallelism-1)).fetchall()
+                    AND (%s='inventory' OR NOT (j.parameters->'scope'->>'resource'='candles' AND j.parameters->'scope'->>'source'='recent'))
+                    ORDER BY CASE WHEN j.parameters->'scope'->>'resource'='candles' THEN 0 ELSE 1 END,j.available_at,j.id LIMIT %s''',(*args,phase,self.parallelism-1)).fetchall()
             for row in nearby:
                 child=self.queue.claim(job_id=row['id'])
                 if child is not None:jobs.append(child)

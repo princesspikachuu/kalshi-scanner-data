@@ -1986,3 +1986,50 @@ Current limits remain 250k entries/1M bars/96MiB report, unverified largest live
 RSS and automated gateway403 smoke. No owner action was required for this milestone.
 Skip future new credentials, Google setup, paid expansion or operator DDL until
 needed. Never merge, deploy the original production app, trade or contact others.
+
+## October 27, 2026 — fix batch thrashing across simultaneous collections
+
+Owner reported unacceptable throughput. Remote head c892610 and the previous green
+CI40605464848 were inspected; no other active work was found. New isolated worktree
+`pocket-throughput-lanes` preserves every earlier dirty worktree. No owner collection
+was created, reset, removed or paused. Observed BTC2053 ->2054 saved pages, report311
+with666 markets/2355 observations and55 included dates; the48 fully processed dates
+counter concealed partial progress. Latest worker987vw was still saving pages.
+
+Concrete defect reproduced BEFORE implementation: an eight-load,96-market interleaved
+fixture made95 HTTP reads instead of8. KalshiEvidence._batch_fetch replaced its entire
+projection map on every batch fetch. Fair rotation among campaigns discarded already
+fetched but not yet checkpointed results, causing repeated downloads and raw batch writes.
+
+Fix: retain exact manifest-bound projections across batches in a thread-safe8MiB,
+4096-entry byte LRU. Each lookup returns a fresh object; successful checkpoint ack
+removes just that scope. Other batch errors cannot discard verified unused data.
+Eviction/restart safely uses provider reads; oversized entries fall back individually
+without a repeated-batch loop. Every original batch remains conditionally archived
+and readback-verified; per-scope checkpoint and full-sample publication remain intact.
+The same fixture now uses8 HTTP reads for all96 markets, with original candle values
+and archived batch provenance. This is a deterministic request-amplification test,
+NOT an end-to-end live speed factor or a seven-day completion-time guarantee.
+
+Independent inventory jobs now overlap provider and archive I/O up to the existing
+concurrency4, same PGpoolmax2 and shared5RPS/burst5 budget. Added actual-PG barrier
+fixture requires four concurrent inventory reads, then reconstructs the worker and
+proves all18 exact crypto source scopes checkpoint once. No concurrent cursor pages
+for one scope; shared historical jobs still use fenced claims. Startup identifies
+inventory/evidence concurrency; bounded telemetry adds batch HTTP/market counts and
+cached-page consumption without recording identities or payloads.
+
+Local validation:261 API/research tests,176 passed/85 actual-PG skipped locally because
+no disposable PostgreSQL;34 JS and7 owner-policy tests passed; gateway checks,
+Blueprint validation and git diff --check passed. Actual PostgreSQL CI and hosted
+rollout remain pending at this checkpoint; do not claim deployed until verified.
+
+Resume: publish these code/tests/checkpoint changes with expected-head leasec892610,
+inspect new PR CI including all85 PG tests, then deploy only existing staging worker
+srv-dbgcsb6c6qcc73f1j6lg (manual/auto-deployoff), capture live deploy/instance, and verify
+cached-page consumption and owner counters advance. API/gateway contracts unchanged;
+no API/UI deploy required. Record actual results in a follow-up checkpoint commit.
+No owner-only step needed. Existing paid plans, private networking, credentials,
+schema/grants, Google setup, original production app and trading remain untouched.
+Archive PUT/readback remains a major cost and eight long loads share one small worker;
+keep measuring live evidence rather than extrapolating this fixture's request reduction.

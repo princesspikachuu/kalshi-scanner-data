@@ -12,6 +12,7 @@ import re
 import time
 
 from .queue import EvidenceConflict
+from .telemetry import count
 
 
 def digest(value):
@@ -206,6 +207,7 @@ class InventoryWorker:
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if state.pages >= self.max_pages: raise ProviderFailure('provider_invalid', retry=False)
             cached = getattr(self.provider,'cached',lambda *_:None)(scope,state.next_cursor)
+            if cached is not None:count('provider.cached_page',1)
             delay = 0 if cached is not None else self.budget.take(self.cost)
             if delay: return {'state': 'throttled', 'retry_after': delay}
             remaining = deadline-self.clock()

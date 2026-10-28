@@ -11,6 +11,13 @@ class ByteCache:
             value=self.values.get(key)
             if value is not None:self.values.move_to_end(key)
             return value
+    def __len__(self):
+        with self.lock:return len(self.values)
+    def pop(self,key):
+        with self.lock:
+            value=self.values.pop(key,None)
+            if value is not None:self.size-=len(value)
+            return value
     def put(self,key,value):
         if not isinstance(key,str) or len(key)>512 or not isinstance(value,bytes) or not 0<len(value)<=self.maximum:return
         with self.lock:

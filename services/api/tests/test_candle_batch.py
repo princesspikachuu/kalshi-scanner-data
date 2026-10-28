@@ -88,3 +88,56 @@ class CandleBatchTests(unittest.TestCase):
         changed={**receipt,'byte_length':receipt['byte_length']+1}
         with self.assertRaises(Exception):cache.read(changed)
         self.assertEqual(archive.read.call_count,2)
+
+    def test_interleaved_campaigns_do_not_refetch_unconsumed_batch_members(self):
+        calls=[]
+        groups=[self.scopes[i:i+12] for i in range(0,96,12)]
+        by_ticker={s.ticker:s for s in self.scopes}
+        def handler(request):
+            calls.append(request)
+            if 'market_tickers' not in request.url.params:
+                scope=by_ticker[request.url.path.split('/')[-2]]
+                return reply(payload=dict(ticker=scope.ticker,candlesticks=[candle(scope)]))
+            return reply(payload=dict(markets=[dict(market_ticker=t,candlesticks=[candle(by_ticker[t])])
+                for t in request.url.params['market_tickers'].split(',')]))
+        p=self.provider(handler)
+        # The scheduler rotates among eight loads after each bounded step.
+        # Every batch response must survive other campaigns fetching a batch.
+        for offset in range(12):
+            for scopes in groups:
+                scope=scopes[offset]
+                p.plan_batch(scopes[offset:])
+                value=p.cached(scope,'')
+                if value is None:value=p.fetch(scope,'',10)
+                self.assertEqual(value.payload['candlesticks'],[candle(scope)])
+                if 'batch_receipt' in value.payload:
+                    self.assertEqual(self.archives.read(value.payload['batch_receipt'])['format'],'candle-batch-v1')
+                p.acknowledge(scope)
+        self.assertEqual(len(calls),8)
+
+    def test_retained_projections_are_bounded_isolated_and_restart_is_a_cache_miss(self):
+        from services.research.cache import ByteCache
+        scopes=self.scopes[:2]
+        def handler(_):return reply(payload=dict(markets=[dict(market_ticker=s.ticker,candlesticks=[candle(s)]) for s in scopes]))
+        p=self.provider(handler);p.plan_batch(scopes);p.fetch(scopes[0],'',10)
+        value=p.cached(scopes[0],'');value.payload['candlesticks'].clear()
+        self.assertEqual(p.cached(scopes[0],'').payload['candlesticks'],[candle(scopes[0])])
+        self.assertLessEqual(p.responses.size,8*1024*1024)
+        before=p.responses.size;p.acknowledge(scopes[0]);self.assertLess(p.responses.size,before)
+        self.assertIsNotNone(p.cached(scopes[1],''))
+        self.assertIsNone(self.provider(handler).cached(scopes[1],''))
+        # Oversized projections fall back individually without another batch loop.
+        p=self.provider(handler);p.responses=ByteCache(1);p.plan_batch(scopes)
+        with self.assertRaises(ProviderDeferred):p.fetch(scopes[0],'',10)
+        p.plan_batch(scopes);self.assertFalse(p.batch);self.assertFalse(p.responses)
+
+    def test_other_batch_failure_does_not_discard_verified_unused_projections(self):
+        calls=[];scopes=self.scopes[:2]
+        def handler(request):
+            calls.append(request)
+            if len(calls)>1:return reply(status=429,headers={'Retry-After':'17'})
+            return reply(payload=dict(markets=[dict(market_ticker=s.ticker,candlesticks=[candle(s)]) for s in scopes]))
+        p=self.provider(handler);p.plan_batch(scopes);p.fetch(scopes[0],'',10)
+        p.plan_batch(self.scopes[2:4])
+        with self.assertRaises(ProviderFailure):p.fetch(self.scopes[2],'',10)
+        self.assertEqual(p.cached(scopes[1],'').payload['candlesticks'],[candle(scopes[1])])

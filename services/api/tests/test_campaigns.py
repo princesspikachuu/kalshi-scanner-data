@@ -109,6 +109,22 @@ class CampaignPostgresTests(unittest.TestCase):
             c.execute("UPDATE research_job SET available_at=clock_timestamp() WHERE status='queued'")
             c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()")
 
+    def test_inventory_pages_overlap_and_restart_keeps_every_scope_checkpoint(self):
+        from threading import Barrier,Lock
+        gate=Barrier(4);lock=Lock();calls=[]
+        def fetch(scope,cursor,timeout):
+            with lock:calls.append((scope.series,scope.source,cursor));ordinal=len(calls)
+            if ordinal<=4:gate.wait(timeout=5)
+            return ProviderPage(dict(markets=[],cursor=''))
+        self.inventory.fetch=fetch;self.worker.parallelism=4
+        identifier=self.store.create('crypto','2026-10-25','2026-10-25','parallel-inventory',now=NOW)
+        self.assertTrue(self.worker.run_once(deadline=time.monotonic()+30))
+        self.assertEqual(self.store.get(identifier)['saved_pages'],4)
+        self.worker=self.make_worker();self.drive(identifier)
+        self.assertEqual(self.store.get(identifier)['status'],'succeeded')
+        self.assertEqual(len(calls),18);self.assertEqual(len(set(calls)),18)
+        self.assertEqual(self.store.get(identifier)['saved_pages'],18)
+
     def test_batched_recent_candles_publish_full_cohort_and_survive_cache_loss(self):
         import httpx
         from unittest.mock import Mock
