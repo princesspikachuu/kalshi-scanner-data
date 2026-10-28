@@ -273,7 +273,7 @@ class CampaignStore:
                 ids=c.execute("""SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s
                     UNION SELECT id AS job_id FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
                         AND idempotency_key>=%s AND idempotency_key<%s""",
-                    (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/~')).fetchall()
+                    (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/zzzz')).fetchall()
                 c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('queued','running')""",([row['id']]+[r['job_id'] for r in ids],))
             if action=='remove' and row['status']!='succeeded':
@@ -284,7 +284,7 @@ class CampaignStore:
                 ids=c.execute("""SELECT DISTINCT job_id FROM research_campaign_work WHERE campaign_id=%s
                     UNION SELECT id AS job_id FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
                         AND idempotency_key>=%s AND idempotency_key<%s""",
-                    (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/~')).fetchall()
+                    (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/zzzz')).fetchall()
                 c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,error_code=NULL,attempts=0,available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('cancelled','failed')""",([row['id']]+[r['job_id'] for r in ids],))
             return True
@@ -455,7 +455,7 @@ class CampaignWorker:
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
                               WHEN %s::jsonb ? day::text THEN 0 ELSE 1 END,
                     day DESC LIMIT 1''',
-                (f'assembly/{identifier}/',f'assembly/{identifier}/~',identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
+                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',identifier,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
                     Jsonb(parent['progress'].get('sample_previews',{})))).fetchone()
         if day is None:
             if self.role=='collector':
