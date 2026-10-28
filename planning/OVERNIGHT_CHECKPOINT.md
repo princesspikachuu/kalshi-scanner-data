@@ -2033,3 +2033,55 @@ No owner-only step needed. Existing paid plans, private networking, credentials,
 schema/grants, Google setup, original production app and trading remain untouched.
 Archive PUT/readback remains a major cost and eight long loads share one small worker;
 keep measuring live evidence rather than extrapolating this fixture's request reduction.
+
+### Verified rollout and existing-hourly-request follow-up — 7:05 p.m. Pacific
+
+Code5b56bada65f7771ca8b25160c1605a4c7004aebb passed CI40617989904/job122584885457:
+261 API/research including85 actual-PG tests +34 JS +7 policy =302 tests,
+no skips/failures. Gateway/Blueprint guards passed. Worker deploy
+`dep-dbgld3egekts7388loo0` is LIVE at2026-10-28T01:58:41.193909Z from that exact SHA;
+new instance `srv-dbgcsb6c6qcc73f1j6lg-pxk58` was ready01:58:44.587315596Z with
+retained candle batches and inventory/evidence concurrency4. No API/UI deploy.
+
+New-instance-only first two timing windows (30.014+30.364s) recorded65 durable
+checkpoints,39 provider reads without errors,11 batch HTTP calls/82 projected
+markets and26 cached-page consumptions. Next window49 checkpoints/24 cached pages;
+following window7 checkpoints/6 cached pages. Real provider cooldowns remain.
+This verifies cache consumption, NOT a stable wall-clock speed factor. Pre-rollout
+20-window aggregate was620.581s,428 reads/1 provider error,436 checkpoints/641PUTs;
+scopes differ, so do not label the short post-rollout burst a controlled benchmark.
+
+Signed-in same BTC request before rollout:2188 pages/2164 tasks, report321,
+762 markets/2739 observations,56 included dates,48 fully enriched dates.
+Existing hourly request remains the original Oct27,2025..Oct27,2026 request:
+89 completed/included dates and report291 reflect old Oct2025..Jan23,2026 empty
+checks. During this follow-up its saved pages advanced1606 ->1616 ->1624 and
+completed tasks1519 ->1529 ->1537 without reset/recreation. Its newest section
+metadata was not reliably captured: dashboard polling resets expanded pagination;
+do not claim a verified latest-hourly day based on that inspection.
+
+Owner asked whether to cancel/restart. Answer NO: existing request is resumed.
+The prelaunch eligibility filter runs for every unsealed inventory-stage date,
+including old queued jobs. Already sealed manifests/datasets retain original
+membership and proof semantics. Seven certified series are excluded before their
+reviewed bounds; KXTEMPLAH remains unknown. Fresh public metadata lookup still404;
+that is not proof the series never had historical data, so do not guess a launch
+floor or silently remove it from frozen campaigns. LOCALTEMPERATURE filing was
+read again and confirms initial listing March5,2026 for mapped NY/CHI/DC series.
+
+Added one further ACTUAL-PG regression fixture to simulate an existing weather
+request whose old planner already queued all16 inventory scopes. A reconstructed
+worker must finish that same request with only the two unknown-LAH source reads,
+zero reads for seven certified series and seven exclusions in its immutable
+manifest. Local262 tests:176 passed/86 PG skipped; remote execution pending.
+Publish this test+checkpoint on top of5b56bad with lease; inspect the next CI.
+It changes no runtime code, so another worker deploy is unnecessary after green CI.
+
+Next resume: inspect actual remote/checkpoint and new CI; profile pxk58 only, track
+original hourly and BTC counters/reports, preserve all jobs/preferences. Do not ask
+owner to restart. Remaining hourly work: a versioned verified availability/index
+snapshot for the unknown series and cached interval coverage could avoid repeated
+empty-day lookups without guessing across unknown gaps. Preserve old proof versions
+when extending the catalog. Optimize shared batch-object projection I/O next if
+profile still shows PUT/readback dominant. No owner-only step, paid upgrade,
+credentials, schema/grants, networking, production deploy, merge or trading needed.

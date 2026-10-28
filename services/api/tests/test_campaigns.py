@@ -125,6 +125,29 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertEqual(len(calls),18);self.assertEqual(len(set(calls)),18)
         self.assertEqual(self.store.get(identifier)['saved_pages'],18)
 
+    def test_existing_unsealed_request_skips_prelaunch_jobs_without_cancel_or_restart(self):
+        from services.research.inventory import scopes_for_days
+        identifier=self.store.create('weather','2026-01-24','2026-01-24','existing-hourly',now=NOW)
+        with self.db.pool.connection() as c:
+            campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s',(identifier,)).fetchone()
+            day=c.execute('SELECT * FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()
+        parent=self.queue.claim(seconds=600,job_id=campaign['job_id'])
+        # Simulate scopes already queued by the older planner, before bounds.
+        self.worker._jobs(campaign,day,'inventory',scopes_for_days(campaign['config']['series'],['2026-01-24'],campaign['id'].hex),parent)
+        self.queue.yield_job(parent['id'],parent['lease_token'])
+        calls=[]
+        def fetch(scope,cursor,timeout):
+            calls.append((scope.series,scope.source))
+            self.assertEqual(scope.series,'KXTEMPLAH')  # Unknown launch date stays queried.
+            return ProviderPage(dict(markets=[],cursor=''))
+        self.inventory.fetch=fetch;self.worker=self.make_worker();self.drive(identifier)
+        self.assertEqual(self.store.get(identifier)['status'],'succeeded')
+        self.assertEqual(set(calls),{('KXTEMPLAH','recent'),('KXTEMPLAH','historical')})
+        self.assertEqual(len(calls),2);self.assertEqual(self.store.get(identifier)['saved_pages'],2)
+        with self.db.pool.connection() as c:
+            manifest=c.execute('SELECT manifest FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()['manifest']
+        self.assertEqual(len(self.archives.read(manifest)['batch']['exclusions']),7)
+
     def test_batched_recent_candles_publish_full_cohort_and_survive_cache_loss(self):
         import httpx
         from unittest.mock import Mock
