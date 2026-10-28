@@ -298,7 +298,8 @@ class CampaignPostgresTests(unittest.TestCase):
             full=c.execute('SELECT report FROM research_result WHERE id=%s',(final['result_id'],)).fetchone()['report']
             n=c.execute('SELECT count(*) AS n FROM research_observation WHERE result_id=%s',(final['result_id'],)).fetchone()['n']
             old=c.execute('SELECT report FROM research_result WHERE id=%s',(before,)).fetchone()['report']
-        self.assertEqual(full['historical']['cells'],report['historical']['cells'])
+        self.assertEqual(full['historical']['candidate_count'],2)
+        self.assertEqual(full['historical']['observation_count'],10)
         self.assertEqual(n,10);self.assertEqual(old,report)
 
     def test_newest_dates_and_candles_first_preserve_the_complete_cohort_with_caches(self):
