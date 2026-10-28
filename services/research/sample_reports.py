@@ -35,9 +35,11 @@ def sample_snapshot(previews, days, datasets, stream):
                 or item['stream_key'] != stream or item['id'] in seen):
             raise EvidenceConflict('Foreign sampled preview dataset')
         seen.add(item['id'])
+    limits=[d.get('preview_limit',SAMPLE_LIMIT) for d in datasets]
+    if any(n not in (100,300) for n in limits):raise EvidenceConflict('Invalid preview limit')
     revision = max(ids)  # Immutable identity IDs increase when another day is published.
     return dict(ids=sorted(ids), publication=dict(complete=False, sampled_preview=True,
-        sample_limit=SAMPLE_LIMIT, reported_sections=len(previews), total_sections=len(days), revision=revision))
+        sample_limit=max(limits), reported_sections=len(previews), total_sections=len(days), revision=revision))
 
 
 class SampleReports:
@@ -90,8 +92,9 @@ class SampleReports:
                     WHERE campaign_id=%s ORDER BY day''', (identifier,)).fetchall()]
                 previews = campaign['progress'].get('sample_previews', {})
                 ids = list(previews.values()) if isinstance(previews, dict) else []
-                datasets = c.execute('''SELECT id,day,stream_key FROM research_dataset
-                    WHERE id=ANY(%s::bigint[])''', (ids,)).fetchall()
+                datasets = c.execute('''SELECT d.id,d.day,d.stream_key,CASE WHEN (s.summary->>'candidate_count')::integer<=100 THEN 100 ELSE (s.summary->>'candidate_count')::integer END AS preview_limit
+                    FROM research_dataset d JOIN research_summary s ON s.dataset_id=d.id
+                    WHERE d.id=ANY(%s::bigint[])''', (ids,)).fetchall()
                 snapshot = sample_snapshot(previews, days, datasets, stream)
                 if snapshot['publication']['revision'] < job['parameters']['revision']:
                     raise EvidenceConflict('Sampled preview revision regressed')

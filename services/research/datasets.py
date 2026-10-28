@@ -298,11 +298,13 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     preview=None
     if sampled_tickers is not None:
         from .sample import select_preview_candidates
-        sample=select_preview_candidates(candidates)
-        if len(candidates)<=100 or set(sampled_tickers)!={c.ticker for c in sample}:
+        sample_limit=len(sampled_tickers)
+        if sample_limit not in (100,300):raise EvidenceConflict("Invalid sampled preview size")
+        sample=select_preview_candidates(candidates,limit=sample_limit)
+        if len(candidates)<=sample_limit or set(sampled_tickers)!={c.ticker for c in sample}:
             raise EvidenceConflict('Invalid sampled preview membership')
         candidates=sample
-        preview=dict(format='stratified-market-preview-v1',limit=100,
+        preview=dict(format='stratified-market-preview-v1',limit=sample_limit,
                      selected_markets=len(sample),available_markets=len(rebuilt.candidates))
     tickers={c.ticker for c in candidates}
     if len({s.key for s in plan.scopes})!=len(plan.scopes):

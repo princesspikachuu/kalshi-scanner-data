@@ -140,7 +140,7 @@ def run(settings,stop):
             worker=CampaignWorker(pool,archives,
                 InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
                 EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=12,stop=stop,
-                role=settings.role)
+                role=settings.role,preview_limit=300 if settings.role=='collector' else 100)
             from .reuse import VerifiedReads
             worker.inventory_worker.reuse=worker.evidence_worker.reuse=VerifiedReads(pool,archives)
         from .heartbeat import WorkerHeartbeat,DayProgress

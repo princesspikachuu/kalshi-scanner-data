@@ -26,14 +26,14 @@ class PreviewSampleTests(unittest.TestCase):
         self.assertTrue(all(any(c is original for original in full) for c in selected))
         self.assertEqual(len(full), 180)
 
-    def test_extra_strikes_are_unique_and_cap_cannot_exceed_one_hundred(self):
+    def test_extra_strikes_are_unique_and_cap_cannot_exceed_three_hundred(self):
         full = tuple(market('A', f'E{event}', strike) for event in range(4) for strike in range(35))
         selected = select_preview_candidates(full)
         self.assertEqual(len(selected), 100)
         self.assertEqual(len({c.ticker for c in selected}), 100)
         self.assertEqual(len({c.event_ticker for c in selected}), 4)
         self.assertEqual(len(select_preview_candidates(full, limit=2)), 2)
-        for bad in (0, 101, True):
+        for bad in (0, 301, True):
             with self.assertRaises(ValueError):
                 select_preview_candidates(full, limit=bad)
 
@@ -45,3 +45,10 @@ class PreviewSampleTests(unittest.TestCase):
             select_preview_candidates(full + (full[0],))
         with self.assertRaises(ValueError):
             select_preview_candidates((replace(full[0], close_time='2026-10-25T12:00:00'),))
+
+    def test_three_hundred_market_selection_preserves_full_membership(self):
+        full=tuple(market('A',f'E{i}',0) for i in range(450))
+        chosen=select_preview_candidates(full,limit=300)
+        self.assertEqual(len(chosen),300)
+        self.assertEqual(chosen,select_preview_candidates(reversed(full),limit=300))
+        self.assertEqual(len(full),450)
