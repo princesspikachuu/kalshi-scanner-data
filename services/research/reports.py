@@ -3,6 +3,7 @@ from .telemetry import timed,timing,count
 
 from bisect import bisect_right
 from collections import defaultdict
+from .cache import ByteCache
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
@@ -31,6 +32,10 @@ SERIES = {
     'sports':{'KXNBAGAME','KXNFLGAME','KXNHLGAME','KXMLBGAME','KXNCAAFGAME','KXATPMATCH','KXWTAMATCH'},
     'weather_daily':{'KXHIGHNY','KXHIGHCHI','KXHIGHLAX','KXHIGHMIA','KXHIGHAUS','KXHIGHDEN','KXHIGHTEWR'}}
 
+# Immutable per-dataset contributions. The global loss model still receives the
+# union of every entry and path and chooses its representatives across all days.
+_daily_inputs=ByteCache(16*1024*1024)
+
 
 def _price(candle,side,kind):
     quote=candle.get(side+'_'+kind) or {}
@@ -54,6 +59,47 @@ def observations(asset,datasets):
 
 
 def _observations(asset,datasets,*,candidate_filter=None):
+    if candidate_filter is not None:
+        return _raw_observations(asset,datasets,candidate_filter=candidate_filter)
+    rows,paths,origin,missing=[],{},{},[]
+    candidate_count=slots=bar_count=0
+    for dataset in datasets:
+        # Validate the immutable raw payload even on a cache hit. The cache is
+        # only a derived-input accelerator, never a replacement for source proof.
+        decoded=decoded_dataset(dataset)
+        payload=decoded['payload']
+        if payload.get('format')!=FORMAT or digest(payload)!=dataset['fingerprint']:
+            raise EvidenceConflict('Published raw dataset integrity mismatch')
+        key=f"{asset}/{dataset['id']}/{dataset['fingerprint']}"
+        saved=_daily_inputs.get(key)
+        if saved is None:
+            contribution=_raw_observations(asset,[decoded])
+            packed=json.dumps(contribution,separators=(',',':'),allow_nan=False).encode()
+            _daily_inputs.put(key,packed)
+        else:
+            count('report.daily_input_cache_hit',1)
+            contribution=json.loads(saved)
+        daily_rows,daily_paths,daily_origin,daily_coverage=contribution
+        # JSON object keys cannot encode tuple identities; serialize only the
+        # per-dataset rows/paths as lists below when caching.
+        rows.extend(daily_rows)
+        for identity,path in daily_paths:
+            identity=tuple(identity)
+            if identity in paths:raise EvidenceConflict('Select one raw version per market/day; refreshes cannot be pooled')
+            paths[identity]=path
+        for identity,source in daily_origin:
+            origin[tuple(identity)]=source
+        candidate_count+=daily_coverage['candidate_count']
+        slots+=daily_coverage['requested_entry_slots']
+        missing.extend(daily_coverage['missing_entry_slots'])
+        bar_count+=daily_coverage['_path_bars']
+        if bar_count>MAX_PATH_BARS:raise ValueError('Report path limit exceeded; split the range')
+        if slots>250000:raise ValueError('Report entry limit exceeded; split the range')
+    return rows,paths,origin,dict(candidate_count=candidate_count,requested_entry_slots=slots,
+        missing_entry_slots=missing,observation_count=len(rows))
+
+
+def _raw_observations(asset,datasets,*,candidate_filter=None):
     if asset not in MINUTES: raise ValueError('Unsupported research category')
     rows,paths,origin,seen,missing=[],{}, {},set(),[]
     candidate_count=0;bar_count=0
@@ -105,8 +151,10 @@ def _observations(asset,datasets,*,candidate_filter=None):
                     maker_bid=str(bid),won=int(candidate['result']==side),quote_age_seconds=target-times[index],
                     dataset_id=dataset['id'],dataset_fingerprint=dataset['fingerprint'],quote_period_ts=times[index])
                 rows.append(row);origin[(day,ticker,minute)]=dataset['id']
-    return rows,paths,origin,dict(candidate_count=candidate_count,requested_entry_slots=candidate_count*len(MINUTES[asset]),
-        missing_entry_slots=missing,observation_count=len(rows))
+    coverage=dict(candidate_count=candidate_count,requested_entry_slots=candidate_count*len(MINUTES[asset]),
+        missing_entry_slots=missing,observation_count=len(rows),_path_bars=bar_count)
+    if candidate_filter is not None:return rows,paths,origin,{k:v for k,v in coverage.items() if k!='_path_bars'}
+    return (rows,list(paths.items()),list(origin.items()),coverage)
 
 
 def _cells(rows,policies):

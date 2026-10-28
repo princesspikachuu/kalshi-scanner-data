@@ -145,6 +145,7 @@ def plan(scopes, attempts):
 class ProviderPage:
     payload: dict
     availability: str = 'available'
+    origin_receipt: dict | None = None
 
 
 class ProviderDeferred(Exception):
@@ -192,8 +193,12 @@ class InventoryWorker:
         self.queue, self.archives, self.provider, self.budget = queue, archives, provider, budget
         self.cost, self.max_pages, self.clock = endpoint_cost, max_pages, clock
         self.scope_loader, self.page_parser = scope_loader, page_parser
+        self.reuse=None
 
     def archive_page(self,scope,checkpoint,response):
+        if response.origin_receipt is not None:
+            from .projections import archive_reused
+            return archive_reused(scope,checkpoint,response,self.archives)
         return self.archives.upload('kalshi', {'scope': asdict(scope), 'checkpoint': checkpoint, 'response': response.payload}),checkpoint
 
     def step(self, job, *, deadline):
@@ -210,6 +215,7 @@ class InventoryWorker:
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if state.pages >= self.max_pages: raise ProviderFailure('provider_invalid', retry=False)
             cached = getattr(self.provider,'cached',lambda *_:None)(scope,state.next_cursor)
+            if cached is None and self.reuse is not None:cached=self.reuse.lookup(job,scope,state.next_cursor)
             if cached is not None:count('provider.cached_page',1)
             delay = 0 if cached is not None else self.budget.take(self.cost)
             if delay: return {'state': 'throttled', 'retry_after': delay}
@@ -231,6 +237,7 @@ class InventoryWorker:
             receipt,cp = self.archive_page(scope,cp,response)
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             self.queue.checkpoint(job_id, token, page['page_key'], receipt, cp)
+            if self.reuse is not None:self.reuse.remember(job,scope,cp,receipt)
             getattr(self.provider,'acknowledge',lambda *_:None)(scope)
             if next_state.state != 'partial': self.queue.finish(job_id, token)
             return {'state': next_state.state, 'retry_after': 0}

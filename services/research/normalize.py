@@ -113,7 +113,10 @@ def _payload(scope, page, archives):
     cached=cache.get(key) if cache is not None else None
     if cached is not None:
         count('inventory.page_cache_hit',1);return decode(cached)
-    envelope = archives.read(receipt)  # checksum, byte length, bounded gzip/JSON
+    if page['checkpoint'].get('projection',{}).get('format')=='provider-page-reference-v1':
+        from .projections import resolve_inventory
+        envelope=dict(scope=asdict(scope),checkpoint=page['checkpoint'],response=resolve_inventory(scope,page,archives))
+    else:envelope = archives.read(receipt)  # checksum, byte length, bounded gzip/JSON
     if (not isinstance(envelope, dict) or envelope.get('scope') != asdict(scope)
             or envelope.get('checkpoint') != page['checkpoint']):
         raise EvidenceConflict('Archive envelope does not match committed scope/checkpoint')

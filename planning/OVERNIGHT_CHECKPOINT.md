@@ -2130,3 +2130,48 @@ steps absent. Keep existing staging resources/plans/credentials/private networki
 grants/schema, original production app, main and trading untouched. Each milestone
 must save code+checkpoint and inspect CI. Deploy only existing staging worker after
 green validation and inspect actual instance progress before claiming improvement.
+
+### Milestone2: time-local batch packing
+
+Milestone1b3157cd passed CI40619817753 including all87 actual-PG fixtures.
+Milestone2 selects nearby candle windows BEFORE the SQL99-neighbor limit, then
+packs anchor-first in deterministic smallest-union-window/nearest-center order.
+The fairly claimed anchor stays first, all unselected jobs remain queued, and the
+100-market/9000-worst-case-bar safety bounds and exact source windows are unchanged.
+Second agent implemented/reviewed this milestone. Same dense/far fixture executed
+against old/new planners fills23 vs100 markets; this is planner fill, NOT a live
+speed ratio. The221-job PG fixture puts120 far, older distractors before100 nearby
+jobs and proves selection is anchor+99near while220 jobs remain queued. Local271
+API/research tests pass with88PG skipped; remote validation pending. No deployment
+claim yet. Milestone3 exact verified read reuse is next; staged files for it are
+not part of this milestone2 commit. Continue using source pocket-five-speed.
+
+### Five-speed continuation, local validation (pending hosted CI and rollout)
+
+The shared worktree now contains all five ordered changes. Shared immutable batch
+receipts and time-local packing are described above. Milestone3 uses a durable
+exact-path/query registry for completed UTC-day backfills, with independently
+fenced per-campaign checkpoints. Rolling, explicit refresh and current-day work
+always fetch fresh evidence. Milestone4 adds exact series/date weather inventory
+snapshots expiring each UTC day; an empty response never excludes adjacent days.
+Milestone5 caches bounded immutable per-day derived rows and price paths, while
+the loss-policy model still reduces the entire selected cohort globally. Raw
+payload integrity is checked on cache hits and cold/warm report fingerprints
+match the original whole-cohort calculation in tests. No schema or pricing changes.
+
+Local API/research suite: 278 passed/skipped total, 93 actual-PostgreSQL cases
+skipped because no local database; browser gateway suite 34 passed. Do not claim
+hosted speed or deploy until actual-PG CI is green, then roll out the existing
+staging worker and measure archive/read/report counters and memory. Preserve
+existing collections and frozen report versions. The old HTTP 403 smoke behavior
+is unrelated and still needs signed-in browser verification if UI changes.
+
+Publishing gate: local commit 396156c is based on verified PR #9 head b3157cd
+and changes 14 source/test/checkpoint files. GitHub identifies
+princesspikachuu/kalshi-scanner-data as public, with this account's push access;
+the proposed push is a fast-forward to its existing build/google-auth-foundation
+branch. Automatic approval review rejected the push twice, even after verifying
+the PR head and repository visibility, because it requires explicit user approval
+for publishing this code to that public external remote. Do not use an alternate
+push route. Await approval, then push the same commit, inspect actual-PG CI, and
+only deploy the existing staging worker if green. No hosted deployment occurred.

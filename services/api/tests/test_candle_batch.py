@@ -1,5 +1,7 @@
 """Batch reads preserve per-market evidence, bounds and explicit fallback gaps."""
 from dataclasses import replace
+from datetime import datetime,timezone
+import math
 from unittest.mock import Mock
 import unittest
 import httpx
@@ -64,6 +66,25 @@ class CandleBatchTests(unittest.TestCase):
         p=self.provider(lambda _:self.fail('No network during planning'))
         p.plan_batch([self.scopes[0],far]);self.assertFalse(p.batch)
         p.plan_batch([replace(s,source='historical') for s in self.scopes]);self.assertFalse(p.batch)
+
+    def test_anchor_locality_fills_dense_batch_before_far_window_neighbors(self):
+        anchor=self.scopes[0];far=[]
+        for i in range(20):
+            offset=6*3600
+            far.append(replace(anchor,ticker='KXBTC15M-FAR-'+str(i),start_ts=anchor.start_ts+offset,
+                end_ts=anchor.end_ts+offset,close_time=datetime.fromtimestamp(anchor.end_ts+offset,timezone.utc).isoformat().replace('+00:00','Z')))
+        # Old UUID/input ordering admitted far windows first, widening every
+        # later trial and limiting this fixture to 23 markets instead of 100.
+        original=[anchor]+far+self.scopes[1:];before=list(original)
+        p=self.provider(lambda _:self.fail('Planning performs no HTTP request'))
+        p.plan_batch(original)
+        self.assertEqual(len(p.batch),100);self.assertEqual(p.batch[0],anchor)
+        self.assertEqual({s.key for s in p.batch},{s.key for s in self.scopes})
+        span=max(s.end_ts for s in p.batch)-min(s.start_ts for s in p.batch)
+        self.assertLessEqual(len(p.batch)*(math.ceil(span/60)+1),9000)
+        self.assertEqual(original,before)  # Unselected work remains available.
+        selected={s.key for s in p.batch};p.plan_batch([s for s in original if s.key not in selected])
+        self.assertEqual({s.key for s in p.batch},{s.key for s in far})
     def test_rejected_batch_falls_back_to_existing_per_market_route(self):
         for status in (400,404,422):
             calls=[];scope=self.scopes[0]

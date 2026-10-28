@@ -84,6 +84,26 @@ class ReportTests(unittest.TestCase):
         self.assertFalse(p['execution_included'])
         self.assertTrue(p['latest_membership_known'])
 
+    def test_daily_contributions_are_reused_without_changing_global_cohorts(self):
+        import services.research.reports as model
+        from services.research.cache import ByteCache
+        selected=[dataset(i,day=i,won=i%2==0) for i in range(1,8)]
+        with patch.object(model,'_daily_inputs',ByteCache(16*1024*1024)) as cache:
+            cold=prepare_report('btc',selected,latest_ids=[6,7])
+            def original_inputs(asset,inputs,*,candidate_filter=None):
+                rows,paths,origin,coverage=model._raw_observations(asset,inputs,candidate_filter=candidate_filter)
+                return rows,dict(paths),dict(origin),{k:v for k,v in coverage.items() if k!='_path_bars'}
+            with patch.object(model,'_observations',side_effect=original_inputs):
+                self.assertEqual(cold,prepare_report('btc',selected,latest_ids=[6,7]))
+            self.assertEqual(len(cache),7)
+            warm=prepare_report('btc',selected,latest_ids=[6,7])
+            self.assertEqual(cold,warm)
+            self.assertEqual(len(cache),7)
+            self.assertEqual(json.loads(warm.payload_json)['historical']['candidate_count'],7)
+            corrupt=deepcopy(selected[0]);corrupt['payload']['candidates'][0]['result']='yes'
+            with self.assertRaises(EvidenceConflict):
+                prepare_report('btc',[corrupt]+selected[1:],latest_ids=[6,7])
+
     def test_unknown_latest_membership_cannot_invent_latest_rows_or_roi(self):
         p=self.report([dataset()],latest=None)
         self.assertFalse(p['latest_membership_known'])

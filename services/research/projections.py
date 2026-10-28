@@ -11,6 +11,44 @@ from .inventory import digest
 from .queue import EvidenceConflict
 
 BATCH='candle-batch-projection-v1'
+READ='provider-page-reference-v1'
+
+
+def reusable_payload(scope,cursor,receipt,archives):
+    from .inventory import Scope,inventory_page
+    from .evidence import EvidenceScope,evidence_page
+    envelope=archives.read(receipt)
+    if not isinstance(envelope,dict) or receipt.get('provider')!='kalshi':raise EvidenceConflict('Invalid reused envelope')
+    original=(EvidenceScope if isinstance(scope,EvidenceScope) else Scope)(**envelope['scope'])
+    cp=envelope['checkpoint'];payload=envelope['response']
+    if (cp.get('scope')!=original.key or cp.get('availability')!='available'
+            or original.request(cp['cursor_in'])!=scope.request(cursor)):
+        raise EvidenceConflict('Reused page request mismatch')
+    parser=evidence_page if isinstance(scope,EvidenceScope) else inventory_page
+    rows,after=parser(scope,payload,'available')
+    if type(cp.get('items')) is not int or cp['items']!=len(rows) or cp.get('cursor_out')!=after:
+        raise EvidenceConflict('Reused source checkpoint mismatch')
+    marker=dict(format=READ,request_sha256=digest(scope.request(cursor)),source_checkpoint_sha256=digest(cp))
+    return payload,marker,rows
+
+
+def archive_reused(scope,checkpoint,response,archives):
+    payload,marker,rows=reusable_payload(scope,checkpoint['cursor_in'],response.origin_receipt,archives)
+    if payload!=response.payload or response.availability!='available' or checkpoint['items']!=len(rows):
+        raise EvidenceConflict('Reusable response mismatch')
+    return response.origin_receipt,{**checkpoint,'projection':marker}
+
+
+def resolve_inventory(scope,page,archives):
+    from .inventory import inventory_page
+    cp=page['checkpoint'];receipt=page['receipt']
+    if cp.get('projection',{}).get('format')!=READ:raise EvidenceConflict('Wrong inventory projection')
+    payload,marker,rows=reusable_payload(scope,cp['cursor_in'],receipt,archives)
+    if cp['projection']!=marker or cp.get('scope')!=scope.key or cp.get('availability')!='available':
+        raise EvidenceConflict('Inventory reference checkpoint mismatch')
+    _,cursor=inventory_page(scope,payload,'available')
+    if cp['items']!=len(rows) or cp['cursor_out']!=cursor:raise EvidenceConflict('Inventory reference counts mismatch')
+    return payload
 
 
 def _entry(scope,receipt,archives):
@@ -73,6 +111,7 @@ def _entry(scope,receipt,archives):
 def archive_evidence(scope,checkpoint,response,archives):
     receipt=response.payload.get('batch_receipt')
     if receipt is None:
+        if response.origin_receipt is not None:return archive_reused(scope,checkpoint,response,archives)
         return archives.upload('kalshi',dict(scope=asdict(scope),checkpoint=checkpoint,response=response.payload)),checkpoint
     payload,marker,_=_entry(scope,receipt,archives)
     if response.availability!='available' or {**payload,'batch_receipt':receipt}!=response.payload:
@@ -97,9 +136,14 @@ def resolve_evidence(scope,page,archives):
     if receipt['object_key']!=page['object_key'] or receipt['provider']!='kalshi':
         raise EvidenceConflict('Wrong evidence reference')
     if 'projection' in cp:
-        payload,marker,selectors=_entry(scope,receipt,archives)
+        if cp['projection'].get('format')==READ:
+            payload,marker,_=reusable_payload(scope,cp['cursor_in'],receipt,archives)
+            if cp.get('scope')!=scope.key or cp['availability']!='available':raise EvidenceConflict('Reused scope mismatch')
+            selectors=[dict(format=READ,row_index=i) for i in range(cp['items'])]
+        else:
+            payload,marker,selectors=_entry(scope,receipt,archives)
+            _check_checkpoint(scope,cp,payload)
         if cp['projection']!=marker:raise EvidenceConflict('Projection selector mismatch')
-        _check_checkpoint(scope,cp,payload)
     else:
         envelope=archives.read(receipt)
         if envelope.get('scope')!=asdict(scope) or envelope.get('checkpoint')!=cp:

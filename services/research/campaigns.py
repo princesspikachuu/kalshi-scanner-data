@@ -341,7 +341,12 @@ class CampaignWorker:
                     AND j.parameters->'scope'->>'resource'='candles'
                     AND j.parameters->'scope'->>'source'='recent'
                     AND coalesce((j.progress->>'completed_pages')::integer,0)=0
-                    ORDER BY j.available_at,j.id LIMIT 99''',args).fetchall()
+                    ORDER BY GREATEST((j.parameters->'scope'->>'end_ts')::bigint,%s::bigint)
+                            -LEAST((j.parameters->'scope'->>'start_ts')::bigint,%s::bigint),
+                        abs((j.parameters->'scope'->>'start_ts')::bigint+(j.parameters->'scope'->>'end_ts')::bigint-%s::bigint),
+                        j.available_at,j.id LIMIT 99''',(*args,job['parameters']['scope']['end_ts'],
+                        job['parameters']['scope']['start_ts'],
+                        job['parameters']['scope']['start_ts']+job['parameters']['scope']['end_ts'])).fetchall()
             worker.prepare_batch([job]+nearby)
         jobs=[job]
         # Batch-capable recent candles use the single HTTP path above. Other

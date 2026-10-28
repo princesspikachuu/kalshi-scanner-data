@@ -222,8 +222,19 @@ class KalshiEvidence(KalshiInventory):
 
     def plan_batch(self,scopes):
         if self.archives is None:return
+        scopes=list(scopes)
         if scopes and self.cached(scopes[0],'') is not None:
             self.batch=();return
+        if scopes:
+            anchor=scopes[0]
+            # Keep the fairly claimed job first, then favor the smallest union
+            # window with that anchor. A far-away UUID neighbor must not widen
+            # the request before closer markets get a chance to fit.
+            def locality(scope):
+                return (max(anchor.end_ts,scope.end_ts)-min(anchor.start_ts,scope.start_ts),
+                        abs(anchor.start_ts+anchor.end_ts-scope.start_ts-scope.end_ts),
+                        scope.start_ts,scope.end_ts,scope.ticker,scope.key)
+            scopes=[anchor]+sorted(scopes[1:],key=locality)
         chosen=[];tickers=set()
         for scope in scopes:
             if (scope.resource,scope.source)!=('candles','recent') or scope.key in self.single_only:continue
