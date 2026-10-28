@@ -2175,3 +2175,29 @@ the PR head and repository visibility, because it requires explicit user approva
 for publishing this code to that public external remote. Do not use an alternate
 push route. Await approval, then push the same commit, inspect actual-PG CI, and
 only deploy the existing staging worker if green. No hosted deployment occurred.
+
+### October 27 Pacific — five-speed hosted rollout
+
+User explicitly approved publishing to the public PR branch. GitHub connector
+published the exact local source tree as 8881ac4, then corrected two PostgreSQL
+test fixture assumptions in abdf1c6 and a06b398. Workflow 40621333239 passed:
+278 API/research tests including actual PostgreSQL, 34 JS tests, owner policy and
+Blueprint checks. Earlier failed workflow runs were fixture failures; no worker
+deployment occurred from them. Existing staging research worker alone deployed
+a06b398 as dep-dbglt0h42hec73df9i80, LIVE 02:32:24 UTC. API, gateway, plans,
+credentials, production and trading were unchanged. Collection remains enabled.
+
+New instance qchft started with 5 public reads/sec, burst 5 and concurrency 4.
+After old instance pxk58 exited, two 30-second windows at 02:34:29 and 02:34:59
+UTC recorded 53+40 durable checkpoints with 29+12 archive uploads, respectively.
+The second window recorded 133 projected markets across 8 batch HTTP requests.
+No error-level logs appeared in the checked post-handoff interval. New instance
+memory was about 138 MB of 537 MB limit at 02:35:20 UTC. This confirms fewer
+archive writes per checkpoint in active work, not a controlled end-to-end speed
+ratio; seven-day/five-minute completion is still unverified. Continue monitoring
+provider backoff, database recovery, report cache hits and campaign completion.
+
+Separate third-agent worktree pocket-strategy-foundation saved local commit
+53b828a with draft-only immutable strategy versions and tests. It is not pushed,
+deployed or merged. It adds migration 0010 and requires coordinated database
+grants and actual-PG CI before integration. No trading execution is present.
