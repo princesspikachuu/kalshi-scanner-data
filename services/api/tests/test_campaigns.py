@@ -644,7 +644,14 @@ class CampaignPostgresTests(unittest.TestCase):
         newer=self.create(key='price-pending-newer')
         claimed=self.worker._claim_parent()
         self.assertEqual(claimed['parameters']['campaign_id'],newer)
-        self.queue.yield_job(claimed['id'],claimed['lease_token'])
+        self.queue.yield_job(claimed['id'],claimed['lease_token'],60)
+        # The earlier collection has all prices and can begin slow trade
+        # packaging. A brief price retry must NOT make that work eligible.
+        self.assertIsNone(self.worker._claim_parent())
+        self.queue.cancel(claimed['id'])
+        enrichment=self.worker._claim_parent()
+        self.assertEqual(enrichment['parameters']['campaign_id'],older)
+        self.queue.yield_job(enrichment['id'],enrichment['lease_token'])
 
 
     def test_day_status_reports_real_saved_days_and_is_paced(self):

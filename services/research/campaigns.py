@@ -573,24 +573,24 @@ class CampaignWorker:
         return True
 
     def _claim_parent(self):
-        # Prefer collections still missing full-cohort price dates. Exhaustive
-        # trade enrichment cannot monopolize the queue after its price dates
-        # are published. Keep oldest-first order within each lane.
+        # A rate-limit wait on price work must not open a lane for a minutes-long
+        # trade assembly. Publish every requested price date before enrichment.
         with self.pool.connection() as c:
-            row=c.execute('''WITH oldest AS (
-                SELECT j.id,j.status,j.available_at,j.lease_expires_at
+            row=c.execute('''WITH candidates AS MATERIALIZED (
+                SELECT j.id,j.status,j.available_at,j.lease_expires_at,r.created_at,r.id AS campaign_id,
+                    coalesce((j.progress->>'last_price_day_at')::timestamptz,r.created_at) AS turn_at,
+                    EXISTS(SELECT 1 FROM research_campaign_day d
+                        WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
+                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)) AS price_pending
                 FROM research_job j JOIN research_campaign r ON r.job_id=j.id
                 WHERE j.parameters->>'collector'='campaign-v1' AND j.attempts<j.max_attempts
-                    AND ((j.status='queued' AND j.available_at<=clock_timestamp()) OR
-                         (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
-                ORDER BY CASE WHEN EXISTS(SELECT 1 FROM research_campaign_day d
-                    WHERE d.campaign_id=r.id AND d.dataset_id IS NULL
-                    AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text))
-                    THEN 0 ELSE 1 END,
-                    coalesce((j.progress->>'last_price_day_at')::timestamptz,r.created_at),r.created_at,r.id LIMIT 1)
-                SELECT id FROM oldest WHERE
-                    (status='queued' AND available_at<=clock_timestamp()) OR
-                    (status='running' AND lease_expires_at<=clock_timestamp())''').fetchone()
+                    AND j.status IN ('queued','running')
+                    AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false))
+                SELECT id FROM candidates
+                WHERE ((status='queued' AND available_at<=clock_timestamp()) OR
+                       (status='running' AND lease_expires_at<=clock_timestamp()))
+                    AND (price_pending OR NOT EXISTS(SELECT 1 FROM candidates WHERE price_pending))
+                ORDER BY CASE WHEN price_pending THEN 0 ELSE 1 END,turn_at,created_at,campaign_id LIMIT 1''').fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
     def run_once(self,*,deadline):
