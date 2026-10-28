@@ -249,6 +249,7 @@ class InventoryWorker:
         except ProviderDeferred:
             return {'state':'partial','retry_after':0}
         except ProviderFailure as error:
+            count('provider.failure.'+error.code,1)
             if error.code in ('provider_rate_limit', 'provider_unavailable'): self.budget.defer(error.cooldown)
             self.queue.fail(job_id, token, error.code, retry=error.retry, delay_seconds=error.delay)
             return {'state': 'failed', 'retry_after': error.delay if error.retry else 0}

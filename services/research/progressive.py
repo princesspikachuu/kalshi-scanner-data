@@ -37,7 +37,7 @@ class ProgressiveReports:
                 # its frozen membership. The stream lock/revision fence seals
                 # at most one identical result and prevents older regressions.
                 c.execute("""INSERT INTO research_job(id,idempotency_key,asset,parameters,max_attempts)
-                    SELECT %s,'checkpoint-repair-v1/'||idempotency_key,asset,parameters,5
+                    SELECT %s,'source-projection-repair-v1/'||idempotency_key,asset,parameters,5
                     FROM research_job WHERE idempotency_key LIKE %s
                     AND status IN ('running','failed')
                     AND parameters->>'revision'=(SELECT max((parameters->>'revision')::integer)::text

@@ -370,7 +370,7 @@ class CampaignPostgresTests(unittest.TestCase):
         self.assertTrue(previews.run_once())
         self.assertEqual(self.queue.get(stranded['id'])['lease_token'],stranded['lease_token'])
         with self.db.pool.connection() as c:
-            repaired=c.execute("SELECT status FROM research_job WHERE idempotency_key LIKE 'checkpoint-repair-v1/%'").fetchall()
+            repaired=c.execute("SELECT status FROM research_job WHERE idempotency_key LIKE 'source-projection-repair-v1/%'").fetchall()
         self.assertEqual(repaired,[{'status':'succeeded'}])
         previews.bootstrap()
         self.assertFalse(previews.run_once())
