@@ -31,15 +31,24 @@ class ReadBudget:
         if type(cost) is not int or cost < 1:
             raise ValueError('Invalid endpoint token cost')
         with self.pool.connection() as c:
-            row = c.execute('SELECT * FROM research_read_budget WHERE name=%s FOR UPDATE', (self.name,)).fetchone()
-            if row is None or cost > row['capacity']:
-                raise ValueError('Read budget missing or endpoint cost exceeds capacity')
-            now = c.execute('SELECT clock_timestamp() AS t').fetchone()['t']
-            tokens = min(row['capacity'], row['tokens'] + max(0, (now-row['updated_at']).total_seconds()) * row['refill_per_second'])
-            wait = max(0, (row['blocked_until']-now).total_seconds(), (cost-tokens)/row['refill_per_second'])
-            c.execute('UPDATE research_read_budget SET tokens=%s,updated_at=%s WHERE name=%s',
-                      (tokens if wait > 0 else tokens-cost, now, self.name))
-            return math.ceil(wait)
+            # Lock before taking the timestamp, then refill/reserve atomically
+            # in one database statement. Shared pacing and cooldown are intact.
+            row=c.execute('''WITH locked AS MATERIALIZED (
+                SELECT * FROM research_read_budget WHERE name=%s FOR UPDATE),
+                clocked AS MATERIALIZED (
+                    SELECT locked.*,clock_timestamp() AS now FROM locked WHERE capacity>=%s),
+                refilled AS MATERIALIZED (
+                    SELECT clocked.*,LEAST(capacity,tokens+
+                        GREATEST(0,extract(epoch FROM(now-updated_at)))*refill_per_second) AS filled FROM clocked),
+                ready AS MATERIALIZED (
+                    SELECT refilled.*,GREATEST(0,extract(epoch FROM(blocked_until-now)),
+                        (%s-filled)/refill_per_second) AS wait FROM refilled)
+                UPDATE research_read_budget b SET
+                    tokens=CASE WHEN ready.wait>0 THEN ready.filled ELSE ready.filled-%s END,
+                    updated_at=ready.now FROM ready WHERE b.name=ready.name
+                RETURNING ceil(ready.wait)::bigint AS seconds''',(self.name,cost,cost,cost)).fetchone()
+            if row is None:raise ValueError('Read budget missing or endpoint cost exceeds capacity')
+            return row['seconds']
 
     def defer(self, seconds):
         if type(seconds) is not int or not 1 <= seconds <= 2**40:
