@@ -189,6 +189,16 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         raise ValueError('Portfolio closeout incomplete')
     if free-starting_cash_cents!=realized_pnl_cents:
         raise ValueError('Portfolio P/L does not reconcile with cash')
+    for s in diagnostics:
+        # A conditional win rate must not be compared to an unconditional grid
+        # win rate. These numbers refer to the SAME bid placement cohort.
+        qualified=s['qualified_contracts'];filled=s['filled_contracts']
+        s['qualified_win_rate_percent']=(round(100*s['qualified_wins']/qualified,4) if qualified else None)
+        s['filled_win_rate_percent']=(round(100*s['filled_winners']/filled,4) if filled else None)
+        s['qualified_all_fill_roi_percent']=(round(100*s['all_qualified_filled_pnl_cents']/s['all_qualified_stake_cents'],4)
+            if s['all_qualified_stake_cents'] else None)
+        s['filled_hold_roi_percent']=(round(100*s['filled_hold_pnl_cents']/s['filled_stake_cents'],4)
+            if s['filled_stake_cents'] else None)
     audit=dict(basis='Ask-price and entry-window-qualified paper orders; not the bid-based research grid.',
         qualified_orders=sum(x['qualified_orders'] for x in diagnostics),
         qualified_contracts=sum(x['qualified_contracts'] for x in diagnostics),

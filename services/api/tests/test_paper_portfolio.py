@@ -74,24 +74,30 @@ class PortfolioTests(unittest.TestCase):
         r=self.run_replay([source(trades=[trade(BASE+300,volume=10)])])
         self.assertEqual(r['filled_contracts'],0);self.assertEqual(r['ending_cash_cents'],10000)
 
-    def test_audit_separates_bid_grid_from_ask_qualified_fills(self):
+    def test_profitable_qualified_orders_can_lose_on_adverse_fill_selection(self):
         selected=strategy(min_price=90,max_price=99)
-        # This winner belongs to a low-bid research square (80-89c), but
-        # qualifies for the 90-99c ASK rule; no fill evidence for this winner.
-        winner=source(ticker='winner',event='winner-event',bars=[candle(BASE,bid=80,ask=90)],trades=[])
+        # All ten ask-qualified orders would net +50c if filled. But only
+        # the losing order has opposing taker volume supporting a maker fill.
+        sources=[source(ticker=f'winner-{i}',event=f'winner-event-{i}',
+            bars=[candle(BASE,bid=80,ask=90)],trades=[]) for i in range(9)]
         loser_asset,loser_payload,loser_records=source(ticker='loser',event='loser-event',
             bars=[candle(BASE,bid=80,ask=90)],trades=[trade(BASE+3,volume=5)])
         loser_payload['candidates'][0]['result']='no'
-        r=self.run_replay([winner,(loser_asset,loser_payload,loser_records)],[selected])
+        sources.append((loser_asset,loser_payload,loser_records))
+        r=self.run_replay(sources,[selected])
         audit=r['reconciliation']
-        self.assertEqual(audit['qualified_orders'],2)
-        self.assertEqual(audit['qualified_contracts'],10)
+        self.assertEqual(audit['qualified_orders'],10)
+        self.assertEqual(audit['qualified_contracts'],50)
         self.assertEqual(audit['filled_contracts'],5)
         self.assertEqual(audit['filled_winners'],0)
-        self.assertEqual(audit['all_qualified_filled_pnl_cents'],-390)
+        self.assertEqual(audit['all_qualified_filled_pnl_cents'],50)
         self.assertEqual(audit['filled_hold_pnl_cents'],-445)
-        self.assertEqual(audit['reconciled_realized_pnl_cents'],r['profit_loss_cents'])
+        self.assertEqual(audit['reconciled_realized_pnl_cents'],-445)
         self.assertEqual(audit['loss_prevention_delta_cents'],0)
+        self.assertEqual(audit['strategies'][0]['qualified_win_rate_percent'],90)
+        self.assertEqual(audit['strategies'][0]['filled_win_rate_percent'],0)
+        self.assertGreater(audit['strategies'][0]['qualified_all_fill_roi_percent'],0)
+        self.assertLess(audit['strategies'][0]['filled_hold_roi_percent'],0)
 
     def test_loss_prevention_audit_reconciles_exit_against_holding(self):
         r=self.run_replay([source(bars=[candle(BASE),candle(BASE+60,50,60)],

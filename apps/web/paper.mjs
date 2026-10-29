@@ -1,6 +1,6 @@
 import {paperCall} from './paper-client.mjs';
 import {appendActivity} from './paper-activity.mjs';
-const setupCache=new Map(),openSetups=new Set();
+const setupCache=new Map(),openSetups=new Set(),openAudits=new Set();
 const $=id=>document.getElementById(id);let workspace,busy=false,requestKey=null,pendingCancel=null;
 function requestCancel(run){
  pendingCancel=run.id;
@@ -38,6 +38,8 @@ async function load(){try{
   const audit=r.reconciliation;
   const review=document.createElement('details'),heading=document.createElement('summary');
   heading.textContent='Why did this replay gain or lose money?';
+  review.addEventListener('toggle',()=>{if(review.open)openAudits.add(run.id);else openAudits.delete(run.id)});
+  if(openAudits.has(run.id))review.open=true;
   review.append(heading);
   const intro=document.createElement('p');intro.textContent='Exact ask-qualified replay orders, not the bid-qualified research table. Hypothetical all-filled outcomes assume every qualifying order filled and are NOT actual performance.';
   review.append(intro);
@@ -45,7 +47,8 @@ async function load(){try{
   overview.textContent=`Qualifying bids: ${audit.qualified_orders}; qualifying contracts: ${audit.qualified_contracts}; filled contracts: ${audit.filled_contracts}; filled winners: ${audit.filled_winners}; hypothetical P/L if every qualifying bid filled: ${money(audit.all_qualified_filled_pnl_cents)}; hold-to-settlement P/L of actual estimated fills: ${money(audit.filled_hold_pnl_cents)}; early-sale effect: ${money(audit.loss_prevention_delta_cents)}; realized replay P/L: ${money(audit.reconciled_realized_pnl_cents)}.`;
   review.append(overview);
   for(const s of audit.strategies){
-   const line=document.createElement('p');line.textContent=`${s.name} (${s.asset}, ASK ${s.ask_band_cents[0]}–${s.ask_band_cents[1]}¢): bid-based reference grid ${s.reference_bid_grid_roi_percent??'N/A'}% (DIFFERENT cohort); qualifying bids ${s.qualified_orders}; filled ${s.filled_contracts}/${s.qualified_contracts} contracts; filled wins ${s.filled_winners}; hypothetical all-qualified P/L ${money(s.all_qualified_filled_pnl_cents)}; filled hold P/L ${money(s.filled_hold_pnl_cents)}.`;
+   const pct=v=>v==null?'N/A':v.toFixed(2)+'%';
+   const line=document.createElement('p');line.textContent=`${s.name} (${s.asset}, ASK ${s.ask_band_cents[0]}–${s.ask_band_cents[1]}¢): bid-based reference grid ${pct(s.reference_bid_grid_roi_percent)} (DIFFERENT cohort); qualified ${s.qualified_orders} bids / ${s.qualified_contracts} contracts, win rate ${pct(s.qualified_win_rate_percent)}, hypothetical all-filled ROI ${pct(s.qualified_all_fill_roi_percent)}; filled ${s.filled_contracts} contracts, winners ${s.filled_winners}, conditional win rate ${pct(s.filled_win_rate_percent)}, hold ROI ${pct(s.filled_hold_roi_percent)}; hypothetical all-qualified P/L ${money(s.all_qualified_filled_pnl_cents)}; filled hold P/L ${money(s.filled_hold_pnl_cents)}.`;
    review.append(line);
   }
   card.append(review);
