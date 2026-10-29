@@ -104,6 +104,7 @@ function drawReport(){
   $('cellDetail').replaceChildren(heading,...lines.map(text=>{const p=doc.createElement('p');p.textContent=text;return p}));
   $('cellDetail').hidden=false;$('cellDetail').focus({preventScroll:true});
  });
+ if(choosingBet)for(const button of $('table').querySelectorAll('.heat')){const row=button.closest('tr'),minute=Number(row?.querySelector('th')?.textContent?.split(' ')[0]),column=button.closest('td')?.cellIndex,band=report.price_bands[column-1];const chosen=betSelections.has(betKey(minute,band));button.setAttribute('aria-pressed',String(chosen));button.setAttribute('aria-label',`${minute} minutes, ${band} cents, ${chosen?'selected':'not selected'}`)}
 }
 async function loadReport(campaign,version){
  const sampled=campaign.sample_result_id&&campaign.sample_reported_sections>campaign.reported_sections;
