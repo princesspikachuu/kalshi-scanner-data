@@ -60,6 +60,17 @@ class PortfolioTests(unittest.TestCase):
             replay_source(dict(asset=asset,payload={**compressed,'sha256':'0'*64},
                 fingerprint=fp),None)
 
+    def test_large_disk_spool_accepts_more_than_250000_records(self):
+        asset,payload,_=source()
+        def records():
+            for _ in range(250010):
+                yield dict(ticker='unselected',resource='candles',record={})
+        updates=[]
+        result=replay_portfolio([(asset,payload,records())],[strategy()],10000,on_progress=updates.append)
+        marker=next(x for x in updates if x.get('phase')=='replaying saved markets')
+        self.assertEqual(marker['records_loaded'],250010)
+        self.assertEqual(result['profit_loss_cents'],0)
+
     def test_progress_reports_actual_timeline_denominator(self):
         updates=[]
         r=replay_portfolio([source(bars=[candle(BASE),candle(BASE+60)],
