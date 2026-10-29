@@ -37,6 +37,7 @@ def select_windows(rows):
     events=defaultdict(list)
     seen=set()
     for index,row in enumerate(rows):
+        if index%512==0:report_jobs.check_priority()
         if index>=MAX_WINDOWS:raise ValueError('Category window limit exceeded; partition explicitly')
         identifier=row['dataset_id'];start,end=_closed(row['start_at']),_closed(row['end_at'])
         if type(identifier) is not int or identifier<1 or start>=end:raise ValueError('Invalid category coverage')
@@ -45,6 +46,7 @@ def select_windows(rows):
         seen.add(key);events[start].append((identifier,1));events[end].append((identifier,-1))
     points=sorted(events);active=defaultdict(int);heap=[];result=[]
     for index,left in enumerate(points[:-1]):
+        if index%512==0:report_jobs.check_priority()
         for identifier,change in events[left]:
             active[identifier]+=change
             if change>0:heapq.heappush(heap,-identifier)
@@ -73,6 +75,7 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
     expected=set(by_dataset);loaded=set()
     def checked():
         for d in datasets:
+            report_jobs.check_priority()
             if d['id'] not in expected:raise EvidenceConflict('Unexpected category input')
             loaded.add(d['id']);yield d
         if loaded!=expected:raise EvidenceConflict('Missing category input')
@@ -82,6 +85,7 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
         owners={}
         with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as saved:
             for d in checked():
+                report_jobs.check_priority()
                 for candidate in report_dataset(d)['payload']['candidates']:
                     if include(d['id'],candidate):
                         key=(candidate['close_time'][:10],candidate['ticker'])

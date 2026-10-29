@@ -220,3 +220,21 @@ class SplitRuntimeTests(unittest.TestCase):
         self.assertEqual([c.kwargs['args'][0].role for c in context.Process.call_args_list],['collector','processor'])
         for child in children:child.start.assert_called_once();self.assertTrue(child.join.called)
         context.Event.return_value.set.assert_called_once()
+
+
+class BackgroundPreemptionTests(unittest.TestCase):
+    def test_background_work_yields_when_primary_job_is_entered(self):
+        from services.research.report_jobs import background_guard,check_priority
+        from services.research.datasets import CollectionInterrupted
+        checks=iter([False,True])
+        with patch('services.research.report_jobs.monotonic',side_effect=[1.0,1.5]):
+            with self.assertRaises(CollectionInterrupted):
+                with background_guard(lambda:next(checks)):
+                    check_priority()
+        # Preemption state must never leak into the next collection/paper job.
+        check_priority()
+
+    def test_idle_background_does_not_raise(self):
+        from services.research.report_jobs import background_guard,check_priority
+        with background_guard(lambda:False):
+            check_priority()
