@@ -4,7 +4,7 @@ const ROUTES=new Map([
  ['/api/auth/google','POST'],['/api/auth/logout','POST']
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
-const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/bet-overlay.mjs');
+const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -81,12 +81,13 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const campaignGet=new RegExp('^/api/collection/campaigns/'+uuid+'$').test(url.pathname);
  const workerStatus=url.pathname==='/api/collection/status';
  const analysisStatus=url.pathname==='/api/collection/analysis';
- const paper=/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname);
+ const paperDetail=new RegExp('^/api/paper/replays/'+uuid+'$').test(url.pathname);
+ const paper=/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
  const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?(url.pathname.endsWith('/workspace')?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail)?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
  if(collection){

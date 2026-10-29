@@ -216,3 +216,18 @@ test('paper transport retains owner session and CSRF without permitting a live r
  globalThis.fetch=async()=>Response.json({contract:'paper-v1',live_trading_enabled:true});await assert.rejects(paperCall('workspace'),/unavailable/);
  }finally{Object.assign(globalThis,previous)}
 });
+
+test('paper activity identifies work, orders and stale worker ownership',async()=>{
+ const {replayState,orderLine}=await import('../apps/web/paper-activity.mjs');
+ assert.match(replayState({status:'queued'}),/waiting/);
+ assert.match(replayState({status:'running',lease_active:false}),/Interrupted/);
+ assert.equal(replayState({status:'running',lease_active:true,activity:{phase:'loading saved evidence'}}),'loading saved evidence');
+ const line=orderLine({order_id:'paper-3',ticker:'GAME-A',side:'yes',kind:'fill',contracts:2,bid_cents:83,remaining:3});
+ for(const text of ['paper-3','GAME-A','YES','83¢','2 contracts','3 unfilled'])assert.ok(line.includes(text));
+});
+
+test('canceled paper replay does not display stale pending orders as open',async()=>{
+ const {appendActivity}=await import('../apps/web/paper-activity.mjs');const {doc}=documentFixture(),card=doc.createElement('article');
+ appendActivity(card,{id:'run',status:'cancelled',activity:{open_orders:[{order_id:'paper-1',ticker:'A',side:'yes',remaining:1,contracts:1,bid_cents:80,expires:1}]}},doc);
+ assert.match(card.textContent,/Canceled/);assert.doesNotMatch(card.textContent,/Open simulated orders/);
+});

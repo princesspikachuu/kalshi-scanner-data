@@ -237,3 +237,15 @@ test('analysis and paper routes retain origin, method and paper-only boundaries'
  assert.equal((await proxyAuth(request('/api/paper/strategies'),env,{fetcher:mustNotFetch})).status,405);
  assert.equal((await proxyAuth(request('/api/paper/replays',{method:'POST',headers:{origin:'https://evil.test','content-type':'application/json'},body:'{}'}),env,{fetcher:mustNotFetch})).status,403);
 });
+
+test('paper replay setup and cancellation use exact owner API routes',async()=>{
+ const id='11111111-1111-4111-8111-111111111111',path='/api/paper/replays/'+id;
+ let sent;
+ const fetcher=async(url,options)=>{sent={url,...options};return json({contract:'paper-v1',live_trading_enabled:false,id,status:'cancelled'})};
+ assert.equal((await proxyAuth(request(path),env,{fetcher})).status,200);
+ assert.equal(sent.url,'https://api.test/paper/replays/'+id);
+ assert.equal((await proxyAuth(request(path+'/cancel',{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json','x-csrf-token':csrf},body:'{}'}),env,{fetcher})).status,200);
+ assert.equal(sent.method,'POST');assert.equal(sent.url,'https://api.test/paper/replays/'+id+'/cancel');
+ assert.equal((await proxyAuth(request(path+'/cancel'),env,{fetcher:()=>assert.fail('must not fetch')})).status,405);
+ assert.equal((await proxyAuth(request(path+'/cancel',{method:'POST',headers:{origin:'https://evil.test','content-type':'application/json'},body:'{}'}),env,{fetcher:()=>assert.fail('must not fetch')})).status,403);
+});

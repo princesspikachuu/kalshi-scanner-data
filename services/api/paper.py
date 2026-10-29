@@ -34,6 +34,7 @@ class ReplayBody(BaseModel):
     starting_cash_cents:int=Field(default=10000,strict=True,ge=100,le=100000000)
     fill_model:Literal['estimated','conservative']='estimated'
     request_key:UUID
+    name:str=Field(default='',max_length=80)
 
 
 def install_paper(app,auth,mutate,pool):
@@ -44,7 +45,7 @@ def install_paper(app,auth,mutate,pool):
         auth(request);no_query(request)
         with pool.connection() as c:
             strategies=c.execute("SELECT id::text,asset,parameters->'strategy' AS strategy FROM research_job WHERE idempotency_key>='paper-strategy/' AND idempotency_key<'paper-strategy/zzzz' ORDER BY created_at DESC LIMIT 50").fetchall()
-            runs=c.execute("SELECT id::text,asset,status,error_code,parameters->>'dataset_id' AS dataset_id,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz' ORDER BY created_at DESC LIMIT 20").fetchall()
+            runs=c.execute("SELECT id::text,parameters->>'name' AS name,asset,status,error_code,created_at,started_at,finished_at,coalesce(lease_expires_at>clock_timestamp(),false) AS lease_active,CASE WHEN status IN ('queued','running','cancelled') THEN progress->'activity' ELSE (progress->'activity')-'recent_activity'-'open_orders' END AS activity,parameters->'dataset_ids' AS dataset_ids,parameters->>'dataset_id' AS dataset_id,jsonb_path_query_array(parameters,'$.strategies[*].name') AS strategy_names,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz' ORDER BY created_at DESC LIMIT 20").fetchall()
             datasets=c.execute("""SELECT ds.id,ds.day,s.summary->>'candidate_count' AS markets,
                 coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds
                 JOIN research_summary s ON s.dataset_id=ds.id
@@ -99,7 +100,29 @@ def install_paper(app,auth,mutate,pool):
             asset=strategy['asset'];parameters=dict(collector='paper-replay-v1',dataset_id=body.dataset_id,strategy=strategy['strategy'])
             if strategy['strategy'].get('bid_offset') is None:
                 parameters=dict(collector='paper-replay-v1',dataset_ids=[body.dataset_id],strategies=[strategy['strategy']],starting_cash_cents=body.starting_cash_cents,fill_model=body.fill_model)
+        parameters['name']=body.name.strip()
         from services.research.queue import ResearchQueue,EvidenceConflict
         try:job=ResearchQueue(pool).enqueue(asset,parameters,'paper-replay/'+str(body.request_key))
         except EvidenceConflict:raise HTTPException(409,'Request key already used') from None
         return dict(contract='paper-v1',id=str(job['id']),live_trading_enabled=False)
+
+    @app.get('/paper/replays/{identifier}')
+    def detail(identifier:UUID,request:Request):
+        auth(request);no_query(request)
+        with pool.connection() as c:
+            run=c.execute("SELECT id::text,status,created_at,started_at,finished_at,parameters AS configuration FROM research_job WHERE id=%s AND parameters->>'collector'='paper-replay-v1' AND idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz'",(identifier,)).fetchone()
+            if not run:raise HTTPException(404,'Paper run not found')
+            ids=run['configuration'].get('dataset_ids') or [run['configuration']['dataset_id']]
+            run['source_days']=c.execute("SELECT ds.id,ds.day,coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','') WHERE ds.id=ANY(%s::bigint[]) ORDER BY ds.day,ds.id",(ids,)).fetchall()
+        return dict(contract='paper-v1',live_trading_enabled=False,run=run)
+
+    @app.post('/paper/replays/{identifier}/cancel')
+    def cancel(identifier:UUID,request:Request):
+        mutate(request);no_query(request)
+        with pool.connection() as c:
+            run=c.execute("SELECT status FROM research_job WHERE id=%s AND parameters->>'collector'='paper-replay-v1' AND idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz'",(identifier,)).fetchone()
+            if not run:raise HTTPException(404,'Paper run not found')
+        from services.research.queue import ResearchQueue
+        ResearchQueue(pool).cancel(identifier)
+        with pool.connection() as c:status=c.execute('SELECT status FROM research_job WHERE id=%s',(identifier,)).fetchone()['status']
+        return dict(contract='paper-v1',live_trading_enabled=False,id=str(identifier),status=status)

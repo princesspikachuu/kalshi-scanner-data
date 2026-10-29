@@ -57,7 +57,7 @@ projects:
               - key: RUNTIME_DB_PROFILE
                 value: research
               - key: WORKER_ROLE
-                value: split
+                value: collector
               - key: COLLECTION_ENABLED
                 value: 'true'
               - key: KALSHI_READ_RATE
