@@ -95,8 +95,9 @@ class KalshiInventory:
     has zero internal retries. A runner, scheduler and hosted connections are not
     created by this class. Use a context manager or close it explicitly.
     """
-    def __init__(self, *, transport=None, clock=time.monotonic, wall_clock=time.time):
+    def __init__(self, *, transport=None, clock=time.monotonic, wall_clock=time.time, signer=None):
         self.clock, self.wall_clock = clock, wall_clock
+        self.signer=signer
         limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
         self.client = httpx.Client(
             transport=transport if transport is not None else httpx.HTTPTransport(retries=0, trust_env=False, limits=limits),
@@ -107,6 +108,22 @@ class KalshiInventory:
     def __enter__(self): return self
     def __exit__(self, *_): self.close()
 
+    def account_allowance(self):
+        if self.signer is None:raise ValueError('Authenticated access required')
+        limits=self._read('/account/limits',{},10,parse_json).payload
+        costs=self._read('/account/endpoint_costs',{},10,parse_json).payload
+        rate=limits.get('read',{}).get('refill_rate')
+        cost=costs.get('default_cost')
+        if type(rate) not in (int,float) or type(cost) not in (int,float) or not 0<rate<=100000 or not 0<cost<=100000:
+            raise ValueError('Invalid authenticated request allowance')
+        # Our supported market GET routes currently use the default cost. Honor
+        # any more expensive exact route introduced upstream conservatively.
+        for entry in costs.get('endpoint_costs',[]):
+            if entry.get('method')=='GET' and entry.get('path','').startswith(('/trade-api/v2/markets','/trade-api/v2/historical/','/trade-api/v2/series/')):
+                cost=max(cost,entry['cost'])
+        return dict(usage_tier=limits.get('usage_tier','unknown'),requests_per_second=rate/cost,
+                    burst_capacity=max(1,int(limits.get('read',{}).get('bucket_capacity',rate)/cost)))
+
     def fetch(self, scope, cursor, timeout_seconds):
         if type(scope) is not Scope:
             raise ValueError('Expected validated inventory scope')
@@ -115,7 +132,8 @@ class KalshiInventory:
 
     @timed('provider.http')
     def _read(self, path, args, timeout_seconds, parser, *, allow_missing=False, missing_statuses=(404,)):
-        allowed = (path in ('/markets','/historical/markets','/markets/trades','/historical/trades','/markets/candlesticks')
+        account_read=self.signer is not None and path in ('/account/limits','/account/endpoint_costs')
+        allowed = (account_read or path in ('/markets','/historical/markets','/markets/trades','/historical/trades','/markets/candlesticks')
             or re.fullmatch(r'/historical/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path)
             or re.fullmatch(r'/series/[A-Z0-9_-]{1,64}/markets/[A-Za-z0-9_.-]{1,256}/candlesticks',path))
         if not allowed: raise ValueError('Unsupported public read route')
@@ -125,9 +143,10 @@ class KalshiInventory:
         deadline = self.clock()+timeout_seconds
         # Build a Request directly: Client.build_request would merge its cookie
         # jar into later requests. No authorization, cookies or caller URLs here.
+        headers={'Accept':'application/json','Accept-Encoding':'identity','User-Agent':'PocketAnalyticsResearch/2'}
+        if self.signer is not None:headers.update(self.signer.headers('GET','/trade-api/v2'+path))
         request = httpx.Request('GET', BASE+path, params=args,
-            headers={'Accept': 'application/json', 'Accept-Encoding': 'identity',
-                     'User-Agent': 'PocketAnalyticsResearch/2'},
+            headers=headers,
             extensions={'timeout': httpx.Timeout(timeout_seconds).as_dict()})
         response = None
         try:

@@ -94,6 +94,8 @@ class ProcessingWorker(CampaignWorker):
                 c.execute('UPDATE research_campaign_day SET dataset_id=%s WHERE campaign_id=%s AND day=%s',
                     (dataset,identifier,day['day']))
             else:
+                if kind=='prices' and 'collection_limit' in campaign['config']:
+                    c.execute('UPDATE research_campaign_day SET dataset_id=%s WHERE campaign_id=%s AND day=%s',(dataset,identifier,day['day']))
                 field='sample_previews' if kind=='sample' else 'candle_previews'
                 previous=progress.setdefault(field,{}).setdefault(key,dataset)
                 if previous!=dataset:raise EvidenceConflict('Assembly dataset changed')
@@ -121,6 +123,8 @@ class ProcessingWorker(CampaignWorker):
         if SampleReports(self.pool).run_once():return True
         # A finished date must reach the category page before more assembly.
         if CategoryReports(self.pool).run_once():return True
+        from services.paper.worker import PaperWorker
+        if PaperWorker(self.pool,self.archives).run_once():return True
         job=self._claim_assembly()
         if job is None:
             return False

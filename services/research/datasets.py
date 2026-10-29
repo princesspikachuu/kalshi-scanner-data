@@ -4,7 +4,7 @@ No observations, ROI, loss policy, provider requests or trading are computed her
 """
 from .telemetry import timed,timing,count
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from concurrent.futures import ThreadPoolExecutor
 from itertools import groupby
 from decimal import Decimal
@@ -242,7 +242,7 @@ def _canonical(resource,row):
 
 @timed('dataset.prepare')
 def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,archive_parallelism=8,
-                    sampled_tickers=None,cancelled=lambda:False):
+                    sampled_tickers=None,collected_tickers=None,cancelled=lambda:False):
     """inventory_loader(id) -> (DB job, committed pages with receipts).
 
     Rebuild normalized membership from transitive inventory, then require every
@@ -285,16 +285,21 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
     if not rebuilt.ready or rebuilt.fingerprint!=manifest.get('fingerprint') or rebuilt.fingerprint!=plan.batch_fingerprint:
         raise EvidenceConflict('Normalized membership no longer matches selected inputs')
     if cached is None:cache.put(proof_key,json.dumps(asdict(rebuilt),sort_keys=True,separators=(',',':')).encode())
+    selection=manifest.get('selected_tickers',collected_tickers)
+    if selection is not None:
+        if len(set(selection))!=len(selection) or not set(selection).issubset({c.ticker for c in rebuilt.candidates}):raise EvidenceConflict('Invalid collection cohort')
+        rebuilt_selected=replace(rebuilt,candidates=tuple(c for c in rebuilt.candidates if c.ticker in selection))
+    else:rebuilt_selected=rebuilt
     resources = tuple(sorted({s.resource for s in plan.scopes}))
-    if rebuilt.candidates:
-        first = rebuilt.candidates[0]
+    if rebuilt_selected.candidates:
+        first = rebuilt_selected.candidates[0]
         starts = [s.start_ts for s in plan.scopes if s.ticker==first.ticker]
         if not starts: raise CoverageIncomplete(('missing_candidate_plan',))
         lookback = math.ceil(_closed(first.close_time).timestamp())-min(starts)
-        expected = plan_from_receipt(rebuilt,manifest_receipt,lookback,resources)
+        expected = plan_from_receipt(rebuilt,manifest_receipt,lookback,resources,selected_tickers=selection)
         if asdict(expected)!=asdict(plan): raise EvidenceConflict('Evidence plan is incomplete or altered')
     elif plan.scopes: raise EvidenceConflict('Empty cohort has unexpected scopes')
-    candidates=rebuilt.candidates
+    candidates=rebuilt_selected.candidates
     preview=None
     if sampled_tickers is not None:
         from .sample import select_preview_candidates

@@ -21,7 +21,7 @@ export function createCollectionClient({fetcher=fetch,readCookie=()=>document.co
  const asset=a=>{if(!['btc','eth','crypto','weather','weather_daily','sports'].includes(a))throw Error('Choose a category.');return a};
  const id=i=>{if(!/^[a-f0-9-]{36}$/.test(i))throw Error('Choose a collection.');return i};
  return {
-  status:()=>call('status'),
+  status:()=>call('status'),analysis:()=>call('analysis'),
   list:(a,before=null,group=null,limit=25)=>{
    if(group!==null&&!['unfinished','finished'].includes(group))throw Error('Invalid collection group.');
    if(!Number.isInteger(limit)||limit<1||limit>50)throw Error('Invalid collection page.');

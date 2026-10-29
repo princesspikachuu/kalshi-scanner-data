@@ -195,7 +195,7 @@ class SharedProjectionPostgresTests(unittest.TestCase):
         with self.db.pool.connection() as c:
             self.assertEqual(c.execute('SELECT count(*) AS n FROM raw_archive').fetchone()['n'],1)
             self.assertEqual(c.execute('SELECT count(*) AS n FROM collection_page').fetchone()['n'],5)
-            self.assertEqual(c.execute("SELECT count(*) AS n FROM research_job WHERE status='succeeded'").fetchone()['n'],5)
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM research_job WHERE status='succeeded' AND parameters->>'collector'='evidence-v1'").fetchone()['n'],5)
         reopened=ArchiveStore(self.objects,cache_bytes=1024*1024)
         for scope,job in zip(self.scopes,jobs):
             pages=self.queue.page_evidence(job['id']);self.assertEqual(len(pages),1)

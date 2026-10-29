@@ -653,3 +653,35 @@ down to 0.1 requests/second and preserves retry backoff; startup configuration
 can lower but never automatically raise that rate. There is no paid Kalshi tier
 or automatic acceleration. Subsequent speed increases require an explicit
 configuration/code decision after reliable collection has been measured.
+
+### Collection, saved-data analysis and paper replay
+
+New hosted requests freeze up to 300 unseen markets per UTC day, retaining every
+configured entry time. Selection is bound to the immutable inventory manifest.
+Prior saved memberships, including removed requests and overlapping categories,
+are excluded. Fewer or no new markets is an explicit completed collection with
+that actual membership. Price publication completes the collection; trade work
+is a separate saved-data backlog. Removed requests never delete source history.
+
+Analysis examines saved cohorts, including legacy data, without reviving request
+coordinators. Every saved market in each cohort is covered. It reuses committed
+pages, fetches missing trade pages, and yields at HTTP-page checkpoints whenever
+an active collection exists. Category turns rotate after 60 seconds. Failures
+remain visible rather than being marked analyzed. New cohorts are added to
+cumulative reports; the newest source wins only for the same market/day.
+
+Authenticated collection reads KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PEM from
+the worker environment only. RSA-PSS and Ed25519 are supported. Requests are GET
+only, fixed-host, without redirects; no order route is supported. Startup reads
+/account/limits and /account/endpoint_costs, then targets 90% of the reported
+allowance, conservatively accounting for any more expensive market route. A new
+verified allowance is applied once; later 429 backoff survives restarts. Clean
+minute windows raise pace 10% toward that ceiling. Public fallback is capped at
+four requests/second, the original collector's configured ceiling.
+
+The /paper workspace stores immutable strategy snapshots and queues historical
+paper replays against saved detailed evidence. Strict trade-through is a proxy,
+not proof of a maker fill. At-price matches receive no presumed fill. Simulated
+cash is reserved until settlement, quantity is bounded by observed trade-through,
+and a one-cent-per-contract fee stress is charged. No live-order client exists.
+This phase does not implement a continuous live-market recorder or live trading.

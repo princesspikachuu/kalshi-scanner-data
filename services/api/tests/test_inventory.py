@@ -180,7 +180,7 @@ class InventoryPostgresTests(unittest.TestCase):
             self.assertEqual(self.queue.pages(job['id']),[])
             with self.store.pool.connection() as c:
                 c.execute("UPDATE research_job SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
-                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second',tokens=100")
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second',tokens=capacity")
             job=self.queue.claim()
         self.step(self.worker(FakeProvider(ProviderPage({'markets':[],'cursor':''}))),job)
         self.assertEqual(self.row(job)['status'],'succeeded')
@@ -254,7 +254,10 @@ class InventoryPostgresTests(unittest.TestCase):
     def test_rejections_reduce_shared_pace_and_restart_preserves_it(self):
         budget=ReadBudget(self.store.pool,'steady');budget.configure(1,1)
         for expected in (.5,.25,.125,.1,.1):
+            with self.store.pool.connection() as c:
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second' WHERE name='steady'")
             budget.rate_limited(2)
+            budget.rate_limited(2)  # Other in-flight rejections share this one reduction.
             with self.store.pool.connection() as c:
                 row=c.execute("SELECT * FROM research_read_budget WHERE name='steady'").fetchone()
             self.assertEqual(row['refill_per_second'],expected)

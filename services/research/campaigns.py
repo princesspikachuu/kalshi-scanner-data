@@ -66,7 +66,8 @@ def configuration(asset):
 
 
 class CampaignStore:
-    def __init__(self,pool):self.pool=pool
+    def __init__(self,pool,*,collection_limit=None):
+        self.pool=pool;self.collection_limit=collection_limit
 
     def create(self,asset,start_date,end_date,request_key,*,now=None,refresh_existing=False):
         """Date controls are inclusive UTC dates; today's section ends at creation."""
@@ -80,6 +81,7 @@ class CampaignStore:
 
     def _create(self,c,asset,start,end,key,mode,request_spec):
         config=configuration(asset);days=sections(start,end)
+        if self.collection_limit is not None:config['collection_limit']=self.collection_limit
         if not isinstance(key,str) or not 1<=len(key)<=128:raise ValueError('Invalid request key')
         # Serialize key races; retries return the original frozen request, including today's cutoff.
         c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91029))',(key,))
@@ -173,6 +175,10 @@ class CampaignStore:
                 GROUP BY r.id,j.status,j.error_code''',(UUID(str(identifier)),)).fetchone()
             if row:
                 row['id']=str(row['id'])
+                row['analyzed_sections']=c.execute('''SELECT count(*)::integer AS n FROM research_campaign_day d
+                    WHERE d.campaign_id=%s AND d.dataset_id IS NOT NULL AND (
+                        EXISTS(SELECT 1 FROM research_summary s WHERE s.dataset_id=d.dataset_id AND s.summary->'resources' ? 'trades')
+                        OR EXISTS(SELECT 1 FROM research_job a WHERE a.idempotency_key='analysis-source/'||d.dataset_id::text AND a.status='succeeded'))''',(UUID(str(identifier)),)).fetchone()['n']
                 result=c.execute('''SELECT rr.id::text AS id,rr.report->'publication' AS publication FROM research_result rr
                     WHERE rr.stream_key=%s ORDER BY rr.id DESC LIMIT 1''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
                 row['reported_sections']=0;row['report_complete']=False
@@ -193,10 +199,12 @@ class CampaignStore:
                     count(*) FILTER(WHERE status='succeeded')::integer AS completed_work_items,
                     coalesce(sum((progress->>'completed_pages')::bigint),0)::bigint AS saved_pages,
                     min(available_at) FILTER(WHERE status='queued' AND available_at>clock_timestamp()) AS retry_at
-                    FROM research_job WHERE id IN (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)''',(UUID(str(identifier)),)).fetchone()
+                    FROM research_job WHERE id IN (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)
+                    AND parameters->'scope'->>'resource' IS DISTINCT FROM 'trades' ''',(UUID(str(identifier)),)).fetchone()
                 row.update(detail)
                 failure=c.execute('''SELECT error_code FROM research_job WHERE id IN
                     (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)
+                    AND parameters->'scope'->>'resource' IS DISTINCT FROM 'trades'
                     AND error_code IS NOT NULL ORDER BY finished_at DESC NULLS LAST,id LIMIT 1''',(UUID(str(identifier)),)).fetchone()
                 row['last_work_error']=failure['error_code'] if failure else None
             return row
@@ -209,6 +217,26 @@ class CampaignStore:
                 FROM research_job WHERE status IN ('queued','running') AND attempts<max_attempts
                 AND parameters->>'collector' IN ('campaign-v1','category-report-v1','campaign-preview-v1')''').fetchone()
         return 5 if row['seconds'] is None else max(.1,min(5,float(row['seconds'])))
+
+    def analysis_status(self):
+        with self.pool.connection() as c:
+            rows=c.execute("""WITH sources AS (
+                SELECT r.asset,ds.day,ds.id,
+                    (s.summary->'resources' ? 'trades' OR a.status='succeeded' OR EXISTS(
+                        SELECT 1 FROM research_campaign_day cd JOIN research_summary cs ON cs.dataset_id=cd.dataset_id
+                        WHERE cd.campaign_id=r.id AND cd.day=ds.day AND cs.summary->'resources' ? 'trades')) IS TRUE AS analyzed
+                FROM research_dataset ds JOIN research_campaign r ON ds.stream_key IN (
+                    'campaign-'||replace(r.id::text,'-',''),'campaign-candles-'||replace(r.id::text,'-',''))
+                JOIN research_summary s ON s.dataset_id=ds.id
+                LEFT JOIN research_job a ON a.idempotency_key='analysis-source/'||ds.id::text),
+                days AS (SELECT asset,day,bool_and(analyzed) AS analyzed FROM sources GROUP BY asset,day)
+                SELECT asset,count(*)::integer AS saved_days,count(*) FILTER(WHERE analyzed)::integer AS analyzed_days
+                FROM days GROUP BY asset ORDER BY asset""").fetchall()
+            collecting=bool(c.execute("""SELECT 1 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
+                WHERE j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false) LIMIT 1""").fetchone())
+            budget=c.execute("SELECT refill_per_second FROM research_read_budget WHERE name='kalshi-read'").fetchone()
+        return dict(categories=rows,state='paused for collection' if collecting else 'working through saved data',
+                    requests_per_second=budget['refill_per_second'] if budget else None)
 
     def worker_status(self):
         from .heartbeat import HEARTBEAT_ID,HEARTBEAT_KEY
@@ -231,7 +259,7 @@ class CampaignStore:
         comparison='>' if group=='unfinished' else '<'
         ordering='j.finished_at' if group=='finished' else 'r.created_at'
         boundary='bj.finished_at' if group=='finished' else 'b.created_at'
-        predicate="AND j.status='succeeded'" if group=='finished' else "AND j.status<>'succeeded' AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)" if group=='unfinished' else ''
+        predicate="AND j.status='succeeded' AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)" if group=='finished' else "AND j.status<>'succeeded' AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)" if group=='unfinished' else ''
         with self.pool.connection() as c:
             rows=c.execute(f'''WITH chosen AS MATERIALIZED (
                 SELECT r.*, {ordering} AS sort_at FROM research_campaign r JOIN research_job j ON j.id=r.job_id
@@ -257,7 +285,7 @@ class CampaignStore:
         with self.pool.connection() as c:
             return c.execute('''SELECT count(*) AS n FROM research_campaign r JOIN research_job j ON j.id=r.job_id
                 WHERE (%s='all' OR r.asset=%s) AND (j.status='succeeded')=%s
-                AND (%s OR NOT coalesce((j.progress->>'removed_from_queue')::boolean,false))''',(asset,asset,group=='finished',group=='finished')).fetchone()['n']
+                AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)''',(asset,asset,group=='finished')).fetchone()['n']
 
     def days(self,identifier,*,after=None,limit=50):
         if type(limit) is not int or not 1<=limit<=100:raise ValueError('Invalid section limit')
@@ -280,7 +308,7 @@ class CampaignStore:
                     (identifier,f'assembly/{identifier}/',f'assembly/{identifier}/zzzz')).fetchall()
                 c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
                     WHERE id=ANY(%s::uuid[]) AND status IN ('queued','running')""",([row['id']]+[r['job_id'] for r in ids],))
-            if action=='remove' and row['status']!='succeeded':
+            if action=='remove':
                 c.execute("UPDATE research_job SET progress=progress||%s WHERE id=%s",(Jsonb({'removed_from_queue':True}),row['id']))
             if action=='resume':
                 c.execute("UPDATE research_job SET progress=progress-'removed_from_queue' WHERE id=%s",(row['id'],))
@@ -302,6 +330,7 @@ class CampaignWorker:
         if preview_limit not in (100,300):raise ValueError("Invalid preview size")
         self.preview_limit=preview_limit
         self.role=role
+        self.background_analysis=False;self.analysis_backlog=None
         self.parallelism=parallelism;self._bootstrapped=False
         self.on_work_tick=lambda:None
         self.cancelled=stop.is_set if stop is not None else lambda:False
@@ -462,7 +491,7 @@ class CampaignWorker:
         manifest=self.archives.read(day['manifest']);raw=manifest['batch']
         if digest(raw)!=manifest['fingerprint']:raise EvidenceConflict('Manifest mismatch')
         batch=batch_from_dict(raw)
-        return plan_from_receipt(batch,day['manifest'],campaign['config']['lookback_seconds'],campaign['config']['resources'])
+        return plan_from_receipt(batch,day['manifest'],campaign['config']['lookback_seconds'],campaign['config']['resources'],selected_tickers=manifest.get('selected_tickers'))
 
     @timed('campaign.step')
     def step(self,parent,*,deadline):
@@ -522,7 +551,7 @@ class CampaignWorker:
         try:
             if day['manifest'] is None:
                 # Immutable complete exact sections may be reused; rolling always refreshes.
-                if campaign['mode']=='backfill' and not campaign['request_spec'].get('refresh_existing',False):
+                if campaign['mode']=='backfill' and 'collection_limit' not in campaign['config'] and not campaign['request_spec'].get('refresh_existing',False):
                     with self.pool.connection() as c:
                         reused=c.execute('''SELECT d.dataset_id FROM research_campaign_day d JOIN research_campaign r ON r.id=d.campaign_id
                             WHERE r.config_hash=%s AND d.start_at=%s AND d.end_at=%s AND d.dataset_id IS NOT NULL ORDER BY d.dataset_id DESC LIMIT 1''',
@@ -544,7 +573,14 @@ class CampaignWorker:
                 batch=normalize_inventory(campaign['config']['series'],day['day'].isoformat(),identifier.hex,attempts,self.archives,
                     window=(day['start_at'].isoformat(),day['end_at'].isoformat()),prelaunch=True)
                 if not batch.ready:raise EvidenceConflict('Inventory incomplete')
-                plan=build_scopes(batch,self.archives,lookback_seconds=campaign['config']['lookback_seconds'],resources=campaign['config']['resources'])
+                selection=None
+                if 'collection_limit' in campaign['config']:
+                    from .backlog import saved_tickers
+                    used=saved_tickers(self.pool,day['day'])
+                    selection=[c.ticker for c in select_preview_candidates(
+                        [c for c in batch.candidates if c.ticker not in used],limit=300)]
+                plan=build_scopes(batch,self.archives,lookback_seconds=campaign['config']['lookback_seconds'],
+                    resources=campaign['config']['resources'],selected_tickers=selection)
                 with self.pool.connection() as c:
                     self.queue._owned(c,parent['id'],parent['lease_token'])
                     c.execute('UPDATE research_campaign_day SET manifest=%s WHERE campaign_id=%s AND day=%s',(Jsonb(plan.manifest_receipt()),identifier,day['day']))
@@ -553,7 +589,7 @@ class CampaignWorker:
                 if not day['evidence_planned']:
                     # Recover a crash between manifest persistence and job planning.
                     self._jobs(campaign,day,'evidence',self._plan(campaign,day).scopes,parent)
-                sample=self._sample_tickers(day,parent)
+                sample=() if 'collection_limit' in campaign['config'] else self._sample_tickers(day,parent)
                 if sample and self._sample_preview(parent,campaign,day,sample):
                     self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 if self._candle_preview(parent,campaign,day):
@@ -777,7 +813,13 @@ class CampaignWorker:
             from .cumulative import CategoryReports
             if CategoryReports(self.pool).run_once():return True
         parent=self._claim_parent()
-        if parent is None:return False
+        if parent is None:
+            if self.background_analysis:
+                if self.analysis_backlog is None:
+                    from .backlog import AnalysisBacklog
+                    self.analysis_backlog=AnalysisBacklog(self)
+                return self.analysis_backlog.run_once(deadline=deadline)
+            return False
         try:self.step(parent,deadline=deadline)
         except CollectionInterrupted:
             self.queue.yield_job(parent['id'],parent['lease_token']);return True

@@ -228,6 +228,7 @@ class InventoryWorker:
             remaining = deadline-self.clock()
             if remaining <= 0: raise ProviderFailure('provider_timeout')
             response = cached if cached is not None else self.provider.fetch(scope, state.next_cursor, min(10, remaining))
+            if cached is None:getattr(self.budget,'successful',lambda:None)()
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if not isinstance(response, ProviderPage) or response.availability not in ('available', 'unavailable'):
                 raise ProviderFailure('provider_invalid', retry=False)
@@ -252,7 +253,7 @@ class InventoryWorker:
             count('provider.failure.'+error.code,1)
             if error.code=='provider_rate_limit' and error.retry:
                 delay=self.queue.defer_rate_limited(job_id,token,error.delay)
-                self.budget.rate_limited(max(error.cooldown,delay))
+                self.budget.rate_limited(max(error.cooldown,delay),minimum_capacity=self.cost)
                 return {'state':'failed','retry_after':delay}
             if error.code=='provider_unavailable':self.budget.defer(error.cooldown)
             self.queue.fail(job_id, token, error.code, retry=error.retry, delay_seconds=error.delay)

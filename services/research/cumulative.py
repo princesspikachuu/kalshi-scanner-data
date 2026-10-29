@@ -10,6 +10,8 @@ from collections import defaultdict
 from datetime import datetime,timezone
 import heapq
 import json
+import tempfile
+from .report_inputs import report_dataset
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
@@ -25,6 +27,12 @@ MAX_WINDOWS=50000
 
 def select_windows(rows):
     """Sweep close-time coverage; greatest immutable dataset ID wins overlaps."""
+    cohorts=[r for r in rows if r.get('cohort')]
+    if cohorts:
+        legacy=select_windows([r for r in rows if not r.get('cohort')])
+        additions={(r['dataset_id'],str(r['start_at']),str(r['end_at'])) for r in cohorts}
+        return sorted(legacy+[dict(dataset_id=i,start_at=a,end_at=b,cohort=True) for i,a,b in additions],
+                      key=lambda r:(r['dataset_id'],r['start_at'],r['end_at']))
     events=defaultdict(list)
     seen=set()
     for index,row in enumerate(rows):
@@ -67,7 +75,21 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
             if d['id'] not in expected:raise EvidenceConflict('Unexpected category input')
             loaded.add(d['id']);yield d
         if loaded!=expected:raise EvidenceConflict('Missing category input')
-    prepared=prepare_report_stream(asset,checked(),latest_ids=None,candidate_filter=include)
+    if any(r.get('cohort') for r in manifest):
+        # Add rerun cohorts; choose one newest version for each actual market/day.
+        # Spool raw inputs to disk rather than retaining a year of payloads in RAM.
+        owners={}
+        with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as saved:
+            for d in checked():
+                for candidate in report_dataset(d)['payload']['candidates']:
+                    if include(d['id'],candidate):
+                        key=(candidate['close_time'][:10],candidate['ticker'])
+                        owners[key]=max(d['id'],owners.get(key,0))
+                saved.write(json.dumps(d,default=str,separators=(',',':'))+'\n')
+            saved.seek(0)
+            prepared=prepare_report_stream(asset,(json.loads(line) for line in saved),latest_ids=None,
+                candidate_filter=lambda identifier,c:include(identifier,c) and owners.get((c['close_time'][:10],c['ticker']))==identifier)
+    else:prepared=prepare_report_stream(asset,checked(),latest_ids=None,candidate_filter=include)
     payload=json.loads(prepared.payload_json)
     payload['selection']={'version':VERSION,'windows':manifest,'revision':revision}
     if not publication_complete:payload['publication']=dict(complete=False,revision=revision)
@@ -98,7 +120,7 @@ class CategoryReports:
     def _snapshot(self,c,asset):
         # One MVCC statement freezes both version revision and source windows.
         row=c.execute('''WITH sources AS MATERIALIZED (
-            SELECT m.dataset_id,d.start_at,d.end_at,latest.id AS result_id,
+            SELECT m.dataset_id,d.start_at,d.end_at,(r.config ? 'collection_limit') AS cohort,latest.id AS result_id,
                 COALESCE((latest.report->'publication'->>'complete')::boolean,true) AS complete
             FROM research_campaign r JOIN LATERAL (SELECT id,report FROM research_result
                 WHERE stream_key='campaign-'||replace(r.id::text,'-','') ORDER BY id DESC LIMIT 1) latest ON true
@@ -108,7 +130,7 @@ class CategoryReports:
             WHERE r.asset=%s)
             SELECT (SELECT max(result_id) FROM sources) AS revision,
                 (SELECT bool_and(complete) FROM sources) AS complete,
-                (SELECT jsonb_agg(w) FROM (SELECT DISTINCT dataset_id,start_at,end_at
+                (SELECT jsonb_agg(w) FROM (SELECT DISTINCT dataset_id,start_at,end_at,cohort
                     FROM sources ORDER BY dataset_id,start_at,end_at LIMIT 50001) w) AS windows''',(asset,)).fetchone()
         if not row['revision'] or not row['windows']:raise EvidenceConflict('No completed category coverage')
         return dict(revision=row['revision'],windows=select_windows(row['windows']),complete=row['complete'])

@@ -61,7 +61,7 @@ projects:
               - key: COLLECTION_ENABLED
                 value: 'true'
               - key: KALSHI_READ_RATE
-                value: '1'
+                value: '4'
               - key: KALSHI_READ_CAPACITY
                 value: '1'
               - key: KALSHI_ENDPOINT_COST

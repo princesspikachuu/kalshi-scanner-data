@@ -224,3 +224,16 @@ test('all-category queue pages and removal remain authenticated bounded gateway 
  const r=await proxyAuth(request('/api/collection/campaigns/'+id+'/remove',{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json','x-csrf-token':csrf},body:'{}'}),env,{fetcher:async()=>json(removed)});
  assert.equal(r.status,200);
 });
+
+test('analysis and paper routes retain origin, method and paper-only boundaries',async()=>{
+ const analysis={contract:'collection-v1',analysis:{categories:[{asset:'btc',saved_days:2,analyzed_days:1}],state:'working through saved data',requests_per_second:18}};
+ const a=await proxyAuth(request('/api/collection/analysis'),env,{fetcher:async()=>json(analysis)});
+ assert.equal(a.status,200);assert.deepEqual(await a.json(),analysis);
+ const paper={contract:'paper-v1',live_trading_enabled:false,strategies:[],runs:[],datasets:[],entry_minutes:{btc:[15,10,5,3,1]}};
+ assert.equal((await proxyAuth(request('/api/paper/workspace'),env,{fetcher:async()=>json(paper)})).status,200);
+ assert.equal((await proxyAuth(request('/api/paper/workspace'),env,{fetcher:async()=>json({...paper,live_trading_enabled:true})})).status,502);
+ const mustNotFetch=()=>assert.fail('must not forward');
+ assert.equal((await proxyAuth(request('/api/paper/orders'),env,{fetcher:mustNotFetch})).status,404);
+ assert.equal((await proxyAuth(request('/api/paper/strategies'),env,{fetcher:mustNotFetch})).status,405);
+ assert.equal((await proxyAuth(request('/api/paper/replays',{method:'POST',headers:{origin:'https://evil.test','content-type':'application/json'},body:'{}'}),env,{fetcher:mustNotFetch})).status,403);
+});
