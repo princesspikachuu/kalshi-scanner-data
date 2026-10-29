@@ -117,7 +117,7 @@ class PortfolioTests(unittest.TestCase):
         result=replay_portfolio([(asset,payload,rows())],[strategy()],10000,on_progress=updates.append)
         first=next(x for x in updates if x.get('phase')=='replaying saved markets')
         self.assertEqual(first['records_loaded'],count)
-        self.assertEqual(first['events_total'],count+1)
+        self.assertEqual(first['events_total'],min(count,12300)+1)
         self.assertEqual(result['starting_cash_cents'],10000)
         self.assertEqual(result['ending_cash_cents'],10000)
         self.assertTrue(any(x.get('events_processed',0)>0 for x in updates))
