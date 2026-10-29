@@ -32,7 +32,7 @@ class ReplayBody(BaseModel):
     strategy_ids:list[UUID]=Field(default_factory=list,max_length=50)
     dataset_ids:list[int]=Field(default_factory=list,max_length=12)
     starting_cash_cents:int=Field(default=10000,strict=True,ge=100,le=100000000)
-    fill_model:Literal['estimated','conservative']='estimated' 
+    fill_model:Literal['estimated','conservative']='estimated'
     request_key:UUID
 
 
@@ -50,7 +50,7 @@ def install_paper(app,auth,mutate,pool):
                 JOIN research_summary s ON s.dataset_id=ds.id
                 LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','')
                 WHERE (r.id IS NOT NULL OR ds.stream_key IN ('analysis-btc','analysis-eth','analysis-crypto','analysis-weather','analysis-weather_daily','analysis-sports'))
-                AND s.summary->'resources' ? 'trades' ORDER BY ds.id DESC LIMIT 100""").fetchall()
+                AND s.summary->'resources' ? 'trades' AND coalesce((s.summary->>'candidate_count')::integer,0)>0 ORDER BY ds.id DESC LIMIT 100""").fetchall()
         return dict(contract='paper-v1',live_trading_enabled=False,strategies=strategies,runs=runs,datasets=datasets,entry_minutes=MINUTES)
     @app.post('/paper/strategies')
     def create(body:Strategy,request:Request):

@@ -1,7 +1,5 @@
-import json
 from services.research.queue import ResearchQueue
 from services.research.datasets import decoded_dataset,iter_dataset_records
-from services.research.backlog import AnalysisBacklog
 from .engine import replay
 from .portfolio import replay_portfolio
 from psycopg.types.json import Jsonb

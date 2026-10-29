@@ -89,7 +89,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
             side,_,ask=quote;remaining=(m['close']-ts)/60
             eligible=[]
             for index,s in enumerate(strategies):
-                compatible=s['asset']==m['asset'] or (s['asset']=='crypto' and m['candidate'].get('series') in {'KXBTC15M','KXETH15M','KXSOL15M','KXXRP15M','KXDOGE15M','KXBNB15M','KXHYPE15M','KXZEC15M','KXNEAR15M'})
+                compatible=s['asset']==m['asset'] or (s['asset']=='btc' and m['candidate'].get('series')=='KXBTC15M') or (s['asset']=='eth' and m['candidate'].get('series')=='KXETH15M') or (s['asset']=='crypto' and m['candidate'].get('series') in {'KXBTC15M','KXETH15M','KXSOL15M','KXXRP15M','KXDOGE15M','KXBNB15M','KXHYPE15M','KXZEC15M','KXNEAR15M'})
                 identity=(ticker,index)
                 if not compatible or identity in attempted:continue
                 if s['entry_minute_min']<remaining<=s['entry_minute_max'] and s['min_price']<=ask<=s['max_price']:
