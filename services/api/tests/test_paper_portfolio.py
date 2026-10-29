@@ -99,6 +99,29 @@ class PortfolioTests(unittest.TestCase):
         self.assertGreater(audit['strategies'][0]['qualified_all_fill_roi_percent'],0)
         self.assertLess(audit['strategies'][0]['filled_hold_roi_percent'],0)
 
+    def test_nearly_all_fills_still_lose_when_win_rate_below_break_even(self):
+        # An apparently attractive historical bid-grid strategy has a
+        # different ask-qualified cohort. Even with 100% fills and 90%
+        # winners, buying at 94c loses because break-even is 94%.
+        selected=strategy(min_price=90,max_price=99,statistical_yield_percent=5)
+        sources=[]
+        for i in range(10):
+            asset,payload,records=source(ticker=f'market-{i}',event=f'event-{i}',
+                bars=[candle(BASE,bid=93,ask=95)],
+                trades=[trade(BASE+3,price=94,volume=5)])
+            if i==9:payload['candidates'][0]['result']='no'
+            sources.append((asset,payload,records))
+        r=self.run_replay(sources,[selected])
+        audit=r['reconciliation'];s=audit['strategies'][0]
+        self.assertEqual(audit['qualified_contracts'],50)
+        self.assertEqual(audit['filled_contracts'],50)
+        self.assertEqual(audit['cancelled_unfilled_contracts'],0)
+        self.assertEqual(audit['fill_rate_percent'],100)
+        self.assertEqual(s['filled_win_rate_percent'],90)
+        self.assertEqual(s['filled_break_even_win_rate_percent'],94)
+        self.assertEqual(s['reference_bid_grid_roi_percent'],5)
+        self.assertLess(r['profit_loss_cents'],0)
+
     def test_loss_prevention_audit_reconciles_exit_against_holding(self):
         r=self.run_replay([source(bars=[candle(BASE),candle(BASE+60,50,60)],
             trades=[trade(BASE+3,volume=2)])],[strategy(loss_trigger_cents=70)])

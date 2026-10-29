@@ -199,11 +199,21 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
             if s['all_qualified_stake_cents'] else None)
         s['filled_hold_roi_percent']=(round(100*s['filled_hold_pnl_cents']/s['filled_stake_cents'],4)
             if s['filled_stake_cents'] else None)
+        # For $1 binary settlement, mean entry price in cents is precisely
+        # the required win rate percentage for break-even before fees.
+        s['filled_break_even_win_rate_percent']=(round(s['filled_stake_cents']/filled,4) if filled else None)
+        s['qualified_break_even_win_rate_percent']=(round(s['all_qualified_stake_cents']/qualified,4)
+            if qualified else None)
+        s['fill_rate_percent']=(round(100*filled/qualified,4) if qualified else None)
     audit=dict(basis='Ask-price and entry-window-qualified paper orders; not the bid-based research grid.',
         qualified_orders=sum(x['qualified_orders'] for x in diagnostics),
         qualified_contracts=sum(x['qualified_contracts'] for x in diagnostics),
         all_qualified_filled_pnl_cents=sum(x['all_qualified_filled_pnl_cents'] for x in diagnostics),
         filled_contracts=sum(x['filled_contracts'] for x in diagnostics),
+        cancelled_unfilled_contracts=counters['cancelled_contracts'],
+        fill_rate_percent=(round(100*sum(x['filled_contracts'] for x in diagnostics)/
+            sum(x['qualified_contracts'] for x in diagnostics),4)
+            if sum(x['qualified_contracts'] for x in diagnostics) else None),
         filled_winners=sum(x['filled_winners'] for x in diagnostics),
         filled_hold_pnl_cents=sum(x['filled_hold_pnl_cents'] for x in diagnostics),
         loss_prevention_delta_cents=realized_pnl_cents-sum(x['filled_hold_pnl_cents'] for x in diagnostics),
