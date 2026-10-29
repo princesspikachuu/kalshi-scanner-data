@@ -40,3 +40,28 @@ class PaperRouteTests(unittest.TestCase):
         result=self.client.get('/paper/workspace',headers=self.headers).json()['runs'][0]
         self.assertEqual(result['status'],'succeeded');self.assertEqual(result['result']['simulated_fills'],0)
         self.assertNotIn('trades',result['result'])
+    def test_table_strategy_validates_saved_square_and_shared_portfolio_replays(self):
+        identifier=self.create(end='2026-10-25');self.drive(identifier)
+        with self.db.pool.connection() as c:
+            report=c.execute("SELECT id,report FROM research_result WHERE asset='btc' ORDER BY id DESC LIMIT 1").fetchone()
+        cell=next(cell for cell in report['report']['historical']['cells'] if cell['hold']['sampled_markets'])['hold']
+        minute=cell['minutes_before_close'];low,high=map(int,cell['price_band_cents'].split('-'))
+        strategy=dict(name='From square',asset='btc',minutes=[minute],min_price=low,max_price=high-1,report_id=report['id'],
+            entry_minute_min=max([m for m in (15,10,5,3,1) if m<minute],default=0),entry_minute_max=minute,
+            below_ask_cents=2,maximum_bid_cents=None,contracts=10,balance_percent=10,loss_trigger_cents=60,starting_cash_cents=10000)
+        self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'report_id':999999},headers=self.headers).status_code,422)
+        self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'balance_percent':11},headers=self.headers).status_code,422)
+        saved=self.client.post('/paper/strategies',json=strategy,headers=self.headers)
+        self.assertEqual(saved.status_code,200,saved.text)
+        workspace=self.client.get('/paper/workspace',headers=self.headers).json()
+        self.assertEqual(workspace['strategies'][0]['strategy']['statistical_yield_percent'],cell['hypothetical_roi_percent'])
+        body=dict(strategy_ids=[saved.json()['id']],dataset_ids=[workspace['datasets'][0]['id']],starting_cash_cents=10000,fill_model='estimated',request_key=str(uuid4()))
+        self.assertEqual(self.client.post('/paper/replays',json=body,headers={'x-test-owner':'owner'}).status_code,403)
+        first=self.client.post('/paper/replays',json=body,headers=self.headers)
+        self.assertEqual(first.status_code,200,first.text)
+        self.assertEqual(self.client.post('/paper/replays',json=body,headers=self.headers).json()['id'],first.json()['id'])
+        self.assertEqual(self.client.post('/paper/replays',json={**body,'fill_model':'conservative'},headers=self.headers).status_code,409)
+        self.assertTrue(PaperWorker(self.db.pool,self.archives).run_once())
+        result=self.client.get('/paper/workspace',headers=self.headers).json()['runs'][0]
+        self.assertEqual(result['status'],'succeeded');self.assertEqual(result['result']['mode'],'historical portfolio replay')
+        self.assertLessEqual(result['result']['peak_event_exposure_percent'],10)

@@ -198,3 +198,21 @@ test('all-category queue expands independently, labels categories, removes safel
   assert.ok(calls.some(c=>c.options.body&&JSON.parse(c.options.body).local_time==='04:30'));
  }finally{events.pagehide?.();Object.assign(globalThis,previous)}
 });
+
+test('table bet maps the selected square into an ask band and bounded entry window',async()=>{
+ const {squareStrategy}=await import('../apps/web/paper-client.mjs');
+ const report={id:'123',asset:'sports',entry_minutes:[360,180,120,60,30,15,5]};
+ const s=squareStrategy(report,{},30,'90-100',{name:'sports',below_ask_cents:2,maximum_bid_cents:null});
+ assert.equal(s.report_id,123);assert.equal(s.min_price,90);assert.equal(s.max_price,99);
+ assert.equal(s.entry_minute_min,15);assert.equal(s.entry_minute_max,30);assert.equal(s.maximum_bid_cents,null);
+ assert.equal(s.below_ask_cents,2);assert.deepEqual(s.minutes,[30]);assert.ok(!Object.hasOwn(s,'bid_offset'));
+});
+test('paper transport retains owner session and CSRF without permitting a live response',async()=>{
+ const {paperCall}=await import('../apps/web/paper-client.mjs');const previous={fetch:globalThis.fetch,document:globalThis.document};
+ try{
+ globalThis.document={cookie:'__Host-pocket_csrf='+'c'.repeat(43)};
+ globalThis.fetch=async(url,options)=>{assert.equal(url,'/api/paper/strategies');assert.equal(options.credentials,'same-origin');assert.equal(options.redirect,'error');assert.equal(options.headers['x-csrf-token'],'c'.repeat(43));return Response.json({contract:'paper-v1',live_trading_enabled:false})};
+ await paperCall('strategies',{maximum_bid_cents:null});
+ globalThis.fetch=async()=>Response.json({contract:'paper-v1',live_trading_enabled:true});await assert.rejects(paperCall('workspace'),/unavailable/);
+ }finally{Object.assign(globalThis,previous)}
+});
