@@ -132,8 +132,9 @@ class ProcessingWorker(CampaignWorker):
                     WHERE j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
                     AND EXISTS(SELECT 1 FROM research_campaign_day d WHERE d.campaign_id=r.id AND d.dataset_id IS NULL) LIMIT 1""").fetchone()
                 due=c.execute("""SELECT j.asset FROM research_job j WHERE j.parameters->>'collector'='category-report-v1'
-                    AND j.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM research_result r
-                        WHERE r.stream_key='category-'||j.asset AND r.published_at>clock_timestamp()-interval '5 minutes') ORDER BY j.created_at,j.id LIMIT 1""").fetchone()
+                    AND ((j.status='queued' AND j.available_at<=clock_timestamp()) OR (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
+                    AND (coalesce((j.parameters->>'urgent')::boolean,false) OR NOT EXISTS(SELECT 1 FROM research_result r
+                        WHERE r.stream_key='category-'||j.asset AND r.published_at>clock_timestamp()-interval '5 minutes')) ORDER BY j.created_at,j.id LIMIT 1""").fetchone()
             if (not collecting or due) and CategoryReports(self.pool).run_once(asset=due['asset'] if collecting and due else None):return True
             from services.paper.worker import PaperWorker
             if PaperWorker(self.pool,self.archives).run_once():return True

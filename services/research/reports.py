@@ -219,6 +219,7 @@ def observation_batches(encoded,batch_size=None):
         if offset<len(encoded)-1:
             if encoded[offset]!=',':raise ValueError('Invalid observations')
             offset+=1
+            while offset<len(encoded)-1 and encoded[offset].isspace():offset+=1
             if offset==len(encoded)-1:raise ValueError('Invalid observations')
         if len(batch)>=batch_size:yield batch;batch=[]
     if batch:yield batch
