@@ -33,7 +33,7 @@ class PortfolioTests(unittest.TestCase):
         self.assertEqual(r['filled_contracts'],2);self.assertEqual(r['expired_orders'],1)
         expired=next(e for e in r['trades'] if e['kind']=='cancel')
         self.assertEqual(expired['time'],BASE+300);self.assertEqual(expired['contracts'],3)
-        self.assertEqual(r['ending_cash_cents'],10020)
+        self.assertEqual(r['ending_cash_cents'],10022)
     def test_estimated_allows_at_bid_but_conservative_requires_through(self):
         src=source(trades=[trade(BASE+3,volume=2)])
         self.assertEqual(self.run_replay([src])['filled_contracts'],2)
@@ -55,7 +55,7 @@ class PortfolioTests(unittest.TestCase):
         r=self.run_replay([source(bars=[candle(BASE),candle(BASE+60,50,60)],trades=[trade(BASE+3,volume=2)])],[strategy(loss_trigger_cents=70)])
         sale=next(e for e in r['trades'] if e['kind']=='loss_prevention_sale')
         self.assertEqual(sale['sale_cents'],50);self.assertEqual(r['loss_prevention_sales'],1)
-        self.assertEqual(r['ending_cash_cents'],9918)
+        self.assertEqual(r['ending_cash_cents'],9922)
     def test_no_quote_after_fill_does_not_invent_stop_sale(self):
         r=self.run_replay([source(trades=[trade(BASE+3,volume=2)])],[strategy(loss_trigger_cents=50)])
         self.assertEqual(r['loss_prevention_sales'],0)

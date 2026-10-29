@@ -61,22 +61,22 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         if len(events)<1000:events.append(event)
         notify(activity(ts,data.get('ticker')))
     def exposure(event=None):
-        return sum(o['remaining']*(o['bid']+1) for o in orders if event is None or o['event']==event)+sum(p['cost'] for p in positions if not p['closed'] and (event is None or p['event']==event))
+        return sum(o['remaining']*o['bid'] for o in orders if event is None or o['event']==event)+sum(p['cost'] for p in positions if not p['closed'] and (event is None or p['event']==event))
     def equity():return free+exposure()
     def cancel(order,ts,reason):
         nonlocal free
         if not order['remaining']:return
-        free+=order['remaining']*(order['bid']+1)
+        free+=order['remaining']*order['bid']
         counters['cancelled_contracts']+=order['remaining'];counters[reason]+=1
         quantity=order['remaining'];order['remaining']=0
         log('cancel',ts,order_id=order['id'],ticker=order['ticker'],side=order['side'],bid_cents=order['bid'],contracts=quantity,reason=reason)
     def sell(p,ts,bid):
         nonlocal free
         # Observed best bid, with no user-defined minimum price. Unknown depth.
-        free+=max(0,bid-1)*p['quantity'];p['closed']=True
+        free+=bid*p['quantity'];p['closed']=True
         counters['loss_prevention_sales']+=1
         log('loss_prevention_sale',ts,ticker=p['ticker'],contracts=p['quantity'],sale_cents=bid,
-            profit_loss_cents=max(0,bid-1)*p['quantity']-p['cost'],evidence='minute best-bid estimate; depth unknown')
+            profit_loss_cents=bid*p['quantity']-p['cost'],evidence='minute best-bid estimate; depth unknown')
     notify(dict(phase='replaying saved markets',records_loaded=record_count,markets_loaded=len(markets)))
     processed=0
     while timeline:
@@ -115,7 +115,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 if not 1<=bid<ask:continue
                 # Reclaim only unfilled lower-yield orders, never sell positions
                 # solely because a different category becomes eligible.
-                cost=bid+1;bankroll=equity()
+                cost=bid;bankroll=equity()
                 desired=min(s['contracts']*cost,int(bankroll*s['balance_percent']/100),int(bankroll*.10))
                 for o in sorted(orders,key=lambda order:order['yield']):
                     shortage=free<desired or (o['event']==m['event'] and int(bankroll*.10)-exposure(m['event'])<desired)
@@ -150,7 +150,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 quantity=min(o['remaining'],available)
                 if quantity<1:continue
                 available-=quantity;o['remaining']-=quantity
-                p=dict(ticker=ticker,event=o['event'],side=o['side'],quantity=quantity,cost=(o['bid']+1)*quantity,stop=o['stop'],closed=False)
+                p=dict(ticker=ticker,event=o['event'],side=o['side'],quantity=quantity,cost=o['bid']*quantity,stop=o['stop'],closed=False)
                 positions.append(p);counters['filled_contracts']+=quantity;counters['simulated_fills']+=1
                 log('fill',ts,order_id=o['id'],ticker=ticker,side=o['side'],remaining=o['remaining'],contracts=quantity,bid_cents=o['bid'],evidence='trade-through proxy' if price<o['bid'] else 'at-price volume estimate')
                 saved=last_quotes.get(ticker)
@@ -164,5 +164,5 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         expired_orders=counters['expired_orders'],priority_cancellations=counters['priority_cancellations'],
         loss_prevention_sales=counters['loss_prevention_sales'],funding_or_event_cap_skips=counters['funding_or_event_cap_skips'],
         peak_event_exposure_percent=round(peak_event,4),no_fill_evidence=counters['expired_orders'],
-        assumptions='1¢ entry/exit fee stress per contract. Snapshot sale prices assume depth; actual fills and intraminute stops are unknown. Rankings use selected saved statistics, not out-of-sample predictions.',
+        assumptions='Before fees: no entry or exit fees deducted. Actual market-specific maker fees and taker fees may apply. Snapshot sale prices assume depth; actual fills and intraminute stops are unknown. Rankings use selected saved statistics, not out-of-sample predictions.',
         recent_activity=list(recent),order_preview=events[:12],trades=events,total_trades=len(events),trades_truncated=len(events)>=1000)
