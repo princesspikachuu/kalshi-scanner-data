@@ -180,7 +180,7 @@ class InventoryPostgresTests(unittest.TestCase):
             self.assertEqual(self.queue.pages(job['id']),[])
             with self.store.pool.connection() as c:
                 c.execute("UPDATE research_job SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
-                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second',tokens=100")
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second',tokens=capacity")
             job=self.queue.claim()
         self.step(self.worker(FakeProvider(ProviderPage({'markets':[],'cursor':''}))),job)
         self.assertEqual(self.row(job)['status'],'succeeded')

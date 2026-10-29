@@ -109,6 +109,8 @@ class AnalysisBacklog:
             if original and original['status']=='succeeded':child=original
             else:
                 child=self.queue.enqueue(job['asset'],scope.parameters(),'analysis-read/'+scope.key)
+                if child['status'] in ('failed','cancelled'):
+                    raise ValueError('Saved analysis evidence is blocked')
                 if child['status']!='succeeded':
                     child=self.queue.claim(job_id=child['id'])
                     if child is None:
