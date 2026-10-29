@@ -104,6 +104,33 @@ class PortfolioTests(unittest.TestCase):
         self.assertGreater(r['priority_cancellations'],0)
         self.assertTrue(any(e['kind']=='fill' and e['ticker']=='sport' for e in r['trades']))
         self.assertGreaterEqual(r['ending_cash_cents'],0)
+    def test_spooled_replay_handles_streamed_large_history_without_event_heap(self):
+        count=16000
+        asset,payload,_=source()
+        def rows():
+            for i in range(count):
+                # Most quotes can be filtered outside the entry window, but
+                # they must still stream through the on-disk timeline.
+                yield dict(ticker='a',resource='candles',
+                    record=candle(BASE-12000+i))
+        updates=[]
+        result=replay_portfolio([(asset,payload,rows())],[strategy()],10000,on_progress=updates.append)
+        first=next(x for x in updates if x.get('phase')=='replaying saved markets')
+        self.assertEqual(first['records_loaded'],count)
+        self.assertEqual(first['events_total'],count+1)
+        self.assertEqual(result['starting_cash_cents'],10000)
+        self.assertEqual(result['ending_cash_cents'],10000)
+        self.assertTrue(any(x.get('events_processed',0)>0 for x in updates))
+
+    def test_spooled_replay_preserves_chronological_market_priority(self):
+        # Event order at equal timestamps must remain stable in the same
+        # per-market order as the previous in-memory heap implementation.
+        a=source(ticker='earlier',event='first')
+        b=source(ticker='later',event='second')
+        result=replay_portfolio([a,b],[strategy(contracts=100)],10000)
+        bids=[x for x in result['trades'] if x['kind']=='bid']
+        self.assertEqual([x['ticker'] for x in bids],['earlier','later'])
+
     def test_newest_source_replaces_duplicate_market_instead_of_double_filling(self):
         r=self.run_replay([source(trades=[trade(BASE+3,volume=10)]),source(trades=[])])
         self.assertEqual(r['filled_contracts'],0)

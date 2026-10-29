@@ -4,8 +4,12 @@ Quotes are minute snapshots; estimated fills assume a share of observed taker
 volume, not a known queue position. Saved statistical rankings are in-sample.
 """
 from collections import defaultdict,deque
+from contextlib import closing
 from decimal import Decimal, InvalidOperation
-import heapq
+import json
+import os
+import sqlite3
+import tempfile
 from scripts.execution_model import best_quote, candle_price, cents, timestamp
 
 
@@ -32,37 +36,84 @@ def proposed_bid(ask, strategy, best_bid=None):
 
 
 def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estimated',on_progress=None):
+    """Stream historical events into a disk-backed sorted spool.
+
+    The worker has 512 MiB of RAM. Keeping every decoded candle, trade, and
+    another heap of the same events in memory causes OOM kills on multi-day
+    replays. SQLite stores the event history in a temporary local file; only
+    one selected event is decoded at a time during chronological execution.
+    """
+    with tempfile.TemporaryDirectory(prefix='pocket-paper-events-') as folder:
+        with closing(sqlite3.connect(os.path.join(folder,'timeline.db'))) as db:
+            db.execute('PRAGMA journal_mode=OFF')
+            db.execute('PRAGMA synchronous=OFF')
+            db.execute('PRAGMA temp_store=FILE')
+            db.execute('PRAGMA cache_size=-4096')
+            return _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,
+                fill_model=fill_model,on_progress=on_progress,db=db)
+
+
+def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_model,on_progress,db):
+    db.execute("""CREATE TABLE events (
+        serial INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        ts REAL NOT NULL,
+        phase INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        data TEXT,
+        trade_identity TEXT,
+        market_rank INTEGER NOT NULL)""")
+    db.execute("""CREATE UNIQUE INDEX unique_trade_event
+        ON events(ticker,trade_identity) WHERE trade_identity IS NOT NULL""")
     markets={};record_count=0
     notify=on_progress or (lambda activity:None)
     notify(dict(phase='loading saved evidence',records_loaded=0))
     for asset,payload,records in sources:
-        cohort={c['ticker']:dict(candidate=c,asset=asset,bars=[],trades=[]) for c in payload['candidates']}
+        cohort={c['ticker']:dict(candidate=c,asset=asset) for c in payload['candidates']}
+        for ticker,m in cohort.items():
+            if ticker in markets:
+                # The newest saved version replaces ALL events for the market,
+                # not just some candles or trades.
+                db.execute('DELETE FROM events WHERE ticker=?',(ticker,))
+                rank=markets[ticker]['rank']
+            else:
+                rank=len(markets)
+            m['rank']=rank
+            close=timestamp(m['candidate']['close_time'])
+            m['close']=close
+            m['event']=m['candidate'].get('event_ticker') or ticker
+            markets[ticker]=m
+            if close is not None:
+                db.execute("""INSERT INTO events(ticker,ts,phase,kind,data,trade_identity,market_rank)
+                    VALUES(?, ?, 0, 'close',NULL,NULL,?)""",(ticker,close,rank))
         for row in records:
             record_count+=1
-            if record_count%1024==0:notify(dict(phase='loading saved evidence',records_loaded=record_count,current_market=row['ticker']))
-            if record_count>250000:raise ValueError('Replay evidence limit exceeded; select fewer days')
-            if row['ticker'] in cohort and row['resource'] in ('candles','trades'):
-                cohort[row['ticker']]['bars' if row['resource']=='candles' else 'trades'].append(row['record'])
-        # Sources arrive oldest first. Never pool duplicate historical versions.
-        markets.update(cohort)
-    timeline=[];serial=0
-    def emit(ts,phase,kind,data):
-        nonlocal serial
-        serial+=1;heapq.heappush(timeline,(ts,phase,serial,kind,data))
-    for ticker,m in markets.items():
-        close=timestamp(m['candidate']['close_time']);m['close']=close
-        m['event']=m['candidate'].get('event_ticker') or ticker
-        if close is None:continue
-        for bar in m['bars']:
-            ts=bar.get('end_period_ts')
-            if isinstance(ts,int) and ts<close:emit(ts,2,'quote',(ticker,bar))
-        seen=set()
-        for t in m['trades']:
-            ts=timestamp(t.get('created_time'))
-            identity=t.get('trade_id') or str(sorted(t.items()))
-            if ts is not None and ts<close and identity not in seen:
-                seen.add(identity);emit(ts,1,'trade',(ticker,t))
-        emit(close,0,'close',ticker)
+            if record_count%1024==0:
+                notify(dict(phase='loading saved evidence',records_loaded=record_count,
+                    current_market=row['ticker']))
+            if record_count>250000:
+                raise ValueError('Replay evidence limit exceeded; select fewer days')
+            ticker=row['ticker'];m=cohort.get(ticker)
+            if m is None or m['close'] is None:continue
+            kind=row['resource'];data=row['record']
+            if kind=='candles':
+                ts=data.get('end_period_ts')
+                if not isinstance(ts,int) or ts>=m['close']:continue
+                db.execute("""INSERT INTO events(ticker,ts,phase,kind,data,trade_identity,market_rank)
+                    VALUES(?, ?, 2, 'quote',?,NULL,?)""",
+                    (ticker,ts,json.dumps(data,separators=(',',':')),m['rank']))
+            elif kind=='trades':
+                ts=timestamp(data.get('created_time'))
+                if ts is None or ts>=m['close']:continue
+                identity=data.get('trade_id') or str(sorted(data.items()))
+                db.execute("""INSERT OR IGNORE INTO events(ticker,ts,phase,kind,data,trade_identity,market_rank)
+                    VALUES(?, ?, 1, 'trade',?,?,?)""",
+                    (ticker,ts,json.dumps(data,separators=(',',':')),str(identity),m['rank']))
+    db.execute('CREATE INDEX chronological_events ON events(ts,phase,market_rank,serial)')
+    total_events=db.execute('SELECT count(*) FROM events').fetchone()[0]
+    notify(dict(phase='replaying saved markets',records_loaded=record_count,
+        markets_loaded=len(markets),events_total=total_events,
+        events_processed=0,percent_complete=35))
     free=starting_cash_cents;orders=[];positions=[];attempted=set();events=[];recent=deque(maxlen=20)
     # Only orders/positions for the affected market need visiting on each
     # trade, quote or close. Global portfolio exposure checks are unchanged.
@@ -115,13 +166,10 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         counters['loss_prevention_sales']+=1
         log('loss_prevention_sale',ts,ticker=p['ticker'],contracts=p['quantity'],sale_cents=bid,
             profit_loss_cents=bid*p['quantity']-p['cost'],evidence='minute best-bid estimate; depth unknown')
-    total_events=len(timeline)
-    notify(dict(phase='replaying saved markets',records_loaded=record_count,
-        markets_loaded=len(markets),events_total=total_events,
-        events_processed=0,percent_complete=35))
     processed=0
-    while timeline:
-        ts,phase,_,kind,data=heapq.heappop(timeline)
+    for ts,phase,rank,serial,kind,ticker,packed in db.execute(
+        'SELECT ts,phase,market_rank,serial,kind,ticker,data FROM events ORDER BY ts,phase,market_rank,serial'):
+        data=ticker if kind=='close' else (ticker,json.loads(packed))
         processed+=1
         if processed%1024==0:notify(activity(ts))
         if kind=='close':
