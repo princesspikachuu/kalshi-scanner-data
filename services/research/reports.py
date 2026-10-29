@@ -204,14 +204,18 @@ class PreparedReport:
     observations_json: str
 
 
-def observation_batches(encoded,batch_size=PUBLICATION_BATCH_ROWS):
+def observation_batches(encoded,batch_size=None):
     """Decode the canonical array without expanding its full row graph again."""
+    if batch_size is None:batch_size=PUBLICATION_BATCH_ROWS
     decoder=json.JSONDecoder();offset=1;batch=[]
     if not encoded.startswith('[') or not encoded.endswith(']'):raise ValueError('Invalid observations')
     while offset<len(encoded)-1:
+        while offset<len(encoded)-1 and encoded[offset].isspace():offset+=1
+        if offset==len(encoded)-1:break
         value,end=decoder.raw_decode(encoded,offset)
         if not isinstance(value,dict):raise ValueError('Invalid observation row')
         batch.append(value);offset=end
+        while offset<len(encoded)-1 and encoded[offset].isspace():offset+=1
         if offset<len(encoded)-1:
             if encoded[offset]!=',':raise ValueError('Invalid observations')
             offset+=1

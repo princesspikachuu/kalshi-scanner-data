@@ -327,5 +327,6 @@ class ObservationBatchTests(unittest.TestCase):
         self.assertEqual([len(batch) for batch in batches],[1000,1000,501])
         self.assertEqual([row for batch in batches for row in batch],rows)
         self.assertEqual(list(observation_batches('[]')),[])
+        self.assertEqual(list(observation_batches('[ {"x": 1}, {"x": 2} ]',1)),[[{'x':1}],[{'x':2}]])
         for bad in ('{}','[1]','[{},]','[{}{}]'):
             with self.assertRaises(ValueError):list(observation_batches(bad))

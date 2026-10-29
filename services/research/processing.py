@@ -31,7 +31,7 @@ class ProcessingWorker(CampaignWorker):
             raise LeaseLost('Campaign stopped')
         return row
 
-    def _claim_assembly(self):
+    def _claim_assembly(self,*,prices_only=False):
         selected=self.oldest_request()
         if selected is None:return None
         with self.pool.connection() as c:
@@ -39,14 +39,14 @@ class ProcessingWorker(CampaignWorker):
                 ON r.id::text=a.parameters->>'campaign_id' JOIN research_job p ON p.id=r.job_id
                 WHERE a.idempotency_key>='assembly/' AND a.idempotency_key<'assemblz'
                     AND a.parameters->>'collector'='campaign-assembly-v1'
-                    AND r.id=%s
+                    AND r.id=%s AND (NOT %s OR a.parameters->>'kind'='prices')
                     AND a.attempts<a.max_attempts AND p.status IN ('queued','running')
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
                     AND ((a.status='queued' AND a.available_at<=clock_timestamp()) OR
                          (a.status='running' AND a.lease_expires_at<=clock_timestamp()))
                     AND (a.parameters->>'kind' NOT IN ('enriched','final') OR NOT %s)
                 ORDER BY CASE a.parameters->>'kind' WHEN 'prices' THEN 0 WHEN 'sample' THEN 1
-                    WHEN 'final' THEN 2 ELSE 3 END,a.created_at,a.id LIMIT 1""",(selected['id'],selected['price_pending'])).fetchone()
+                    WHEN 'final' THEN 2 ELSE 3 END,a.created_at,a.id LIMIT 1""",(selected['id'],prices_only,selected['price_pending'])).fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
     def _publish(self,job):
@@ -121,7 +121,7 @@ class ProcessingWorker(CampaignWorker):
             self._category_recovered.add(oldest['asset'])
         # A completed price day becomes visible before any table rebuild can
         # occupy this process. The collector retains its independent I/O lane.
-        job=self._claim_assembly()
+        job=self._claim_assembly(prices_only=True)
         if job is None:
             if ProgressiveReports(self.pool).run_once():return True
             if SampleReports(self.pool).run_once():return True
@@ -136,7 +136,9 @@ class ProcessingWorker(CampaignWorker):
                         WHERE r.stream_key='category-'||j.asset AND r.published_at>clock_timestamp()-interval '5 minutes') ORDER BY j.created_at,j.id LIMIT 1""").fetchone()
             if (not collecting or due) and CategoryReports(self.pool).run_once(asset=due['asset'] if collecting and due else None):return True
             from services.paper.worker import PaperWorker
-            return PaperWorker(self.pool,self.archives).run_once()
+            if PaperWorker(self.pool,self.archives).run_once():return True
+            job=self._claim_assembly()
+            if job is None:return False
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)
         try:self._publish(job)
         except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'])

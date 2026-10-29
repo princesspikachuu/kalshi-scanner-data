@@ -94,7 +94,7 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
     payload['selection']={'version':VERSION,'windows':manifest,'revision':revision}
     if not publication_complete:payload['publication']=dict(complete=False,revision=revision)
     encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
-    if len(encoded.encode())+len(prepared.observations_json.encode())>MAX_REPORT_BYTES:raise ValueError('Category result exceeds bounded report size')
+    if len(encoded)+len(prepared.observations_json)>MAX_REPORT_BYTES:raise ValueError('Category result exceeds bounded report size')
     return PreparedReport(encoded,report_fingerprint(encoded,prepared.observations_json),prepared.observations_json)
 
 
