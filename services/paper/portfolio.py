@@ -48,6 +48,9 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 seen.add(identity);emit(ts,1,'trade',(ticker,t))
         emit(close,0,'close',ticker)
     free=starting_cash_cents;orders=[];positions=[];attempted=set();events=[];recent=deque(maxlen=20)
+    # Only orders/positions for the affected market need visiting on each
+    # trade, quote or close. Global portfolio exposure checks are unchanged.
+    orders_by_ticker=defaultdict(list);positions_by_ticker=defaultdict(list)
     counters=defaultdict(int);last_quotes={};peak_event=0
     def activity(ts,ticker=None):
         return dict(phase='replaying saved markets',simulated_time=ts,current_market=ticker,
@@ -85,17 +88,17 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         if processed%1024==0:notify(activity(ts))
         if kind=='close':
             ticker=data
-            for o in orders:
-                if o['ticker']==ticker:cancel(o,ts,'expired_orders')
-            for p in positions:
-                if p['ticker']==ticker and not p['closed']:
+            for o in orders_by_ticker[ticker]:
+                cancel(o,ts,'expired_orders')
+            for p in positions_by_ticker[ticker]:
+                if not p['closed']:
                     payment=100*p['quantity'] if markets[ticker]['candidate']['result']==p['side'] else 0
                     free+=payment;p['closed']=True
                     log('settlement',ts,ticker=ticker,contracts=p['quantity'],profit_loss_cents=payment-p['cost'])
         elif kind=='quote':
             ticker,bar=data;m=markets[ticker];last_quotes[ticker]=(ts,bar)
-            for p in positions:
-                if p['ticker']!=ticker or p['closed'] or p['stop'] is None:continue
+            for p in positions_by_ticker[ticker]:
+                if p['closed'] or p['stop'] is None:continue
                 bid=cents(candle_price(bar,p['side'],'bid'))
                 if bid is None and p['side']=='no':
                     ask=cents(candle_price(bar,'yes','ask'));bid=None if ask is None else 100-ask
@@ -130,7 +133,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 attempted.add(identity);free-=quantity*cost
                 order=dict(id='paper-'+str(counters['orders_placed']+1),quantity=quantity,ticker=ticker,event=m['event'],side=side,bid=bid,remaining=quantity,
                     created=ts,yield_=s['statistical_yield_percent'],stop=s.get('loss_trigger_cents'),strategy=index)
-                order['yield']=order.pop('yield_');orders.append(order);counters['orders_placed']+=1
+                order['yield']=order.pop('yield_');orders.append(order);orders_by_ticker[ticker].append(order);counters['orders_placed']+=1
                 peak_event=max(peak_event,exposure(m['event'])/bankroll*100)
                 log('bid',ts,order_id=order['id'],ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
                     expires=m['close'],statistical_yield_percent=order['yield'])
@@ -143,7 +146,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
             available=int(volume)
             # One shared volume budget per trade. Multiple bids cannot each
             # claim the same execution volume.
-            for o in sorted((o for o in orders if o['ticker']==ticker and o['remaining']),key=lambda o:(-o['bid'],-o['yield'],o['created'])):
+            for o in sorted((o for o in orders_by_ticker[ticker] if o['remaining']),key=lambda o:(-o['bid'],-o['yield'],o['created'])):
                 if ts<o['created']+2 or t['taker_outcome_side']==o['side']:continue
                 price=cents(t.get(o['side']+'_price_dollars'))
                 if price is None or price>o['bid'] or (fill_model=='conservative' and price==o['bid']):continue
@@ -151,7 +154,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 if quantity<1:continue
                 available-=quantity;o['remaining']-=quantity
                 p=dict(ticker=ticker,event=o['event'],side=o['side'],quantity=quantity,cost=o['bid']*quantity,stop=o['stop'],closed=False)
-                positions.append(p);counters['filled_contracts']+=quantity;counters['simulated_fills']+=1
+                positions.append(p);positions_by_ticker[ticker].append(p);counters['filled_contracts']+=quantity;counters['simulated_fills']+=1
                 log('fill',ts,order_id=o['id'],ticker=ticker,side=o['side'],remaining=o['remaining'],contracts=quantity,bid_cents=o['bid'],evidence='trade-through proxy' if price<o['bid'] else 'at-price volume estimate')
                 saved=last_quotes.get(ticker)
                 if saved and 0<=ts-saved[0]<=60 and p['stop'] is not None:

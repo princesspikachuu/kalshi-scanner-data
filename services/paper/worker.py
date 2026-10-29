@@ -23,6 +23,7 @@ class PaperWorker:
                 c.execute("UPDATE research_job SET progress=progress||%s,lease_expires_at=clock_timestamp()+interval '600 seconds' WHERE id=%s",(Jsonb(dict(activity=activity)),job['id']))
             last_update=now
         try:
+            started=time.monotonic()
             update(dict(phase='loading saved evidence',provider_reads=0),force=True)
             if 'strategies' in job['parameters']:
                 def sources():
@@ -40,7 +41,7 @@ class PaperWorker:
                 payload=decoded_dataset(source)['payload']
                 if 'trades' not in payload['summary']['resources']:raise ValueError('Detailed trade evidence required')
                 result=replay(payload,job['parameters']['strategy'],iter_dataset_records(payload,self.archives))
-            update(dict(phase='finished',open_orders=[],recent_activity=result.get('recent_activity',[])),force=True)
+            update(dict(phase='finished',elapsed_seconds=round(time.monotonic()-started,3),open_orders=[],recent_activity=result.get('recent_activity',[])),force=True)
             with self.pool.connection() as c:
                 self.queue._owned(c,job['id'],job['lease_token'])
                 c.execute('UPDATE research_job SET progress=progress||%s WHERE id=%s',(Jsonb(dict(result=result)),job['id']))
