@@ -331,6 +331,21 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
             raise ValueError('Paper matched-price opportunity P/L does not reconcile')
         if s['filled_best_bid_pnl_cents']-s['filled_hold_pnl_cents']!=s['filled_entry_price_premium_cents']:
             raise ValueError('Paper matched-price fill P/L does not reconcile')
+    # Independently recompute all-filled P/L from the actual order ledger,
+    # with the identical markets, sides, entry prices, and contract quantities.
+    # This is a true same-cohort/same-price accounting parity check.
+    ledger_hold_pnl=sum((100*int(markets[o['ticker']]['candidate']['result']==o['side'])
+        -o['bid'])*o['quantity'] for o in orders)
+    matched_hold_pnl=sum(s['all_qualified_filled_pnl_cents'] for s in diagnostics)
+    if ledger_hold_pnl!=matched_hold_pnl:
+        raise ValueError('Independent cohort and replay ledger differ')
+    if fill_model=='all_filled' and ledger_hold_pnl!=realized_pnl_cents:
+        raise ValueError('All-filled settlement and order ledger differ')
+    # Fixed-time research snapshots are a SEPARATE, explicitly labeled cohort.
+    # They are useful to explain why a saved bid-band square differs from the
+    # actual first-ask-qualified replay orders; never label them identical.
+    from .cohort import compare_cohorts
+    comparison=compare_cohorts(db,markets,strategies,orders,ledger_hold_pnl)
     audit=dict(basis='Ask-price and entry-window-qualified paper orders; not the bid-based research grid.',
         qualified_orders=sum(x['qualified_orders'] for x in diagnostics),
         qualified_contracts=sum(x['qualified_contracts'] for x in diagnostics),
@@ -348,7 +363,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
         loss_prevention_delta_cents=realized_pnl_cents-sum(x['filled_hold_pnl_cents'] for x in diagnostics),
         reconciled_realized_pnl_cents=realized_pnl_cents,
         strategies=diagnostics)
-    return dict(reconciliation=audit,mode='historical portfolio replay',fill_model=('Assume all qualifying orders fill immediately; hold to settlement' if fill_model=='all_filled' else ('Conservative trade-through' if fill_model=='conservative' else 'Estimated: qualifying trade volume, including at-price trades; queue position unknown')),
+    return dict(cohort_comparison=comparison,reconciliation=audit,mode='historical portfolio replay',fill_model=('Assume all qualifying orders fill immediately; hold to settlement' if fill_model=='all_filled' else ('Conservative trade-through' if fill_model=='conservative' else 'Estimated: qualifying trade volume, including at-price trades; queue position unknown')),
         starting_cash_cents=starting_cash_cents,ending_cash_cents=free,profit_loss_cents=free-starting_cash_cents,
         simulated_fills=counters['simulated_fills'],filled_contracts=counters['filled_contracts'],orders_placed=counters['orders_placed'],
         expired_orders=counters['expired_orders'],priority_cancellations=counters['priority_cancellations'],
