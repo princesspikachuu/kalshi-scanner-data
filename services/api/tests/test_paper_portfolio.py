@@ -111,6 +111,15 @@ class PortfolioTests(unittest.TestCase):
         expired=next(e for e in r['trades'] if e['kind']=='cancel')
         self.assertEqual(expired['time'],BASE+300);self.assertEqual(expired['contracts'],3)
         self.assertEqual(r['ending_cash_cents'],10022)
+    def test_audit_counts_unique_events_and_actual_entry_time(self):
+        results=self.run_replay([source(ticker='a',event='shared'),source(ticker='b',event='shared')],
+            [strategy()],cash=100000,model='all_filled')
+        s=results['reconciliation']['strategies'][0]
+        self.assertEqual(s['distinct_markets'],2)
+        self.assertEqual(s['distinct_events'],1)
+        self.assertEqual(s['average_entry_minutes_before_close'],5)
+        self.assertEqual(s['average_distance_from_window_midpoint_minutes'],1)
+
     def test_all_filled_mode_fills_with_no_trades_and_ignores_stops(self):
         src=source(trades=[])
         r=self.run_replay([src],model='all_filled')

@@ -134,6 +134,8 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
             if s.get('bid_adjustment_cents') is not None else -s['below_ask_cents']),
         reference_bid_grid_roi_percent=s.get('statistical_yield_percent'),
         qualified_orders=0,qualified_contracts=0,qualified_wins=0,
+        qualified_tickers=set(),qualified_events=set(),entry_minutes_weighted=0,
+        entry_minutes_distance_weighted=0,
         all_qualified_filled_pnl_cents=0,all_qualified_stake_cents=0,
         same_orders_best_bid_pnl_cents=0,entry_price_premium_cents=0,
         displayed_spread_cents=0,filled_best_bid_pnl_cents=0,
@@ -230,6 +232,11 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                 order['yield']=order.pop('yield_');orders.append(order);orders_by_ticker[ticker].append(order);counters['orders_placed']+=1
                 matched=diagnostics[index];matched['qualified_orders']+=1
                 matched['qualified_contracts']+=quantity
+                matched['qualified_tickers'].add(ticker)
+                matched['qualified_events'].add(m['event'])
+                matched['entry_minutes_weighted']+=remaining*quantity
+                target=(s['entry_minute_min']+s['entry_minute_max'])/2
+                matched['entry_minutes_distance_weighted']+=abs(remaining-target)*quantity
                 won=m['candidate']['result']==side
                 matched['qualified_wins']+=int(won)*quantity
                 matched['all_qualified_stake_cents']+=quantity*bid
@@ -309,6 +316,10 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
         s['qualified_break_even_win_rate_percent']=(round(s['all_qualified_stake_cents']/qualified,4)
             if qualified else None)
         s['fill_rate_percent']=(round(100*filled/qualified,4) if qualified else None)
+        s['distinct_markets']=len(s.pop('qualified_tickers'))
+        s['distinct_events']=len(s.pop('qualified_events'))
+        s['average_entry_minutes_before_close']=(round(s.pop('entry_minutes_weighted')/qualified,3) if qualified else None)
+        s['average_distance_from_window_midpoint_minutes']=(round(s.pop('entry_minutes_distance_weighted')/qualified,3) if qualified else None)
         s['avg_displayed_spread_cents']=(round(s['displayed_spread_cents']/qualified,4) if qualified else None)
         s['avg_entry_premium_over_best_bid_cents']=(round(s['entry_price_premium_cents']/qualified,4)
             if qualified else None)
