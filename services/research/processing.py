@@ -119,15 +119,24 @@ class ProcessingWorker(CampaignWorker):
         if oldest and oldest['asset'] not in self._category_recovered:
             CategoryReports(self.pool).recover_latest(oldest['asset'])
             self._category_recovered.add(oldest['asset'])
-        if ProgressiveReports(self.pool).run_once():return True
-        if SampleReports(self.pool).run_once():return True
-        # A finished date must reach the category page before more assembly.
-        if CategoryReports(self.pool).run_once():return True
-        from services.paper.worker import PaperWorker
-        if PaperWorker(self.pool,self.archives).run_once():return True
+        # A completed price day becomes visible before any table rebuild can
+        # occupy this process. The collector retains its independent I/O lane.
         job=self._claim_assembly()
         if job is None:
-            return False
+            if ProgressiveReports(self.pool).run_once():return True
+            if SampleReports(self.pool).run_once():return True
+            # Keep cumulative history fresh without rebuilding a hundred days
+            # after every newly saved day during an active download queue.
+            with self.pool.connection() as c:
+                collecting=c.execute("""SELECT 1 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
+                    WHERE j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
+                    AND EXISTS(SELECT 1 FROM research_campaign_day d WHERE d.campaign_id=r.id AND d.dataset_id IS NULL) LIMIT 1""").fetchone()
+                due=c.execute("""SELECT j.asset FROM research_job j WHERE j.parameters->>'collector'='category-report-v1'
+                    AND j.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM research_result r
+                        WHERE r.stream_key='category-'||j.asset AND r.published_at>clock_timestamp()-interval '5 minutes') ORDER BY j.created_at,j.id LIMIT 1""").fetchone()
+            if (not collecting or due) and CategoryReports(self.pool).run_once(asset=due['asset'] if collecting and due else None):return True
+            from services.paper.worker import PaperWorker
+            return PaperWorker(self.pool,self.archives).run_once()
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)
         try:self._publish(job)
         except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'])

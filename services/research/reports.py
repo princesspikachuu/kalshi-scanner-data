@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
 import hashlib
+import tempfile
 
 from psycopg.types.json import Jsonb
 
@@ -203,6 +204,22 @@ class PreparedReport:
     observations_json: str
 
 
+def observation_batches(encoded,batch_size=PUBLICATION_BATCH_ROWS):
+    """Decode the canonical array without expanding its full row graph again."""
+    decoder=json.JSONDecoder();offset=1;batch=[]
+    if not encoded.startswith('[') or not encoded.endswith(']'):raise ValueError('Invalid observations')
+    while offset<len(encoded)-1:
+        value,end=decoder.raw_decode(encoded,offset)
+        if not isinstance(value,dict):raise ValueError('Invalid observation row')
+        batch.append(value);offset=end
+        if offset<len(encoded)-1:
+            if encoded[offset]!=',':raise ValueError('Invalid observations')
+            offset+=1
+            if offset==len(encoded)-1:raise ValueError('Invalid observations')
+        if len(batch)>=batch_size:yield batch;batch=[]
+    if batch:yield batch
+
+
 def report_fingerprint(report_json,observations_json):
     """Hash the exact canonical envelope without another full observation copy."""
     checksum=hashlib.sha256()
@@ -266,8 +283,18 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
         latest=dict(cells=latest_cells,policy_cells=latest_policy,observation_count=len(latest_rows),candidate_count=latest_candidates,first_date=latest_days[0] if latest_days else None,last_date=latest_days[-1] if latest_days else None),
         execution_included=False,baseline_fees_cents=0,exit_cost_stress_cents=2)
     encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
-    obs=json.dumps(rows,sort_keys=True,separators=(',',':'),allow_nan=False)
-    if len(encoded.encode())+len(obs.encode())>MAX_REPORT_BYTES: raise ValueError('Research result too large; explicit partitions required')
+    # Serialize one row at a time, releasing expanded inputs before loading the
+    # final envelope. json.dumps(rows) otherwise keeps the row graph, a large
+    # encoder chunk list, and the final JSON string resident at once.
+    with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as saved:
+        saved.write('[')
+        for index,row in enumerate(rows):
+            if index:saved.write(',')
+            saved.write(json.dumps(row,sort_keys=True,separators=(',',':'),allow_nan=False))
+        saved.write(']')
+        del rows,latest_rows
+        if len(encoded)+saved.tell()>MAX_REPORT_BYTES:raise ValueError('Research result too large; explicit partitions required')
+        saved.seek(0);obs=saved.read()
     return PreparedReport(encoded,report_fingerprint(encoded,obs),obs)
 
 
@@ -293,7 +320,7 @@ class ReportStore:
         # Preview cells retain full source cohorts; raw datasets already retain
         # every observation input. Avoid O(days squared) observation duplication.
         preview=payload.get('publication',{}).get('complete') is False
-        rows=[] if preview else json.loads(prepared.observations_json)
+        batches=() if preview else observation_batches(prepared.observations_json)
         with self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91028))',(stream_key,))
             if stream_key.startswith('campaign-') and 'publication' in payload:
@@ -314,10 +341,10 @@ class ReportStore:
                 SELECT %s,id,latest FROM jsonb_to_recordset(%s::jsonb) AS m(id bigint,latest boolean)''',(result,Jsonb(payload['datasets'])))
             # Bound PostgreSQL's JSON expansion memory; every batch remains in
             # this SAME publication transaction, preserving all-or-nothing sealing.
-            for offset in range(0,len(rows),PUBLICATION_BATCH_ROWS):
+            for batch in batches:
                 c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation)
                     SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
-                    FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(rows[offset:offset+PUBLICATION_BATCH_ROWS])))
+                    FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(batch)))
             return result
 
     def publish_campaign(self,stream_key,asset,dataset_ids,*,publication=None):
