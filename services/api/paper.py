@@ -31,8 +31,8 @@ def install_paper(app,auth,mutate,pool):
     def workspace(request:Request):
         auth(request);no_query(request)
         with pool.connection() as c:
-            strategies=c.execute("SELECT id::text,asset,parameters->'strategy' AS strategy FROM research_job WHERE idempotency_key>='paper-strategy/' AND idempotency_key<'paper-strategy0' ORDER BY created_at DESC LIMIT 50").fetchall()
-            runs=c.execute("SELECT id::text,asset,status,error_code,parameters->>'dataset_id' AS dataset_id,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay0' ORDER BY created_at DESC LIMIT 20").fetchall()
+            strategies=c.execute("SELECT id::text,asset,parameters->'strategy' AS strategy FROM research_job WHERE idempotency_key>='paper-strategy/' AND idempotency_key<'paper-strategy/zzzz' ORDER BY created_at DESC LIMIT 50").fetchall()
+            runs=c.execute("SELECT id::text,asset,status,error_code,parameters->>'dataset_id' AS dataset_id,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz' ORDER BY created_at DESC LIMIT 20").fetchall()
             datasets=c.execute("""SELECT ds.id,ds.day,s.summary->>'candidate_count' AS markets,
                 coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds
                 JOIN research_summary s ON s.dataset_id=ds.id

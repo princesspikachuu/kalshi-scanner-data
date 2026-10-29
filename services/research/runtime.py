@@ -140,8 +140,9 @@ def run(settings,stop):
             inventory=stack.enter_context(KalshiInventory(signer=signer));evidence=stack.enter_context(KalshiEvidence(archives=archives,signer=signer))
             if signer is not None:
                 allowance=inventory.account_allowance();ceiling=allowance['requests_per_second']*.9
-                budget.configure(ceiling,1,allow_update=True)
-                budget.authenticated(ceiling,signer.key_id)
+                capacity=min(12,allowance['burst_capacity'],max(1,int(ceiling)))
+                budget.configure(ceiling,capacity,allow_update=True,preserve_capacity=True)
+                budget.authenticated(ceiling,signer.key_id,capacity)
                 print(json.dumps(dict(event='authenticated_kalshi_allowance',tier=allowance['usage_tier'],
                     allowed_requests_per_second=allowance['requests_per_second'],target_ceiling=ceiling)),flush=True)
             else:budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)

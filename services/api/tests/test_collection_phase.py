@@ -85,3 +85,18 @@ class CollectionPhaseTests(unittest.TestCase):
         self.budget.configure(18,1,allow_update=True);self.budget.authenticated(18,'test-key')
         with self.db.pool.connection() as c:
             self.assertEqual(c.execute('SELECT refill_per_second FROM research_read_budget').fetchone()['refill_per_second'],9)
+
+    def test_analysis_keeps_a_cohort_until_category_turn_expires(self):
+        backlog=AnalysisBacklog(self.worker)
+        ids={}
+        for asset in ('btc','eth'):
+            ids[asset]=self.queue.enqueue(asset,dict(collector='saved-analysis-v1',source_dataset=1,source_campaign='00000000-0000-0000-0000-000000000001',day='2026-10-25'),'analysis-source/'+asset)['id']
+        claimed=[]
+        def step(job,deadline):
+            claimed.append(job['id']);self.queue.yield_job(job['id'],job['lease_token'])
+        with patch.object(backlog,'bootstrap'),patch.object(backlog,'step',side_effect=step),patch('services.research.backlog.monotonic',return_value=1):
+            backlog.run_once(deadline=30);backlog.run_once(deadline=30)
+        self.assertEqual(claimed,[ids['btc'],ids['btc']])
+        with patch.object(backlog,'bootstrap'),patch.object(backlog,'step',side_effect=step),patch('services.research.backlog.monotonic',return_value=62):
+            backlog.run_once(deadline=90)
+        self.assertEqual(claimed[-1],ids['eth'])

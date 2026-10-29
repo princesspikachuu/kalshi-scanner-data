@@ -12,15 +12,17 @@ class ReadBudget:
         text_key(name, 64)
         self.pool, self.name = pool, name
 
-    def configure(self, refill_per_second, capacity, *, allow_update=False):
+    def configure(self, refill_per_second, capacity, *, allow_update=False,preserve_capacity=False):
         if (type(refill_per_second) not in (int, float) or not math.isfinite(refill_per_second)
                 or not 0 < refill_per_second <= 100000 or type(capacity) is not int or not 1 <= capacity <= 100000):
             raise ValueError('Invalid read budget')
+        requested_capacity=capacity
         with self.pool.connection() as c:
             c.execute('''INSERT INTO research_read_budget(name,refill_per_second,capacity,tokens)
                 VALUES(%s,%s,%s,%s) ON CONFLICT(name) DO NOTHING''',
                 (self.name, refill_per_second, capacity, capacity))
             row = c.execute('SELECT * FROM research_read_budget WHERE name=%s FOR UPDATE', (self.name,)).fetchone()
+            if preserve_capacity:capacity=min(capacity,row['capacity'])
             if (row['refill_per_second'], row['capacity']) != (refill_per_second, capacity):
                 if not allow_update:raise EvidenceConflict('Read budget already configured differently')
                 # Runtime configuration may change pacing, never reset cooldown or mint tokens.
@@ -30,9 +32,9 @@ class ReadBudget:
         with self.pool.connection() as c:
             c.execute("""INSERT INTO research_job(id,asset,parameters,idempotency_key,status,finished_at,progress)
                 VALUES(%s,'btc',%s,%s,'succeeded',clock_timestamp(),
-                    jsonb_build_object('ceiling',%s::double precision,'adjusted_at',clock_timestamp()))
-                ON CONFLICT(idempotency_key) DO UPDATE SET progress=research_job.progress||jsonb_build_object('ceiling',%s::double precision)""",
-                (uuid4(),Jsonb({'collector':'pacing-v1'}),'pacing/'+self.name,refill_per_second,refill_per_second))
+                    jsonb_build_object('ceiling',%s::double precision,'capacity_ceiling',%s::integer,'adjusted_at',clock_timestamp()))
+                ON CONFLICT(idempotency_key) DO UPDATE SET progress=research_job.progress||jsonb_build_object('ceiling',%s::double precision,'capacity_ceiling',%s::integer)""",
+                (uuid4(),Jsonb({'collector':'pacing-v1'}),'pacing/'+self.name,refill_per_second,requested_capacity,refill_per_second,requested_capacity))
 
     @timed('budget.take')
     def take(self, cost):
@@ -73,6 +75,7 @@ class ReadBudget:
         with self.pool.connection() as c:
             row=c.execute('''UPDATE research_read_budget SET
                 refill_per_second=LEAST(refill_per_second,GREATEST(0.1,refill_per_second/2)),
+                capacity=LEAST(capacity,GREATEST(1,floor(refill_per_second/2)::integer)),
                 tokens=0,updated_at=clock_timestamp(),
                 blocked_until=GREATEST(blocked_until,clock_timestamp()+%s*interval '1 second')
                 WHERE name=%s RETURNING refill_per_second''',(seconds,self.name)).fetchone()
@@ -88,11 +91,12 @@ class ReadBudget:
             if row is None:return
             p=row['progress']
             if c.execute("SELECT clock_timestamp() >= %s::timestamptz+interval '60 seconds' AS ready",(p['adjusted_at'],)).fetchone()['ready']:
-                c.execute('''UPDATE research_read_budget SET refill_per_second=LEAST(%s,refill_per_second*1.1)
-                    WHERE name=%s AND blocked_until<=clock_timestamp()''',(p['ceiling'],self.name))
+                c.execute('''UPDATE research_read_budget SET refill_per_second=LEAST(%s,refill_per_second*1.1),
+                    capacity=LEAST(%s,GREATEST(capacity,floor(LEAST(%s,refill_per_second*1.1))::integer))
+                    WHERE name=%s AND blocked_until<=clock_timestamp()''',(p['ceiling'],p.get('capacity_ceiling',1),p['ceiling'],self.name))
                 c.execute("UPDATE research_job SET progress=progress||jsonb_build_object('adjusted_at',clock_timestamp()) WHERE idempotency_key=%s",('pacing/'+self.name,))
 
-    def authenticated(self,ceiling,key_id):
+    def authenticated(self,ceiling,key_id,capacity=1):
         """Apply a newly verified account allowance once; retain later backoff."""
         import hashlib
         identity=hashlib.sha256(key_id.encode()).hexdigest()
@@ -100,5 +104,5 @@ class ReadBudget:
             row=c.execute("SELECT progress FROM research_job WHERE idempotency_key=%s FOR UPDATE",('pacing/'+self.name,)).fetchone()
             previous=row['progress']
             if previous.get('authenticated_key')!=identity or previous.get('authenticated_ceiling')!=ceiling:
-                c.execute('UPDATE research_read_budget SET refill_per_second=%s WHERE name=%s',(ceiling,self.name))
+                c.execute('UPDATE research_read_budget SET refill_per_second=%s,capacity=%s WHERE name=%s',(ceiling,capacity,self.name))
                 c.execute("UPDATE research_job SET progress=progress||%s WHERE idempotency_key=%s",(Jsonb(dict(authenticated_key=identity,authenticated_ceiling=ceiling)),'pacing/'+self.name))

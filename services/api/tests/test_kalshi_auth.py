@@ -25,7 +25,7 @@ class SigningTests(unittest.TestCase):
             seen.append(request);self.assertIn('KALSHI-ACCESS-SIGNATURE',request.headers)
             return reply(payload={'read':{'refill_rate':200},'usage_tier':'basic'} if request.url.path.endswith('/limits') else {'default_cost':10,'endpoint_costs':[]})
         with KalshiInventory(signer=self.signer(ed25519.Ed25519PrivateKey.generate()),transport=httpx.MockTransport(handler)) as provider:
-            self.assertEqual(provider.account_allowance(),dict(usage_tier='basic',requests_per_second=20))
+            self.assertEqual(provider.account_allowance(),dict(usage_tier='basic',requests_per_second=20,burst_capacity=20))
         self.assertEqual(len(seen),2)
     def test_incomplete_credentials_fail_closed(self):
         self.assertIsNone(signer_from_env({}))

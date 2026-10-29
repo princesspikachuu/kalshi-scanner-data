@@ -33,7 +33,7 @@ class AnalysisBacklog:
     """One HTTP page per turn; every saved cohort, without reviving removed requests."""
     def __init__(self,owner):
         self.owner=owner;self.pool=owner.pool;self.queue=owner.queue;self.archives=owner.archives
-        self.asset=None;self.turn_started=0;self.cached=None;self.bootstrap_at=0
+        self.asset=None;self.turn_started=0;self.cached=None;self.bootstrap_at=0;self.jobs={}
 
     def collecting(self):
         with self.pool.connection() as c:
@@ -76,12 +76,21 @@ class AnalysisBacklog:
         self.bootstrap()
         with self.pool.connection() as c:
             assets=[r['asset'] for r in c.execute("""SELECT DISTINCT asset FROM research_job
-                WHERE idempotency_key>='analysis-source/' AND idempotency_key<'analysis-source0'
+                WHERE idempotency_key>='analysis-source/' AND idempotency_key<'analysis-source/zzzz'
                 AND status IN ('queued','running') AND attempts<max_attempts ORDER BY asset""").fetchall()]
         if not assets:return False
         if self.asset not in assets or monotonic()-self.turn_started>=60:
             self.asset=next((a for a in assets if self.asset is not None and a>self.asset),assets[0]);self.turn_started=monotonic()
-        job=self.queue.claim(seconds=120,collector='saved-analysis-v1',asset=self.asset)
+        selected=self.jobs.get(self.asset)
+        if selected and self.queue.get(selected)['status'] not in ('queued','running'):
+            self.jobs.pop(self.asset);selected=None
+        if selected is None:
+            with self.pool.connection() as c:
+                row=c.execute('''SELECT id FROM research_job WHERE idempotency_key>='analysis-source/'
+                    AND idempotency_key<'analysis-source/zzzz' AND asset=%s AND status IN ('queued','running')
+                    AND attempts<max_attempts ORDER BY created_at,id LIMIT 1''',(self.asset,)).fetchone()
+            if row:self.jobs[self.asset]=selected=row['id']
+        job=self.queue.claim(seconds=120,collector='saved-analysis-v1',asset=self.asset,job_id=selected) if selected else None
         if job is None:return False
         try:self.step(job,deadline)
         except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'],1)
@@ -123,7 +132,13 @@ class AnalysisBacklog:
                 with self.pool.connection() as c:child=c.execute('SELECT * FROM research_job WHERE idempotency_key=%s',('analysis-read/'+scope.key,)).fetchone()
             attempts.append((child,self.queue.page_evidence(child['id'])))
         guard=self.owner._work_guard(job)
-        def cancelled():return self.collecting() or guard()
+        next_check=0;interrupted=False
+        def cancelled():
+            nonlocal next_check,interrupted
+            if guard():return True
+            if monotonic()>=next_check:
+                interrupted=self.collecting();next_check=monotonic()+1
+            return interrupted
         prepared=prepare_dataset(plan,attempts,self.archives,lambda jid:(self.queue.get(jid),self.queue.page_evidence(jid)),
             collected_tickers=tickers,cancelled=cancelled)
         if cancelled():raise CollectionInterrupted('Collection preempts analysis')

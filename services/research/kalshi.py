@@ -121,7 +121,8 @@ class KalshiInventory:
         for entry in costs.get('endpoint_costs',[]):
             if entry.get('method')=='GET' and entry.get('path','').startswith(('/trade-api/v2/markets','/trade-api/v2/historical/','/trade-api/v2/series/')):
                 cost=max(cost,entry['cost'])
-        return dict(usage_tier=limits.get('usage_tier','unknown'),requests_per_second=rate/cost)
+        return dict(usage_tier=limits.get('usage_tier','unknown'),requests_per_second=rate/cost,
+                    burst_capacity=max(1,int(limits.get('read',{}).get('bucket_capacity',rate)/cost)))
 
     def fetch(self, scope, cursor, timeout_seconds):
         if type(scope) is not Scope:

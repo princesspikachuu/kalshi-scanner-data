@@ -199,10 +199,12 @@ class CampaignStore:
                     count(*) FILTER(WHERE status='succeeded')::integer AS completed_work_items,
                     coalesce(sum((progress->>'completed_pages')::bigint),0)::bigint AS saved_pages,
                     min(available_at) FILTER(WHERE status='queued' AND available_at>clock_timestamp()) AS retry_at
-                    FROM research_job WHERE id IN (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)''',(UUID(str(identifier)),)).fetchone()
+                    FROM research_job WHERE id IN (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)
+                    AND parameters->'scope'->>'resource' IS DISTINCT FROM 'trades' ''',(UUID(str(identifier)),)).fetchone()
                 row.update(detail)
                 failure=c.execute('''SELECT error_code FROM research_job WHERE id IN
                     (SELECT job_id FROM research_campaign_work WHERE campaign_id=%s)
+                    AND parameters->'scope'->>'resource' IS DISTINCT FROM 'trades'
                     AND error_code IS NOT NULL ORDER BY finished_at DESC NULLS LAST,id LIMIT 1''',(UUID(str(identifier)),)).fetchone()
                 row['last_work_error']=failure['error_code'] if failure else None
             return row
