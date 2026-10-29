@@ -1,10 +1,12 @@
 import {paperCall,squareStrategy} from './paper-client.mjs';
-export function openBetOverlay(report,cell,minutes,band){
+export function openBetOverlay(selections){
+ if(!selections?.length)return;
+ const [{report,cell,minutes,band}]=selections;
  const $=id=>document.getElementById(id),dialog=$('betDialog');
  let context={report,cell,minutes,band};
- $('betSquare').textContent=`${report.asset} · ${band}¢ ask · ${Math.max(0,...report.entry_minutes.filter(m=>m<minutes))}–${minutes} minutes before close`;
+ $('betSquare').textContent=selections.length===1?`${report.asset} · ${band}¢ ask · ${Math.max(0,...report.entry_minutes.filter(m=>m<minutes))}–${minutes} minutes before close`:`${selections.length} selected price/time squares · ${report.asset}`;
  $('betStats').textContent=`Reference BID-grid ROI ${cell.hold.hypothetical_roi_percent.toFixed(2)}% (not a paper-trading forecast) · bid-grid win rate ${cell.hold.win_rate_percent.toFixed(2)}% · ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days. Statistics use historical bid prices; new entry eligibility uses the current ask.`;
- $('betName').value=`${report.asset} ${band}¢ / ${minutes} min`;
+ $('betName').value=selections.length===1?`${report.asset} ${band}¢ / ${minutes} min`:`${report.asset} selection`;
  $('betMaximum').value='';$('betReference').value='ask';$('betAdjustment').value='-1';$('betContracts').value='1';$('betPercent').value='10';
  $('betStop').value='';$('betStopEnabled').checked=false;
  $('betMessage').textContent='Paper only. Unfilled orders expire at the end of their game or market period. Each event is capped at 10%, including other strategies and pending bids.';
@@ -27,11 +29,14 @@ export function openBetOverlay(report,cell,minutes,band){
    if($('betAdjustment').value==='')throw Error('Enter a maker bid price adjustment.');
    if($('betReference').value==='ask'&&Number($('betAdjustment').value)>=0)
     throw Error('Ask-based maker bids must be below the ask. Choose a negative price adjustment.');
-   await paperCall('strategies',squareStrategy(context.report,context.cell,context.minutes,context.band,{
+   const settings={
     name:$('betName').value.trim(),bid_reference:$('betReference').value,bid_adjustment_cents:Number($('betAdjustment').value),maximum_bid_cents:$('betMaximum').value===''?null:Number($('betMaximum').value),
     contracts:Number($('betContracts').value),balance_percent:Number($('betPercent').value),starting_cash_cents:10000,
-    loss_trigger_cents:$('betStopEnabled').checked?Number($('betStop').value):null}));
-   $('betMessage').textContent='Saved. Add more squares, then open Paper trading to replay them together using one shared balance.';
+    loss_trigger_cents:$('betStopEnabled').checked?Number($('betStop').value):null};
+   const results=await Promise.allSettled(selections.map(item=>paperCall('strategies',squareStrategy(item.report,item.cell,item.minutes,item.band,{
+     ...settings,name:selections.length===1?settings.name:`${settings.name} · ${item.band}¢ / ${item.minutes} min`}))));
+   const failed=results.filter(r=>r.status==='rejected');
+   $('betMessage').textContent=failed.length?`${results.length-failed.length} of ${results.length} saved. ${failed[0].reason?.message||'Check failed selections and retry.'}`:`Saved ${results.length} strategies. Open Paper trading to replay them together using one shared balance.`;
   }catch(error){$('betMessage').textContent=error.message}finally{button.disabled=false}
  };
  preview();dialog.showModal();

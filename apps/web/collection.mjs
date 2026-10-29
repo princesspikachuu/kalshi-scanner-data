@@ -3,8 +3,17 @@ import {createCollectionClient} from './collection-client.mjs';
 import {createResearchClient} from './research-client.mjs';
 import {renderTable,reportCsv} from './report-view.mjs';
 import {openBetOverlay} from './bet-overlay.mjs';
-let choosingBet=false;
-document.getElementById('newBet').addEventListener('click',()=>{choosingBet=!choosingBet;document.getElementById('newBet').setAttribute('aria-pressed',String(choosingBet));document.getElementById('betHint').textContent=choosingBet?'Tap the statistics square for this bet.':'Choose New bet, then tap a statistics square to build a paper strategy.';});
+let choosingBet=false,betSelections=new Map();
+const betKey=(minutes,band)=>`${minutes}:${band}`;
+function betSelectionStatus(){
+ const count=betSelections.size;
+ document.getElementById('betHint').textContent=choosingBet?`${count} squares selected. Tap squares to add/remove, then choose Configure selected bets.`:'Choose New bet, then tap one or more statistics squares.';
+ document.getElementById('betConfigure').hidden=!choosingBet||!count;
+ document.getElementById('betClear').hidden=!choosingBet||!count;
+}
+document.getElementById('newBet').addEventListener('click',()=>{choosingBet=!choosingBet;document.getElementById('newBet').setAttribute('aria-pressed',String(choosingBet));betSelectionStatus();drawReport()});
+document.getElementById('betConfigure').addEventListener('click',()=>openBetOverlay([...betSelections.values()]));
+document.getElementById('betClear').addEventListener('click',()=>{betSelections.clear();betSelectionStatus();drawReport()});
 const $=id=>document.getElementById(id),client=createCollectionClient();
 let timer,statusTimer,revision=0,selected=null,next=null,key=null,busy=false,historyNext=null,report=null,reportKey=null;
 const research=createResearchClient(),auth=createAuthClient();
@@ -37,7 +46,7 @@ async function workerStatus(){
  if(!$('workspace').hidden)void loadHistory(revision);
  statusTimer=setTimeout(workerStatus,30000);
 }
-function clearReport(){report=null;reportKey=null;reportContext=null;reportRequest++;sourcesLoaded=null;sourceNext=null;windowNext=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true;$('exportCsv').hidden=true;$('provenance').open=false}
+function clearReport(){betSelections.clear();betSelectionStatus();report=null;reportKey=null;reportContext=null;reportRequest++;sourcesLoaded=null;sourceNext=null;windowNext=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true;$('exportCsv').hidden=true;$('provenance').open=false}
 function showReport(data,context){
  report=data;reportContext=context;sourcesLoaded=null;sourceNext=null;windowNext=null;$('provenance').open=false;
  $('sourceList').replaceChildren();$('windowList').replaceChildren();$('sourcesMore').hidden=true;$('windowsMore').hidden=true;
@@ -84,7 +93,7 @@ $('exportCsv').addEventListener('click',()=>{if(!report)return;const url=URL.cre
 function drawReport(){
  if(!report)return;$('cellDetail').hidden=true;
  renderTable($('table'),report,{loss:$('loss').checked,metric:$('metric').value,minimum:Number($('minimum').value)},(cell,minutes,band)=>{
-  if(choosingBet){openBetOverlay(report,cell,minutes,band);return}
+  if(choosingBet){const k=betKey(minutes,band);if(betSelections.has(k))betSelections.delete(k);else betSelections.set(k,{report,cell,minutes,band});betSelectionStatus();drawReport();return}
   const row=$('loss').checked?cell.loss_prevention:cell.hold,p=cell.loss_prevention,doc=document;
   const heading=doc.createElement('h3');heading.textContent=`${minutes} minutes before close · ${band}¢`;
   const lines=[`${report.sampled_preview?'Preliminary sampled cohort':'Full original sample'}: ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days.`,
