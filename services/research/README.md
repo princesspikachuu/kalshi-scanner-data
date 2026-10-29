@@ -637,3 +637,19 @@ number of dates, the ordinary full-cohort report takes precedence in the UI.
 This is a separate, smaller workload comparable in market count to the older
 collector's default cap; it is not proof of identical rows or a five-minute
 hosted completion time. Existing saved pages and source versions remain intact.
+
+### Steady queue-wide backfill policy
+
+The split collector publishes full-cohort price days for the oldest request, then
+advances to the next request's price history. No detailed trade downloads or
+enriched assembly start until every active request has its price days saved.
+Only then does enrichment run oldest first. Paused/removed requests are excluded;
+new requests preempt further trade steps. Already saved pages remain durable.
+Price-only reports remain explicitly incomplete for execution analysis.
+
+The staging worker starts at one public request per second, burst one. All
+requests share the existing database budget. Each 429 halves its refill rate
+down to 0.1 requests/second and preserves retry backoff; startup configuration
+can lower but never automatically raise that rate. There is no paid Kalshi tier
+or automatic acceleration. Subsequent speed increases require an explicit
+configuration/code decision after reliable collection has been measured.

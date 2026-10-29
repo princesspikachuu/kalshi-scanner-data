@@ -22,7 +22,7 @@ class ReadBudget:
             if (row['refill_per_second'], row['capacity']) != (refill_per_second, capacity):
                 if not allow_update:raise EvidenceConflict('Read budget already configured differently')
                 # Runtime configuration may change pacing, never reset cooldown or mint tokens.
-                c.execute('''UPDATE research_read_budget SET refill_per_second=%s,capacity=%s,
+                c.execute('''UPDATE research_read_budget SET refill_per_second=LEAST(refill_per_second,%s),capacity=%s,
                     tokens=LEAST(tokens,%s) WHERE name=%s''',(refill_per_second,capacity,capacity,self.name))
 
     @timed('budget.take')
@@ -57,3 +57,15 @@ class ReadBudget:
             row = c.execute('''UPDATE research_read_budget SET blocked_until=GREATEST(blocked_until,
                 clock_timestamp()+%s*interval '1 second') WHERE name=%s RETURNING name''', (seconds, self.name)).fetchone()
             if row is None: raise ValueError('Read budget missing')
+
+    def rate_limited(self,seconds):
+        """Reduce the shared pace after a rejection; never accelerate on restart."""
+        if type(seconds) is not int or not 1<=seconds<=2**40:raise ValueError('Invalid provider cooldown')
+        with self.pool.connection() as c:
+            row=c.execute('''UPDATE research_read_budget SET
+                refill_per_second=LEAST(refill_per_second,GREATEST(0.1,refill_per_second/2)),
+                tokens=0,updated_at=clock_timestamp(),
+                blocked_until=GREATEST(blocked_until,clock_timestamp()+%s*interval '1 second')
+                WHERE name=%s RETURNING refill_per_second''',(seconds,self.name)).fetchone()
+            if row is None:raise ValueError('Read budget missing')
+        count('provider.pacing_reduced',1)
