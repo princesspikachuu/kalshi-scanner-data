@@ -3,6 +3,8 @@ import math
 from .telemetry import timed,timing,count
 
 from .queue import EvidenceConflict, text_key
+from uuid import uuid4
+from psycopg.types.json import Jsonb
 
 
 class ReadBudget:
@@ -24,6 +26,13 @@ class ReadBudget:
                 # Runtime configuration may change pacing, never reset cooldown or mint tokens.
                 c.execute('''UPDATE research_read_budget SET refill_per_second=LEAST(refill_per_second,%s),capacity=%s,
                     tokens=LEAST(tokens,%s) WHERE name=%s''',(refill_per_second,capacity,capacity,self.name))
+
+        with self.pool.connection() as c:
+            c.execute("""INSERT INTO research_job(id,asset,parameters,idempotency_key,status,finished_at,progress)
+                VALUES(%s,'btc',%s,%s,'succeeded',clock_timestamp(),
+                    jsonb_build_object('ceiling',%s::double precision,'adjusted_at',clock_timestamp()))
+                ON CONFLICT(idempotency_key) DO UPDATE SET progress=research_job.progress||jsonb_build_object('ceiling',%s::double precision)""",
+                (uuid4(),Jsonb({'collector':'pacing-v1'}),'pacing/'+self.name,refill_per_second,refill_per_second))
 
     @timed('budget.take')
     def take(self, cost):
@@ -68,4 +77,28 @@ class ReadBudget:
                 blocked_until=GREATEST(blocked_until,clock_timestamp()+%s*interval '1 second')
                 WHERE name=%s RETURNING refill_per_second''',(seconds,self.name)).fetchone()
             if row is None:raise ValueError('Read budget missing')
+        with self.pool.connection() as c:
+            c.execute("UPDATE research_job SET progress=progress||jsonb_build_object('adjusted_at',clock_timestamp()) WHERE idempotency_key=%s",('pacing/'+self.name,))
         count('provider.pacing_reduced',1)
+
+    def successful(self):
+        """Probe upward slowly after a clean minute; a 429 still cuts pace immediately."""
+        with self.pool.connection() as c:
+            row=c.execute("SELECT progress FROM research_job WHERE idempotency_key=%s FOR UPDATE",('pacing/'+self.name,)).fetchone()
+            if row is None:return
+            p=row['progress']
+            if c.execute("SELECT clock_timestamp() >= %s::timestamptz+interval '60 seconds' AS ready",(p['adjusted_at'],)).fetchone()['ready']:
+                c.execute('''UPDATE research_read_budget SET refill_per_second=LEAST(%s,refill_per_second*1.1)
+                    WHERE name=%s AND blocked_until<=clock_timestamp()''',(p['ceiling'],self.name))
+                c.execute("UPDATE research_job SET progress=progress||jsonb_build_object('adjusted_at',clock_timestamp()) WHERE idempotency_key=%s",('pacing/'+self.name,))
+
+    def authenticated(self,ceiling,key_id):
+        """Apply a newly verified account allowance once; retain later backoff."""
+        import hashlib
+        identity=hashlib.sha256(key_id.encode()).hexdigest()
+        with self.pool.connection() as c:
+            row=c.execute("SELECT progress FROM research_job WHERE idempotency_key=%s FOR UPDATE",('pacing/'+self.name,)).fetchone()
+            previous=row['progress']
+            if previous.get('authenticated_key')!=identity or previous.get('authenticated_ceiling')!=ceiling:
+                c.execute('UPDATE research_read_budget SET refill_per_second=%s WHERE name=%s',(ceiling,self.name))
+                c.execute("UPDATE research_job SET progress=progress||%s WHERE idempotency_key=%s",(Jsonb(dict(authenticated_key=identity,authenticated_ceiling=ceiling)),'pacing/'+self.name))

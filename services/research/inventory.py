@@ -228,6 +228,7 @@ class InventoryWorker:
             remaining = deadline-self.clock()
             if remaining <= 0: raise ProviderFailure('provider_timeout')
             response = cached if cached is not None else self.provider.fetch(scope, state.next_cursor, min(10, remaining))
+            if cached is None:getattr(self.budget,'successful',lambda:None)()
             if self.clock() >= deadline: raise ProviderFailure('provider_timeout')
             if not isinstance(response, ProviderPage) or response.availability not in ('available', 'unavailable'):
                 raise ProviderFailure('provider_invalid', retry=False)

@@ -4,7 +4,7 @@ const ROUTES=new Map([
  ['/api/auth/google','POST'],['/api/auth/logout','POST']
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
-const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);
+const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -42,7 +42,9 @@ function researchBody(path,data){
 function collectionBody(data){
  if(data.contract!=='collection-v1')throw Error('invalid collection');
  const keys=Object.keys(data).sort().join(',');
- if('worker' in data){
+ if('analysis' in data){
+  if(keys!=='analysis,contract'||!Array.isArray(data.analysis.categories)||data.analysis.categories.length>7||data.analysis.categories.some(r=>!Number.isSafeInteger(r.saved_days)||!Number.isSafeInteger(r.analyzed_days)||r.analyzed_days>r.saved_days))throw Error('invalid analysis status');
+ }else if('worker' in data){
   if(keys!=='contract,worker'||!['online','waiting'].includes(data.worker.state)||data.worker.heartbeat_ttl_seconds!==90||
      (data.worker.last_seen!==null&&(typeof data.worker.last_seen!=='string'||!Number.isFinite(Date.parse(data.worker.last_seen)))))throw Error('invalid worker status');
  }else if('items' in data){
@@ -61,6 +63,7 @@ function collectionBody(data){
  }
  return data;
 }
+function paperBody(data){if(data.contract!=='paper-v1'||data.live_trading_enabled!==false)throw Error('invalid paper workspace');if(data.runs&&(!Array.isArray(data.runs)||data.runs.length>20))throw Error('invalid paper runs');return data;}
 function responseCookies(headers){
  const values=typeof headers.getSetCookie==='function'?headers.getSetCookie():headers.getAll('Set-Cookie');
  return values.filter(value=>{
@@ -77,11 +80,13 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
  const campaignGet=new RegExp('^/api/collection/campaigns/'+uuid+'$').test(url.pathname);
  const workerStatus=url.pathname==='/api/collection/status';
- const collection=workerStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
+ const analysisStatus=url.pathname==='/api/collection/analysis';
+ const paper=/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname);
+ const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=collection?((campaignGet||campaignList||workerStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?(url.pathname.endsWith('/workspace')?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
  if(collection){
@@ -125,11 +130,11 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
   if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');
   const outgoing=new Headers(BASE_HEADERS);
-  const setCookies=(research||collection)?[]:responseCookies(upstream.headers);
+  const setCookies=(research||collection||paper)?[]:responseCookies(upstream.headers);
   let response;
   if(!upstream.ok){
    const messages={400:'Invalid request',401:'Sign in required',403:'Request rejected',413:'Request too large',415:'JSON required',422:'Invalid sign-in request',429:'Too many requests. Try again shortly.',503:'Sign-in connection unavailable'};
-   if(research||collection){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
+   if(research||collection||paper){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
    const status=Object.hasOwn(messages,upstream.status)?upstream.status:502;
    response=problem(status,messages[status]||'Sign-in connection unavailable');
    if(status===429)response.headers.set('retry-after','60');
@@ -139,8 +144,8 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
-   const text=new TextDecoder().decode(await boundedBody(upstream.body,(research||collection)?262144:32768));
-   response=new Response(JSON.stringify(collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,(research||collection||paper)?262144:32768));
+   response=new Response(JSON.stringify(paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;

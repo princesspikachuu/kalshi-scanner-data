@@ -43,6 +43,7 @@ class Campaign(Closed):
     error_code:str|None=Field(max_length=64)
     total_sections:int=Field(ge=1,le=3661)
     completed_sections:int=Field(ge=0,le=3661)
+    analyzed_sections:int=Field(default=0,ge=0,le=3661)
     saved_pages:int=Field(default=0,ge=0)
     work_items:int=Field(default=0,ge=0)
     completed_work_items:int=Field(default=0,ge=0)
@@ -81,6 +82,11 @@ def install_collection(app,auth,mutate,store):
         auth(request);no_query(request)
         row=store.worker_status()
         return dict(contract='collection-v1',worker=dict(state=row['state'],last_seen=row['last_seen'],heartbeat_ttl_seconds=90))
+
+    @app.get('/collection/analysis')
+    def analysis(request:Request):
+        auth(request);no_query(request)
+        return dict(contract='collection-v1',analysis=store.analysis_status())
 
     @app.post('/collection/campaigns')
     def create(body:RangeBody,request:Request):

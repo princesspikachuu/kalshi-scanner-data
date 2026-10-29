@@ -116,7 +116,7 @@ async function loadHistory(version,append=false,group=null){
    if(existing.has(c.id))continue;existing.add(c.id);
    const button=document.createElement('button');button.type='button';button.dataset.campaign=c.id;button.setAttribute('aria-pressed',String(c.id===selected));
    const title=document.createElement('strong');title.textContent=({btc:'Bitcoin',eth:'Ethereum',crypto:'All crypto',weather:'Hourly temperature',weather_daily:'Daily weather',sports:'Sports'}[c.asset]||c.asset)+' · '+c.start_at.slice(0,10)+' – '+c.end_at.slice(0,10);
-   const subtitle=document.createElement('small');subtitle.textContent=`${c.mode==='rolling'?'24-hour update':'Date range'} · ${c.status==='cancelled'?'paused':c.status} · ${c.completed_sections}/${c.total_sections} dates processed${c.result_id?' · report saved':''}`;
+   const subtitle=document.createElement('small');subtitle.textContent=`${c.mode==='rolling'?'24-hour update':'Date range'} · ${c.status==='cancelled'?'paused':c.status} · ${c.completed_sections}/${c.total_sections} days collected${c.result_id?' · report saved':''}`;
    button.append(title,subtitle);button.addEventListener('click',async()=>{if($('asset').value!==c.asset){$('asset').value=c.asset;prefs[c.asset]=c.id;await category()}else await selectCampaign(c.id)});
    if(unfinished){const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='Remove from queue';remove.setAttribute('aria-label','Remove '+title.textContent+' from queue');remove.addEventListener('click',async()=>{remove.disabled=true;try{await client.control(c.id,'remove');await category();$('notice').textContent='Removed from queue. Saved data and history are retained.'}catch(error){failure(error);remove.disabled=false}});const entry=document.createElement('div');entry.className='queue-entry';entry.dataset.campaign=c.id;entry.append(button,remove);target.append(entry)}else target.append(button)
   }
@@ -140,9 +140,9 @@ $('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{a
 
 function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
- $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last issue: '+c.last_work_error.replaceAll('_',' '):''}`;
+ $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last recorded issue: '+c.last_work_error.replaceAll('_',' '):''}`;
  $('completion').max=c.total_sections;$('completion').value=c.reported_sections||0;if($('reportScope').value==='load')void loadReport(c,revision);
- $('counts').textContent=`${c.reported_sections||0} of ${c.total_sections} days available in the research report · ${c.report_days_last_five_minutes||0} new days in the last 5 minutes · ${c.completed_sections} days also have complete trade details · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
+ $('counts').textContent=`${c.reported_sections||0} of ${c.total_sections} days collected · ${c.report_days_last_five_minutes||0} new days in the last 5 minutes · ${c.analyzed_sections||0} days analyzed · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
  $('pause').hidden=!['queued','running'].includes(c.status);$('resume').hidden=!['failed','cancelled'].includes(c.status);
  if(!append)$('sections').replaceChildren();
@@ -208,3 +208,10 @@ $('more').addEventListener('click',async()=>{
 });
 window.addEventListener('pagehide',()=>{revision++;clearTimeout(timer);clearTimeout(statusTimer)});
 try{if(await auth.current()){$('workspace').hidden=false;$('signOut').hidden=false;$('collection').hidden=false;$('notice').textContent='Choose a date range or open a saved collection.';await Promise.all([category(),workerStatus()])}else{$('signIn').hidden=false;$('notice').textContent='Sign in to open your research workspace.'}}catch(error){failure(error)}
+
+async function showAnalysisProgress(){
+ try{const {analysis}=await client.analysis();const row=analysis.categories.find(r=>r.asset===$('asset').value);
+  $('analysisProgress').textContent=`Analysis: ${row?.analyzed_days||0} of ${row?.saved_days||0} saved days · ${analysis.state}`;
+ }catch{$('analysisProgress').textContent='Analysis progress unavailable; saved data is retained.'}
+}
+void showAnalysisProgress();const analysisTimer=setInterval(showAnalysisProgress,15000);analysisTimer?.unref?.();

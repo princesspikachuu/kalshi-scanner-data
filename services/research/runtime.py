@@ -135,21 +135,30 @@ def run(settings,stop):
             worker=ProcessingWorker(pool,archives,stop=stop)
         else:
             budget=ReadBudget(pool)
-            budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)
-            inventory=stack.enter_context(KalshiInventory());evidence=stack.enter_context(KalshiEvidence(archives=archives))
+            from .kalshi_auth import signer_from_env
+            signer=signer_from_env(os.environ)
+            inventory=stack.enter_context(KalshiInventory(signer=signer));evidence=stack.enter_context(KalshiEvidence(archives=archives,signer=signer))
+            if signer is not None:
+                allowance=inventory.account_allowance();ceiling=allowance['requests_per_second']*.9
+                budget.configure(ceiling,1,allow_update=True)
+                budget.authenticated(ceiling,signer.key_id)
+                print(json.dumps(dict(event='authenticated_kalshi_allowance',tier=allowance['usage_tier'],
+                    allowed_requests_per_second=allowance['requests_per_second'],target_ceiling=ceiling)),flush=True)
+            else:budget.configure(settings.read_rate,settings.read_capacity,allow_update=True)
             worker=CampaignWorker(pool,archives,
                 InventoryWorker(queue,archives,inventory,budget,endpoint_cost=settings.endpoint_cost),
                 EvidenceWorker(queue,archives,evidence,budget,endpoint_cost=settings.endpoint_cost),parallelism=12,stop=stop,
                 role=settings.role,preview_limit=300 if settings.role=='collector' else 100)
+            worker.background_analysis=True
             from .reuse import VerifiedReads
             worker.inventory_worker.reuse=worker.evidence_worker.reuse=VerifiedReads(pool,archives)
         from .heartbeat import WorkerHeartbeat,DayProgress
         heartbeat=WorkerHeartbeat(pool)
         print(f'Collection enabled; {settings.role} worker ready',flush=True)
-        if settings.role!='processor':print(f'Collection pacing: {settings.read_rate:g} public reads/sec, burst {settings.read_capacity}; retained recent candle batches; inventory/evidence concurrency 12',flush=True)
+        if settings.role!='processor':print(f'Collection pacing: shared budget; retained recent candle batches; inventory/evidence concurrency 12',flush=True)
         from .telemetry import configure
         meter=configure(lambda data:print(json.dumps(data,sort_keys=True,separators=(',',':')),flush=True))
-        campaigns=CampaignStore(pool)
+        campaigns=CampaignStore(pool,collection_limit=300)
         progress=DayProgress(pool,lambda data:print(json.dumps(data,default=str,sort_keys=True),flush=True))
         def tick():
             heartbeat.beat();progress.emit()

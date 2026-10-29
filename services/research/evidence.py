@@ -83,7 +83,7 @@ class EvidencePlan:
                     provider='research',content_type='application/gzip')
 
 
-def build_scopes(batch,archives,*,lookback_seconds,resources=('candles','trades')):
+def build_scopes(batch,archives,*,lookback_seconds,resources=('candles','trades'),selected_tickers=None):
     """Archive the full ready membership, then plan ALL candidates, both sources.
     No enqueue or provider calls. Candles and optional execution trades stay
     separate resources; downstream must never shrink candle counts to trade rows.
@@ -96,16 +96,22 @@ def build_scopes(batch,archives,*,lookback_seconds,resources=('candles','trades'
     if not resources or any(v not in ('candles','trades') for v in resources): raise ValueError('Invalid resources')
     if len(batch.candidates)*math.ceil(lookback_seconds/21600)*len(resources)*2 > 100000:
         raise ValueError('Evidence plan too large; select explicit batch partitions')
-    receipt = archives.upload('research',dict(format='candidate-manifest-v1',fingerprint=batch.fingerprint,batch=json.loads(json.dumps(asdict(batch)))))
-    return plan_from_receipt(batch,receipt,lookback_seconds,resources)
+    manifest=dict(format='candidate-manifest-v1',fingerprint=batch.fingerprint,batch=json.loads(json.dumps(asdict(batch))))
+    if selected_tickers is not None:
+        selected_tickers=sorted(set(selected_tickers))
+        if len(selected_tickers)>300 or not set(selected_tickers).issubset({c.ticker for c in batch.candidates}):raise ValueError('Invalid collection selection')
+        manifest['selected_tickers']=selected_tickers
+    receipt=archives.upload('research',manifest)
+    return plan_from_receipt(batch,receipt,lookback_seconds,resources,selected_tickers=selected_tickers)
 
 
-def plan_from_receipt(batch,receipt,lookback_seconds,resources):
+def plan_from_receipt(batch,receipt,lookback_seconds,resources,*,selected_tickers=None):
     """Pure canonical plan reconstruction for publication validation."""
     if type(lookback_seconds) is not int or not 60 <= lookback_seconds <= 86400:
         raise ValueError('Invalid evidence lookback')
     scopes = []
     for candidate in batch.candidates:
+        if selected_tickers is not None and candidate.ticker not in selected_tickers:continue
         if candidate.result not in ('yes','no') or not candidate.evidence:
             raise EvidenceConflict('Candidate lacks settled inventory provenance')
         end = math.ceil(_closed(candidate.close_time).timestamp())

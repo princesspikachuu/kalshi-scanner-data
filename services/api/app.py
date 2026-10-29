@@ -153,6 +153,8 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
         csrf_check(request,csrf,CSRF)
         if not secrets.compare_digest(digest(csrf),row['csrf_hash']):raise HTTPException(403,'Request rejected')
         limit('collection',30)
-    install_collection(app,current,collection_mutation,campaign_store or CampaignStore(getattr(store,'pool',None)))
+    install_collection(app,current,collection_mutation,campaign_store or CampaignStore(getattr(store,'pool',None),collection_limit=300))
+    from .paper import install_paper
+    install_paper(app,current,collection_mutation,getattr(store,'pool',None))
     install_history(app,current,settings,history_store or HistoryStore(getattr(store,'pool',None)))
     return app
