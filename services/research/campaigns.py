@@ -642,7 +642,9 @@ class CampaignWorker:
                 VALUES(%s,%s,%s,%s,5) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id""",
                 (uuid5(campaign['id'],key),campaign['asset'],Jsonb(parameters),key)).fetchone()
             saved=c.execute('SELECT status,parameters FROM research_job WHERE idempotency_key=%s',(key,)).fetchone()
-            if saved['parameters']!=parameters or saved['status'] in ('failed','cancelled'):
+            if saved['parameters']!=parameters or (saved['status'] in ('failed','cancelled') and kind!='final'):
+                # A failed background report cannot undo a completed raw-data
+                # collection; its own failure is retained for diagnostics.
                 raise EvidenceConflict('Assembly handoff blocked')
         if kind=='sample' and saved['status'] in ('queued','running'):
             parent.setdefault('_sample_assembly_pending',set()).add(date_key)
@@ -730,8 +732,28 @@ class CampaignWorker:
                 AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
                 ORDER BY price_pending DESC,r.created_at,r.id LIMIT 1""").fetchone()
 
+    def _claim_completed_parent(self):
+        # Existing fully saved campaigns can otherwise starve indefinitely:
+        # oldest_request() prioritizes incomplete price passes across the
+        # entire queue. Reconcile a finished parent FIRST without downloading
+        # anything or waiting for its separate report/analysis job.
+        with self.pool.connection() as c:
+            row=c.execute("""SELECT j.id FROM research_campaign r
+                JOIN research_job j ON j.id=r.job_id
+                WHERE j.parameters->>'collector'='campaign-v1'
+                AND j.status='queued' AND j.available_at<=clock_timestamp()
+                AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
+                AND EXISTS (SELECT 1 FROM research_campaign_day d
+                    WHERE d.campaign_id=r.id AND d.dataset_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM research_campaign_day d
+                    WHERE d.campaign_id=r.id AND d.dataset_id IS NULL)
+                ORDER BY r.created_at,r.id LIMIT 1""").fetchone()
+        return self.queue.claim(seconds=120,job_id=row['id']) if row else None
+
     def _claim_parent(self):
         if self.role=='collector':
+            ready=self._claim_completed_parent()
+            if ready is not None:return ready
             oldest=self.oldest_request()
             return self.queue.claim(seconds=120,job_id=oldest['job_id']) if oldest else None
         # A rate-limit wait on price work must not open a lane for a minutes-long

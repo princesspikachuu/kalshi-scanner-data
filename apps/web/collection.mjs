@@ -32,6 +32,9 @@ async function workerStatus(){
   $('workerMessage').textContent=online?'Saved requests are processed section by section, even after you close this page. No trades are placed.':'Requests stay safely queued. The worker has not checked in recently; saved progress is retained.';
  }catch(error){$('workerTitle').textContent='Worker status unavailable';$('workerMessage').textContent='Your saved work is retained. Refresh to retry.';if(error.status===401){failure(error);return}}
  if($('reportScope').value==='category')void loadCategory(revision);
+ // A different collection may finish while this page polls a selected run.
+ // Refresh active/finished queue membership without resetting selection.
+ if(!$('workspace').hidden)void loadHistory(revision);
  statusTimer=setTimeout(workerStatus,30000);
 }
 function clearReport(){report=null;reportKey=null;reportContext=null;reportRequest++;sourcesLoaded=null;sourceNext=null;windowNext=null;$('research').hidden=true;$('reportContent').hidden=true;$('cellDetail').hidden=true;$('exportCsv').hidden=true;$('provenance').open=false}

@@ -335,6 +335,48 @@ class ProcessingPostgresTests(unittest.TestCase):
             progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
         self.assertEqual(len(progress['candle_previews']),1)
 
+    def test_preexisting_complete_queued_collection_reconciles_before_new_work(self):
+        # Reproduce the staging state: every day and the report are saved,
+        # but the old parent is still queued while a new price pass competes.
+        old=self.create(key='legacy-complete',end='2026-10-25')
+        self.assertEqual(self.finish(old)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(old,)).fetchone()['job_id']
+            c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,
+                available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
+                WHERE id=%s""",(parent,))
+        newer=self.create(key='new-incomplete',start='2026-10-26',end='2026-10-26')
+        claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['id'],parent)
+        self.worker.step(claimed,deadline=time.monotonic()+30)
+        self.assertEqual(self.store.get(old)['status'],'succeeded')
+        self.assertEqual(self.store.get(old)['completed_sections'],self.store.get(old)['total_sections'])
+        self.assertEqual(self.store.count('all','unfinished'),1)
+        self.assertEqual(self.store.count('all','finished'),1)
+        self.assertEqual(self.store.get(newer)['status'],'queued')
+
+    def test_reconcile_completed_parent_does_not_wait_for_background_report(self):
+        from services.research.campaigns import CampaignStore
+        self.store=CampaignStore(self.db.pool,collection_limit=300)
+        old=self.create(key='legacy-cohort',end='2026-10-25')
+        self.assertEqual(self.finish(old)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(old,)).fetchone()['job_id']
+            c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,
+                available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
+                WHERE id=%s""",(parent,))
+        # Its final report is background work, not a collection dependency.
+        claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['id'],parent)
+        self.worker.step(claimed,deadline=time.monotonic()+30)
+        self.assertEqual(self.store.get(old)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE parameters->>'collector'='campaign-assembly-v1'
+                AND parameters->>'kind'='final'
+                AND parameters->>'campaign_id'=%s
+                AND status IN ('queued','running')""",(str(old),)).fetchone()['n'],1)
+
     def test_new_collection_finishes_without_waiting_for_full_history_analysis(self):
         from services.research.campaigns import CampaignStore
         self.store=CampaignStore(self.db.pool,collection_limit=300)
