@@ -59,6 +59,9 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         reference_bid_grid_roi_percent=s.get('statistical_yield_percent'),
         qualified_orders=0,qualified_contracts=0,qualified_wins=0,
         all_qualified_filled_pnl_cents=0,all_qualified_stake_cents=0,
+        same_orders_best_bid_pnl_cents=0,entry_price_premium_cents=0,
+        displayed_spread_cents=0,filled_best_bid_pnl_cents=0,
+        filled_entry_price_premium_cents=0,
         filled_contracts=0,filled_winners=0,filled_hold_pnl_cents=0,
         filled_stake_cents=0) for i,s in enumerate(strategies)]
     realized_pnl_cents=0
@@ -117,7 +120,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 if bid is not None and bid<=p['stop']:sell(p,ts,bid)
             quote=best_quote(bar)
             if quote is None:continue
-            side,_,ask=quote;remaining=(m['close']-ts)/60
+            side,best_bid,ask=quote;remaining=(m['close']-ts)/60
             eligible=[]
             for index,s in enumerate(strategies):
                 compatible=s['asset']==m['asset'] or (s['asset']=='btc' and m['candidate'].get('series')=='KXBTC15M') or (s['asset']=='eth' and m['candidate'].get('series')=='KXETH15M') or (s['asset']=='crypto' and m['candidate'].get('series') in {'KXBTC15M','KXETH15M','KXSOL15M','KXXRP15M','KXDOGE15M','KXBNB15M','KXHYPE15M','KXZEC15M','KXNEAR15M'})
@@ -144,7 +147,8 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                     continue
                 attempted.add(identity);free-=quantity*cost
                 order=dict(id='paper-'+str(counters['orders_placed']+1),quantity=quantity,ticker=ticker,event=m['event'],side=side,bid=bid,remaining=quantity,
-                    created=ts,yield_=s['statistical_yield_percent'],stop=s.get('loss_trigger_cents'),strategy=index)
+                    created=ts,yield_=s['statistical_yield_percent'],stop=s.get('loss_trigger_cents'),strategy=index,
+                    displayed_best_bid=best_bid,displayed_ask=ask)
                 order['yield']=order.pop('yield_');orders.append(order);orders_by_ticker[ticker].append(order);counters['orders_placed']+=1
                 matched=diagnostics[index];matched['qualified_orders']+=1
                 matched['qualified_contracts']+=quantity
@@ -152,6 +156,9 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 matched['qualified_wins']+=int(won)*quantity
                 matched['all_qualified_stake_cents']+=quantity*bid
                 matched['all_qualified_filled_pnl_cents']+=(100*int(won)-bid)*quantity
+                matched['same_orders_best_bid_pnl_cents']+=(100*int(won)-best_bid)*quantity
+                matched['entry_price_premium_cents']+=(bid-best_bid)*quantity
+                matched['displayed_spread_cents']+=(ask-best_bid)*quantity
                 peak_event=max(peak_event,exposure(m['event'])/bankroll*100)
                 log('bid',ts,order_id=order['id'],ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
                     expires=m['close'],statistical_yield_percent=order['yield'])
@@ -177,6 +184,8 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 matched['filled_contracts']+=quantity;matched['filled_winners']+=int(won)*quantity
                 matched['filled_stake_cents']+=p['cost']
                 matched['filled_hold_pnl_cents']+=(100*int(won)*quantity-p['cost'])
+                matched['filled_best_bid_pnl_cents']+=(100*int(won)-o['displayed_best_bid'])*quantity
+                matched['filled_entry_price_premium_cents']+=(o['bid']-o['displayed_best_bid'])*quantity
                 log('fill',ts,order_id=o['id'],ticker=ticker,side=o['side'],remaining=o['remaining'],contracts=quantity,bid_cents=o['bid'],evidence='trade-through proxy' if price<o['bid'] else 'at-price volume estimate')
                 saved=last_quotes.get(ticker)
                 if saved and 0<=ts-saved[0]<=60 and p['stop'] is not None:
@@ -205,10 +214,24 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         s['qualified_break_even_win_rate_percent']=(round(s['all_qualified_stake_cents']/qualified,4)
             if qualified else None)
         s['fill_rate_percent']=(round(100*filled/qualified,4) if qualified else None)
+        s['avg_displayed_spread_cents']=(round(s['displayed_spread_cents']/qualified,4) if qualified else None)
+        s['avg_entry_premium_over_best_bid_cents']=(round(s['entry_price_premium_cents']/qualified,4)
+            if qualified else None)
+        s['avg_filled_entry_premium_cents']=(round(s['filled_entry_price_premium_cents']/filled,4)
+            if filled else None)
+        # This is a same-opportunity price comparison, NOT a claim that the
+        # lower resting bid would have filled the same contracts.
+        if s['same_orders_best_bid_pnl_cents']-s['all_qualified_filled_pnl_cents']!=s['entry_price_premium_cents']:
+            raise ValueError('Paper matched-price opportunity P/L does not reconcile')
+        if s['filled_best_bid_pnl_cents']-s['filled_hold_pnl_cents']!=s['filled_entry_price_premium_cents']:
+            raise ValueError('Paper matched-price fill P/L does not reconcile')
     audit=dict(basis='Ask-price and entry-window-qualified paper orders; not the bid-based research grid.',
         qualified_orders=sum(x['qualified_orders'] for x in diagnostics),
         qualified_contracts=sum(x['qualified_contracts'] for x in diagnostics),
         all_qualified_filled_pnl_cents=sum(x['all_qualified_filled_pnl_cents'] for x in diagnostics),
+        same_orders_best_bid_pnl_cents=sum(x['same_orders_best_bid_pnl_cents'] for x in diagnostics),
+        entry_price_premium_cents=sum(x['entry_price_premium_cents'] for x in diagnostics),
+        filled_entry_price_premium_cents=sum(x['filled_entry_price_premium_cents'] for x in diagnostics),
         filled_contracts=sum(x['filled_contracts'] for x in diagnostics),
         cancelled_unfilled_contracts=counters['cancelled_contracts'],
         fill_rate_percent=(round(100*sum(x['filled_contracts'] for x in diagnostics)/

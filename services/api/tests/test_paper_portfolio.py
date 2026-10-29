@@ -99,6 +99,30 @@ class PortfolioTests(unittest.TestCase):
         self.assertGreater(audit['strategies'][0]['qualified_all_fill_roi_percent'],0)
         self.assertLess(audit['strategies'][0]['filled_hold_roi_percent'],0)
 
+    def test_pay_near_ask_erases_positive_best_bid_edge_even_with_full_fills(self):
+        # Same exact opportunities and outcomes, 90% winners at 94c lose;
+        # a resting 85c maker price would have positive conditional P/L,
+        # but the lower price is NOT assumed to fill at the same rate.
+        s=strategy(min_price=95,max_price=99,statistical_yield_percent=5)
+        sources=[]
+        for i in range(10):
+            asset,payload,records=source(ticker=f'spread-{i}',event=f'event-spread-{i}',
+                bars=[candle(BASE,bid=85,ask=95)],
+                trades=[trade(BASE+3,price=94,volume=5)])
+            if i==9:payload['candidates'][0]['result']='no'
+            sources.append((asset,payload,records))
+        r=self.run_replay(sources,[s]);audit=r['reconciliation'];by=audit['strategies'][0]
+        self.assertEqual(audit['filled_contracts'],50)
+        self.assertEqual(audit['fill_rate_percent'],100)
+        self.assertEqual(audit['all_qualified_filled_pnl_cents'],-200)
+        self.assertEqual(audit['same_orders_best_bid_pnl_cents'],250)
+        self.assertEqual(audit['entry_price_premium_cents'],450)
+        self.assertEqual(audit['filled_entry_price_premium_cents'],450)
+        self.assertEqual(by['avg_displayed_spread_cents'],10)
+        self.assertEqual(by['avg_entry_premium_over_best_bid_cents'],9)
+        self.assertEqual(by['filled_win_rate_percent'],90)
+        self.assertEqual(by['filled_break_even_win_rate_percent'],94)
+
     def test_nearly_all_fills_still_lose_when_win_rate_below_break_even(self):
         # An apparently attractive historical bid-grid strategy has a
         # different ask-qualified cohort. Even with 100% fills and 90%
