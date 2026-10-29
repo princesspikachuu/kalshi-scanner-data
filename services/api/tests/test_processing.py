@@ -325,3 +325,13 @@ class ProcessingPostgresTests(unittest.TestCase):
         with self.db.pool.connection() as c:
             progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
         self.assertEqual(len(progress['candle_previews']),1)
+
+    def test_new_collection_finishes_without_waiting_for_full_history_analysis(self):
+        from services.research.campaigns import CampaignStore
+        self.store=CampaignStore(self.db.pool,collection_limit=300)
+        first=self.create(key='new-collection-first',end='2026-10-25')
+        self.create(key='new-collection-next',start='2026-10-26',end='2026-10-26')
+        with patch('services.research.processing.CategoryReports.run_once',side_effect=AssertionError('history competed with collection')):
+            self.assertEqual(self.finish(first)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            self.assertIsNotNone(c.execute('SELECT result_id FROM research_campaign_result WHERE campaign_id=%s',(first,)).fetchone())

@@ -112,6 +112,16 @@ class ProcessingWorker(CampaignWorker):
             lease_token=NULL,lease_expires_at=NULL WHERE id=%s""",(job['id'],))
 
     def run_once(self,*,deadline):
+        worked=False
+        try:
+            worked=self._run_once(deadline=deadline)
+            return worked
+        finally:
+            if worked:
+                from .memory import release_report_memory
+                release_report_memory()
+
+    def _run_once(self,*,deadline):
         # Publish ready full-cohort price reports ahead of sample/trade work.
         if not self._bootstrapped:
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
@@ -125,17 +135,13 @@ class ProcessingWorker(CampaignWorker):
         if job is None:
             if ProgressiveReports(self.pool).run_once():return True
             if SampleReports(self.pool).run_once():return True
-            # Keep cumulative history fresh without rebuilding a hundred days
-            # after every newly saved day during an active download queue.
+            # Full-history risk computation is analysis, and must yield to
+            # new 300-market collection requests across the whole queue.
             with self.pool.connection() as c:
                 collecting=c.execute("""SELECT 1 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
-                    WHERE j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
-                    AND EXISTS(SELECT 1 FROM research_campaign_day d WHERE d.campaign_id=r.id AND d.dataset_id IS NULL) LIMIT 1""").fetchone()
-                due=c.execute("""SELECT j.asset FROM research_job j WHERE j.parameters->>'collector'='category-report-v1'
-                    AND ((j.status='queued' AND j.available_at<=clock_timestamp()) OR (j.status='running' AND j.lease_expires_at<=clock_timestamp()))
-                    AND (coalesce((j.parameters->>'urgent')::boolean,false) OR NOT EXISTS(SELECT 1 FROM research_result r
-                        WHERE r.stream_key='category-'||j.asset AND r.published_at>clock_timestamp()-interval '5 minutes')) ORDER BY j.created_at,j.id LIMIT 1""").fetchone()
-            if (not collecting or due) and CategoryReports(self.pool).run_once(asset=due['asset'] if collecting and due else None):return True
+                    WHERE r.config ? 'collection_limit' AND j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
+                    LIMIT 1""").fetchone()
+            if not collecting and CategoryReports(self.pool).run_once():return True
             from services.paper.worker import PaperWorker
             if PaperWorker(self.pool,self.archives).run_once():return True
             job=self._claim_assembly()
