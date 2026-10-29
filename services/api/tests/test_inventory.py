@@ -335,7 +335,7 @@ class InventoryPostgresTests(unittest.TestCase):
             # Advance durable test clocks without a sleep or a live provider call.
             with self.store.pool.connection() as c:
                 c.execute("UPDATE research_job SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
-                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second'")
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second', updated_at=clock_timestamp()-interval '1 second'")
             job = self.queue.claim()
             self.assertEqual(self.step(worker,job)['state'],'complete')
         self.assertEqual([r.url.params.get('cursor','') for r in calls],['','two','two'])
