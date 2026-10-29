@@ -28,12 +28,28 @@ function options(id,items){const selected=new Set(checked(id));$(id).replaceChil
 function money(cents){return '$'+(cents/100).toFixed(2)}
 async function load(){try{
  workspace=await paperCall('workspace');
- options('strategies',workspace.strategies.filter(s=>s.strategy.bid_offset==null).map(s=>({id:s.id,label:`${s.strategy.name} · ${s.asset} · saved yield ${s.strategy.statistical_yield_percent.toFixed(2)}% · n=${s.strategy.sampled_markets}`})));
+ options('strategies',workspace.strategies.filter(s=>s.strategy.bid_offset==null).map(s=>({id:s.id,label:`${s.strategy.name} · ${s.asset} · reference bid-grid ROI ${s.strategy.statistical_yield_percent.toFixed(2)}% (not validated for ask entries) · n=${s.strategy.sampled_markets}`})));
  options('datasets',workspace.datasets.map(d=>({id:d.id,label:`${d.day} · ${d.asset} · ${d.markets} markets · version ${d.id}`})));
  $('results').replaceChildren(...workspace.runs.map(run=>{const card=document.createElement('article');card.className='run-card';const title=document.createElement('strong'),p=document.createElement('p'),note=document.createElement('p'),r=run.result;
  title.textContent=(run.name||run.strategy_names?.slice(0,3).join(' + ')||'Portfolio replay')+' · '+(r?`${money(r.profit_loss_cents)} P/L · ${money(r.ending_cash_cents)} ending balance`:`Replay ${run.status}`);
  p.textContent=r?`${r.orders_placed??r.attempts} bids · ${r.filled_contracts??r.simulated_fills} filled contracts · ${r.expired_orders??r.no_fill_evidence} expired orders · ${r.priority_cancellations??0} priority cancellations · ${r.loss_prevention_sales??0} loss-prevention sales`:(run.status==='cancelled'?'Canceled by you. No further work will be published.':run.error_code?'Replay could not finish. Choose fewer days and retry.':'Waiting for the paper processor.');
  note.className='small';note.textContent=r?`${r.fill_model}. ${r.assumptions??'Historical fill proxy; actual queue position is unknown.'}`:'';card.append(title,p,note);
+ if(r?.reconciliation){
+  const audit=r.reconciliation;
+  const review=document.createElement('details'),heading=document.createElement('summary');
+  heading.textContent='Why did this replay gain or lose money?';
+  review.append(heading);
+  const intro=document.createElement('p');intro.textContent='Exact ask-qualified replay orders, not the bid-qualified research table. Hypothetical all-filled outcomes assume every qualifying order filled and are NOT actual performance.';
+  review.append(intro);
+  const overview=document.createElement('p');
+  overview.textContent=`Qualifying bids: ${audit.qualified_orders}; qualifying contracts: ${audit.qualified_contracts}; filled contracts: ${audit.filled_contracts}; filled winners: ${audit.filled_winners}; hypothetical P/L if every qualifying bid filled: ${money(audit.all_qualified_filled_pnl_cents)}; hold-to-settlement P/L of actual estimated fills: ${money(audit.filled_hold_pnl_cents)}; early-sale effect: ${money(audit.loss_prevention_delta_cents)}; realized replay P/L: ${money(audit.reconciled_realized_pnl_cents)}.`;
+  review.append(overview);
+  for(const s of audit.strategies){
+   const line=document.createElement('p');line.textContent=`${s.name} (${s.asset}, ASK ${s.ask_band_cents[0]}–${s.ask_band_cents[1]}¢): bid-based reference grid ${s.reference_bid_grid_roi_percent??'N/A'}% (DIFFERENT cohort); qualifying bids ${s.qualified_orders}; filled ${s.filled_contracts}/${s.qualified_contracts} contracts; filled wins ${s.filled_winners}; hypothetical all-qualified P/L ${money(s.all_qualified_filled_pnl_cents)}; filled hold P/L ${money(s.filled_hold_pnl_cents)}.`;
+   review.append(line);
+  }
+  card.append(review);
+ }
  appendActivity(card,run,document);
  const setup=document.createElement('details'),setupTitle=document.createElement('summary');setupTitle.textContent='View run setup';setup.append(setupTitle);
  setup.addEventListener('toggle',async()=>{if(!setup.open){openSetups.delete(run.id);return}openSetups.add(run.id);if(setup.dataset.loaded)return;setup.dataset.loaded='true';try{

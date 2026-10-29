@@ -74,6 +74,33 @@ class PortfolioTests(unittest.TestCase):
         r=self.run_replay([source(trades=[trade(BASE+300,volume=10)])])
         self.assertEqual(r['filled_contracts'],0);self.assertEqual(r['ending_cash_cents'],10000)
 
+    def test_audit_separates_bid_grid_from_ask_qualified_fills(self):
+        selected=strategy(min_price=90,max_price=99)
+        # This winner belongs to a low-bid research square (80-89c), but
+        # qualifies for the 90-99c ASK rule; no fill evidence for this winner.
+        winner=source(ticker='winner',event='winner-event',bars=[candle(BASE,bid=80,ask=90)],trades=[])
+        loser_asset,loser_payload,loser_records=source(ticker='loser',event='loser-event',
+            bars=[candle(BASE,bid=80,ask=90)],trades=[trade(BASE+3,volume=5)])
+        loser_payload['candidates'][0]['result']='no'
+        r=self.run_replay([winner,(loser_asset,loser_payload,loser_records)],[selected])
+        audit=r['reconciliation']
+        self.assertEqual(audit['qualified_orders'],2)
+        self.assertEqual(audit['qualified_contracts'],10)
+        self.assertEqual(audit['filled_contracts'],5)
+        self.assertEqual(audit['filled_winners'],0)
+        self.assertEqual(audit['all_qualified_filled_pnl_cents'],110)
+        self.assertEqual(audit['filled_hold_pnl_cents'],-445)
+        self.assertEqual(audit['reconciled_realized_pnl_cents'],r['profit_loss_cents'])
+        self.assertEqual(audit['loss_prevention_delta_cents'],0)
+
+    def test_loss_prevention_audit_reconciles_exit_against_holding(self):
+        r=self.run_replay([source(bars=[candle(BASE),candle(BASE+60,50,60)],
+            trades=[trade(BASE+3,volume=2)])],[strategy(loss_trigger_cents=70)])
+        audit=r['reconciliation']
+        self.assertEqual(audit['filled_hold_pnl_cents'],22)
+        self.assertEqual(audit['reconciled_realized_pnl_cents'],-78)
+        self.assertEqual(audit['loss_prevention_delta_cents'],-100)
+
     def test_activity_reports_identifiable_bids_fills_and_simulated_time(self):
         updates=[]
         r=replay_portfolio([source(trades=[trade(BASE+3,volume=2)])],[strategy()],10000,on_progress=updates.append)

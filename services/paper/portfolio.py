@@ -52,6 +52,16 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
     # trade, quote or close. Global portfolio exposure checks are unchanged.
     orders_by_ticker=defaultdict(list);positions_by_ticker=defaultdict(list)
     counters=defaultdict(int);last_quotes={};peak_event=0
+    # Audit the exact ask-filtered opportunities separately from actual fills.
+    # The research grid's bid-filtered reference ROI is NOT a prediction here.
+    diagnostics=[dict(name=s.get('name') or 'Strategy '+str(i+1),asset=s['asset'],
+        ask_band_cents=[s['min_price'],s['max_price']],
+        reference_bid_grid_roi_percent=s.get('statistical_yield_percent'),
+        qualified_orders=0,qualified_contracts=0,qualified_wins=0,
+        all_qualified_filled_pnl_cents=0,all_qualified_stake_cents=0,
+        filled_contracts=0,filled_winners=0,filled_hold_pnl_cents=0,
+        filled_stake_cents=0) for i,s in enumerate(strategies)]
+    realized_pnl_cents=0
     def activity(ts,ticker=None):
         return dict(phase='replaying saved markets',simulated_time=ts,current_market=ticker,
             orders_placed=counters['orders_placed'],filled_contracts=counters['filled_contracts'],
@@ -74,9 +84,10 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         quantity=order['remaining'];order['remaining']=0
         log('cancel',ts,order_id=order['id'],ticker=order['ticker'],side=order['side'],bid_cents=order['bid'],contracts=quantity,reason=reason)
     def sell(p,ts,bid):
-        nonlocal free
+        nonlocal free,realized_pnl_cents
         # Observed best bid, with no user-defined minimum price. Unknown depth.
         free+=bid*p['quantity'];p['closed']=True
+        realized_pnl_cents+=bid*p['quantity']-p['cost']
         counters['loss_prevention_sales']+=1
         log('loss_prevention_sale',ts,ticker=p['ticker'],contracts=p['quantity'],sale_cents=bid,
             profit_loss_cents=bid*p['quantity']-p['cost'],evidence='minute best-bid estimate; depth unknown')
@@ -94,6 +105,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 if not p['closed']:
                     payment=100*p['quantity'] if markets[ticker]['candidate']['result']==p['side'] else 0
                     free+=payment;p['closed']=True
+                    realized_pnl_cents+=payment-p['cost']
                     log('settlement',ts,ticker=ticker,contracts=p['quantity'],profit_loss_cents=payment-p['cost'])
         elif kind=='quote':
             ticker,bar=data;m=markets[ticker];last_quotes[ticker]=(ts,bar)
@@ -134,6 +146,12 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 order=dict(id='paper-'+str(counters['orders_placed']+1),quantity=quantity,ticker=ticker,event=m['event'],side=side,bid=bid,remaining=quantity,
                     created=ts,yield_=s['statistical_yield_percent'],stop=s.get('loss_trigger_cents'),strategy=index)
                 order['yield']=order.pop('yield_');orders.append(order);orders_by_ticker[ticker].append(order);counters['orders_placed']+=1
+                matched=diagnostics[index];matched['qualified_orders']+=1
+                matched['qualified_contracts']+=quantity
+                won=m['candidate']['result']==side
+                matched['qualified_wins']+=int(won)*quantity
+                matched['all_qualified_stake_cents']+=quantity*bid
+                matched['all_qualified_filled_pnl_cents']+=(100*int(won)-bid)*quantity
                 peak_event=max(peak_event,exposure(m['event'])/bankroll*100)
                 log('bid',ts,order_id=order['id'],ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
                     expires=m['close'],statistical_yield_percent=order['yield'])
@@ -155,13 +173,33 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 available-=quantity;o['remaining']-=quantity
                 p=dict(ticker=ticker,event=o['event'],side=o['side'],quantity=quantity,cost=o['bid']*quantity,stop=o['stop'],closed=False)
                 positions.append(p);positions_by_ticker[ticker].append(p);counters['filled_contracts']+=quantity;counters['simulated_fills']+=1
+                matched=diagnostics[o['strategy']];won=markets[ticker]['candidate']['result']==o['side']
+                matched['filled_contracts']+=quantity;matched['filled_winners']+=int(won)*quantity
+                matched['filled_stake_cents']+=p['cost']
+                matched['filled_hold_pnl_cents']+=(100*int(won)*quantity-p['cost'])
                 log('fill',ts,order_id=o['id'],ticker=ticker,side=o['side'],remaining=o['remaining'],contracts=quantity,bid_cents=o['bid'],evidence='trade-through proxy' if price<o['bid'] else 'at-price volume estimate')
                 saved=last_quotes.get(ticker)
                 if saved and 0<=ts-saved[0]<=60 and p['stop'] is not None:
                     bid=cents(candle_price(saved[1],p['side'],'bid'))
                     if bid is not None and bid<=p['stop']:sell(p,ts,bid)
     unresolved=counters['expired_orders']
-    return dict(mode='historical portfolio replay',fill_model=('Conservative trade-through' if fill_model=='conservative' else 'Estimated: qualifying trade volume, including at-price trades; queue position unknown'),
+    # Every market close has been processed. Verify that canceled bid reserves
+    # were refunded and realized P/L exactly matches the final cash movement.
+    if any(o['remaining'] for o in orders) or any(not p['closed'] for p in positions):
+        raise ValueError('Portfolio closeout incomplete')
+    if free-starting_cash_cents!=realized_pnl_cents:
+        raise ValueError('Portfolio P/L does not reconcile with cash')
+    audit=dict(basis='Ask-price and entry-window-qualified paper orders; not the bid-based research grid.',
+        qualified_orders=sum(x['qualified_orders'] for x in diagnostics),
+        qualified_contracts=sum(x['qualified_contracts'] for x in diagnostics),
+        all_qualified_filled_pnl_cents=sum(x['all_qualified_filled_pnl_cents'] for x in diagnostics),
+        filled_contracts=sum(x['filled_contracts'] for x in diagnostics),
+        filled_winners=sum(x['filled_winners'] for x in diagnostics),
+        filled_hold_pnl_cents=sum(x['filled_hold_pnl_cents'] for x in diagnostics),
+        loss_prevention_delta_cents=realized_pnl_cents-sum(x['filled_hold_pnl_cents'] for x in diagnostics),
+        reconciled_realized_pnl_cents=realized_pnl_cents,
+        strategies=diagnostics)
+    return dict(reconciliation=audit,mode='historical portfolio replay',fill_model=('Conservative trade-through' if fill_model=='conservative' else 'Estimated: qualifying trade volume, including at-price trades; queue position unknown'),
         starting_cash_cents=starting_cash_cents,ending_cash_cents=free,profit_loss_cents=free-starting_cash_cents,
         simulated_fills=counters['simulated_fills'],filled_contracts=counters['filled_contracts'],orders_placed=counters['orders_placed'],
         expired_orders=counters['expired_orders'],priority_cancellations=counters['priority_cancellations'],

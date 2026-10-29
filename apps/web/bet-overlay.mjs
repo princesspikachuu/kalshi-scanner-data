@@ -3,7 +3,7 @@ export function openBetOverlay(report,cell,minutes,band){
  const $=id=>document.getElementById(id),dialog=$('betDialog');
  let context={report,cell,minutes,band};
  $('betSquare').textContent=`${report.asset} · ${band}¢ ask · ${Math.max(0,...report.entry_minutes.filter(m=>m<minutes))}–${minutes} minutes before close`;
- $('betStats').textContent=`Saved ROI ${cell.hold.hypothetical_roi_percent.toFixed(2)}% · win rate ${cell.hold.win_rate_percent.toFixed(2)}% · ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days. Statistics use historical bid prices; new entry eligibility uses the current ask.`;
+ $('betStats').textContent=`Reference BID-grid ROI ${cell.hold.hypothetical_roi_percent.toFixed(2)}% (not a paper-trading forecast) · bid-grid win rate ${cell.hold.win_rate_percent.toFixed(2)}% · ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days. Statistics use historical bid prices; new entry eligibility uses the current ask.`;
  $('betName').value=`${report.asset} ${band}¢ / ${minutes} min`;
  $('betMaximum').value='';$('betDistance').value='1';$('betContracts').value='1';$('betPercent').value='10';
  $('betStop').value='';$('betStopEnabled').checked=false;
