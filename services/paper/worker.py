@@ -50,12 +50,8 @@ class PaperWorker:
                             datasets_loaded=index),force=True)
                         with self.pool.connection() as c:
                             source=c.execute("SELECT ds.id,ds.fingerprint,ds.payload,coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','') WHERE ds.id=%s",(identifier,)).fetchone()
-                        payload=decoded_dataset(source)['payload']
-                        if 'trades' not in payload['summary']['resources']:raise ValueError('Detailed trade evidence required')
-                        # Release the compressed database row before scanning
-                        # archives; retained JSONB + expanded payload doubles RSS.
-                        asset=source['asset']
-                        records=iter_dataset_records(payload,self.archives)
+                        from .stream import replay_source
+                        asset,payload,records=replay_source(source,self.archives)
                         source=None
                         yield asset,payload,records
                         payload=None
