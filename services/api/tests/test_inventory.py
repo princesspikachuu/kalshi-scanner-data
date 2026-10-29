@@ -249,7 +249,23 @@ class InventoryPostgresTests(unittest.TestCase):
             after=c.execute("SELECT * FROM research_read_budget WHERE name='runtime-change'").fetchone()
         self.assertEqual(after['blocked_until'],before['blocked_until'])
         self.assertEqual(after['tokens'],before['tokens']);self.assertEqual(after['updated_at'],before['updated_at'])
-        self.assertEqual((after['refill_per_second'],after['capacity']),(5,5));self.assertGreater(budget.take(1),0)
+        self.assertEqual((after['refill_per_second'],after['capacity']),(1,5));self.assertGreater(budget.take(1),0)
+
+    def test_rejections_reduce_shared_pace_and_restart_preserves_it(self):
+        budget=ReadBudget(self.store.pool,'steady');budget.configure(1,1)
+        for expected in (.5,.25,.125,.1,.1):
+            budget.rate_limited(2)
+            with self.store.pool.connection() as c:
+                row=c.execute("SELECT * FROM research_read_budget WHERE name='steady'").fetchone()
+            self.assertEqual(row['refill_per_second'],expected)
+            self.assertEqual(row['tokens'],0)
+            self.assertGreater(budget.take(1),0)
+        restarted=ReadBudget(self.store.pool,'steady');restarted.configure(1,1,allow_update=True)
+        with self.store.pool.connection() as c:
+            self.assertEqual(c.execute("SELECT refill_per_second FROM research_read_budget WHERE name='steady'").fetchone()['refill_per_second'],.1)
+        budget=ReadBudget(self.store.pool,'smooth');budget.configure(1,1)
+        self.assertEqual(budget.take(1),0)
+        self.assertGreater(budget.take(1),0)
 
     def test_bad_payload_and_safety_page_limit_leave_explicit_failed_gap(self):
         job = self.claim()
@@ -319,7 +335,7 @@ class InventoryPostgresTests(unittest.TestCase):
             # Advance durable test clocks without a sleep or a live provider call.
             with self.store.pool.connection() as c:
                 c.execute("UPDATE research_job SET available_at=clock_timestamp()-interval '1 second' WHERE id=%s",(job['id'],))
-                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second'")
+                c.execute("UPDATE research_read_budget SET blocked_until=clock_timestamp()-interval '1 second', updated_at=clock_timestamp()-interval '1 second'")
             job = self.queue.claim()
             self.assertEqual(self.step(worker,job)['state'],'complete')
         self.assertEqual([r.url.params.get('cursor','') for r in calls],['','two','two'])

@@ -27,6 +27,12 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.worker.role='collector'
         self.processor=ProcessingWorker(self.db.pool,self.archives)
 
+    def trade_calls(self):
+        with self.db.pool.connection() as c:
+            return c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE parameters->'scope'->>'resource'='trades'
+                AND (status IN ('running','succeeded') OR progress ? 'completed_pages')""").fetchone()['n']
+
     def queued(self,kind='prices'):
         with self.db.pool.connection() as c:
             return c.execute("""SELECT * FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
@@ -227,25 +233,20 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.store.control(first,'remove')
         self.assertEqual(str(self.worker.oldest_request()['id']),newer)
 
-    def test_finishes_and_publishes_a_date_before_opening_the_eighth_unfinished_date(self):
-        identifier=self.create(key='bounded-window',start='2026-10-20',end='2026-10-27')
+    def test_all_eight_price_days_publish_before_any_trade_download(self):
+        identifier=self.create(key='price-first-window',start='2026-10-20',end='2026-10-27')
         self.worker.preview_limit=300
         for _ in range(600):
             self.available();self.worker.run_once(deadline=time.monotonic()+30)
             self.processor.run_once(deadline=time.monotonic()+30)
-            state=self.store.get(identifier)
-            self.assertNotEqual(state['status'],'failed',state)
-            if state['completed_sections']:break
-        else:self.fail('A date never finished within the bounded window')
-        with self.db.pool.connection() as c:
-            oldest=c.execute("SELECT manifest FROM research_campaign_day WHERE campaign_id=%s AND day='2026-10-20'",(identifier,)).fetchone()
-            finished=c.execute('SELECT dataset_id FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NOT NULL',(identifier,)).fetchone()['dataset_id']
-        self.assertIsNone(oldest['manifest'])
-        # The next full campaign/category publications precede more assembly.
-        for _ in range(3):self.available();self.processor.run_once(deadline=time.monotonic()+30)
-        with self.db.pool.connection() as c:
-            report=c.execute("SELECT report FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()['report']
-        self.assertIn(finished,[d['id'] for d in report['datasets']])
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+            if len(progress.get('candle_previews',{}))==8:break
+            self.assertFalse(self.trade_calls())
+            self.assertEqual(self.store.get(identifier)['completed_sections'],0)
+        else:self.fail('Price pass did not advance past seven dates')
+        self.assertFalse(self.trade_calls())
+        self.assertEqual(self.finish(identifier)['completed_sections'],8)
 
     def test_recovery_publishes_saved_campaign_data_after_old_category_job_failed(self):
         from services.research.progressive import ProgressiveReports
@@ -261,14 +262,37 @@ class ProcessingPostgresTests(unittest.TestCase):
             self.assertIsNotNone(c.execute("SELECT id FROM research_result WHERE stream_key='category-btc'").fetchone())
         self.assertEqual(self.queue.get(old)['status'],'failed')
 
-    def test_oldest_finishes_enrichment_and_final_report_while_newer_waits(self):
-        first=self.create(key='finish-oldest',end='2026-10-25')
-        newer=self.create(key='hold-newer',end='2026-10-26')
+    def test_whole_queue_prices_precede_oldest_enrichment_and_new_arrivals_preempt(self):
+        first=self.create(key='first-prices',end='2026-10-25')
+        newer=self.create(key='next-prices',end='2026-10-26')
+        def price_count(identifier):
+            with self.db.pool.connection() as c:
+                return len(c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress'].get('candle_previews',{}))
+        def drive_prices(identifier,count):
+            for _ in range(350):
+                if price_count(identifier)==count:return
+                self.available();self.worker.run_once(deadline=time.monotonic()+30)
+                self.processor.run_once(deadline=time.monotonic()+30)
+                self.assertFalse(self.trade_calls())
+            self.fail('Queue price pass stalled')
+        drive_prices(first,1)
+        self.assertEqual(self.store.get(newer)['saved_pages'],0)
+        self.assertEqual(str(self.worker.oldest_request()['id']),newer)
+        # A price wait cannot open an enrichment lane.
+        parent=self.worker._claim_parent();self.queue.yield_job(parent['id'],parent['lease_token'],60)
+        self.assertIsNone(self.worker._claim_parent())
+        drive_prices(newer,2)
+        self.assertEqual(self.store.get(first)['completed_sections'],0)
+        self.assertEqual(str(self.worker.oldest_request()['id']),first)
+        arrival=self.create(key='late-arrival',end='2026-10-25')
+        self.assertEqual(str(self.worker.oldest_request()['id']),arrival)
+        drive_prices(arrival,1)
+        self.assertEqual(str(self.worker.oldest_request()['id']),first)
         self.assertEqual(self.finish(first)['status'],'succeeded')
-        waiting=self.store.get(newer)
-        self.assertEqual(waiting['status'],'queued')
-        self.assertEqual(waiting['saved_pages'],0)
-        self.assertEqual(waiting['completed_sections'],0)
+        self.assertGreater(self.store.get(newer)['saved_pages'],0)
+        self.assertEqual(self.store.get(newer)['completed_sections'],0)
+        self.assertEqual(self.finish(newer)['status'],'succeeded')
+        self.assertEqual(self.finish(arrival)['status'],'succeeded')
 
     def test_three_hundred_market_preview_publishes_with_explicit_limit(self):
         from services.research.inventory import ProviderPage

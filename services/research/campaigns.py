@@ -467,6 +467,8 @@ class CampaignWorker:
     @timed('campaign.step')
     def step(self,parent,*,deadline):
         identifier=UUID(parent['parameters']['campaign_id'])
+        selected=self.oldest_request() if self.role=='collector' else None
+        prices_only=bool(selected and selected['price_pending'])
         self.queue.heartbeat(parent['id'],parent['lease_token'],120 if self.role=='collector' else 600)
         with self.pool.connection() as c:
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s AND job_id=%s',(identifier,parent['id'])).fetchone()
@@ -479,13 +481,14 @@ class CampaignWorker:
                     AND parameters->>'collector'='campaign-assembly-v1'
                     AND (parameters->>'kind' IN ('prices','enriched') OR (%s=300 AND parameters->>'kind'='sample')) AND status IN ('queued','running')),
                 active_days AS MATERIALIZED (SELECT * FROM research_campaign_day
-                    WHERE campaign_id=%s AND dataset_id IS NULL ORDER BY day DESC LIMIT %s)
+                    WHERE campaign_id=%s AND dataset_id IS NULL
+                        AND (NOT %s OR NOT (%s::jsonb ? day::text)) ORDER BY day DESC LIMIT %s)
                 SELECT * FROM active_days
                 WHERE (%s='combined' OR NOT EXISTS(SELECT 1 FROM pending_assembly a WHERE a.day=active_days.day::text))
                 ORDER BY CASE WHEN %s::jsonb ? day::text THEN 2
                               WHEN %s::jsonb ? day::text THEN %s ELSE %s END,
                     day DESC LIMIT 1''',
-                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',self.preview_limit,identifier,ACTIVE_DAYS if self.role=='collector' else MAX_DAYS,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
+                (f'assembly/{identifier}/',f'assembly/{identifier}/zzzz',self.preview_limit,identifier,prices_only,Jsonb(parent['progress'].get('candle_previews',{})),ACTIVE_DAYS if self.role=='collector' else MAX_DAYS,self.role,Jsonb(parent['progress'].get('candle_previews',{})),
                     Jsonb(parent['progress'].get('sample_previews',{})),1 if self.preview_limit==300 else 0,0 if self.preview_limit==300 else 1)).fetchone()
         if day is None:
             if self.role=='collector':
@@ -556,11 +559,13 @@ class CampaignWorker:
                 if self._candle_preview(parent,campaign,day):
                     self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 wait=self._one(campaign,day,'evidence',self.evidence_worker,deadline,
-                    resource=None if day['day'].isoformat() in parent['progress'].get('candle_previews',{}) else 'candles',
+                    resource='candles' if prices_only or day['day'].isoformat() not in parent['progress'].get('candle_previews',{}) else None,
                     priority_tickers=sample if sample and day['day'].isoformat() not in parent['progress'].get('sample_previews',{})
                         and day['day'].isoformat() not in parent.get('_sample_assembly_pending',set()) else None)
                 if wait is not None:self.queue.yield_job(parent['id'],parent['lease_token'],wait);return wait
                 if self.role=='collector':
+                    if prices_only:
+                        self.queue.yield_job(parent['id'],parent['lease_token'],1);return 1
                     self._enqueue_assembly(parent,campaign,day,'enriched')
                     self.queue.yield_job(parent['id'],parent['lease_token']);return 0
                 plan=self._plan(campaign,day)
@@ -671,11 +676,15 @@ class CampaignWorker:
 
     def oldest_request(self):
         with self.pool.connection() as c:
-            return c.execute("""SELECT r.id,r.job_id,r.asset FROM research_campaign r
+            return c.execute("""SELECT r.id,r.job_id,r.asset,
+                    EXISTS(SELECT 1 FROM research_campaign_day d WHERE d.campaign_id=r.id
+                        AND d.dataset_id IS NULL
+                        AND NOT (coalesce(j.progress->'candle_previews','{}'::jsonb) ? d.day::text)) AS price_pending
+                FROM research_campaign r
                 JOIN research_job j ON j.id=r.job_id WHERE (j.status IN ('queued','running') OR
                     (j.status='failed' AND j.error_code IN ('attempts_exhausted','campaign_step_failed')))
                 AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
-                ORDER BY r.created_at,r.id LIMIT 1""").fetchone()
+                ORDER BY price_pending DESC,r.created_at,r.id LIMIT 1""").fetchone()
 
     def _claim_parent(self):
         if self.role=='collector':
