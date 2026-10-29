@@ -37,3 +37,41 @@ def coalesce(c,job,revision,*,campaign=False):
         WHERE status='queued' AND parameters->>'collector'=%s {identity}
             AND NOT (progress ? %s) AND NOT coalesce((parameters->>'urgent')::boolean,false)''',
         (INTERVAL_SECONDS,job['parameters']['collector'],value,key))
+
+# Background report work runs only when collection and paper are idle.
+# New primary work raises a cooperative interruption; job leases are yielded.
+from contextlib import contextmanager
+from contextvars import ContextVar
+from time import monotonic
+from .datasets import CollectionInterrupted
+
+_background = ContextVar('pocket_background_guard',default=None)
+
+
+def primary_work_pending(pool):
+    with pool.connection() as c:
+        return bool(c.execute("""SELECT 1 FROM research_job j
+            WHERE j.status IN ('queued','running') AND (
+              j.parameters->>'collector'='paper-replay-v1'
+              OR (j.parameters->>'collector'='campaign-v1'
+                AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)))
+            LIMIT 1""").fetchone())
+
+
+@contextmanager
+def background_guard(check):
+    token=_background.set([check,0.0])
+    try:
+        check_priority()
+        yield
+    finally:
+        _background.reset(token)
+
+
+def check_priority():
+    state=_background.get()
+    if state is None:return
+    now=monotonic()
+    if now<state[1]:return
+    state[1]=now+0.35
+    if state[0]():raise CollectionInterrupted('Primary activity preempts analysis')

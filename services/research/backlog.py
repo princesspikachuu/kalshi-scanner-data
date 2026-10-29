@@ -36,10 +36,8 @@ class AnalysisBacklog:
         self.asset=None;self.turn_started=0;self.cached=None;self.bootstrap_at=0;self.jobs={}
 
     def collecting(self):
-        with self.pool.connection() as c:
-            return bool(c.execute("""SELECT 1 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
-                WHERE j.status IN ('queued','running')
-                AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false) LIMIT 1""").fetchone())
+        from .report_jobs import primary_work_pending
+        return primary_work_pending(self.pool)
 
     def bootstrap(self):
         if monotonic()-self.bootstrap_at<30:return
@@ -145,6 +143,7 @@ class AnalysisBacklog:
             collected_tickers=tickers,cancelled=cancelled)
         if cancelled():raise CollectionInterrupted('Collection preempts analysis')
         self.queue.heartbeat(job['id'],job['lease_token'],600)
+        if cancelled():raise CollectionInterrupted('Primary work preempts analysis')
         dataset=DatasetStore(self.pool).publish('analysis-'+job['asset'],prepared)
         result=ReportStore(self.pool).publish_campaign('analysis-source-'+str(job['parameters']['source_dataset']),job['asset'],[dataset],
             publication=dict(complete=True,revision=1,reported_sections=1,total_sections=1))

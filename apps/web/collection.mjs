@@ -145,14 +145,14 @@ $('signOut').addEventListener('click',async()=>{$('signOut').disabled=true;try{a
 function render(data,append=false){
  const c=data.campaign;selected=c.id;$('progress').hidden=false;
  $('workCounts').textContent=`${c.saved_pages||0} pages saved · ${c.completed_work_items||0}/${c.work_items||0} collection tasks finished${c.retry_at?' · retry after '+new Date(c.retry_at).toLocaleTimeString():''}${c.last_work_error?' · last recorded issue: '+c.last_work_error.replaceAll('_',' '):''}`;
- $('completion').max=c.total_sections;$('completion').value=c.reported_sections||0;if($('reportScope').value==='load')void loadReport(c,revision);
- $('counts').textContent=`${c.reported_sections||0} of ${c.total_sections} days collected · ${c.report_days_last_five_minutes||0} new days in the last 5 minutes · ${c.analyzed_sections||0} days analyzed · ${c.status==='cancelled'?'paused':c.completed_sections===c.total_sections&&c.status!=='succeeded'?'building combined report · '+c.status:c.status}`;
+ $('completion').max=c.total_sections;$('completion').value=c.completed_sections||0;if($('reportScope').value==='load')void loadReport(c,revision);
+ $('counts').textContent=`${c.completed_sections||0} of ${c.total_sections} days collected · ${c.reported_sections||0} days reported · ${c.analyzed_sections||0} days analyzed · ${c.status==='cancelled'?'paused':c.status==='succeeded'?'collected — analyzing in background':c.status}`;
  $('range').textContent=`${c.start_at} through ${c.end_at} · ${c.mode==='rolling'?'rolling 24 hours':'date range'}${c.result_id?' · saved research report '+c.result_id:''}`;
  $('pause').hidden=!['queued','running'].includes(c.status);$('resume').hidden=!['failed','cancelled'].includes(c.status);
  if(!append)$('sections').replaceChildren();
  for(const s of data.sections||[]){const li=document.createElement('li');li.textContent=`${s.day} · ${s.stage}${s.dataset_id?' · saved version '+s.dataset_id:''}`;$('sections').append(li)}
  next=data.next_after;$('more').hidden=!next;
- if(c.status==='succeeded')$('notice').textContent='Collection complete. All sections and the combined research report are saved.';
+ if(c.status==='succeeded'){$('notice').textContent='Collection complete. All requested raw data is saved. Reports and analysis continue while workers are idle.';void loadHistory(revision)}
  else if(['queued','running'].includes(c.status))$('notice').textContent='Collection in progress. Saved pages are retained across retries and restarts.';
  else if(c.status==='failed')$('notice').textContent='Collection stopped with an unresolved error. Resume retries unfinished work and retains saved pages.';
 }

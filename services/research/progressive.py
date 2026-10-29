@@ -5,6 +5,7 @@ from psycopg.types.json import Jsonb
 from .queue import ResearchQueue
 from .reports import ReportStore
 from . import report_jobs
+from .datasets import CollectionInterrupted
 
 
 class ProgressiveReports:
@@ -77,6 +78,8 @@ class ProgressiveReports:
         job=self.queue.claim(seconds=600,collector='campaign-preview-v1',campaign_id=campaign_id,asset=asset)
         if job is None:return False
         try:self.step(job)
+        except CollectionInterrupted:
+            self.queue.yield_job(job['id'],job['lease_token'],1)
         except ValueError as error:
             codes={'Report path limit exceeded; split the range':'progress_path_limit',
                    'Report entry limit exceeded; split the range':'progress_entry_limit',

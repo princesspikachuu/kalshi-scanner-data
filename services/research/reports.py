@@ -18,6 +18,7 @@ from .inventory import digest
 from .models.conditional_v2 import SOURCE_COMMIT, CHECKPOINTS, analyze_risk, policy_cells
 from .normalize import _closed
 from .queue import EvidenceConflict, text_key
+from . import report_jobs
 
 MODEL = 'research-return-conditional-v1'
 MAX_REPORT_BYTES=96*1024*1024
@@ -66,6 +67,7 @@ def _observations(asset,datasets,*,candidate_filter=None):
     rows,paths,origin,missing=[],{},{},[]
     candidate_count=slots=bar_count=0
     for dataset in datasets:
+        report_jobs.check_priority()
         # Validate the immutable raw payload even on a cache hit. The cache is
         # only a derived-input accelerator, never a replacement for source proof.
         decoded=report_dataset(dataset)
@@ -107,6 +109,7 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
     rows,paths,origin,seen,missing=[],{}, {},set(),[]
     candidate_count=0;bar_count=0
     for dataset in datasets:
+        report_jobs.check_priority()
         payload=report_dataset(dataset)['payload']
         if payload.get('format')!=FORMAT:
             raise EvidenceConflict('Published raw dataset integrity mismatch')
@@ -120,6 +123,7 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
             if record['resource']=='candles' and (candidate_filter is None or record['ticker'] in tickers):
                 bars[record['ticker']].append(record['record'])
         for candidate in candidates:
+            report_jobs.check_priority()
             ticker,day=candidate['ticker'],payload['day']
             key=(day,ticker)
             if key in seen: raise EvidenceConflict('Select one raw version per market/day; refreshes cannot be pooled')
@@ -250,6 +254,7 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     def inputs():
         previous=0
         for d in datasets:
+            report_jobs.check_priority()
             if type(d['id']) is not int or d['id']<=previous or len(metadata)>=3661:raise ValueError('Select ascending unique dataset IDs, at most 3661')
             previous=d['id']
             d=report_dataset(d)
@@ -266,6 +271,7 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     if latest is not None and not latest.issubset(ids): raise ValueError('Latest membership must be an explicit subset')
     latest_keys=None if latest is None else {k for k,v in origin.items() if v in latest}
     del origin
+    report_jobs.check_priority()
     risk=analyze_risk(rows,paths,asset,include_snapshots=True,compact=True)
     del paths
     historical_policy,latest_policy=policy_cells(risk.pop('_snapshot_groups'),latest_keys)
@@ -294,6 +300,7 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as saved:
         saved.write('[')
         for index,row in enumerate(rows):
+            report_jobs.check_priority()
             if index:saved.write(',')
             saved.write(json.dumps(row,sort_keys=True,separators=(',',':'),allow_nan=False))
         saved.write(']')
@@ -347,6 +354,7 @@ class ReportStore:
             # Bound PostgreSQL's JSON expansion memory; every batch remains in
             # this SAME publication transaction, preserving all-or-nothing sealing.
             for batch in batches:
+                report_jobs.check_priority()
                 c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation)
                     SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
                     FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(batch)))
@@ -358,6 +366,7 @@ class ReportStore:
         if not ids or len(ids)>3661 or len(set(ids))!=len(ids) or any(type(i) is not int or i<1 for i in ids):raise ValueError('Invalid campaign membership')
         def inputs():
             for identifier in ids:
+                report_jobs.check_priority()
                 with self.pool.connection() as c:
                     size=c.execute("SELECT COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                     if not size:raise EvidenceConflict('Missing campaign dataset')

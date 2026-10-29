@@ -17,6 +17,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 from .inventory import digest
 from . import report_jobs
+from .datasets import CollectionInterrupted
 from .normalize import _closed
 from .queue import ResearchQueue,EvidenceConflict
 from .reports import ReportStore,PreparedReport,prepare_report_stream,SERIES,MAX_REPORT_BYTES,report_fingerprint
@@ -177,6 +178,8 @@ class CategoryReports:
         job=self.queue.claim(seconds=600,collector='category-report-v1',campaign_id=campaign_id,asset=asset)
         if job is None:return False
         try:self.step(job)
+        except CollectionInterrupted:
+            self.queue.yield_job(job['id'],job['lease_token'],1)
         except ValueError as error:
             print(json.dumps(dict(event='category_publication_blocked',asset=job['asset'],reason=str(error)[:200])),flush=True)
             self.queue.fail(job['id'],job['lease_token'],'category_report_blocked',retry=False)

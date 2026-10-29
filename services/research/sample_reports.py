@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from . import report_jobs
+from .datasets import CollectionInterrupted
 from .queue import EvidenceConflict, ResearchQueue
 from .reports import ReportStore
 
@@ -116,6 +117,8 @@ class SampleReports:
             return False
         try:
             self.step(job)
+        except CollectionInterrupted:
+            self.queue.yield_job(job['id'],job['lease_token'],1)
         except ValueError:
             self.queue.fail(job['id'], job['lease_token'], 'sample_report_blocked', retry=False)
         return True

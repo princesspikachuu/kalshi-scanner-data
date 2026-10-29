@@ -4,6 +4,7 @@ import datetime as dt
 import math
 from bisect import bisect_right
 from collections import defaultdict
+from ..report_jobs import check_priority
 
 SOURCE_COMMIT = '26c65c2325d3c5f18e3c8e9ef8142fc938f8bbdf'
 
@@ -14,6 +15,7 @@ EXIT_COST_CENTS = 2
 def canonical(rows):
     picked = {}
     for row in rows:
+        check_priority()
         key = (row['date'], row['ticker'], int(row['minutes_before_close']))
         if key not in picked or float(row['maker_bid']) > float(picked[key]['maker_bid']):
             picked[key] = row
@@ -77,6 +79,7 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
     # Never infer a bid from the opposite side's bid.
     saved_quotes = defaultdict(list)
     for r in rows:
+        check_priority()
         try:
             close = int(dt.datetime.fromisoformat(r['close_time'].replace('Z', '+00:00')).timestamp())
             age = float(r.get('quote_age_seconds') or 0)
@@ -93,6 +96,7 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
     # Choose one outcome-blind event representative before examining quote coverage.
     # Stable event IDs, without a collection-date prefix, prevent repeat-day inflation.
     for r in saved:
+        check_priority()
         try:
             entry = 100 * float(r['maker_bid'])
             minute = int(r['minutes_before_close'])
@@ -114,6 +118,7 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
     covered = set()
     path_cache = {}
     for key, (_, r) in representatives.items():
+        check_priority()
         family, minute, band, event = key
         path_key = (r['date'], r['ticker'])
         path = paths.get(path_key)
@@ -216,6 +221,7 @@ def policy_cells(groups, latest_keys=None):
             cells[(minute, band)].extend(items)
     historical, latest = [], []
     for (minute, band), candidates in sorted(cells.items()):
+        check_priority()
         # The same event cannot become independent by appearing in two series.
         representatives = {}
         for x in candidates:
