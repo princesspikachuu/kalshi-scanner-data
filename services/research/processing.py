@@ -122,6 +122,10 @@ class ProcessingWorker(CampaignWorker):
                 release_report_memory()
 
     def _run_once(self,*,deadline):
+        # A paper replay must not sit behind the historical report/assembly backlog.
+        # Claim it before expensive dataset preparation or category publication.
+        from services.paper.worker import PaperWorker
+        if PaperWorker(self.pool,self.archives).run_once():return True
         # Publish ready full-cohort price reports ahead of sample/trade work.
         if not self._bootstrapped:
             ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
@@ -142,8 +146,6 @@ class ProcessingWorker(CampaignWorker):
                     WHERE r.config ? 'collection_limit' AND j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
                     LIMIT 1""").fetchone()
             if not collecting and CategoryReports(self.pool).run_once():return True
-            from services.paper.worker import PaperWorker
-            if PaperWorker(self.pool,self.archives).run_once():return True
             job=self._claim_assembly()
             if job is None:return False
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)

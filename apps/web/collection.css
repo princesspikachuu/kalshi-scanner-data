@@ -3,3 +3,12 @@
 .queue-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.queue-entry>button.secondary{font-size:11px;padding:8px;max-width:95px}#finishedMore{margin-top:14px}
 
 input:not([type=checkbox]){display:block;width:100%;min-height:44px;padding:10px;margin-top:6px;color:var(--text);background:var(--bg);border:1px solid #60798c;border-radius:9px}dialog{color:var(--text);background:#122335f5;border:1px solid var(--mint);border-radius:20px;padding:24px;width:min(600px,calc(100% - 24px));max-height:90dvh;overflow:auto;box-shadow:0 24px 100px #0009}dialog::backdrop{background:#07111b66}.bet-fields{display:grid;grid-template-columns:1fr 1fr;gap:16px}.bet-fields>label:first-child{grid-column:1/-1}#newBet[aria-pressed=true]{background:var(--mint);color:#10251f}.paper-options{display:grid;gap:8px;max-height:320px;overflow:auto}.paper-options .check{margin:0;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px}.run-card{padding:16px;border:1px solid var(--border);border-radius:12px;margin:12px 0}.run-card p{margin:6px 0}.run-card strong{font-size:20px}@media(max-width:460px){.bet-fields{grid-template-columns:1fr}.bet-fields>label:first-child{grid-column:auto}dialog{padding:18px}}
+
+/* Run setup is a safe disclosure; cancellation lives behind a separate menu and dialog. */
+.run-actions{display:flex;justify-content:flex-end;align-items:flex-end;border-top:1px solid var(--border);padding-top:16px;margin-top:24px}
+.run-more{margin:0}.run-more summary{color:var(--muted);padding:10px 12px;min-height:44px}
+.run-more button{display:block;margin:10px 0 0 auto}
+button.danger{background:#652a36;color:#fff;border:1px solid #d88294}
+button.danger:focus-visible{outline:3px solid #ffc7d3;outline-offset:3px}
+.cancel-confirmation{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:12px;margin-top:24px}
+.cancel-confirmation button{min-height:44px}

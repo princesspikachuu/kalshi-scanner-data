@@ -1,7 +1,28 @@
 import {paperCall} from './paper-client.mjs';
 import {appendActivity} from './paper-activity.mjs';
 const setupCache=new Map(),openSetups=new Set();
-const $=id=>document.getElementById(id);let workspace,busy=false,requestKey=null;
+const $=id=>document.getElementById(id);let workspace,busy=false,requestKey=null,pendingCancel=null;
+function requestCancel(run){
+ pendingCancel=run.id;
+ $('cancelReplayName').textContent=run.name||run.strategy_names?.slice(0,3).join(' + ')||'Portfolio replay';
+ $('confirmCancelReplay').disabled=false;
+ $('cancelReplayDialog').showModal();
+}
+$('keepReplay').addEventListener('click',()=>{$('cancelReplayDialog').close();pendingCancel=null});
+$('cancelReplayDialog').addEventListener('close',()=>{pendingCancel=null});
+$('confirmCancelReplay').addEventListener('click',async()=>{
+ if(!pendingCancel)return;
+ const id=pendingCancel;
+ $('confirmCancelReplay').disabled=true;
+ try{
+  await paperCall('replays/'+id+'/cancel',{});
+  $('cancelReplayDialog').close();pendingCancel=null;
+  await load();
+ }catch(error){
+  $('status').textContent=error.message;
+  $('confirmCancelReplay').disabled=false;
+ }
+});
 const checked=id=>[...$(id).querySelectorAll('input:checked')].map(e=>e.value);
 function options(id,items){const selected=new Set(checked(id));$(id).replaceChildren(...items.map(item=>{const label=document.createElement('label');label.className='check';const input=document.createElement('input');input.type='checkbox';input.value=item.id;input.checked=selected.has(String(item.id));const span=document.createElement('span');span.textContent=item.label;label.append(input,span);return label}));if(!items.length)$(id).textContent=id==='strategies'?'No table-based strategies saved. Choose New bet on the statistics table.':'No analyzed trade datasets yet. They will appear as analysis finishes.';}
 function money(cents){return '$'+(cents/100).toFixed(2)}
@@ -22,7 +43,14 @@ async function load(){try{
  ...(config.strategies??[config.strategy]).filter(Boolean).map(s=>`${s.name} · ${s.asset} · ask ${s.min_price}–${s.max_price}¢ · ${s.entry_minute_min??'?'}–${s.entry_minute_max??s.minutes?.join(',')} minutes before close · ${s.below_ask_cents??'?'}¢ below ask · maximum ${s.maximum_bid_cents==null?'none':s.maximum_bid_cents+'¢'} · ${s.contracts} contracts · ${s.balance_percent??10}% of balance · loss prevention ${s.loss_trigger_cents==null?'off':'sell at '+s.loss_trigger_cents+'¢ or lower'}`)];
  for(const text of lines){const line=document.createElement('p');line.textContent=text;setup.append(line)}
  }catch(error){setup.dataset.loaded='';const line=document.createElement('p');line.textContent=error.message;setup.append(line)}});if(openSetups.has(run.id))setup.open=true;card.append(setup);
- if(['queued','running'].includes(run.status)){const cancel=document.createElement('button');cancel.className='secondary';cancel.textContent='Cancel run';cancel.addEventListener('click',async()=>{cancel.disabled=true;try{await paperCall('replays/'+run.id+'/cancel',{});await load()}catch(error){$('status').textContent=error.message;cancel.disabled=false}});card.append(cancel)}return card}));
+ if(['queued','running'].includes(run.status)){
+  const actions=document.createElement('div');actions.className='run-actions';
+  const menu=document.createElement('details');menu.className='run-more';
+  const menuTitle=document.createElement('summary');menuTitle.textContent='More actions';
+  const cancel=document.createElement('button');cancel.type='button';cancel.className='danger';cancel.textContent='Cancel this run…';
+  cancel.addEventListener('click',()=>requestCancel(run));
+  menu.append(menuTitle,cancel);actions.append(menu);card.append(actions);
+ }return card}));
  if(!busy)$('status').textContent='Paper workspace ready · live trading disabled';
  }catch(error){$('status').textContent=error.message}}
 $('run').addEventListener('click',async()=>{
