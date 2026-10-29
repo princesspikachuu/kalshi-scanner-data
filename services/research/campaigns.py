@@ -525,6 +525,10 @@ class CampaignWorker:
                     missing=c.execute('SELECT 1 FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL LIMIT 1',(identifier,)).fetchone()
                     complete=c.execute('SELECT 1 FROM research_campaign_result WHERE campaign_id=%s',(identifier,)).fetchone()
                 if complete:
+                    if 'collection_limit' in campaign['config']:
+                        # Full-history statistics are independent analysis, not
+                        # a prerequisite for declaring this collection complete.
+                        self.queue.finish(parent['id'],parent['lease_token']);return 0
                     with self.pool.connection() as c:
                         category=c.execute('SELECT status FROM research_job WHERE idempotency_key=%s',('category/'+str(identifier),)).fetchone()
                     if category and category['status']=='failed':
