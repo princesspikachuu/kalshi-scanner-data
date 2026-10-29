@@ -74,8 +74,10 @@ class ReadBudget:
         if type(seconds) is not int or not 1<=seconds<=2**40:raise ValueError('Invalid provider cooldown')
         with self.pool.connection() as c:
             row=c.execute('''UPDATE research_read_budget SET
-                refill_per_second=LEAST(refill_per_second,GREATEST(0.1,refill_per_second/2)),
-                capacity=LEAST(capacity,GREATEST(1,floor(refill_per_second/2)::integer)),
+                refill_per_second=CASE WHEN blocked_until>clock_timestamp() THEN refill_per_second
+                    ELSE LEAST(refill_per_second,GREATEST(0.1,refill_per_second/2)) END,
+                capacity=CASE WHEN blocked_until>clock_timestamp() THEN capacity
+                    ELSE LEAST(capacity,GREATEST(1,floor(refill_per_second/2)::integer)) END,
                 tokens=0,updated_at=clock_timestamp(),
                 blocked_until=GREATEST(blocked_until,clock_timestamp()+%s*interval '1 second')
                 WHERE name=%s RETURNING refill_per_second''',(seconds,self.name)).fetchone()
