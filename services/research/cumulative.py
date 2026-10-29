@@ -94,7 +94,7 @@ def prepare_category(asset,datasets,manifest,revision,*,publication_complete=Tru
     payload['selection']={'version':VERSION,'windows':manifest,'revision':revision}
     if not publication_complete:payload['publication']=dict(complete=False,revision=revision)
     encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
-    if len(encoded.encode())+len(prepared.observations_json.encode())>MAX_REPORT_BYTES:raise ValueError('Category result exceeds bounded report size')
+    if len(encoded)+len(prepared.observations_json)>MAX_REPORT_BYTES:raise ValueError('Category result exceeds bounded report size')
     return PreparedReport(encoded,report_fingerprint(encoded,prepared.observations_json),prepared.observations_json)
 
 
@@ -144,6 +144,12 @@ class CategoryReports:
                 snapshot=self._snapshot(c,job['asset'])
                 c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
                     (Jsonb({'category_snapshot':snapshot}),job['id']))
+        with self.pool.connection() as c:
+            current=c.execute("SELECT id,report->'selection'->>'revision' AS revision FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1",('category-'+job['asset'],)).fetchone()
+        if current and int(current['revision'] or 0)>=snapshot['revision']:
+            # The newer sealed report already covers this immutable source
+            # revision. A recovered frozen job need not rebuild it again.
+            self.queue.finish(job['id'],job['lease_token']);return
         ids=sorted({r['dataset_id'] for r in snapshot['windows']})
         days=set()
         def inputs():

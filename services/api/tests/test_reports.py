@@ -316,3 +316,17 @@ class ReportPostgresTests(unittest.TestCase):
             with self.assertRaisesRegex(psycopg.Error,'sealed'):
                 with self.store.pool.connection() as c:c.execute(sql,args)
         self.assertEqual(self.counts(),(1,1,1))
+
+
+class ObservationBatchTests(unittest.TestCase):
+    def test_large_observation_array_roundtrips_in_bounded_batches(self):
+        from services.research.reports import observation_batches
+        rows=[dict(ticker=f'ticker-{i}',note='quote \" and unicode Ω',minute=i%15) for i in range(2501)]
+        encoded=json.dumps(rows,sort_keys=True,separators=(',',':'))
+        batches=list(observation_batches(encoded))
+        self.assertEqual([len(batch) for batch in batches],[1000,1000,501])
+        self.assertEqual([row for batch in batches for row in batch],rows)
+        self.assertEqual(list(observation_batches('[]')),[])
+        self.assertEqual(list(observation_batches('[ {"x": 1}, {"x": 2} ]',1)),[[{'x':1}],[{'x':2}]])
+        for bad in ('{}','[1]','[{},]','[{}, ]','[{}{}]'):
+            with self.assertRaises(ValueError):list(observation_batches(bad))

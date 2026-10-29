@@ -315,3 +315,13 @@ class ProcessingPostgresTests(unittest.TestCase):
         self.assertTrue(report['publication']['sampled_preview'])
         self.assertEqual(report['publication']['sample_limit'],300)
         self.assertEqual(report['historical']['candidate_count'],300)
+
+    def test_ready_price_day_precedes_all_report_rebuilds(self):
+        identifier=self.create(key='assembly-before-reports',end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        with patch('services.research.processing.ProgressiveReports.run_once',side_effect=AssertionError('report delayed completed day')), \
+             patch('services.research.processing.CategoryReports.run_once',side_effect=AssertionError('category delayed completed day')):
+            self.assertTrue(self.processor.run_once(deadline=time.monotonic()+30))
+        with self.db.pool.connection() as c:
+            progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+        self.assertEqual(len(progress['candle_previews']),1)
