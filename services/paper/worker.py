@@ -1,4 +1,13 @@
 import time
+import os
+import resource
+import logging
+
+_LOG=logging.getLogger(__name__)
+
+def resident_mib():
+    # Linux ru_maxrss is KiB; captures transient peaks missed by provider metrics.
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,1)
 from datetime import datetime,timezone
 from services.research.queue import ResearchQueue,LeaseLost
 from services.research.datasets import decoded_dataset,iter_dataset_records
@@ -18,6 +27,11 @@ class PaperWorker:
             previous=activity.get('phase');activity.update(data);now=time.monotonic()
             if not force and previous==activity.get('phase') and now-last_update<2:return
             activity['updated_at']=datetime.now(timezone.utc).isoformat()
+            activity['peak_rss_mib']=resident_mib()
+            if previous!=activity.get('phase') or force:
+                _LOG.info('paper_replay_phase job=%s phase=%s peak_rss_mib=%s datasets=%s/%s records=%s',
+                    job['id'],activity.get('phase'),activity['peak_rss_mib'],
+                    activity.get('datasets_loaded'),activity.get('datasets_total'),activity.get('records_loaded'))
             with self.pool.connection() as c:
                 self.queue._owned(c,job['id'],job['lease_token'])
                 c.execute("UPDATE research_job SET progress=progress||%s,lease_expires_at=clock_timestamp()+interval '600 seconds' WHERE id=%s",(Jsonb(dict(activity=activity)),job['id']))
@@ -38,7 +52,13 @@ class PaperWorker:
                             source=c.execute("SELECT ds.id,ds.fingerprint,ds.payload,coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','') WHERE ds.id=%s",(identifier,)).fetchone()
                         payload=decoded_dataset(source)['payload']
                         if 'trades' not in payload['summary']['resources']:raise ValueError('Detailed trade evidence required')
-                        yield source['asset'],payload,iter_dataset_records(payload,self.archives)
+                        # Release the compressed database row before scanning
+                        # archives; retained JSONB + expanded payload doubles RSS.
+                        asset=source['asset']
+                        records=iter_dataset_records(payload,self.archives)
+                        source=None
+                        yield asset,payload,records
+                        payload=None
                         # The generator resumes here only after the complete
                         # saved dataset has been consumed and validated.
                         update(dict(datasets_loaded=index+1,

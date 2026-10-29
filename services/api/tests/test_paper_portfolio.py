@@ -20,6 +20,24 @@ def strategy(**kwargs):
 class PortfolioTests(unittest.TestCase):
     def run_replay(self,sources,strategies=None,cash=10000,model='estimated'):
         return replay_portfolio(sources,strategies or [strategy()],cash,model)
+    def test_many_events_are_spooled_with_small_sqlite_cache(self):
+        from unittest.mock import patch
+        import sqlite3
+        original_connect=sqlite3.connect
+        statements=[]
+        class Connection:
+            def __init__(self,connection):self.connection=connection
+            def execute(self,statement,*args):
+                if statement.startswith('PRAGMA'):statements.append(statement)
+                return self.connection.execute(statement,*args)
+            def __getattr__(self,name):return getattr(self.connection,name)
+            def close(self):return self.connection.close()
+        with patch('services.paper.portfolio.sqlite3.connect',side_effect=lambda *a,**k:Connection(original_connect(*a,**k))):
+            outcome=self.run_replay([source()])
+        self.assertIsInstance(outcome['ending_cash_cents'],int)
+        self.assertIn('PRAGMA mmap_size=0',statements)
+        self.assertIn('PRAGMA cache_size=-1024',statements)
+
     def test_progress_reports_actual_timeline_denominator(self):
         updates=[]
         r=replay_portfolio([source(bars=[candle(BASE),candle(BASE+60)],

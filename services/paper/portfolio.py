@@ -48,7 +48,9 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
             db.execute('PRAGMA journal_mode=OFF')
             db.execute('PRAGMA synchronous=OFF')
             db.execute('PRAGMA temp_store=FILE')
-            db.execute('PRAGMA cache_size=-4096')
+            db.execute('PRAGMA cache_size=-1024')
+            db.execute('PRAGMA mmap_size=0')
+            db.execute('PRAGMA foreign_keys=OFF')
             return _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,
                 fill_model=fill_model,on_progress=on_progress,db=db)
 
@@ -89,6 +91,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
         for row in records:
             record_count+=1
             if record_count%1024==0:
+                db.commit()  # Bound SQLite pending write state and rollback memory.
                 notify(dict(phase='loading saved evidence',records_loaded=record_count,
                     current_market=row['ticker']))
             if record_count>250000:
@@ -109,7 +112,9 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                 db.execute("""INSERT OR IGNORE INTO events(ticker,ts,phase,kind,data,trade_identity,market_rank)
                     VALUES(?, ?, 1, 'trade',?,?,?)""",
                     (ticker,ts,json.dumps(data,separators=(',',':')),str(identity),m['rank']))
+    db.commit()
     db.execute('CREATE INDEX chronological_events ON events(ts,phase,market_rank,serial)')
+    db.commit()
     total_events=db.execute('SELECT count(*) FROM events').fetchone()[0]
     notify(dict(phase='replaying saved markets',records_loaded=record_count,
         markets_loaded=len(markets),events_total=total_events,
