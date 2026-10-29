@@ -17,12 +17,12 @@ from services.research.datasets import (
 from services.research.queue import EvidenceConflict
 
 
-def replay_source(source, archives):
+def replay_source(source, archives, require_trades=True):
     asset=source['asset']
     packed=source['payload']
     if packed.get('storage')!=STORAGE:
         payload=decoded_dataset(source)['payload']
-        if 'trades' not in payload['summary']['resources']:
+        if (('trades' if require_trades else 'candles') not in payload['summary']['resources']):
             raise ValueError('Detailed trade evidence required')
         return asset,payload,iter_dataset_records(payload,archives)
 
@@ -49,7 +49,7 @@ def replay_source(source, archives):
                 yield from ijson.items(stream,prefix,use_float=True)
         summary=next(items('summary'),None)
         candidates=list(items('candidates.item'))
-        if not isinstance(summary,dict) or 'trades' not in summary.get('resources',[]):
+        if not isinstance(summary,dict) or ('trades' if require_trades else 'candles') not in summary.get('resources',[]):
             raise ValueError('Detailed trade evidence required')
         # Preserve original record and partition iteration order. Each R2
         # partition is verified before yielding any of its rows.

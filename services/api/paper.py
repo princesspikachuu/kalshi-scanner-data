@@ -33,7 +33,7 @@ class ReplayBody(BaseModel):
     strategy_id:UUID|None=None
     dataset_id:int|None=Field(default=None,strict=True,ge=1)
     strategy_ids:list[UUID]=Field(default_factory=list,max_length=50)
-    dataset_ids:list[int]=Field(default_factory=list,max_length=12)
+    dataset_ids:list[int]=Field(default_factory=list,max_length=24)
     starting_cash_cents:int=Field(default=10000,strict=True,ge=100,le=100000000)
     fill_model:Literal['estimated','conservative','all_filled']='estimated'
     request_key:UUID
@@ -50,11 +50,12 @@ def install_paper(app,auth,mutate,pool):
             strategies=c.execute("SELECT id::text,asset,parameters->'strategy' AS strategy FROM research_job WHERE idempotency_key>='paper-strategy/' AND idempotency_key<'paper-strategy/zzzz' ORDER BY created_at DESC LIMIT 50").fetchall()
             runs=c.execute("SELECT id::text,parameters->>'name' AS name,asset,status,error_code,created_at,started_at,finished_at,coalesce(lease_expires_at>clock_timestamp(),false) AS lease_active,CASE WHEN status IN ('queued','running','cancelled') THEN progress->'activity' ELSE (progress->'activity')-'recent_activity'-'open_orders' END AS activity,parameters->'dataset_ids' AS dataset_ids,parameters->>'dataset_id' AS dataset_id,jsonb_path_query_array(parameters,'$.strategies[*].name') AS strategy_names,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz' ORDER BY created_at DESC LIMIT 20").fetchall()
             datasets=c.execute("""SELECT ds.id,ds.day,s.summary->>'candidate_count' AS markets,
+                (s.summary->'resources' ? 'trades') AS has_trade_evidence,
                 coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds
                 JOIN research_summary s ON s.dataset_id=ds.id
                 LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','')
                 WHERE (r.id IS NOT NULL OR ds.stream_key IN ('analysis-btc','analysis-eth','analysis-crypto','analysis-weather','analysis-weather_daily','analysis-sports'))
-                AND s.summary->'resources' ? 'trades' AND coalesce((s.summary->>'candidate_count')::integer,0)>0 ORDER BY ds.id DESC LIMIT 100""").fetchall()
+                AND s.summary->'resources' ? 'candles' AND coalesce((s.summary->>'candidate_count')::integer,0)>0 ORDER BY ds.day DESC,ds.id DESC LIMIT 800""").fetchall()
         return dict(contract='paper-v1',live_trading_enabled=False,strategies=strategies,runs=runs,datasets=datasets,entry_minutes=MINUTES)
     @app.post('/paper/strategies')
     def create(body:Strategy,request:Request):
@@ -95,7 +96,8 @@ def install_paper(app,auth,mutate,pool):
                 rows=c.execute("SELECT parameters->'strategy' AS strategy FROM research_job WHERE id=ANY(%s::uuid[]) AND idempotency_key>='paper-strategy/' AND idempotency_key<'paper-strategy/zzzz' ORDER BY id",(body.strategy_ids,)).fetchall()
                 datasets=c.execute("SELECT ds.id,s.summary FROM research_dataset ds JOIN research_summary s ON s.dataset_id=ds.id WHERE ds.id=ANY(%s::bigint[])",(body.dataset_ids,)).fetchall()
             if len(rows)!=len(body.strategy_ids) or any(r['strategy'].get('bid_offset') is not None for r in rows):raise HTTPException(422,'Select table-based strategies')
-            if len(datasets)!=len(body.dataset_ids) or any('trades' not in d['summary'].get('resources',[]) for d in datasets):raise HTTPException(422,'Detailed saved trade evidence is required')
+            required='candles' if body.fill_model=='all_filled' else 'trades'
+            if len(datasets)!=len(body.dataset_ids) or any(required not in d['summary'].get('resources',[]) for d in datasets):raise HTTPException(422,'Selected days lack the required evidence for this fill model')
             parameters=dict(collector='paper-replay-v1',dataset_ids=sorted(body.dataset_ids),strategies=[r['strategy'] for r in rows],starting_cash_cents=body.starting_cash_cents,fill_model=body.fill_model)
             asset='crypto' # Operational queue label; strategies retain their own categories.
         else:

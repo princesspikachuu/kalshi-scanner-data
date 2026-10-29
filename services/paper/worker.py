@@ -51,7 +51,7 @@ class PaperWorker:
                         with self.pool.connection() as c:
                             source=c.execute("SELECT ds.id,ds.fingerprint,ds.payload,coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','') WHERE ds.id=%s",(identifier,)).fetchone()
                         from .stream import replay_source
-                        asset,payload,records=replay_source(source,self.archives)
+                        asset,payload,records=replay_source(source,self.archives,require_trades=job['parameters']['fill_model']!='all_filled')
                         source=None
                         yield asset,payload,records
                         payload=None

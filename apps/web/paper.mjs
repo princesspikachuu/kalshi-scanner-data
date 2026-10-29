@@ -29,7 +29,11 @@ function money(cents){return '$'+(cents/100).toFixed(2)}
 async function load(){try{
  workspace=await paperCall('workspace');
  options('strategies',workspace.strategies.filter(s=>s.strategy.bid_offset==null).map(s=>({id:s.id,label:`${s.strategy.name} · ${s.asset} · reference bid-grid ROI ${s.strategy.statistical_yield_percent.toFixed(2)}% (not validated for ask entries) · n=${s.strategy.sampled_markets}`})));
- options('datasets',workspace.datasets.map(d=>({id:d.id,label:`${d.day} · ${d.asset} · ${d.markets} markets · version ${d.id}`})));
+ const eligibleDays=workspace.datasets.filter(d=>$('fillModel').value==='all_filled'||d.has_trade_evidence);
+ const picked=checked('datasets');
+ const optionsForDays=eligibleDays.filter(d=>!$('daySearch').value.trim()||(`${d.day} ${d.asset}`).toLowerCase().includes($('daySearch').value.trim().toLowerCase())).map(d=>({id:d.id,label:`${d.day} · ${d.asset} · ${d.markets} markets · version ${d.id}${d.has_trade_evidence?'':' · candles only'}`}));
+ options('datasets',optionsForDays);
+ $('dayCount').textContent=`${eligibleDays.length} eligible saved versions · ${new Set(eligibleDays.map(d=>d.day)).size} distinct dates · ${picked.length} selected`;
  $('results').replaceChildren(...workspace.runs.map(run=>{const card=document.createElement('article');card.className='run-card';const title=document.createElement('strong'),p=document.createElement('p'),note=document.createElement('p'),r=run.result;
  title.textContent=(run.name||run.strategy_names?.slice(0,3).join(' + ')||'Portfolio replay')+' · '+(r?`${money(r.profit_loss_cents)} P/L · ${money(r.ending_cash_cents)} ending balance`:`Replay ${run.status}`);
  p.textContent=r?`${r.orders_placed??r.attempts} orders placed · ${r.reconciliation?`${r.reconciliation.qualified_contracts} contracts ordered · ${r.reconciliation.filled_contracts} contracts filled (${r.reconciliation.fill_rate_percent?.toFixed(1)??'N/A'}%) · ${r.reconciliation.cancelled_unfilled_contracts} contracts unfilled`:`${r.filled_contracts??r.simulated_fills} filled contracts (total ordered not recorded)`} · ${r.expired_orders??r.no_fill_evidence} orders expired · ${r.priority_cancellations??0} priority cancellations · ${r.loss_prevention_sales??0} loss-prevention sales`:(run.status==='cancelled'?'Canceled by you. No further work will be published.':run.error_code?'Replay could not finish. Choose fewer days and retry.':'Waiting for the paper processor.');
@@ -91,10 +95,11 @@ async function load(){try{
  }catch(error){$('status').textContent=error.message}}
 $('run').addEventListener('click',async()=>{
  if(busy)return;busy=true;$('run').disabled=true;
- try{const strategy_ids=checked('strategies'),dataset_ids=checked('datasets').map(Number);if(!strategy_ids.length||!dataset_ids.length)throw Error('Select at least one strategy and one saved day.');if(dataset_ids.length>12)throw Error('Select at most 12 saved days per replay.');
+ try{const strategy_ids=checked('strategies'),dataset_ids=checked('datasets').map(Number);if(!strategy_ids.length||!dataset_ids.length)throw Error('Select at least one strategy and one saved day.');if(dataset_ids.length>24)throw Error('Select at most 24 saved dataset versions per replay.');
  requestKey??=crypto.randomUUID();const queued=await paperCall('replays',{name:$('runName').value.trim(),strategy_ids,dataset_ids,starting_cash_cents:Math.round(Number($('cash').value)*100),fill_model:$('fillModel').value,request_key:requestKey});requestKey=null;
  $('status').textContent=`Replay ${queued.id} queued. Follow its status and order activity below.`;await load();
  }catch(error){$('status').textContent=error.message}finally{busy=false;$('run').disabled=false}
 });
+$('daySearch').addEventListener('input',()=>{void load()});
 for(const id of ['strategies','datasets','cash','fillModel','runName'])$(id).addEventListener('change',()=>{requestKey=null});
 void load();const refreshTimer=setInterval(load,5000);refreshTimer?.unref?.();
