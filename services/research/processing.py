@@ -138,10 +138,9 @@ class ProcessingWorker(CampaignWorker):
                 release_report_memory()
 
     def _run_once(self,*,deadline):
-        # Paper replay > required raw data assembly > idle report analysis.
-        from services.paper.worker import PaperWorker
+        # Collection-side data assembly has priority over all idle analysis.
+        # Paper replay is claimed ONLY by the dedicated paper service.
         from . import report_jobs
-        if PaperWorker(self.pool,self.archives).run_once():return True
         job=self._claim_assembly(prices_only=True)
         if job is None:job=self._claim_assembly()
         if job is None:

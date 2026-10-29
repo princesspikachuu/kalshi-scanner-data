@@ -7,7 +7,7 @@ import os
 import re
 import signal
 import sys
-from threading import Event
+from threading import Event,Thread
 
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -131,8 +131,10 @@ def run(settings,stop):
         archives=ArchiveStore(objects,cache_bytes=(16 if settings.role=='combined' else 4)*1024*1024)
         queue=ResearchQueue(pool)
         if settings.role=='processor':
-            from .processing import ProcessingWorker
-            worker=ProcessingWorker(pool,archives,stop=stop)
+            # Paper service never constructs provider clients or executes
+            # research assembly, report publication, or saved-data analysis.
+            from services.paper.worker import PaperWorker
+            worker=PaperWorker(pool,archives)
         else:
             budget=ReadBudget(pool)
             from .kalshi_auth import signer_from_env
@@ -164,14 +166,32 @@ def run(settings,stop):
         def tick():
             heartbeat.beat();progress.emit()
         worker.on_work_tick=tick
-        try:serve(campaigns,worker,stop,on_tick=tick,idle_wait=(lambda:1) if settings.role=='processor' else campaigns.next_wait,schedule=settings.role!='processor',on_error=lambda code:print(code,file=sys.stderr,flush=True))
+        analysis_thread=None
+        if settings.role=='collector':
+            # This is a SECOND execution lane within the existing collection
+            # service, not a new Render service or paper-processing resource.
+            # Evidence downloads and saved-data assembly can overlap; costly
+            # report analysis yields whenever collection or paper is active.
+            from .processing import ProcessingWorker
+            research=ProcessingWorker(pool,archives,stop=stop)
+            def run_research():
+                serve(campaigns,research,stop,on_tick=tick,idle_wait=lambda:1,
+                    schedule=False,on_error=lambda code:print(code,file=sys.stderr,flush=True))
+            analysis_thread=Thread(target=run_research,name='collection-data-and-analysis',daemon=True)
+            analysis_thread.start()
+        try:
+            serve(campaigns,worker,stop,on_tick=tick,idle_wait=(lambda:1) if settings.role=='processor' else campaigns.next_wait,
+                schedule=settings.role!='processor',on_error=lambda code:print(code,file=sys.stderr,flush=True))
         finally:
+            if analysis_thread is not None:
+                stop.set()
+                analysis_thread.join(timeout=10)
             meter.flush(force=True);configure()
 
 
 def _child(settings,stop):
     # Spawned processes build independent SDK clients, caches and DB pools.
-    # No provider client is constructed in the processing role.
+    # The paper-only processor never constructs provider clients or research workers.
     try:run(settings,stop)
     except Exception:
         print(f'{settings.role} worker exited; private error details suppressed',file=sys.stderr,flush=True)
@@ -191,7 +211,7 @@ def run_split(settings,stop):
         for role in ('collector','processor'):
             child=context.Process(target=_child,args=(replace(settings,role=role),shared_stop),name='research-'+role)
             child.start();children.append(child)
-        print('Split enabled: independent collector and processor processes; shared durable queue',flush=True)
+        print('Split enabled: collection/data/analysis service and paper-only service; shared durable queue',flush=True)
         while not stop.is_set():
             if any(not child.is_alive() for child in children):
                 raise RuntimeError('Split worker process exited')

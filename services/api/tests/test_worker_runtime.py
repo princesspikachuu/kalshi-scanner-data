@@ -208,7 +208,29 @@ class SplitRuntimeTests(unittest.TestCase):
         inventory.assert_not_called();evidence.assert_not_called();budget.assert_not_called()
         self.assertEqual(factory.call_args.kwargs['max_size'],2)
         self.assertFalse(serve.call_args.kwargs['schedule'])
-        self.assertEqual(type(serve.call_args.args[1]).__name__,'ProcessingWorker')
+        self.assertEqual(type(serve.call_args.args[1]).__name__,'PaperWorker')
+        self.assertEqual(serve.call_count,1)
+
+    def test_collector_adds_research_lane_without_polluting_paper_service(self):
+        settings=runtime.WorkerSettings.from_env({**environment(),'COLLECTION_ENABLED':'true','WORKER_ROLE':'collector'})
+        pool=MagicMock()
+        pool.connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value={'ready':True}
+        with patch('services.research.acceptance.audit_database',return_value={'privilege_boundary_ready':True}), \
+             patch.object(runtime,'ConnectionPool',return_value=pool), \
+             patch.object(runtime.R2Objects,'connect'), \
+             patch.object(runtime,'KalshiInventory'),patch.object(runtime,'KalshiEvidence'), \
+             patch.object(runtime,'ReadBudget'), \
+             patch('services.research.processing.ProcessingWorker') as research, \
+             patch.object(runtime,'Thread') as lane, \
+             patch.object(runtime,'serve',side_effect=RuntimeError('stop collector')) as serve:
+            with self.assertRaisesRegex(RuntimeError,'stop collector'):
+                runtime.run(settings,Event())
+        research.assert_called_once()
+        lane.assert_called_once()
+        lane.return_value.start.assert_called_once()
+        lane.return_value.join.assert_called_once_with(timeout=10)
+        self.assertEqual(serve.call_count,1)
+        self.assertEqual(type(serve.call_args.args[1]).__name__,'CampaignWorker')
 
     def test_split_spawns_both_roles_and_shuts_them_down_together(self):
         settings=runtime.WorkerSettings.from_env({**environment(),'COLLECTION_ENABLED':'true','WORKER_ROLE':'split'})

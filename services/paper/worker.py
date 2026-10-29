@@ -9,7 +9,7 @@ from psycopg.types.json import Jsonb
 
 class PaperWorker:
     def __init__(self,pool,archives):self.pool,self.archives=pool,archives;self.queue=ResearchQueue(pool)
-    def run_once(self):
+    def run_once(self,*,deadline=None):
         job=self.queue.claim(seconds=600,collector='paper-replay-v1')
         if job is None:return False
         activity={};last_update=0
