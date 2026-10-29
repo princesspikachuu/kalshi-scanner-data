@@ -20,6 +20,20 @@ def strategy(**kwargs):
 class PortfolioTests(unittest.TestCase):
     def run_replay(self,sources,strategies=None,cash=10000,model='estimated'):
         return replay_portfolio(sources,strategies or [strategy()],cash,model)
+    def test_progress_reports_actual_timeline_denominator(self):
+        updates=[]
+        r=replay_portfolio([source(bars=[candle(BASE),candle(BASE+60)],
+            trades=[trade(BASE+3,volume=2)])],[strategy()],10000,
+            on_progress=updates.append)
+        self.assertIsInstance(r['profit_loss_cents'],int)
+        markers=[v for v in updates if v.get('phase')=='replaying saved markets'
+            and 'percent_complete' in v]
+        self.assertTrue(markers)
+        self.assertEqual(markers[0]['percent_complete'],35)
+        self.assertEqual(markers[0]['events_processed'],0)
+        self.assertEqual(markers[0]['events_total'],4)
+        self.assertTrue(all(0<=x['percent_complete']<=99 for x in markers))
+
     def test_optional_cap_overrides_distance(self):
         self.assertEqual(proposed_bid(96,strategy(below_ask_cents=2)),94)
         self.assertEqual(proposed_bid(96,strategy(below_ask_cents=2,maximum_bid_cents=90)),90)

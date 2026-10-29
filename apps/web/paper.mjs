@@ -34,6 +34,23 @@ async function load(){try{
  title.textContent=(run.name||run.strategy_names?.slice(0,3).join(' + ')||'Portfolio replay')+' · '+(r?`${money(r.profit_loss_cents)} P/L · ${money(r.ending_cash_cents)} ending balance`:`Replay ${run.status}`);
  p.textContent=r?`${r.orders_placed??r.attempts} orders placed · ${r.reconciliation?`${r.reconciliation.qualified_contracts} contracts ordered · ${r.reconciliation.filled_contracts} contracts filled (${r.reconciliation.fill_rate_percent?.toFixed(1)??'N/A'}%) · ${r.reconciliation.cancelled_unfilled_contracts} contracts unfilled`:`${r.filled_contracts??r.simulated_fills} filled contracts (total ordered not recorded)`} · ${r.expired_orders??r.no_fill_evidence} orders expired · ${r.priority_cancellations??0} priority cancellations · ${r.loss_prevention_sales??0} loss-prevention sales`:(run.status==='cancelled'?'Canceled by you. No further work will be published.':run.error_code?'Replay could not finish. Choose fewer days and retry.':'Waiting for the paper processor.');
  note.className='small';note.textContent=r?`${r.fill_model}. ${r.assumptions??'Historical fill proxy; actual queue position is unknown.'}`:'';card.append(title,p,note);
+ if(['queued','running'].includes(run.status)){
+  const progress=run.activity||{},phase=progress.phase||
+   (run.status==='queued'?'Queued — awaiting replay worker':'Preparing replay');
+  const pct=Number.isFinite(progress.percent_complete)?
+    Math.max(0,Math.min(100,progress.percent_complete)):null;
+  const section=document.createElement('div');section.className='paper-replay-progress';
+  const label=document.createElement('p');label.className='small';
+  label.textContent=`${phase}${pct==null?'':` · ${pct.toFixed(1)}%`}`+
+   (progress.datasets_total?` · ${progress.datasets_loaded||0}/${progress.datasets_total} saved datasets loaded`:'')+
+   (progress.events_total?` · ${progress.events_processed||0}/${progress.events_total} market events processed`:'')+
+   (progress.records_loaded?` · ${progress.records_loaded} records loaded`:'');
+  const bar=document.createElement('progress');bar.max=100;
+  if(pct!=null)bar.value=pct;
+  bar.style.width='100%';
+  bar.setAttribute('aria-label',`Paper replay: ${phase}`);
+  section.append(label,bar);card.append(section);
+ }
  if(r?.reconciliation){
   const audit=r.reconciliation;
   const review=document.createElement('details'),heading=document.createElement('summary');

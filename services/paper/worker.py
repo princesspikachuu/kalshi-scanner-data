@@ -24,16 +24,25 @@ class PaperWorker:
             last_update=now
         try:
             started=time.monotonic()
-            update(dict(phase='loading saved evidence',provider_reads=0),force=True)
+            total_datasets=len(job['parameters'].get('dataset_ids',[])) or 1
+            update(dict(phase='loading saved evidence',provider_reads=0,
+                datasets_total=total_datasets,datasets_loaded=0,
+                records_loaded=0,events_processed=0,events_total=0,
+                percent_complete=0),force=True)
             if 'strategies' in job['parameters']:
                 def sources():
-                    for identifier in job['parameters']['dataset_ids']:
-                        update(dict(dataset_id=identifier,phase='loading saved evidence'),force=True)
+                    for index,identifier in enumerate(job['parameters']['dataset_ids']):
+                        update(dict(dataset_id=identifier,phase='loading saved evidence',
+                            datasets_loaded=index),force=True)
                         with self.pool.connection() as c:
                             source=c.execute("SELECT ds.id,ds.fingerprint,ds.payload,coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','') WHERE ds.id=%s",(identifier,)).fetchone()
                         payload=decoded_dataset(source)['payload']
                         if 'trades' not in payload['summary']['resources']:raise ValueError('Detailed trade evidence required')
                         yield source['asset'],payload,iter_dataset_records(payload,self.archives)
+                        # The generator resumes here only after the complete
+                        # saved dataset has been consumed and validated.
+                        update(dict(datasets_loaded=index+1,
+                            percent_complete=round(35*(index+1)/total_datasets,2)),force=True)
                 result=replay_portfolio(sources(),job['parameters']['strategies'],job['parameters']['starting_cash_cents'],job['parameters']['fill_model'],on_progress=update)
             else:
                 with self.pool.connection() as c:
@@ -41,7 +50,9 @@ class PaperWorker:
                 payload=decoded_dataset(source)['payload']
                 if 'trades' not in payload['summary']['resources']:raise ValueError('Detailed trade evidence required')
                 result=replay(payload,job['parameters']['strategy'],iter_dataset_records(payload,self.archives))
-            update(dict(phase='finished',elapsed_seconds=round(time.monotonic()-started,3),open_orders=[],recent_activity=result.get('recent_activity',[])),force=True)
+            update(dict(phase='finished',elapsed_seconds=round(time.monotonic()-started,3),
+                percent_complete=100,datasets_loaded=total_datasets,
+                open_orders=[],recent_activity=result.get('recent_activity',[])),force=True)
             with self.pool.connection() as c:
                 self.queue._owned(c,job['id'],job['lease_token'])
                 c.execute('UPDATE research_job SET progress=progress||%s WHERE id=%s',(Jsonb(dict(result=result)),job['id']))

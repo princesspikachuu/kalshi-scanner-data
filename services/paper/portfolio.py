@@ -86,6 +86,8 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
     realized_pnl_cents=0
     def activity(ts,ticker=None):
         return dict(phase='replaying saved markets',simulated_time=ts,current_market=ticker,
+            events_processed=processed,events_total=total_events,
+            percent_complete=(round(35+64*processed/total_events,2) if total_events else 99),
             orders_placed=counters['orders_placed'],filled_contracts=counters['filled_contracts'],
             available_cash_cents=free,recent_activity=list(recent),
             open_orders=[dict(order_id=o['id'],ticker=o['ticker'],side=o['side'],bid_cents=o['bid'],
@@ -113,7 +115,10 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         counters['loss_prevention_sales']+=1
         log('loss_prevention_sale',ts,ticker=p['ticker'],contracts=p['quantity'],sale_cents=bid,
             profit_loss_cents=bid*p['quantity']-p['cost'],evidence='minute best-bid estimate; depth unknown')
-    notify(dict(phase='replaying saved markets',records_loaded=record_count,markets_loaded=len(markets)))
+    total_events=len(timeline)
+    notify(dict(phase='replaying saved markets',records_loaded=record_count,
+        markets_loaded=len(markets),events_total=total_events,
+        events_processed=0,percent_complete=35))
     processed=0
     while timeline:
         ts,phase,_,kind,data=heapq.heappop(timeline)
