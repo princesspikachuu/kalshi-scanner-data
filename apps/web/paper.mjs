@@ -1,5 +1,6 @@
 import {paperCall} from './paper-client.mjs';
 import {appendActivity} from './paper-activity.mjs';
+const setupCache=new Map(),openSetups=new Set();
 const $=id=>document.getElementById(id);let workspace,busy=false,requestKey=null;
 const checked=id=>[...$(id).querySelectorAll('input:checked')].map(e=>e.value);
 function options(id,items){const selected=new Set(checked(id));$(id).replaceChildren(...items.map(item=>{const label=document.createElement('label');label.className='check';const input=document.createElement('input');input.type='checkbox';input.value=item.id;input.checked=selected.has(String(item.id));const span=document.createElement('span');span.textContent=item.label;label.append(input,span);return label}));if(!items.length)$(id).textContent=id==='strategies'?'No table-based strategies saved. Choose New bet on the statistics table.':'No analyzed trade datasets yet. They will appear as analysis finishes.';}
@@ -14,13 +15,13 @@ async function load(){try{
  note.className='small';note.textContent=r?`${r.fill_model}. ${r.assumptions??'Historical fill proxy; actual queue position is unknown.'}`:'';card.append(title,p,note);
  appendActivity(card,run,document);
  const setup=document.createElement('details'),setupTitle=document.createElement('summary');setupTitle.textContent='View run setup';setup.append(setupTitle);
- setup.addEventListener('toggle',async()=>{if(!setup.open||setup.dataset.loaded)return;setup.dataset.loaded='true';try{
- const {run:saved}=await paperCall('replays/'+run.id),config=saved.configuration;
+ setup.addEventListener('toggle',async()=>{if(!setup.open){openSetups.delete(run.id);return}openSetups.add(run.id);if(setup.dataset.loaded)return;setup.dataset.loaded='true';try{
+ const saved=setupCache.get(run.id)??(await paperCall('replays/'+run.id)).run;setupCache.set(run.id,saved);const config=saved.configuration;
  const lines=[`Created ${new Date(saved.created_at).toLocaleString()} · starting balance ${money(config.starting_cash_cents??config.strategy?.starting_cash_cents??10000)} · fill model ${config.fill_model??'legacy conservative'}`,
  'Saved days: '+saved.source_days.map(d=>`${d.day} / ${d.asset} / version ${d.id}`).join('; '),
  ...(config.strategies??[config.strategy]).filter(Boolean).map(s=>`${s.name} · ${s.asset} · ask ${s.min_price}–${s.max_price}¢ · ${s.entry_minute_min??'?'}–${s.entry_minute_max??s.minutes?.join(',')} minutes before close · ${s.below_ask_cents??'?'}¢ below ask · maximum ${s.maximum_bid_cents==null?'none':s.maximum_bid_cents+'¢'} · ${s.contracts} contracts · ${s.balance_percent??10}% of balance · loss prevention ${s.loss_trigger_cents==null?'off':'sell at '+s.loss_trigger_cents+'¢ or lower'}`)];
  for(const text of lines){const line=document.createElement('p');line.textContent=text;setup.append(line)}
- }catch(error){setup.dataset.loaded='';const line=document.createElement('p');line.textContent=error.message;setup.append(line)}});card.append(setup);
+ }catch(error){setup.dataset.loaded='';const line=document.createElement('p');line.textContent=error.message;setup.append(line)}});if(openSetups.has(run.id))setup.open=true;card.append(setup);
  if(['queued','running'].includes(run.status)){const cancel=document.createElement('button');cancel.className='secondary';cancel.textContent='Cancel run';cancel.addEventListener('click',async()=>{cancel.disabled=true;try{await paperCall('replays/'+run.id+'/cancel',{});await load()}catch(error){$('status').textContent=error.message;cancel.disabled=false}});card.append(cancel)}return card}));
  if(!busy)$('status').textContent='Paper workspace ready · live trading disabled';
  }catch(error){$('status').textContent=error.message}}
