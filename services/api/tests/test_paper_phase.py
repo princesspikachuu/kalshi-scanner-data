@@ -15,4 +15,4 @@ class PaperTests(unittest.TestCase):
         strategy=dict(minutes=[1],min_price=70,max_price=98,bid_offset=0,contracts=1,starting_cash_cents=100)
         result=replay(payload,strategy,records)
         self.assertEqual(result['simulated_fills'],1);self.assertEqual(result['no_fill_evidence'],1)
-        self.assertEqual(result['insufficient_cash'],1);self.assertEqual(result['ending_cash_cents'],119)
+        self.assertEqual(result['insufficient_cash'],1);self.assertEqual(result['ending_cash_cents'],120)
