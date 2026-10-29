@@ -45,8 +45,16 @@ class CollectionPhaseTests(unittest.TestCase):
         second=self.create(key='cohort-second',end='2026-10-25')
         self.assertEqual(self.finish(second,limit=700)['completed_sections'],1)
         b=self.membership(second);self.assertEqual(len(b),300);self.assertFalse(a&b)
-        with self.db.pool.connection() as c:
-            report=c.execute("SELECT report FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()['report']
+        # Collection is finished before analysis: process queued immutable
+        # reports only after both requests have left the collection queue.
+        report=None
+        for _ in range(100):
+            self.processor.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                row=c.execute("SELECT report FROM research_result WHERE stream_key='category-btc' ORDER BY id DESC LIMIT 1").fetchone()
+            if row and row['report']['historical']['candidate_count']==600:
+                report=row['report'];break
+        self.assertIsNotNone(report,'Idle category analysis did not publish saved cohorts')
         self.assertEqual(report['historical']['candidate_count'],600)
         self.assertEqual(self.store.count('all','finished'),1)
 

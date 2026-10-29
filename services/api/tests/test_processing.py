@@ -257,9 +257,18 @@ class ProcessingPostgresTests(unittest.TestCase):
         with self.db.pool.connection() as c:
             old=c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted' WHERE parameters->>'collector'='category-report-v1' RETURNING id").fetchone()['id']
         replacement=ProcessingWorker(self.db.pool,self.archives)
-        self.assertTrue(replacement.run_once(deadline=time.monotonic()+30))
-        with self.db.pool.connection() as c:
-            self.assertIsNotNone(c.execute("SELECT id FROM research_result WHERE stream_key='category-btc'").fetchone())
+        # While collection is active, a failed category report must not
+        # interrupt evidence assembly.
+        with patch('services.research.processing.CategoryReports.run_once',
+                   side_effect=AssertionError('category report must wait for idle')):
+            replacement.run_once(deadline=time.monotonic()+30)
+        self.assertEqual(self.finish(identifier)['status'],'succeeded')
+        for _ in range(100):
+            replacement.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                row=c.execute("SELECT id FROM research_result WHERE stream_key='category-btc'").fetchone()
+            if row:break
+        else:self.fail('Idle category recovery failed to publish stored collection')
         self.assertEqual(self.queue.get(old)['status'],'failed')
 
     def test_whole_queue_prices_precede_oldest_enrichment_and_new_arrivals_preempt(self):
@@ -334,4 +343,21 @@ class ProcessingPostgresTests(unittest.TestCase):
         with patch('services.research.processing.CategoryReports.run_once',side_effect=AssertionError('history competed with collection')):
             self.assertEqual(self.finish(first)['status'],'succeeded')
         with self.db.pool.connection() as c:
-            self.assertIsNotNone(c.execute('SELECT result_id FROM research_campaign_result WHERE campaign_id=%s',(first,)).fetchone())
+            self.assertIsNone(c.execute('SELECT result_id FROM research_campaign_result WHERE campaign_id=%s',(first,)).fetchone())
+            self.assertEqual(c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE parameters->>'collector'='campaign-assembly-v1'
+                AND parameters->>'kind'='final'
+                AND parameters->>'campaign_id'=%s AND status='queued'""",(str(first),)).fetchone()['n'],1)
+        # A second queued collection prevents full-history analysis.
+        with patch('services.research.processing.CategoryReports.run_once',
+                   side_effect=AssertionError('analysis ran while collecting')):
+            self.assertFalse(self.processor.run_once(deadline=time.monotonic()+30))
+        # Once primary collection is paused, the final report may run idle.
+        second=self.store.list('all',group='unfinished')[0]['id']
+        self.store.control(second,'pause')
+        for _ in range(50):
+            self.processor.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                ready=c.execute('SELECT result_id FROM research_campaign_result WHERE campaign_id=%s',(first,)).fetchone()
+            if ready:break
+        self.assertIsNotNone(ready,'Background final report did not complete after idle')

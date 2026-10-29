@@ -28,7 +28,7 @@ class ProcessingWorker(CampaignWorker):
         row=c.execute('''SELECT j.* FROM research_campaign r JOIN research_job j ON j.id=r.job_id
             WHERE r.id=%s'''+(' FOR UPDATE OF j' if lock else ''),(identifier,)).fetchone()
         if (row is None or row['status'] not in (('queued','running','succeeded') if allow_finished else ('queued','running'))
-                or row['progress'].get('removed_from_queue')):
+                or (row['progress'].get('removed_from_queue') and not allow_finished)):
             raise LeaseLost('Campaign stopped')
         return row
 
@@ -59,7 +59,6 @@ class ProcessingWorker(CampaignWorker):
                 JOIN research_job p ON p.id=r.job_id
                 WHERE a.parameters->>'collector'='campaign-assembly-v1'
                 AND a.parameters->>'kind'='final' AND p.status='succeeded'
-                AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
                 AND a.attempts<a.max_attempts
                 AND ((a.status='queued' AND a.available_at<=clock_timestamp())
                   OR (a.status='running' AND a.lease_expires_at<=clock_timestamp()))
@@ -153,6 +152,12 @@ class ProcessingWorker(CampaignWorker):
                         ProgressiveReports(self.pool).bootstrap()
                         SampleReports(self.pool).bootstrap()
                         self._bootstrapped=True
+                    if not self._category_recovered:
+                        with self.pool.connection() as c:
+                            assets=[r['asset'] for r in c.execute('SELECT DISTINCT asset FROM research_campaign ORDER BY asset LIMIT 12').fetchall()]
+                        for asset in assets:
+                            CategoryReports(self.pool).recover_latest(asset)
+                            self._category_recovered.add(asset)
                     if ProgressiveReports(self.pool).run_once():return True
                     if SampleReports(self.pool).run_once():return True
                     if CategoryReports(self.pool).run_once():return True

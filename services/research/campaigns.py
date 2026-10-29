@@ -527,7 +527,7 @@ class CampaignWorker:
                 if not missing:
                     # Full raw evidence is saved; analysis/report publication
                     # is independently queued and cannot hold the collection.
-                    if not complete and 'collection_limit' not in campaign['config']:
+                    if not complete:
                         self._enqueue_assembly(parent,campaign,None,'final')
                     with self.pool.connection() as c:
                         self.queue._owned(c,parent['id'],parent['lease_token'])
