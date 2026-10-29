@@ -147,17 +147,21 @@ class ProcessingWorker(CampaignWorker):
         if job is None:job=self._claim_assembly()
         if job is None:
             if report_jobs.primary_work_pending(self.pool):return False
-            with report_jobs.background_guard(lambda:report_jobs.primary_work_pending(self.pool)):
-                if not self._bootstrapped:
-                    ProgressiveReports(self.pool).bootstrap()
-                    SampleReports(self.pool).bootstrap()
-                    self._bootstrapped=True
-                if ProgressiveReports(self.pool).run_once():return True
-                if SampleReports(self.pool).run_once():return True
-                if CategoryReports(self.pool).run_once():return True
-                job=self._claim_final_report()
-                if job is None:return False
-                return self._run_assembly(job)
+            try:
+                with report_jobs.background_guard(lambda:report_jobs.primary_work_pending(self.pool)):
+                    if not self._bootstrapped:
+                        ProgressiveReports(self.pool).bootstrap()
+                        SampleReports(self.pool).bootstrap()
+                        self._bootstrapped=True
+                    if ProgressiveReports(self.pool).run_once():return True
+                    if SampleReports(self.pool).run_once():return True
+                    if CategoryReports(self.pool).run_once():return True
+                    job=self._claim_final_report()
+                    if job is None:return False
+                    return self._run_assembly(job)
+            except CollectionInterrupted:
+                # New work arrived between the idle check and job selection.
+                return False
         return self._run_assembly(job)
 
     def _run_assembly(self,job):
