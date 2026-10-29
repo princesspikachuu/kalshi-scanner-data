@@ -524,19 +524,23 @@ class CampaignWorker:
                 with self.pool.connection() as c:
                     missing=c.execute('SELECT 1 FROM research_campaign_day WHERE campaign_id=%s AND dataset_id IS NULL LIMIT 1',(identifier,)).fetchone()
                     complete=c.execute('SELECT 1 FROM research_campaign_result WHERE campaign_id=%s',(identifier,)).fetchone()
-                if complete:
-                    if 'collection_limit' in campaign['config']:
-                        # Full-history statistics are independent analysis, not
-                        # a prerequisite for declaring this collection complete.
-                        self.queue.finish(parent['id'],parent['lease_token']);return 0
+                if not missing:
+                    # Full raw evidence is saved; analysis/report publication
+                    # is independently queued and cannot hold the collection.
+                    if not complete and 'collection_limit' not in campaign['config']:
+                        self._enqueue_assembly(parent,campaign,None,'final')
                     with self.pool.connection() as c:
-                        category=c.execute('SELECT status FROM research_job WHERE idempotency_key=%s',('category/'+str(identifier),)).fetchone()
-                    if category and category['status']=='failed':
-                        self.queue.fail(parent['id'],parent['lease_token'],'campaign_category_blocked',retry=False);return 0
-                    if category and category['status']=='succeeded':
-                        self.queue.finish(parent['id'],parent['lease_token']);return 0
-                    self.queue.yield_job(parent['id'],parent['lease_token'],1);return 1
-                if not missing:self._enqueue_assembly(parent,campaign,None,'final')
+                        self.queue._owned(c,parent['id'],parent['lease_token'])
+                        # Once every full dataset is saved, pending sampled and
+                        # candle previews are obsolete. Revoke their leases.
+                        c.execute("""UPDATE research_job SET status='succeeded',
+                            finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,
+                            progress=progress||jsonb_build_object('superseded_by','collection-complete')
+                            WHERE parameters->>'collector'='campaign-assembly-v1'
+                            AND parameters->>'campaign_id'=%s
+                            AND parameters->>'kind' IN ('prices','sample')
+                            AND status IN ('queued','running')""",(str(identifier),))
+                    self.queue.finish(parent['id'],parent['lease_token']);return 0
                 self.queue.yield_job(parent['id'],parent['lease_token'],1);return 1
             try:
                 with self.pool.connection() as c:

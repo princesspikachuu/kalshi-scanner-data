@@ -24,10 +24,11 @@ class ProcessingWorker(CampaignWorker):
         self._category_recovered=set()
 
     @staticmethod
-    def _active(c,identifier,*,lock=False):
+    def _active(c,identifier,*,lock=False,allow_finished=False):
         row=c.execute('''SELECT j.* FROM research_campaign r JOIN research_job j ON j.id=r.job_id
             WHERE r.id=%s'''+(' FOR UPDATE OF j' if lock else ''),(identifier,)).fetchone()
-        if (row is None or row['status'] not in ('queued','running') or row['progress'].get('removed_from_queue')):
+        if (row is None or row['status'] not in (('queued','running','succeeded') if allow_finished else ('queued','running'))
+                or row['progress'].get('removed_from_queue')):
             raise LeaseLost('Campaign stopped')
         return row
 
@@ -40,6 +41,7 @@ class ProcessingWorker(CampaignWorker):
                 WHERE a.idempotency_key>='assembly/' AND a.idempotency_key<'assemblz'
                     AND a.parameters->>'collector'='campaign-assembly-v1'
                     AND r.id=%s AND (NOT %s OR a.parameters->>'kind'='prices')
+                    AND a.parameters->>'kind' IN ('prices','enriched','sample')
                     AND a.attempts<a.max_attempts AND p.status IN ('queued','running')
                     AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
                     AND ((a.status='queued' AND a.available_at<=clock_timestamp()) OR
@@ -49,10 +51,25 @@ class ProcessingWorker(CampaignWorker):
                     WHEN 'final' THEN 2 ELSE 3 END,a.created_at,a.id LIMIT 1""",(selected['id'],prices_only,selected['price_pending'])).fetchone()
         return self.queue.claim(seconds=600,job_id=row['id']) if row else None
 
+    def _claim_final_report(self):
+        # Full analysis continues after a request has left the collection queue.
+        with self.pool.connection() as c:
+            row=c.execute("""SELECT a.id FROM research_job a JOIN research_campaign r
+                ON r.id::text=a.parameters->>'campaign_id'
+                JOIN research_job p ON p.id=r.job_id
+                WHERE a.parameters->>'collector'='campaign-assembly-v1'
+                AND a.parameters->>'kind'='final' AND p.status='succeeded'
+                AND NOT coalesce((p.progress->>'removed_from_queue')::boolean,false)
+                AND a.attempts<a.max_attempts
+                AND ((a.status='queued' AND a.available_at<=clock_timestamp())
+                  OR (a.status='running' AND a.lease_expires_at<=clock_timestamp()))
+                ORDER BY a.created_at,a.id LIMIT 1""").fetchone()
+        return self.queue.claim(seconds=600,job_id=row['id']) if row else None
+
     def _publish(self,job):
         identifier=UUID(job['parameters']['campaign_id']);kind=job['parameters']['kind']
         with self.pool.connection() as c:
-            self._active(c,identifier)
+            self._active(c,identifier,allow_finished=(kind=='final'))
             campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s',(identifier,)).fetchone()
             day=(None if kind=='final' else c.execute('SELECT * FROM research_campaign_day WHERE campaign_id=%s AND day=%s',
                 (identifier,job['parameters']['day'])).fetchone())
@@ -64,7 +81,7 @@ class ProcessingWorker(CampaignWorker):
             result=ReportStore(self.pool).publish_campaign('campaign-'+identifier.hex,campaign['asset'],ids,
                 publication=dict(complete=True,revision=2*len(ids),reported_sections=len(ids),total_sections=len(ids)))
             with self.pool.connection() as c:
-                self._active(c,identifier,lock=True);self.queue._owned(c,job['id'],job['lease_token'])
+                self._active(c,identifier,lock=True,allow_finished=True);self.queue._owned(c,job['id'],job['lease_token'])
                 c.execute('INSERT INTO research_campaign_result VALUES(%s,%s) ON CONFLICT DO NOTHING',(identifier,result))
                 CategoryReports.enqueue(c,campaign['asset'],identifier,source_revision=result)
                 self._finish(c,job)
@@ -122,35 +139,31 @@ class ProcessingWorker(CampaignWorker):
                 release_report_memory()
 
     def _run_once(self,*,deadline):
-        # A paper replay must not sit behind the historical report/assembly backlog.
-        # Claim it before expensive dataset preparation or category publication.
+        # Paper replay > required raw data assembly > idle report analysis.
         from services.paper.worker import PaperWorker
+        from . import report_jobs
         if PaperWorker(self.pool,self.archives).run_once():return True
-        # Publish ready full-cohort price reports ahead of sample/trade work.
-        if not self._bootstrapped:
-            ProgressiveReports(self.pool).bootstrap();SampleReports(self.pool).bootstrap();self._bootstrapped=True
-        oldest=self.oldest_request()
-        if oldest and oldest['asset'] not in self._category_recovered:
-            CategoryReports(self.pool).recover_latest(oldest['asset'])
-            self._category_recovered.add(oldest['asset'])
-        # A completed price day becomes visible before any table rebuild can
-        # occupy this process. The collector retains its independent I/O lane.
         job=self._claim_assembly(prices_only=True)
+        if job is None:job=self._claim_assembly()
         if job is None:
-            if ProgressiveReports(self.pool).run_once():return True
-            if SampleReports(self.pool).run_once():return True
-            # Full-history risk computation is analysis, and must yield to
-            # new 300-market collection requests across the whole queue.
-            with self.pool.connection() as c:
-                collecting=c.execute("""SELECT 1 FROM research_campaign r JOIN research_job j ON j.id=r.job_id
-                    WHERE r.config ? 'collection_limit' AND j.status IN ('queued','running') AND NOT coalesce((j.progress->>'removed_from_queue')::boolean,false)
-                    LIMIT 1""").fetchone()
-            if not collecting and CategoryReports(self.pool).run_once():return True
-            job=self._claim_assembly()
-            if job is None:return False
+            if report_jobs.primary_work_pending(self.pool):return False
+            with report_jobs.background_guard(lambda:report_jobs.primary_work_pending(self.pool)):
+                if not self._bootstrapped:
+                    ProgressiveReports(self.pool).bootstrap()
+                    SampleReports(self.pool).bootstrap()
+                    self._bootstrapped=True
+                if ProgressiveReports(self.pool).run_once():return True
+                if SampleReports(self.pool).run_once():return True
+                if CategoryReports(self.pool).run_once():return True
+                job=self._claim_final_report()
+                if job is None:return False
+                return self._run_assembly(job)
+        return self._run_assembly(job)
+
+    def _run_assembly(self,job):
         print(json.dumps(dict(event='assembly_started',asset=job['asset'],kind=job['parameters']['kind'],day=job['parameters']['day'])),flush=True)
         try:self._publish(job)
-        except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'])
+        except CollectionInterrupted:self.queue.yield_job(job['id'],job['lease_token'],1)
         except LeaseLost:
             # Parent state can change after preparation. Do not leave an owned
             # assembly falsely running until its ten-minute crash lease expires.
