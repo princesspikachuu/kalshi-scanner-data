@@ -18,7 +18,10 @@ class Strategy(BaseModel):
     report_id:int|None=Field(default=None,ge=1)
     entry_minute_min:int=Field(default=0,ge=0,le=359)
     entry_minute_max:int=Field(default=1,ge=1,le=360)
+    # Existing snapshots use below_ask_cents and do not contain the new fields.
     below_ask_cents:int=Field(default=1,ge=1,le=99)
+    bid_reference:Literal['ask','best_bid']='ask'
+    bid_adjustment_cents:int|None=Field(default=None,ge=-99,le=99)
     maximum_bid_cents:int|None=Field(default=None,ge=1,le=99)
     balance_percent:int=Field(default=10,ge=1,le=10)
     loss_trigger_cents:int|None=Field(default=None,ge=0,le=99)
@@ -57,6 +60,13 @@ def install_paper(app,auth,mutate,pool):
     def create(body:Strategy,request:Request):
         mutate(request);no_query(request)
         if body.asset not in SERIES or body.min_price>body.max_price or len(set(body.minutes))!=len(body.minutes) or not set(body.minutes).issubset(MINUTES[body.asset]):raise HTTPException(422,'Invalid strategy')
+        # A resting maker bid must be strictly below the observed ask.
+        # Best-bid modes may improve the bid but runtime checks prevent
+        # accidental taker or crossed orders at each snapshot.
+        if body.bid_reference=='ask' and body.bid_adjustment_cents is not None and body.bid_adjustment_cents>=0:
+            raise HTTPException(422,'Ask-based maker bids must be below the ask')
+        if body.bid_reference=='best_bid' and body.bid_adjustment_cents is None:
+            raise HTTPException(422,'Best-bid adjustment is required')
         identifier=uuid4();snapshot=body.model_dump()
         if body.bid_offset is None:
             if body.report_id is None or body.entry_minute_max not in body.minutes or body.minutes!=[body.entry_minute_max]:raise HTTPException(422,'Select a saved statistics square')

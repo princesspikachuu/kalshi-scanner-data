@@ -9,8 +9,24 @@ import heapq
 from scripts.execution_model import best_quote, candle_price, cents, timestamp
 
 
-def proposed_bid(ask, strategy):
-    price=ask-strategy['below_ask_cents']
+def proposed_bid(ask, strategy, best_bid=None):
+    """Choose price from ask or best bid; preserve old ask-minus-distance bets.
+
+    Positive adjustments to the best bid improve queue priority, but the
+    caller must still enforce post-only price strictly below the current ask.
+    """
+    basis=strategy.get('bid_reference','ask')
+    if basis not in ('ask','best_bid'):
+        raise ValueError('Unsupported maker bid reference')
+    reference=ask if basis=='ask' else best_bid
+    if reference is None:
+        raise ValueError('Missing displayed best bid')
+    offset=strategy.get('bid_adjustment_cents')
+    if offset is None:
+        if basis!='ask':
+            raise ValueError('Best-bid strategy needs an explicit adjustment')
+        offset=-strategy['below_ask_cents']
+    price=reference+offset
     cap=strategy.get('maximum_bid_cents')
     return min(price,cap) if cap is not None else price
 
@@ -56,6 +72,9 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
     # The research grid's bid-filtered reference ROI is NOT a prediction here.
     diagnostics=[dict(name=s.get('name') or 'Strategy '+str(i+1),asset=s['asset'],
         ask_band_cents=[s['min_price'],s['max_price']],
+        bid_reference=s.get('bid_reference','ask'),
+        bid_adjustment_cents=(s.get('bid_adjustment_cents')
+            if s.get('bid_adjustment_cents') is not None else -s['below_ask_cents']),
         reference_bid_grid_roi_percent=s.get('statistical_yield_percent'),
         qualified_orders=0,qualified_contracts=0,qualified_wins=0,
         all_qualified_filled_pnl_cents=0,all_qualified_stake_cents=0,
@@ -129,7 +148,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 if s['entry_minute_min']<remaining<=s['entry_minute_max'] and s['min_price']<=ask<=s['max_price']:
                     eligible.append((index,s,identity))
             for index,s,identity in sorted(eligible,key=lambda item:-item[1]['statistical_yield_percent']):
-                bid=proposed_bid(ask,s)
+                bid=proposed_bid(ask,s,best_bid=best_bid)
                 if not 1<=bid<ask:continue
                 # Reclaim only unfilled lower-yield orders, never sell positions
                 # solely because a different category becomes eligible.
@@ -161,7 +180,8 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 matched['displayed_spread_cents']+=(ask-best_bid)*quantity
                 peak_event=max(peak_event,exposure(m['event'])/bankroll*100)
                 log('bid',ts,order_id=order['id'],ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
-                    expires=m['close'],statistical_yield_percent=order['yield'])
+                    expires=m['close'],statistical_yield_percent=order['yield'],
+                    bid_reference=s.get('bid_reference','ask'),best_bid_cents=best_bid,ask_cents=ask)
         elif kind=='trade':
             ticker,t=data
             if t.get('is_block_trade') is True or t.get('taker_outcome_side') not in ('yes','no'):continue

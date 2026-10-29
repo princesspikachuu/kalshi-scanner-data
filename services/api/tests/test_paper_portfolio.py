@@ -23,6 +23,29 @@ class PortfolioTests(unittest.TestCase):
     def test_optional_cap_overrides_distance(self):
         self.assertEqual(proposed_bid(96,strategy(below_ask_cents=2)),94)
         self.assertEqual(proposed_bid(96,strategy(below_ask_cents=2,maximum_bid_cents=90)),90)
+        self.assertEqual(proposed_bid(96,strategy(bid_reference='best_bid',bid_adjustment_cents=0),best_bid=87),87)
+        self.assertEqual(proposed_bid(96,strategy(bid_reference='best_bid',bid_adjustment_cents=1),best_bid=87),88)
+        self.assertEqual(proposed_bid(96,strategy(bid_reference='best_bid',bid_adjustment_cents=-2),best_bid=87),85)
+        self.assertEqual(proposed_bid(96,strategy(bid_reference='best_bid',bid_adjustment_cents=1,maximum_bid_cents=82),best_bid=87),82)
+        self.assertEqual(proposed_bid(96,strategy(bid_reference='ask',bid_adjustment_cents=-3),best_bid=87),93)
+        with self.assertRaises(ValueError):
+            proposed_bid(96,strategy(bid_reference='best_bid'),best_bid=87)
+    def test_best_bid_basis_uses_same_ask_band_entry_gate(self):
+        src=source(bars=[candle(BASE,bid=81,ask=96)])
+        r=self.run_replay([src],[strategy(bid_reference='best_bid',bid_adjustment_cents=0,
+            min_price=90,max_price=99)])
+        self.assertEqual(r['orders_placed'],1)
+        bid=next(e for e in r['trades'] if e['kind']=='bid')
+        self.assertEqual(bid['bid_cents'],81)
+        self.assertEqual(bid['ask_cents'],96)
+        self.assertEqual(bid['best_bid_cents'],81)
+        self.assertEqual(bid['bid_reference'],'best_bid')
+        self.assertEqual(r['reconciliation']['strategies'][0]['bid_reference'],'best_bid')
+        too_high=self.run_replay([src],[strategy(bid_reference='best_bid',bid_adjustment_cents=15)])
+        self.assertEqual(too_high['orders_placed'],0)
+        wrong_ask=self.run_replay([source(bars=[candle(BASE,bid=81,ask=89)])],
+            [strategy(bid_reference='best_bid',bid_adjustment_cents=0)])
+        self.assertEqual(wrong_ask['orders_placed'],0)
     def test_ask_band_and_time_gate_not_proposed_bid(self):
         self.assertEqual(self.run_replay([source(bars=[candle(BASE,70,89)])])['orders_placed'],0)
         self.assertEqual(self.run_replay([source(bars=[candle(BASE+121)])])['orders_placed'],0)

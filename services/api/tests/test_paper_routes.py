@@ -56,6 +56,17 @@ class PaperRouteTests(unittest.TestCase):
             below_ask_cents=2,maximum_bid_cents=None,contracts=10,balance_percent=10,loss_trigger_cents=60,starting_cash_cents=10000)
         self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'report_id':999999},headers=self.headers).status_code,422)
         self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'balance_percent':11},headers=self.headers).status_code,422)
+        self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'bid_reference':'best_bid'},headers=self.headers).status_code,422)
+        self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'bid_reference':'ask','bid_adjustment_cents':0},headers=self.headers).status_code,422)
+        self.assertEqual(self.client.post('/paper/strategies',json={**strategy,'bid_reference':'not_supported','bid_adjustment_cents':0},headers=self.headers).status_code,422)
+        for adjustment in (0,1,-2):
+            bid_strategy={**strategy,'bid_reference':'best_bid','bid_adjustment_cents':adjustment}
+            response=self.client.post('/paper/strategies',json=bid_strategy,headers=self.headers)
+            self.assertEqual(response.status_code,200,response.text)
+            saved_id=response.json()['id']
+            saved_strategy=next(s['strategy'] for s in self.client.get('/paper/workspace',headers=self.headers).json()['strategies'] if s['id']==saved_id)
+            self.assertEqual(saved_strategy['bid_reference'],'best_bid')
+            self.assertEqual(saved_strategy['bid_adjustment_cents'],adjustment)
         saved=self.client.post('/paper/strategies',json=strategy,headers=self.headers)
         self.assertEqual(saved.status_code,200,saved.text)
         workspace=self.client.get('/paper/workspace',headers=self.headers).json()
