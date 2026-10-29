@@ -2,6 +2,9 @@ import {createAuthClient} from './auth-client.mjs';
 import {createCollectionClient} from './collection-client.mjs';
 import {createResearchClient} from './research-client.mjs';
 import {renderTable,reportCsv} from './report-view.mjs';
+import {openBetOverlay} from './bet-overlay.mjs';
+let choosingBet=false;
+document.getElementById('newBet').addEventListener('click',()=>{choosingBet=!choosingBet;document.getElementById('newBet').setAttribute('aria-pressed',String(choosingBet));document.getElementById('betHint').textContent=choosingBet?'Tap the statistics square for this bet.':'Choose New bet, then tap a statistics square to build a paper strategy.';});
 const $=id=>document.getElementById(id),client=createCollectionClient();
 let timer,statusTimer,revision=0,selected=null,next=null,key=null,busy=false,historyNext=null,report=null,reportKey=null;
 const research=createResearchClient(),auth=createAuthClient();
@@ -78,6 +81,7 @@ $('exportCsv').addEventListener('click',()=>{if(!report)return;const url=URL.cre
 function drawReport(){
  if(!report)return;$('cellDetail').hidden=true;
  renderTable($('table'),report,{loss:$('loss').checked,metric:$('metric').value,minimum:Number($('minimum').value)},(cell,minutes,band)=>{
+  if(choosingBet){openBetOverlay(report,cell,minutes,band);return}
   const row=$('loss').checked?cell.loss_prevention:cell.hold,p=cell.loss_prevention,doc=document;
   const heading=doc.createElement('h3');heading.textContent=`${minutes} minutes before close · ${band}¢`;
   const lines=[`${report.sampled_preview?'Preliminary sampled cohort':'Full original sample'}: ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days.`,
