@@ -12,6 +12,7 @@ export function orderLine(event){
 export function appendActivity(card,run,doc){
  const make=(tag,text)=>{const el=doc.createElement(tag);el.textContent=text;return el},a=run.activity;
  card.append(make('p',`Replay ${run.id} · ${replayState(run)}`));
+ if(run.created_at)card.append(make('p',`Created ${new Date(run.created_at).toLocaleString()} · ${run.dataset_ids?.length??1} saved dataset(s)`));
  if(run.strategy_names?.length)card.append(make('p','Strategies: '+run.strategy_names.join(', ')));
  if(a?.updated_at)card.append(make('p',`Worker update: ${new Date(a.updated_at).toLocaleString()} · ${a.provider_reads??0} Kalshi reads for this replay`));
  if(a?.simulated_time)card.append(make('p',`Simulated market time: ${new Date(a.simulated_time*1000).toLocaleString()}${a.current_market?' · '+a.current_market:''}`));

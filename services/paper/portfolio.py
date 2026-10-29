@@ -68,8 +68,8 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         if not order['remaining']:return
         free+=order['remaining']*(order['bid']+1)
         counters['cancelled_contracts']+=order['remaining'];counters[reason]+=1
-        log('cancel',ts,order_id=order['id'],ticker=order['ticker'],side=order['side'],bid_cents=order['bid'],contracts=order['remaining'],reason=reason)
-        order['remaining']=0
+        quantity=order['remaining'];order['remaining']=0
+        log('cancel',ts,order_id=order['id'],ticker=order['ticker'],side=order['side'],bid_cents=order['bid'],contracts=quantity,reason=reason)
     def sell(p,ts,bid):
         nonlocal free
         # Observed best bid, with no user-defined minimum price. Unknown depth.

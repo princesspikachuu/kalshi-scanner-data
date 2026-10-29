@@ -1,6 +1,6 @@
 import time
 from datetime import datetime,timezone
-from services.research.queue import ResearchQueue
+from services.research.queue import ResearchQueue,LeaseLost
 from services.research.datasets import decoded_dataset,iter_dataset_records
 from .engine import replay
 from .portfolio import replay_portfolio
@@ -45,6 +45,10 @@ class PaperWorker:
                 self.queue._owned(c,job['id'],job['lease_token'])
                 c.execute('UPDATE research_job SET progress=progress||%s WHERE id=%s',(Jsonb(dict(result=result)),job['id']))
             self.queue.finish(job['id'],job['lease_token'])
+        except LeaseLost:
+            # Cancellation revokes ownership; keep the processor alive and never
+            # publish a result after the cancel response has succeeded.
+            return True
         except Exception:
             self.queue.fail(job['id'],job['lease_token'],'paper_replay_blocked',retry=False)
             raise

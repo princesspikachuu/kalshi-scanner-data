@@ -81,12 +81,13 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const campaignGet=new RegExp('^/api/collection/campaigns/'+uuid+'$').test(url.pathname);
  const workerStatus=url.pathname==='/api/collection/status';
  const analysisStatus=url.pathname==='/api/collection/analysis';
- const paper=/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname);
+ const paperDetail=new RegExp('^/api/paper/replays/'+uuid+'$').test(url.pathname);
+ const paper=/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
  const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?(url.pathname.endsWith('/workspace')?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail)?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
  if(collection){
