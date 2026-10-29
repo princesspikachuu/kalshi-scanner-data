@@ -253,7 +253,7 @@ class InventoryWorker:
             count('provider.failure.'+error.code,1)
             if error.code=='provider_rate_limit' and error.retry:
                 delay=self.queue.defer_rate_limited(job_id,token,error.delay)
-                self.budget.rate_limited(max(error.cooldown,delay))
+                self.budget.rate_limited(max(error.cooldown,delay),minimum_capacity=self.cost)
                 return {'state':'failed','retry_after':delay}
             if error.code=='provider_unavailable':self.budget.defer(error.cooldown)
             self.queue.fail(job_id, token, error.code, retry=error.retry, delay_seconds=error.delay)
