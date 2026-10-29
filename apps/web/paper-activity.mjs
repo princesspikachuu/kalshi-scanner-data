@@ -17,7 +17,7 @@ export function appendActivity(card,run,doc){
  if(a?.updated_at)card.append(make('p',`Worker update: ${new Date(a.updated_at).toLocaleString()} · ${a.provider_reads??0} Kalshi reads for this replay`));
  if(a?.simulated_time)card.append(make('p',`Simulated market time: ${new Date(a.simulated_time*1000).toLocaleString()}${a.current_market?' · '+a.current_market:''}`));
  else if(a?.dataset_id)card.append(make('p',`Reading saved dataset ${a.dataset_id}${a.current_market?' · '+a.current_market:''} · ${a.records_loaded??0} records loaded`));
- if(a?.open_orders?.length){card.append(make('h3','Open simulated orders'));
+ if(run.status==='running'&&a?.open_orders?.length){card.append(make('h3','Open simulated orders'));
   for(const order of a.open_orders){card.append(make('p',`${order.order_id} · ${order.ticker} · ${order.side.toUpperCase()} · bid ${order.bid_cents}¢ · ${order.remaining}/${order.contracts} contracts unfilled · expires ${new Date(order.expires*1000).toLocaleString()}`));}}
  const events=run.result?.recent_activity||a?.recent_activity||run.result?.order_preview||[];
  if(events.length){const details=doc.createElement('details');details.open=run.status==='running';details.append(make('summary','Recent simulated order activity'));
