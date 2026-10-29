@@ -35,7 +35,7 @@ class ReplayBody(BaseModel):
     strategy_ids:list[UUID]=Field(default_factory=list,max_length=50)
     dataset_ids:list[int]=Field(default_factory=list,max_length=12)
     starting_cash_cents:int=Field(default=10000,strict=True,ge=100,le=100000000)
-    fill_model:Literal['estimated','conservative']='estimated'
+    fill_model:Literal['estimated','conservative','all_filled']='estimated'
     request_key:UUID
     name:str=Field(default='',max_length=80)
 

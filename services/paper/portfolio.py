@@ -67,6 +67,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
         market_rank INTEGER NOT NULL)""")
     db.execute("""CREATE UNIQUE INDEX unique_trade_event
         ON events(ticker,trade_identity) WHERE trade_identity IS NOT NULL""")
+    if fill_model not in ('estimated','conservative','all_filled'):raise ValueError('Unknown paper fill model')
     markets={};record_count=0
     notify=on_progress or (lambda activity:None)
     notify(dict(phase='loading saved evidence',records_loaded=0))
@@ -190,7 +191,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
         elif kind=='quote':
             ticker,bar=data;m=markets[ticker];last_quotes[ticker]=(ts,bar)
             for p in positions_by_ticker[ticker]:
-                if p['closed'] or p['stop'] is None:continue
+                if fill_model=='all_filled' or p['closed'] or p['stop'] is None:continue
                 bid=cents(candle_price(bar,p['side'],'bid'))
                 if bid is None and p['side']=='no':
                     ask=cents(candle_price(bar,'yes','ask'));bid=None if ask is None else 100-ask
@@ -236,11 +237,27 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                 matched['same_orders_best_bid_pnl_cents']+=(100*int(won)-best_bid)*quantity
                 matched['entry_price_premium_cents']+=(bid-best_bid)*quantity
                 matched['displayed_spread_cents']+=(ask-best_bid)*quantity
+                if fill_model=='all_filled':
+                    filled=order['remaining'];order['remaining']=0
+                    position=dict(ticker=ticker,event=order['event'],side=side,
+                        quantity=filled,cost=bid*filled,stop=None,closed=False)
+                    positions.append(position);positions_by_ticker[ticker].append(position)
+                    counters['filled_contracts']+=filled;counters['simulated_fills']+=1
+                    matched['filled_contracts']+=filled
+                    matched['filled_winners']+=int(won)*filled
+                    matched['filled_stake_cents']+=position['cost']
+                    matched['filled_hold_pnl_cents']+=(100*int(won)-bid)*filled
+                    matched['filled_best_bid_pnl_cents']+=(100*int(won)-best_bid)*filled
+                    matched['filled_entry_price_premium_cents']+=(bid-best_bid)*filled
+                    log('fill',ts,order_id=order['id'],ticker=ticker,side=side,
+                        remaining=0,contracts=filled,bid_cents=bid,
+                        evidence='assumed immediate fill; no execution evidence')
                 peak_event=max(peak_event,exposure(m['event'])/bankroll*100)
                 log('bid',ts,order_id=order['id'],ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
                     expires=m['close'],statistical_yield_percent=order['yield'],
                     bid_reference=s.get('bid_reference','ask'),best_bid_cents=best_bid,ask_cents=ask)
         elif kind=='trade':
+            if fill_model=='all_filled':continue
             ticker,t=data
             if t.get('is_block_trade') is True or t.get('taker_outcome_side') not in ('yes','no'):continue
             try:volume=Decimal(str(t.get('count_fp') or '0'))
@@ -320,11 +337,11 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
         loss_prevention_delta_cents=realized_pnl_cents-sum(x['filled_hold_pnl_cents'] for x in diagnostics),
         reconciled_realized_pnl_cents=realized_pnl_cents,
         strategies=diagnostics)
-    return dict(reconciliation=audit,mode='historical portfolio replay',fill_model=('Conservative trade-through' if fill_model=='conservative' else 'Estimated: qualifying trade volume, including at-price trades; queue position unknown'),
+    return dict(reconciliation=audit,mode='historical portfolio replay',fill_model=('Assume all qualifying orders fill immediately; hold to settlement' if fill_model=='all_filled' else ('Conservative trade-through' if fill_model=='conservative' else 'Estimated: qualifying trade volume, including at-price trades; queue position unknown')),
         starting_cash_cents=starting_cash_cents,ending_cash_cents=free,profit_loss_cents=free-starting_cash_cents,
         simulated_fills=counters['simulated_fills'],filled_contracts=counters['filled_contracts'],orders_placed=counters['orders_placed'],
         expired_orders=counters['expired_orders'],priority_cancellations=counters['priority_cancellations'],
         loss_prevention_sales=counters['loss_prevention_sales'],funding_or_event_cap_skips=counters['funding_or_event_cap_skips'],
         peak_event_exposure_percent=round(peak_event,4),no_fill_evidence=counters['expired_orders'],
-        assumptions='Before fees: no entry or exit fees deducted. Actual market-specific maker fees and taker fees may apply. Snapshot sale prices assume depth; actual fills and intraminute stops are unknown. Rankings use selected saved statistics, not out-of-sample predictions.',
+        assumptions='All-filled mode is hypothetical and ignores early-sale triggers. Before fees: no entry or exit fees deducted. Actual market-specific maker fees and taker fees may apply. Snapshot sale prices assume depth; actual fills and intraminute stops are unknown. Rankings use selected saved statistics, not out-of-sample predictions.',
         recent_activity=list(recent),order_preview=events[:12],trades=events,total_trades=len(events),trades_truncated=len(events)>=1000)

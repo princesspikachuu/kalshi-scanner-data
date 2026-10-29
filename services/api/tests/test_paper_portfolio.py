@@ -111,6 +111,20 @@ class PortfolioTests(unittest.TestCase):
         expired=next(e for e in r['trades'] if e['kind']=='cancel')
         self.assertEqual(expired['time'],BASE+300);self.assertEqual(expired['contracts'],3)
         self.assertEqual(r['ending_cash_cents'],10022)
+    def test_all_filled_mode_fills_with_no_trades_and_ignores_stops(self):
+        src=source(trades=[])
+        r=self.run_replay([src],model='all_filled')
+        self.assertEqual(r['orders_placed'],1)
+        self.assertEqual(r['filled_contracts'],5)
+        self.assertEqual(r['expired_orders'],0)
+        self.assertEqual(r['reconciliation']['fill_rate_percent'],100)
+        self.assertEqual(r['profit_loss_cents'],55)
+        self.assertEqual(self.run_replay([src],model='estimated')['filled_contracts'],0)
+        stopped=self.run_replay([source(bars=[candle(BASE),candle(BASE+60,50,60)])],
+            [strategy(loss_trigger_cents=70)],model='all_filled')
+        self.assertEqual(stopped['loss_prevention_sales'],0)
+        self.assertEqual(stopped['filled_contracts'],5)
+
     def test_estimated_allows_at_bid_but_conservative_requires_through(self):
         src=source(trades=[trade(BASE+3,volume=2)])
         self.assertEqual(self.run_replay([src])['filled_contracts'],2)
