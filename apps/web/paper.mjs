@@ -55,6 +55,19 @@ async function load(){try{
   bar.setAttribute('aria-label',`Paper replay: ${phase}`);
   section.append(label,bar);card.append(section);
  }
+ if(r?.cohort_comparison){
+  const comparison=r.cohort_comparison,details=document.createElement('details'),title=document.createElement('summary');
+  title.textContent='Matched cohort · research vs actual replay prices';details.append(title);
+  const intro=document.createElement('p');intro.textContent=comparison.methodology;details.append(intro);
+  const ledger=document.createElement('p');ledger.textContent=`Independently reconciled exact-order hold P/L: ${money(comparison.same_orders_ledger_hold_pnl_cents)}. This must equal the all-filled P/L when that model is selected.`;details.append(ledger);
+  const formatPct=v=>v==null?'N/A':v.toFixed(2)+'%';
+  for(const c of comparison.strategies){
+   const line=document.createElement('p');
+   line.textContent=`${c.strategy} · fixed-minute reference: ${c.reference_band_markets}/${c.markets_checked} qualifying markets, ${c.reference_distinct_events} independent events, ROI ${formatPct(c.fixed_reference_roi_percent)}. Matched same-side orders: ${c.paired_markets}, ${c.paired_contracts} contracts; fixed-checkpoint bid ROI ${formatPct(c.paired_reference_roi_percent)} vs actual replay bid ROI ${formatPct(c.paired_replay_roi_percent)}. P/L reference ${money(c.paired_fixed_bid_pnl_cents)} vs replay ${money(c.paired_replay_bid_pnl_cents)}. Price difference ${money(c.paired_price_difference_cents)}; reference-band opportunities without replay orders ${c.reference_markets_without_order}; replay orders outside paired cohort ${c.unmatched_replay_orders}; side mismatches ${c.different_side}; quote missing/stale ${c.missing_or_stale_fixed_quote}.`;
+   details.append(line);
+  }
+  card.append(details);
+ }
  if(r?.reconciliation){
   const audit=r.reconciliation;
   const review=document.createElement('details'),heading=document.createElement('summary');
