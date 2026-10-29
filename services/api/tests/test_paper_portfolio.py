@@ -44,6 +44,7 @@ class PortfolioTests(unittest.TestCase):
         from services.research.inventory import digest
         import json
         asset,payload,records=source(trades=[trade(BASE+3,volume=2)])
+        records=records*2000  # Large enough to force compressed storage.
         raw={**payload,'format':'raw-evidence-dataset-v1',
              'summary':{'resources':['trades','candles']},'records':records}
         canonical=json.dumps(raw,sort_keys=True,separators=(',',':'),allow_nan=False)
