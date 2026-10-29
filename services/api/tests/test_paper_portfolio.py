@@ -38,6 +38,27 @@ class PortfolioTests(unittest.TestCase):
         self.assertIn('PRAGMA mmap_size=0',statements)
         self.assertIn('PRAGMA cache_size=-1024',statements)
 
+    def test_compressed_paper_source_streams_without_full_json_expansion(self):
+        from services.paper.stream import replay_source
+        from services.research.datasets import storage_payload
+        from services.research.inventory import digest
+        import json
+        asset,payload,records=source(trades=[trade(BASE+3,volume=2)])
+        raw={**payload,'format':'raw-evidence-dataset-v1',
+             'summary':{'resources':['trades','candles']},'records':records}
+        canonical=json.dumps(raw,sort_keys=True,separators=(',',':'),allow_nan=False)
+        fp=digest(raw)
+        compressed=storage_payload(canonical,fp)
+        self.assertEqual(compressed.get('storage'),'raw-evidence-gzip-v1')
+        result=replay_source(dict(asset=asset,payload=compressed,fingerprint=fp),None)
+        self.assertEqual(result[0],'btc')
+        self.assertEqual(result[1]['candidates'],payload['candidates'])
+        self.assertEqual(list(result[2]),records)
+        # Fingerprint checking rejects altered compressed metadata.
+        with self.assertRaises(ValueError):
+            replay_source(dict(asset=asset,payload={**compressed,'sha256':'0'*64},
+                fingerprint=fp),None)
+
     def test_progress_reports_actual_timeline_denominator(self):
         updates=[]
         r=replay_portfolio([source(bars=[candle(BASE),candle(BASE+60)],
