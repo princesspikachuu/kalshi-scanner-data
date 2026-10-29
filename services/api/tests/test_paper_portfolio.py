@@ -120,6 +120,17 @@ class PortfolioTests(unittest.TestCase):
         self.assertEqual(s['average_entry_minutes_before_close'],5)
         self.assertEqual(s['average_distance_from_window_midpoint_minutes'],1)
 
+    def test_matched_cohort_fixed_reference_and_actual_order_ledger(self):
+        replay=self.run_replay([source()],[strategy(min_price=80,max_price=99)],model='all_filled')
+        self.assertEqual(replay['cohort_comparison']['same_orders_ledger_hold_pnl_cents'],replay['profit_loss_cents'])
+        line=replay['cohort_comparison']['strategies'][0]
+        self.assertEqual(line['reference_band_markets'],1)
+        self.assertEqual(line['paired_markets'],1)
+        self.assertEqual(line['paired_contracts'],5)
+        self.assertEqual(line['paired_fixed_bid_stake_cents'],400)
+        self.assertEqual(line['paired_replay_bid_stake_cents'],445)
+        self.assertEqual(line['paired_price_difference_cents'],45)
+
     def test_all_filled_mode_fills_with_no_trades_and_ignores_stops(self):
         src=source(trades=[])
         r=self.run_replay([src],model='all_filled')
