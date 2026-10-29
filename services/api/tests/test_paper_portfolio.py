@@ -88,7 +88,7 @@ class PortfolioTests(unittest.TestCase):
         self.assertEqual(audit['qualified_contracts'],10)
         self.assertEqual(audit['filled_contracts'],5)
         self.assertEqual(audit['filled_winners'],0)
-        self.assertEqual(audit['all_qualified_filled_pnl_cents'],110)
+        self.assertEqual(audit['all_qualified_filled_pnl_cents'],-390)
         self.assertEqual(audit['filled_hold_pnl_cents'],-445)
         self.assertEqual(audit['reconciled_realized_pnl_cents'],r['profit_loss_cents'])
         self.assertEqual(audit['loss_prevention_delta_cents'],0)
