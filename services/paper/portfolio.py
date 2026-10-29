@@ -3,7 +3,7 @@
 Quotes are minute snapshots; estimated fills assume a share of observed taker
 volume, not a known queue position. Saved statistical rankings are in-sample.
 """
-from collections import defaultdict
+from collections import defaultdict,deque
 from decimal import Decimal, InvalidOperation
 import heapq
 from scripts.execution_model import best_quote, candle_price, cents, timestamp
@@ -15,12 +15,15 @@ def proposed_bid(ask, strategy):
     return min(price,cap) if cap is not None else price
 
 
-def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estimated'):
+def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estimated',on_progress=None):
     markets={};record_count=0
+    notify=on_progress or (lambda activity:None)
+    notify(dict(phase='loading saved evidence',records_loaded=0))
     for asset,payload,records in sources:
         cohort={c['ticker']:dict(candidate=c,asset=asset,bars=[],trades=[]) for c in payload['candidates']}
         for row in records:
             record_count+=1
+            if record_count%1024==0:notify(dict(phase='loading saved evidence',records_loaded=record_count,current_market=row['ticker']))
             if record_count>250000:raise ValueError('Replay evidence limit exceeded; select fewer days')
             if row['ticker'] in cohort and row['resource'] in ('candles','trades'):
                 cohort[row['ticker']]['bars' if row['resource']=='candles' else 'trades'].append(row['record'])
@@ -44,10 +47,19 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
             if ts is not None and ts<close and identity not in seen:
                 seen.add(identity);emit(ts,1,'trade',(ticker,t))
         emit(close,0,'close',ticker)
-    free=starting_cash_cents;orders=[];positions=[];attempted=set();events=[]
+    free=starting_cash_cents;orders=[];positions=[];attempted=set();events=[];recent=deque(maxlen=20)
     counters=defaultdict(int);last_quotes={};peak_event=0
+    def activity(ts,ticker=None):
+        return dict(phase='replaying saved markets',simulated_time=ts,current_market=ticker,
+            orders_placed=counters['orders_placed'],filled_contracts=counters['filled_contracts'],
+            available_cash_cents=free,recent_activity=list(recent),
+            open_orders=[dict(order_id=o['id'],ticker=o['ticker'],side=o['side'],bid_cents=o['bid'],
+                contracts=o['quantity'],remaining=o['remaining'],expires=markets[o['ticker']]['close'])
+                for o in orders if o['remaining']][-10:])
     def log(kind,ts,**data):
-        if len(events)<1000:events.append(dict(kind=kind,time=ts,**data))
+        event=dict(kind=kind,time=ts,**data);recent.append(event)
+        if len(events)<1000:events.append(event)
+        notify(activity(ts,data.get('ticker')))
     def exposure(event=None):
         return sum(o['remaining']*(o['bid']+1) for o in orders if event is None or o['event']==event)+sum(p['cost'] for p in positions if not p['closed'] and (event is None or p['event']==event))
     def equity():return free+exposure()
@@ -56,7 +68,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         if not order['remaining']:return
         free+=order['remaining']*(order['bid']+1)
         counters['cancelled_contracts']+=order['remaining'];counters[reason]+=1
-        log('cancel',ts,ticker=order['ticker'],contracts=order['remaining'],reason=reason)
+        log('cancel',ts,order_id=order['id'],ticker=order['ticker'],side=order['side'],bid_cents=order['bid'],contracts=order['remaining'],reason=reason)
         order['remaining']=0
     def sell(p,ts,bid):
         nonlocal free
@@ -65,8 +77,12 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         counters['loss_prevention_sales']+=1
         log('loss_prevention_sale',ts,ticker=p['ticker'],contracts=p['quantity'],sale_cents=bid,
             profit_loss_cents=max(0,bid-1)*p['quantity']-p['cost'],evidence='minute best-bid estimate; depth unknown')
+    notify(dict(phase='replaying saved markets',records_loaded=record_count,markets_loaded=len(markets)))
+    processed=0
     while timeline:
         ts,phase,_,kind,data=heapq.heappop(timeline)
+        processed+=1
+        if processed%1024==0:notify(activity(ts))
         if kind=='close':
             ticker=data
             for o in orders:
@@ -112,11 +128,11 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                     counters['funding_or_event_cap_skips']+=1
                     continue
                 attempted.add(identity);free-=quantity*cost
-                order=dict(ticker=ticker,event=m['event'],side=side,bid=bid,remaining=quantity,
+                order=dict(id='paper-'+str(counters['orders_placed']+1),quantity=quantity,ticker=ticker,event=m['event'],side=side,bid=bid,remaining=quantity,
                     created=ts,yield_=s['statistical_yield_percent'],stop=s.get('loss_trigger_cents'),strategy=index)
                 order['yield']=order.pop('yield_');orders.append(order);counters['orders_placed']+=1
                 peak_event=max(peak_event,exposure(m['event'])/bankroll*100)
-                log('bid',ts,ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
+                log('bid',ts,order_id=order['id'],ticker=ticker,event=m['event'],side=side,bid_cents=bid,contracts=quantity,
                     expires=m['close'],statistical_yield_percent=order['yield'])
         elif kind=='trade':
             ticker,t=data
@@ -136,7 +152,7 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
                 available-=quantity;o['remaining']-=quantity
                 p=dict(ticker=ticker,event=o['event'],side=o['side'],quantity=quantity,cost=(o['bid']+1)*quantity,stop=o['stop'],closed=False)
                 positions.append(p);counters['filled_contracts']+=quantity;counters['simulated_fills']+=1
-                log('fill',ts,ticker=ticker,contracts=quantity,bid_cents=o['bid'],evidence='trade-through proxy' if price<o['bid'] else 'at-price volume estimate')
+                log('fill',ts,order_id=o['id'],ticker=ticker,side=o['side'],remaining=o['remaining'],contracts=quantity,bid_cents=o['bid'],evidence='trade-through proxy' if price<o['bid'] else 'at-price volume estimate')
                 saved=last_quotes.get(ticker)
                 if saved and 0<=ts-saved[0]<=60 and p['stop'] is not None:
                     bid=cents(candle_price(saved[1],p['side'],'bid'))
@@ -149,4 +165,4 @@ def replay_portfolio(sources, strategies, starting_cash_cents, fill_model='estim
         loss_prevention_sales=counters['loss_prevention_sales'],funding_or_event_cap_skips=counters['funding_or_event_cap_skips'],
         peak_event_exposure_percent=round(peak_event,4),no_fill_evidence=counters['expired_orders'],
         assumptions='1¢ entry/exit fee stress per contract. Snapshot sale prices assume depth; actual fills and intraminute stops are unknown. Rankings use selected saved statistics, not out-of-sample predictions.',
-        order_preview=events[:12],trades=events,total_trades=len(events),trades_truncated=len(events)>=1000)
+        recent_activity=list(recent),order_preview=events[:12],trades=events,total_trades=len(events),trades_truncated=len(events)>=1000)

@@ -73,3 +73,14 @@ class PortfolioTests(unittest.TestCase):
     def test_trade_at_period_end_cannot_fill_expired_bid(self):
         r=self.run_replay([source(trades=[trade(BASE+300,volume=10)])])
         self.assertEqual(r['filled_contracts'],0);self.assertEqual(r['ending_cash_cents'],10000)
+
+    def test_activity_reports_identifiable_bids_fills_and_simulated_time(self):
+        updates=[]
+        r=replay_portfolio([source(trades=[trade(BASE+3,volume=2)])],[strategy()],10000,on_progress=updates.append)
+        self.assertTrue(any(u.get('phase')=='loading saved evidence' for u in updates))
+        bid=next(e for u in updates for e in u.get('recent_activity',[]) if e['kind']=='bid')
+        fill=next(e for u in updates for e in u.get('recent_activity',[]) if e['kind']=='fill')
+        self.assertEqual(bid['order_id'],fill['order_id']);self.assertEqual(bid['side'],'yes')
+        self.assertEqual(bid['bid_cents'],89);self.assertEqual(fill['remaining'],3)
+        self.assertTrue(any(u.get('simulated_time')==BASE+3 for u in updates))
+        self.assertTrue(r['recent_activity'])

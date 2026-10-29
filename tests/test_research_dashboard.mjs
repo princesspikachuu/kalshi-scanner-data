@@ -216,3 +216,12 @@ test('paper transport retains owner session and CSRF without permitting a live r
  globalThis.fetch=async()=>Response.json({contract:'paper-v1',live_trading_enabled:true});await assert.rejects(paperCall('workspace'),/unavailable/);
  }finally{Object.assign(globalThis,previous)}
 });
+
+test('paper activity identifies work, orders and stale worker ownership',async()=>{
+ const {replayState,orderLine}=await import('../apps/web/paper-activity.mjs');
+ assert.match(replayState({status:'queued'}),/waiting/);
+ assert.match(replayState({status:'running',lease_active:false}),/Interrupted/);
+ assert.equal(replayState({status:'running',lease_active:true,activity:{phase:'loading saved evidence'}}),'loading saved evidence');
+ const line=orderLine({order_id:'paper-3',ticker:'GAME-A',side:'yes',kind:'fill',contracts:2,bid_cents:83,remaining:3});
+ for(const text of ['paper-3','GAME-A','YES','83¢','2 contracts','3 unfilled'])assert.ok(line.includes(text));
+});

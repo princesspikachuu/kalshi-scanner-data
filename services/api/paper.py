@@ -44,7 +44,7 @@ def install_paper(app,auth,mutate,pool):
         auth(request);no_query(request)
         with pool.connection() as c:
             strategies=c.execute("SELECT id::text,asset,parameters->'strategy' AS strategy FROM research_job WHERE idempotency_key>='paper-strategy/' AND idempotency_key<'paper-strategy/zzzz' ORDER BY created_at DESC LIMIT 50").fetchall()
-            runs=c.execute("SELECT id::text,asset,status,error_code,parameters->>'dataset_id' AS dataset_id,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz' ORDER BY created_at DESC LIMIT 20").fetchall()
+            runs=c.execute("SELECT id::text,asset,status,error_code,created_at,started_at,finished_at,coalesce(lease_expires_at>clock_timestamp(),false) AS lease_active,progress->'activity' AS activity,parameters->'dataset_ids' AS dataset_ids,parameters->>'dataset_id' AS dataset_id,jsonb_path_query_array(parameters,'$.strategies[*].name') AS strategy_names,(progress->'result')-'trades' AS result FROM research_job WHERE idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz' ORDER BY created_at DESC LIMIT 20").fetchall()
             datasets=c.execute("""SELECT ds.id,ds.day,s.summary->>'candidate_count' AS markets,
                 coalesce(r.asset,substring(ds.stream_key from 10)) AS asset FROM research_dataset ds
                 JOIN research_summary s ON s.dataset_id=ds.id

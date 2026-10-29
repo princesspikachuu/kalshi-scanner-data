@@ -36,7 +36,9 @@ class PaperRouteTests(unittest.TestCase):
         first=self.client.post('/paper/replays',json=body,headers=self.headers)
         self.assertEqual(first.status_code,200,first.text)
         self.assertEqual(self.client.post('/paper/replays',json=body,headers=self.headers).json()['id'],first.json()['id'])
+        before=list(self.inventory.calls)
         self.assertTrue(PaperWorker(self.db.pool,self.archives).run_once())
+        self.assertEqual(self.inventory.calls,before)
         result=self.client.get('/paper/workspace',headers=self.headers).json()['runs'][0]
         self.assertEqual(result['status'],'succeeded');self.assertEqual(result['result']['simulated_fills'],0)
         self.assertNotIn('trades',result['result'])
@@ -61,7 +63,11 @@ class PaperRouteTests(unittest.TestCase):
         self.assertEqual(first.status_code,200,first.text)
         self.assertEqual(self.client.post('/paper/replays',json=body,headers=self.headers).json()['id'],first.json()['id'])
         self.assertEqual(self.client.post('/paper/replays',json={**body,'fill_model':'conservative'},headers=self.headers).status_code,409)
+        before=list(self.inventory.calls)
         self.assertTrue(PaperWorker(self.db.pool,self.archives).run_once())
+        self.assertEqual(self.inventory.calls,before)
         result=self.client.get('/paper/workspace',headers=self.headers).json()['runs'][0]
         self.assertEqual(result['status'],'succeeded');self.assertEqual(result['result']['mode'],'historical portfolio replay')
+        self.assertEqual(result['activity']['phase'],'finished');self.assertEqual(result['activity']['provider_reads'],0)
+        self.assertTrue(result['activity']['updated_at']);self.assertTrue(result['started_at'])
         self.assertLessEqual(result['result']['peak_event_exposure_percent'],10)
