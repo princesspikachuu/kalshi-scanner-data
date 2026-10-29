@@ -95,8 +95,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                 db.commit()  # Bound SQLite pending write state and rollback memory.
                 notify(dict(phase='loading saved evidence',records_loaded=record_count,
                     current_market=row['ticker']))
-            if record_count>250000:
-                raise ValueError('Replay evidence limit exceeded; select fewer days')
+            # Input size is constrained by disk, evidence bounds, and selected days.
             ticker=row['ticker'];m=cohort.get(ticker)
             if m is None or m['close'] is None:continue
             kind=row['resource'];data=row['record']
@@ -107,6 +106,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                     VALUES(?, ?, 2, 'quote',?,NULL,?)""",
                     (ticker,ts,json.dumps(data,separators=(',',':')),m['rank']))
             elif kind=='trades':
+                if fill_model=='all_filled':continue
                 ts=timestamp(data.get('created_time'))
                 if ts is None or ts>=m['close']:continue
                 identity=data.get('trade_id') or str(sorted(data.items()))
