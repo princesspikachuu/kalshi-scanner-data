@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {tableModel,renderTable} from '../apps/web/report-view.mjs';
 import {createResearchClient} from '../apps/web/research-client.mjs';
+import {accountSummary} from '../apps/web/live-paper-view.mjs';
+
+test('live account separates available cash, reservations, positions and stale health',()=>{
+ const s={status:'running',state:{cash:9000,updated_at:100,feed:'connected',orders:[{remaining:3,bid:80}],positions:[{cost:760}]}};
+ assert.deepEqual(accountSummary(s,110),{reserved:240,cost:760,stale:false,age:10,label:'connected'});
+ assert.equal(accountSummary(s,120).stale,true);s.state.stopping=true;
+ assert.equal(accountSummary(s,110).label,'Stopping · monitoring filled positions');
+ s.status='succeeded';assert.equal(accountSummary(s,110).label,'Stopped · positions settled');
+});
 
 const id='11111111-1111-4111-8111-111111111111';
 function fixture(){

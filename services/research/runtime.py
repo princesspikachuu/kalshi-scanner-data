@@ -167,6 +167,12 @@ def run(settings,stop):
             heartbeat.beat();progress.emit()
         worker.on_work_tick=tick
         analysis_thread=None
+        live_thread=None
+        if settings.role=='collector' and signer is not None:
+            from services.paper.live_feed import LiveFeed
+            live=LiveFeed(pool,budget,signer,stop)
+            live_thread=Thread(target=live.run,name='live-paper-market-feed',daemon=True)
+            live_thread.start()
         if settings.role=='collector':
             # This is a SECOND execution lane within the existing collection
             # service, not a new Render service or paper-processing resource.
@@ -183,6 +189,9 @@ def run(settings,stop):
             serve(campaigns,worker,stop,on_tick=tick,idle_wait=(lambda:1) if settings.role=='processor' else campaigns.next_wait,
                 schedule=settings.role!='processor',on_error=lambda code:print(code,file=sys.stderr,flush=True))
         finally:
+            if live_thread is not None:
+                stop.set()
+                live_thread.join(timeout=12)
             if analysis_thread is not None:
                 stop.set()
                 analysis_thread.join(timeout=10)

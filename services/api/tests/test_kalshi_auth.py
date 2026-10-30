@@ -19,6 +19,9 @@ class SigningTests(unittest.TestCase):
             else:key.public_key().verify(signature,message,padding.PSS(mgf=padding.MGF1(hashes.SHA256()),salt_length=padding.PSS.DIGEST_LENGTH),hashes.SHA256())
             for method,path in (('POST','/trade-api/v2/markets'),('GET','/trade-api/v2/portfolio/orders')):
                 with self.assertRaises(ValueError):signer.headers(method,path)
+            self.assertIn('KALSHI-ACCESS-SIGNATURE',signer.headers('GET','/trade-api/ws/v2'))
+            for method,path in (('POST','/trade-api/ws/v2'),('GET','/trade-api/ws/v2/orders')):
+                with self.assertRaises(ValueError):signer.headers(method,path)
     def test_limits_and_endpoint_costs_determine_read_allowance(self):
         seen=[]
         def handler(request):

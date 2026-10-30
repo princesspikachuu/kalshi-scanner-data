@@ -4,7 +4,7 @@ const ROUTES=new Map([
  ['/api/auth/google','POST'],['/api/auth/logout','POST']
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
-const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
+const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/live-paper');STATIC.add('/live-paper.html');STATIC.add('/live-paper.mjs');STATIC.add('/live-paper-view.mjs');STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -82,13 +82,18 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const workerStatus=url.pathname==='/api/collection/status';
  const analysisStatus=url.pathname==='/api/collection/analysis';
  const paperDetail=new RegExp('^/api/paper/replays/'+uuid+'$').test(url.pathname);
- const paper=/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
+ const liveList=url.pathname==='/api/paper/live';
+ const liveDetail=new RegExp('^/api/paper/live/'+uuid+'$').test(url.pathname);
+ const liveEvents=new RegExp('^/api/paper/live/'+uuid+'/events$').test(url.pathname);
+ const liveStop=new RegExp('^/api/paper/live/'+uuid+'/stop$').test(url.pathname);
+ const paper=liveList||liveDetail||liveEvents||liveStop||/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
  const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail)?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
+ if(paper&&url.search){const entries=[...url.searchParams];if(!liveEvents||entries.length!==1||entries[0][0]!=='before'||!/^\d{1,12}$/.test(entries[0][1]))return problem(422,'Invalid request')}
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
  if(collection){
   const entries=[...url.searchParams];
@@ -109,7 +114,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
      (detail&&!['historical','latest'].includes(url.searchParams.get('view')))||
      (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit')))||
      (url.searchParams.has('cursor')&&!/^[A-Za-z0-9_-]{1,1024}$/.test(url.searchParams.get('cursor'))))return problem(400,'Invalid research query');
- }else if(url.search)return problem(400,'Query parameters are not accepted');
+ }else if(url.search&&!liveEvents)return problem(400,'Query parameters are not accepted');
  const app=origin(env.APP_ORIGIN),api=origin(env.API_ORIGIN);
  if(!app||!api||app===api||typeof env.API_PROXY_SECRET!=='string'||env.API_PROXY_SECRET.length<32)return problem(503,'Sign-in connection is not configured');
  if(url.origin!==app||request.headers.get('sec-fetch-site')==='cross-site')return problem(403,'Request rejected');

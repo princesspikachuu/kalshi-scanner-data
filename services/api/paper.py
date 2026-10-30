@@ -41,6 +41,8 @@ class ReplayBody(BaseModel):
 
 
 def install_paper(app,auth,mutate,pool):
+    from .paper_live import install_live_paper
+    install_live_paper(app,auth,mutate,pool)
     def no_query(request):
         if request.query_params:raise HTTPException(422,'Query parameters are not accepted')
     @app.get('/paper/workspace')
