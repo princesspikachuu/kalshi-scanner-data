@@ -6,6 +6,7 @@ from uuid import uuid5,NAMESPACE_URL
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from .store import DemoStore
+from .orderbook import OrderBooks
 from .exchange import Exchange,ExchangeFailure,credentials,WS
 from .engine import candidates,quantity,qualifies,exit_price,wire_order,protective_threshold,entry_protection_matches
 
@@ -30,10 +31,10 @@ class Worker:
         self.store,self.exchange,self.stop,self.guard=store,exchange,stop,guard
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
-        self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
+        self.socket=None;self.subscription=set();self.book_sid=None;self.stream_command=2;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
-        self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
+        self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
         summary={}
@@ -251,7 +252,7 @@ class Worker:
                     # Price and observation time are one piece of evidence. REST
                     # metadata must not replace a verified stream price while
                     # inheriting its timestamp (including stale stream quotes).
-                    q.update(bid=old['bid'],ask=old['ask'],at=old['at'])
+                    q=dict(old,close=q['close'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'])
                 else:q['at']=0
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
         rank=lambda item:(item[0] not in pinned,item[1]['close'],item[0])
@@ -271,53 +272,77 @@ class Worker:
             threshold=protective_threshold(bot['config'],bot['config']['squares'][order['square']])
             bid,ask=side_quote(q,order['side'])
             if threshold is None or not 0<=bid<ask<100 or ask>threshold:continue
+            if q.get('source')=='orderbook' and not q.get('book_ready'):continue
             order['exit_triggered']=True;order['exit_reference']='ask';self.save_order(order)
             prior_ask=side_quote(previous,order['side'])[1] if previous else None
-            gap=round(q['at']-previous['at'],3) if previous and previous.get('at') else None
+            gap=round(q.get('event_at',q['at'])-previous.get('event_at',previous['at']),3) if previous and previous.get('at') else None
             self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',previous_ask=prior_ask,observation_gap_seconds=gap)
-            print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap)),flush=True)
+            print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap,source=q.get('source'),clock=q.get('clock'),seq=q.get('seq'))),flush=True)
             triggered=True
         return triggered
 
     def stream(self):
         desired=set(self.quotes)
         if not desired:return
-        if desired!=self.subscription or self.socket is None:
+        if self.socket is None:
             self.close_stream()
             from websockets.sync.client import connect
             self.socket=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
                 max_size=262144,max_queue=8,open_timeout=8,close_timeout=2,ping_interval=10,ping_timeout=10,compression=None)
-            self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['ticker'],market_tickers=sorted(desired),send_initial_snapshot=True))))
+            self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0))))
             self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['fill','user_orders']))))
             self.subscription=desired;self.sequence={};self.recovered=False
+        elif desired!=self.subscription and self.book_sid is not None:
+            # Add/remove markets on the existing sequence instead of repeatedly
+            # disconnecting held positions whenever discovery finds a market.
+            for action,markets in [('add_markets',desired-self.subscription),('delete_markets',self.subscription-desired)]:
+                if markets:
+                    self.stream_command+=1
+                    self.socket.send(json.dumps(dict(id=self.stream_command,cmd='update_subscription',params=dict(sids=[self.book_sid],market_tickers=sorted(markets),action=action))))
+            self.subscription=desired
+            self.books.books={t:b for t,b in self.books.books.items() if t in desired}
         for index in range(100):
             try:message=json.loads(self.socket.recv(timeout=.5 if index==0 else 0))
-            except TimeoutError:break
+            except TimeoutError:
+                # A quiet but sequenced book remains current after a confirmed
+                # transport round trip and an empty receive queue. No REST polls.
+                now=time.time()
+                if self.book_pong is not None and self.book_pong.is_set():
+                    for ticker in self.books.books:
+                        q=self.quotes.get(ticker)
+                        if q and q.get('source')=='orderbook':q['at']=now
+                    self.book_pong=None
+                if self.book_pong is None and now-self.last_book_ping>=2 and hasattr(self.socket,'ping'):
+                    self.book_pong=self.socket.ping();self.last_book_ping=now
+                break
             if message.get('type')=='error':raise ExchangeFailure('stream_subscription')
-            if message.get('type')=='subscribed':continue
+            if message.get('type')=='subscribed':
+                if message.get('msg',{}).get('channel')=='orderbook_delta':self.book_sid=message['msg']['sid']
+                continue
             if 'seq' in message and 'sid' in message:
                 sid=message['sid'];seq=message['seq']
                 if sid in self.sequence and seq!=self.sequence[sid]+1:raise ExchangeFailure('stream_gap')
                 self.sequence[sid]=seq
             raw=message.get('msg',{})
             if message.get('type') in ('fill','user_orders'):self.last_reconcile=0
-            if message.get('type')=='ticker':
-                ticker=raw.get('market_ticker') or raw.get('ticker')
+            # Verify newly filled exposure before consuming later price changes;
+            # otherwise its first stop crossing could arrive while filled=0.
+            if message.get('type')=='fill':return
+            if message.get('type') in ('orderbook_snapshot','orderbook_delta'):
+                ticker=raw.get('market_ticker')
                 if ticker not in self.quotes:continue
-                old=self.quotes[ticker]
-                if 'yes_bid_dollars' not in raw or 'yes_ask_dollars' not in raw:continue
-                observed=number(message.get('sending_ts_ms',raw.get('ts_ms',0)))/1000
-                now=time.time()
-                if not observed or observed>now+5:continue
-                self.quotes[ticker]=dict(old,bid=cents(raw['yes_bid_dollars']),ask=cents(raw['yes_ask_dollars']),at=min(now,observed))
-                # Do not drain past a threshold crossing and overwrite it with a
-                # much lower quote before protection gets a turn to submit.
-                if self.observe_exit_triggers(ticker,now,old):return
+                self.book_sid=message['sid']
+                now=time.time();old=self.quotes[ticker]
+                ticker,observed=self.books.apply(message,now)
+                self.quotes[ticker]=dict(old,**observed)
+                # Yield on the first crossing instead of collapsing a burst of
+                # exchange changes into its last (potentially much lower) price.
+                if observed['book_ready'] and self.observe_exit_triggers(ticker,now,old):return
     def close_stream(self):
         if self.socket:
             try:self.socket.close()
             except Exception:pass
-        self.socket=None;self.subscription=set()
+        self.socket=None;self.subscription=set();self.book_sid=None;self.book_pong=None;self.last_book_ping=0;self.books.clear()
         for q in self.quotes.values():q['at']=0
     def cancel(self,order,reason):
         self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
@@ -380,6 +405,16 @@ class Worker:
         for order in self.orders:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
             if order.get('status')=='uncertain':continue
+            if self.recovered and order['kind']=='entry' and order.get('remaining',0)>0 and bot and bot['config'].get('maximum_cents') is not None and order.get('entry_pricing')!='cap_v2':
+                self.cancel(order,'Replacing the old fixed maximum with a capped calculated bid')
+                order['entry_pricing']='cap_v2';self.save_order(order)
+                if not order.get('filled',0):
+                    key=f"{order['ticker']}/{order['square']}/{order['side']}"
+                    memory=self.states.get(order['bot'],{}).get(key)
+                    if memory:
+                        memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                        self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
+                return
             if order['kind']=='entry' and order.get('remaining',0)>0:
                 explicitly_invalid=(not bot or bot['desired']!='running' or order['revision']!=bot['revision'] or now>=order['close'])
                 fresh=q is not None and now-q['at']<=5
@@ -443,7 +478,7 @@ class Worker:
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
-            self.submit(dict(client_id=identifier,kind='entry',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']]['close'],created_at=now,status='intent',remaining=0,filled=0));return
+            self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']]['close'],created_at=now,status='intent',remaining=0,filled=0));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
             packed=json.dumps(self.states[bot['id']],sort_keys=True)

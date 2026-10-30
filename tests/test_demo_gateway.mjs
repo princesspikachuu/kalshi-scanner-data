@@ -40,3 +40,6 @@ test('exit evidence distinguishes the threshold from the actual side bid and ask
  assert.deepEqual(exitEvidence({kind:'exit_trigger',details:{threshold:60,reference:'ask',side:'yes',quote:{bid:59,ask:65}}}),['Exit trigger: ASK at or below 60¢','Observed YES bid 59¢ / ask 65¢']);
  assert.deepEqual(exitEvidence({kind:'fill',details:{price:2}}),[]);
 });
+test('exit evidence exposes sequenced book source and preceding ask',()=>{
+ assert.deepEqual(exitEvidence({kind:'exit_trigger',details:{reference:'ask',threshold:55,side:'yes',previous_ask:56,observation_gap_seconds:0.1,quote:{bid:50,ask:54,source:'orderbook',seq:17,clock:300}}}),['Exit trigger: ASK at or below 55¢','Observed YES bid 50¢ / ask 54¢','Source: sequenced order book · sequence 17 · exchange clock 300','Previous ASK 56¢ · 0.1s between observations']);
+});

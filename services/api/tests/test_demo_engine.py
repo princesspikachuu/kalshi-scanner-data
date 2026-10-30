@@ -30,9 +30,14 @@ class Rules(unittest.TestCase):
         q=quote();q.update(bid=31,ask=35)
         result=candidates([bot()],{'t':q},{},NOW)
         self.assertEqual(result[0]['side'],'no');self.assertEqual(result[0]['price'],68)
-    def test_maximum_overrides_adjustment_but_never_crosses(self):
+    def test_maximum_caps_normal_bids_without_suppressing_lower_prices(self):
         self.assertEqual(entry_price(config(maximum_cents=62),quote(),'yes'),62)
-        self.assertIsNone(entry_price(config(maximum_cents=65),quote(),'yes'))
+        self.assertEqual(entry_price(config(maximum_cents=96),quote(),'yes'),64)
+        self.assertEqual(entry_price(config(maximum_cents=65),quote(),'yes'),64)
+        self.assertEqual(entry_price(config(maximum_cents=96,adjustment_cents=-5),quote(),'yes'),60)
+        self.assertIsNone(entry_price(config(maximum_cents=96,adjustment_cents=1),quote(),'yes'))
+        q=quote();q.update(bid=31,ask=35)
+        self.assertEqual(entry_price(config(maximum_cents=96),q,'no'),68)
     def test_submitted_condition_requires_genuine_reentry(self):
         b=bot();states={};q=quote()
         first=candidates([b],{'t':q},states,NOW)[0]
@@ -250,8 +255,8 @@ class ProtectiveThresholds(unittest.TestCase):
     def test_stream_yields_on_first_crossing_before_later_low_quote(self):
         worker=self.worker(bid=55,ask=61)
         worker.subscription={'t'}
-        messages=[dict(type='ticker',sending_ts_ms=NOW*1000,msg=dict(market_ticker='t',yes_bid_dollars='0.5000',yes_ask_dollars='0.5400')),
-            dict(type='ticker',sending_ts_ms=NOW*1000,msg=dict(market_ticker='t',yes_bid_dollars='0.0100',yes_ask_dollars='0.0200'))]
+        messages=[dict(type='orderbook_snapshot',sid=2,seq=1,sending_ts_ms=NOW*1000,msg=dict(market_ticker='t',clock=1,yes_dollars_fp=[['0.50','1']],no_dollars_fp=[['0.46','1']])),
+            dict(type='orderbook_delta',sid=2,seq=2,sending_ts_ms=NOW*1000,msg=dict(market_ticker='t',clock=2,ts_ms=NOW*1000,side='no',price_dollars='0.98',delta_fp='1'))]
         class Socket:
             def recv(self,**kw):
                 if not messages:raise TimeoutError

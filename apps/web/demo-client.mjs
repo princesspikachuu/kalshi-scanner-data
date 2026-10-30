@@ -38,5 +38,7 @@ export function exitEvidence(item){
   const bid=d.side==='yes'?q.bid:100-q.ask,ask=d.side==='yes'?q.ask:100-q.bid;
   lines.push(`Observed ${d.side.toUpperCase()} bid ${bid}¢ / ask ${ask}¢`);
  }
+ if(q.source==='orderbook')lines.push(`Source: sequenced order book · sequence ${q.seq} · exchange clock ${q.clock}`);
+ if(Number.isFinite(d.previous_ask))lines.push(`Previous ASK ${d.previous_ask}¢${Number.isFinite(d.observation_gap_seconds)?' · '+d.observation_gap_seconds+'s between observations':''}`);
  return lines;
 }

@@ -4,7 +4,7 @@ from services.research.reports import SERIES
 
 def side_quote(quote,side):
     if side=='yes':return quote['bid'],quote['ask']
-    return 100-quote['ask'],100-quote['bid']
+    return round(100-quote['ask'],4),round(100-quote['bid'],4)
 
 def qualifies(square,quote,side,now,reference):
     bid,ask=side_quote(quote,side)
@@ -25,8 +25,9 @@ def entry_protection_matches(config,square,quote,side):
 def entry_price(config,quote,side):
     bid,ask=side_quote(quote,side)
     price=(bid if config['price_reference']=='bid' else ask)+config['adjustment_cents']
-    # Maximum overrides the reference adjustment when configured.
-    if config.get('maximum_cents') is not None:price=config['maximum_cents']
+    # The maximum is a ceiling, never an instruction to raise a lower bid.
+    if config.get('maximum_cents') is not None:price=min(price,config['maximum_cents'])
+    price=math.floor(price)
     return price if 1<=price<ask and price<=99 else None
 
 def quantity(config,price,equity,cash,market_exposure,bot_exposure):
@@ -64,7 +65,7 @@ def exit_price(quote,side,ceiling=None):
     bid,ask=side_quote(quote,side)
     # ASK is the buy-now/taker price for this outcome. Once an exit is posted,
     # a rising quote must be allowed to reach it instead of chasing it upward.
-    candidate=ask+1 if 0<=bid<ask<99 else None
+    candidate=math.ceil(ask+1) if 0<=bid<ask<=98 else None
     if ceiling is not None:return min(ceiling,candidate) if candidate is not None else ceiling
     return candidate
 
