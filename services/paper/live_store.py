@@ -50,6 +50,7 @@ class LiveStore:
     def checkpoint(self,job,now,*,messages=(),metadata=(),feed=None,gap=None,diagnostics=None):
         with self.pool.connection() as c:
             row=self.owned(c,job['id'],job['lease_token'])
+            job['parameters']=row['parameters']
             state=row['progress'].get('state') or initial(row['parameters']['starting_cash_cents'])
             def core(value):return json.dumps({k:v for k,v in value.items() if k not in ('quotes','updated_at','last_message_at')},sort_keys=True)
             before=core(state)

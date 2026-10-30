@@ -5,6 +5,7 @@ proxy is evidence for a simulated fill, never proof of an achievable maker fill.
 """
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, ROUND_CEILING
 from .portfolio import proposed_bid
+from .rules import matching_rule
 
 MAX_MARKETS=100
 MAX_ORDERS=100
@@ -178,7 +179,7 @@ class Ledger:
             for i,s in enumerate(self.strategies):
                 if str(i) in self.s['attempted'].get(ticker,[]):continue
                 if m['series'] not in s['series']:continue
-                if s['entry_minute_min']<(m['close']-now)/60<=s['entry_minute_max'] and s['min_price']<=ask<=s['max_price']:
+                if matching_rule(s,ask,(m['close']-now)/60):
                     opportunities.append((-s['statistical_yield_percent'],m['close'],ticker,i,side,bid,ask))
         for _,_,ticker,i,side,best_bid,ask in sorted(opportunities):
             if len(self.s['orders'])>=MAX_ORDERS or len(self.s['positions'])>=MAX_POSITIONS or self.s['orders_placed']>=MAX_SESSION_ORDERS:

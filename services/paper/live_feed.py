@@ -103,6 +103,7 @@ class LiveFeed:
         try:
             while not self.stop.is_set():
                 self.health('live paper lane ready')
+                strategies=job['parameters']['strategies']
                 now=self.clock();messages=[];watch=self.watched(catalog,state,strategies)
                 diagnostics=dict(provider_reads=self.reads,reconnects=self.reconnects,
                     watch_limit=self.watch_limit,watched_markets=len(watch),discovery_note=None,

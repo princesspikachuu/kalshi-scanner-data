@@ -19,6 +19,11 @@ class StartLive(BaseModel):
     request_key:UUID
 
 
+class AddLiveStrategy(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    strategy_id:UUID
+
+
 def install_live_paper(app,auth,mutate,pool):
     def envelope(**data):return dict(contract='paper-v1',live_trading_enabled=False,live_paper_enabled=True,**data)
     def no_query(request):
@@ -95,6 +100,27 @@ def install_live_paper(app,auth,mutate,pool):
                 if not ledger.s['stopping']:
                     ledger.stop(time.time());save(c,row,ledger,time.time())
         return envelope(id=str(identifier),message='New bids stopped. Unfilled bids canceled. Existing positions continue through settlement.')
+
+    @app.post('/paper/live/{identifier}/strategies')
+    def add_strategy(identifier:UUID,body:AddLiveStrategy,request:Request):
+        mutate(request);no_query(request)
+        with pool.connection() as c:
+            row=session(c,identifier,True)
+            if row['status'] not in ('queued','running') or row['progress'].get('state',{}).get('stopping'):
+                raise HTTPException(409,'Account is not accepting new strategies')
+            params=dict(row['parameters'])
+            ids=list(params['request']['strategy_ids'])
+            if str(body.strategy_id) in ids:raise HTTPException(409,'Strategy already in account')
+            if len(ids)>=20:raise HTTPException(422,'Maximum 20 strategies per account')
+            candidate=c.execute("SELECT parameters->'strategy' AS strategy FROM research_job WHERE id=%s AND idempotency_key=%s",
+                (body.strategy_id,'paper-strategy/'+str(body.strategy_id))).fetchone()
+            if candidate is None or candidate['strategy'].get('bid_offset') is not None:
+                raise HTTPException(422,'Select a saved table or manual strategy')
+            item=dict(candidate['strategy']);item['series']=sorted(SERIES[item['asset']])
+            params['strategies']=[*params['strategies'],item]
+            params['request']=dict(params['request'],strategy_ids=[*ids,str(body.strategy_id)])
+            c.execute('UPDATE research_job SET parameters=%s WHERE id=%s',(Jsonb(params),identifier))
+        return envelope(id=str(identifier),strategy_id=str(body.strategy_id),message='Strategy attached to running paper account')
 
     @app.get('/paper/live/{identifier}/events')
     def events(identifier:UUID,request:Request):
