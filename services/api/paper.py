@@ -135,6 +135,8 @@ def install_paper(app,auth,mutate,pool):
     @app.post('/paper/replays')
     def start(body:ReplayBody,request:Request):
         mutate(request);no_query(request)
+        import os
+        if os.environ.get('DEMO_ENGINE_ENABLED')=='true':raise HTTPException(409,'Historical replay records are preserved. New execution uses Kalshi Demo bots.')
         portfolio=bool(body.strategy_ids or body.dataset_ids)
         if portfolio:
             if body.strategy_id is not None or body.dataset_id is not None or not body.strategy_ids or not body.dataset_ids or any(type(d) is not int or d<1 for d in body.dataset_ids):raise HTTPException(422,'Select strategies and saved days')

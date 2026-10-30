@@ -77,7 +77,7 @@ class WorkerSettings:
         elif env.get('STAGING_RUNTIME_VERIFIERS',''):
             raise ConfigurationError('Clear private runtime verifiers outside activation')
         role=env.get('WORKER_ROLE','combined')
-        if role not in ('combined','split','collector','processor'):raise ConfigurationError('Invalid WORKER_ROLE')
+        if role not in ('combined','split','collector','processor','demo'):raise ConfigurationError('Invalid WORKER_ROLE')
         return cls(database,account,bucket,access,secret,rate,capacity,cost,enabled=='true',acceptance,operator,verifiers,role)
 
 
@@ -94,6 +94,9 @@ def termination(stop):
 
 
 def run(settings,stop):
+    if settings.role=='demo':
+        from services.demo.runtime import run as run_demo
+        return run_demo(stop)
     # Disabled staging deploys do not construct SDK/DB clients or schedule/fetch work.
     if not settings.enabled:
         if settings.operator_action!='off':
@@ -168,7 +171,7 @@ def run(settings,stop):
         worker.on_work_tick=tick
         analysis_thread=None
         live_thread=None
-        if settings.role=='collector' and signer is not None:
+        if settings.role=='collector' and signer is not None and os.environ.get('LEGACY_LIVE_PAPER_ENABLED','false')=='true':
             from services.paper.live_feed import LiveFeed
             live=LiveFeed(pool,budget,signer,stop)
             live_thread=Thread(target=live.run,name='live-paper-market-feed',daemon=True)

@@ -7,7 +7,7 @@ let choosingBet=false,betSelections=new Map();
 const betKey=(minutes,band)=>`${minutes}:${band}`;
 function betSelectionStatus(){
  const count=betSelections.size;
- document.getElementById('betHint').textContent=choosingBet?`${count} squares selected. Tap squares to add/remove, then choose Configure selected bets.`:'Choose New bet, then tap one or more statistics squares.';
+ document.getElementById('betHint').textContent=choosingBet?`${count} squares selected. Tap squares to add/remove, then choose Configure one bot.`:'Choose New bot, then select one or more statistics squares.';
  document.getElementById('betConfigure').hidden=!choosingBet||!count;
  document.getElementById('betClear').hidden=!choosingBet||!count;
 }

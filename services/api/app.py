@@ -157,4 +157,6 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
     from .paper import install_paper
     install_paper(app,current,collection_mutation,getattr(store,'pool',None))
     install_history(app,current,settings,history_store or HistoryStore(getattr(store,'pool',None)))
+    from .demo import install_demo
+    install_demo(app,current,collection_mutation,getattr(store,'pool',None))
     return app

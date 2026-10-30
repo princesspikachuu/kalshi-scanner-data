@@ -54,6 +54,8 @@ def install_live_paper(app,auth,mutate,pool):
     @app.post('/paper/live')
     def start(body:StartLive,request:Request):
         mutate(request);no_query(request)
+        import os
+        if os.environ.get('DEMO_ENGINE_ENABLED')=='true':raise HTTPException(409,'Simulated accounts are preserved. New execution uses Kalshi Demo bots.')
         if len(set(body.strategy_ids))!=len(body.strategy_ids):raise HTTPException(422,'Duplicate strategy')
         with pool.connection() as c:
             # Serialize starts without introducing a new table or lock service.

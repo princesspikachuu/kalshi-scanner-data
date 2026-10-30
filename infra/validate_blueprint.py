@@ -42,7 +42,7 @@ service=processor['services'][0]
 assert service['type']=='worker' and service['name']=='pocket-processing-staging'
 assert service['autoDeployTrigger']=='off' and service['plan']=='0.5c-512mb'
 variables={v['key']:v for v in service['envVars'] if 'key' in v}
-assert variables['WORKER_ROLE']['value']=='processor'
+assert variables['WORKER_ROLE']['value']=='demo'
 assert variables['DATABASE_URL']['fromService']=={'name':'pocket-research-staging','type':'worker','envVarKey':'DATABASE_URL'}
 assert {'fromGroup':'pocket-r2-staging'} in service['envVars']
 assert not {'KALSHI_API_KEY_ID','KALSHI_PRIVATE_KEY_PEM'} & variables.keys()
