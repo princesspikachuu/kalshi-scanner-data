@@ -88,3 +88,12 @@ This section supersedes earlier connection/first-order setup notes.
 - Live receipt 17:05:15.349506125Z: `demo_shard_funded`, source 0, destination 2, amount_cents 21000. Immediately afterward at 17:05:15.366922748Z, `demo_order_accepted`: maker entry, exchange_index 2, remaining 10.0, filled 0.0. This verifies a resting maker bid, not a fill. Protective exit/partial-fill recovery still require live evidence.
 - Frontend diagnostics gateway deployment succeeded in workflow 41093066513; its credential-free public smoke check still encounters the existing Cloudflare boundary. No API or collector redeploy was necessary for this worker fix.
 - Critical email, hosted storage autoscaling and full provider backup verification remain as described above. Preserve all existing history.
+
+
+## Weather and sports audit — October 30, 2026, around 10:25 a.m. Pacific
+- Bounded public Demo reads checked all eight configured hourly-weather series (both CH/CHS variants), seven daily-weather series and seven sports series for open markets closing within 24 hours. All hourly and sports responses were empty. All seven daily-weather series returned active markets on shard 0. Do not generalize these results to production or to every possible Demo sports series.
+- Current worker diagnostics list weather, sports, btc and crypto running conditions; no weather_daily conditions are running. Do not invent daily trading windows or add conditions without user selection.
+- Added routing regression coverage for both hourly-weather variants, daily weather, football (shard 0), basketball/tennis (shard 3), and existing-Demo-funds transfers from crypto shard 2 back to default shard 0 or sports shard 3.
+- Fixed discovery fairness: existing-position refreshes used the series counter and could permanently skip series slots when the series count was divisible by five. Refresh and series rotation now have independent counters, with no increase in discovery request frequency.
+- Local Python suite: 444 cases, 295 passed, 149 database-dependent cases skipped. Targeted engine/funding suite: 34 passed.
+- Follow-up user report: crypto exits consistently occur at 2 cents. Investigate after finishing this deployment; do not assume a price limit or change configured exit thresholds without evidence.

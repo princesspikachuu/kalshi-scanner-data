@@ -192,3 +192,34 @@ class RejectionDiagnostics(unittest.TestCase):
         worker.quotes['t']['at']=NOW-6
         info=worker.entry_diagnostics(NOW)[b['id']]
         self.assertEqual(info['fresh'],0);self.assertIn('streaming',info['message'])
+
+class CategoryRouting(unittest.TestCase):
+    def test_both_hourly_weather_variants_daily_weather_and_sports_qualify_and_route(self):
+        from services.demo.runtime import quote as parse_quote
+        cases=[('weather','KXTEMPNYCH',0),('weather','KXTEMPNYCHS',0),('weather_daily','KXHIGHNY',0),('sports','KXNFLGAME',0),('sports','KXNBAGAME',3),('sports','KXATPMATCH',3)]
+        for asset,series,index in cases:
+            with self.subTest(asset=asset,series=series):
+                b=bot();b['config']['squares'][0]['asset']=asset
+                raw={'ticker':series+'-TEST','yes_bid_dollars':'0.6000','yes_ask_dollars':'0.6500','close_time':NOW+200,'exchange_index':index,'status':'active'}
+                ticker,q=parse_quote(raw,NOW)
+                options=candidates([b],{ticker:q},{},NOW)
+                self.assertEqual(len(options),1)
+                intent=dict(options[0],kind='entry',client_id='test',quantity=1,close=q['close'],exchange_index=q['exchange_index'])
+                self.assertEqual(wire_order(intent)['exchange_index'],index)
+                self.assertTrue(wire_order(intent)['post_only'])
+    def test_every_configured_series_is_scanned_while_existing_positions_are_refreshed(self):
+        from services.research.reports import SERIES
+        class Ex:
+            def __init__(self):self.calls=[]
+            def call(self,method,path,**kw):self.calls.append(kw['params']);return {'markets':[]}
+        ex=Ex();worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        worker.bots=[bot()];worker.orders=[{'ticker':'held'}]
+        # Ten series exposed a permanent skipped-slot bug when both tasks shared
+        # one counter; include all actual categories in a second pass as well.
+        for configured in [set('S'+str(i) for i in range(10)),set().union(SERIES['weather'],SERIES['weather_daily'],SERIES['sports'])]:
+            ex.calls=[];worker.series_index=0;worker.discovery_turn=0
+            with patch.dict(SERIES,btc=configured),patch('services.demo.runtime.time.time',return_value=NOW):
+                for _ in range(len(configured)+1+(len(configured)//4)):worker.discover()
+            observed={p['series_ticker'] for p in ex.calls if 'series_ticker' in p}
+            self.assertEqual(observed,configured)
+            self.assertTrue(any('tickers' in p for p in ex.calls))

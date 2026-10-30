@@ -67,3 +67,19 @@ class Funding(unittest.TestCase):
         funding=ShardFunding(store,exchange)
         self.assertTrue(funding.ensure(2,90,1000,{}))
         self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+
+class CategoryShardFunding(unittest.TestCase):
+    def test_weather_can_use_default_shard_and_sports_can_move_funds_back_from_crypto(self):
+        for destination in [0,3]:
+            with self.subTest(destination=destination):
+                store=Store()
+                class Ex:
+                    def __init__(self):self.writes=[]
+                    def call(self,method,path,**kw):
+                        if method=='GET':return {'subaccount_balances':[{'subaccount_number':0,'exchange_index':2,'balance':'100.00'}]}
+                        self.writes.append(kw['body']);return {'transfer_id':'id'}
+                exchange=Ex();funding=ShardFunding(store,exchange)
+                self.assertFalse(funding.ensure(destination,100,1000,{2:1000}))
+                body=exchange.writes[0]
+                self.assertEqual((body['source_exchange_shard'],body['destination_exchange_shard']),(2,destination))
+                self.assertEqual(body['amount'],100000)

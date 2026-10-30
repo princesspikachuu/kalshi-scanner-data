@@ -30,7 +30,7 @@ class Worker:
         self.store,self.exchange,self.stop,self.guard=store,exchange,stop,guard
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
-        self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0
+        self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def entry_diagnostics(self,now):
@@ -213,7 +213,7 @@ class Worker:
         from services.research.reports import SERIES
         series=sorted({s for b in self.bots if b['desired']=='running' for q in b['config']['squares'] for s in SERIES[q['asset']]})
         pinned={o['ticker'] for o in self.orders}
-        if pinned and (self.series_index%5==0 or not series):params=dict(tickers=','.join(sorted(pinned)[:100]),limit=200)
+        if pinned and (self.discovery_turn%5==0 or not series):params=dict(tickers=','.join(sorted(pinned)[:100]),limit=200)
         elif series:
             current=series[self.series_index%len(series)];params=dict(series_ticker=current,status='open',limit=200,min_close_ts=int(now),max_close_ts=int(now+86400))
             if self.cursor.get(current):params['cursor']=self.cursor[current]
@@ -230,7 +230,8 @@ class Worker:
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
         rank=lambda item:(item[0] not in pinned,item[1]['close'],item[0])
         kept=[(t,q) for t,q in self.quotes.items() if t in pinned or q['close']>now]
-        self.quotes=dict(sorted(kept,key=rank)[:100]);self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.series_index+=1
+        self.quotes=dict(sorted(kept,key=rank)[:100]);self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.discovery_turn+=1
+        if 'series_ticker' in params:self.series_index+=1
     def stream(self):
         desired=set(self.quotes)
         if not desired:return
