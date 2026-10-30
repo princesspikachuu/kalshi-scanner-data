@@ -16,9 +16,9 @@ class ReadSigner:
 
     def headers(self,method,path):
         path=path.split('?')[0]
-        if method!='GET' or not path.startswith('/trade-api/v2/') or not (
+        if method!='GET' or not (path=='/trade-api/ws/v2' or (path.startswith('/trade-api/v2/') and (
             path.startswith(('/trade-api/v2/markets','/trade-api/v2/historical/','/trade-api/v2/series/'))
-            or path in ('/trade-api/v2/account/limits','/trade-api/v2/account/endpoint_costs')):
+            or path in ('/trade-api/v2/account/limits','/trade-api/v2/account/endpoint_costs')))):
             raise ValueError('Only market-data and allowance reads may be signed')
         timestamp=str(int(self.clock()*1000));message=(timestamp+method+path).encode()
         if isinstance(self._key,ed25519.Ed25519PrivateKey):signature=self._key.sign(message)

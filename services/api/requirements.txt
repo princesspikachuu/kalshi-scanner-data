@@ -36,3 +36,4 @@ s3transfer==0.19.3
 python-dateutil==2.9.0.post0
 six==1.17.0
 ijson==3.6.0
+websockets==17.2

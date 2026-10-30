@@ -4,6 +4,7 @@ on:
     paths:
       - 'services/api/**'
       - 'services/research/**'
+      - 'services/paper/**'
       - 'apps/**'
       - 'tests/test_login_bridge.mjs'
       - 'tests/test_research_dashboard.mjs'

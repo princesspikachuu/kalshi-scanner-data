@@ -249,3 +249,20 @@ test('paper replay setup and cancellation use exact owner API routes',async()=>{
  assert.equal((await proxyAuth(request(path+'/cancel'),env,{fetcher:()=>assert.fail('must not fetch')})).status,405);
  assert.equal((await proxyAuth(request(path+'/cancel',{method:'POST',headers:{origin:'https://evil.test','content-type':'application/json'},body:'{}'}),env,{fetcher:()=>assert.fail('must not fetch')})).status,403);
 });
+
+test('live paper routes preserve exact methods, owner proxy, CSRF and event cursor bounds',async()=>{
+ const id='11111111-1111-4111-8111-111111111111',base='/api/paper/live';let sent;
+ const fetcher=async(url,options)=>{sent={url,...options};return json({contract:'paper-v1',live_trading_enabled:false,live_paper_enabled:true})};
+ for(const path of [base,base+'/'+id,base+'/'+id+'/events?before=2']){
+  assert.equal((await proxyAuth(request(path),env,{fetcher})).status,200);assert.equal(sent.method,'GET');
+ }
+ const headers={origin:env.APP_ORIGIN,'content-type':'application/json','x-csrf-token':csrf};
+ for(const path of [base,base+'/'+id+'/stop']){
+  assert.equal((await proxyAuth(request(path,{method:'POST',headers,body:'{}'}),env,{fetcher})).status,200);assert.equal(sent.method,'POST');
+ }
+ const no=()=>assert.fail('must not fetch');
+ for(const path of [base+'?before=2',base+'/'+id+'/events?before=2&before=1',base+'/'+id+'/events?before=-1'])assert.equal((await proxyAuth(request(path),env,{fetcher:no})).status,422);
+ assert.equal((await proxyAuth(request(base+'/'+id+'/stop'),env,{fetcher:no})).status,405);
+ assert.equal((await proxyAuth(request(base,{method:'POST',headers:{...headers,origin:'https://evil.test'},body:'{}'}),env,{fetcher:no})).status,403);
+ assert.equal((await proxyAuth(request(base+'/orders'),env,{fetcher:no})).status,404);
+});
