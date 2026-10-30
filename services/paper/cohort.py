@@ -6,6 +6,7 @@ reference uses the latest candle *at or before* each fixed checkpoint (<=120s).
 The fixed-time baseline is NOT an executable portfolio or the same population.
 """
 import json
+from .rules import entry_rules
 from decimal import Decimal, InvalidOperation
 
 
@@ -55,6 +56,9 @@ def compare_cohorts(db,markets,strategies,orders,ledger_hold_pnl):
     by_order={(o['ticker'],o['strategy']):o for o in orders}
     sections=[]
     for idx,strategy in enumerate(strategies):
+        if len(entry_rules(strategy))>1:
+            sections.append(dict(strategy=strategy.get('name','Multi-square strategy'),checkpoint_minutes=None,fixed_bid_band_cents=None,markets_checked=0,fixed_quotes_available=0,reference_band_markets=0,reference_band_wins=0,reference_bid_stake_cents=0,reference_bid_pnl_cents=0,reference_events=0,reference_markets_without_order=0,paired_markets=0,paired_contracts=0,paired_winners=0,paired_fixed_bid_stake_cents=0,paired_fixed_bid_pnl_cents=0,paired_replay_bid_stake_cents=0,paired_replay_bid_pnl_cents=0,different_side=0,missing_or_stale_fixed_quote=0,fixed_band_mismatch=0,unmatched_replay_orders=sum(o['strategy']==idx for o in orders),reference_distinct_events=0,fixed_reference_roi_percent=None,paired_reference_roi_percent=None,paired_replay_roi_percent=None,paired_price_difference_cents=0))
+            continue
         summary=dict(strategy=strategy.get('name') or f'Strategy {idx+1}',
             checkpoint_minutes=strategy.get('entry_minute_max'),
             fixed_bid_band_cents=[strategy.get('min_price'),strategy.get('max_price')],
