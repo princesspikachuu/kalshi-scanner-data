@@ -3,7 +3,8 @@
 Quotes are minute snapshots; estimated fills assume a share of observed taker
 volume, not a known queue position. Saved statistical rankings are in-sample.
 """
-from collections import defaultdict,deque
+from collections import defaultdict
+from .rules import matching_rule,deque
 from contextlib import closing
 from decimal import Decimal, InvalidOperation
 import json
@@ -206,7 +207,7 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                 compatible=s['asset']==m['asset'] or (s['asset']=='btc' and m['candidate'].get('series')=='KXBTC15M') or (s['asset']=='eth' and m['candidate'].get('series')=='KXETH15M') or (s['asset']=='crypto' and m['candidate'].get('series') in {'KXBTC15M','KXETH15M','KXSOL15M','KXXRP15M','KXDOGE15M','KXBNB15M','KXHYPE15M','KXZEC15M','KXNEAR15M'})
                 identity=(ticker,index)
                 if not compatible or identity in attempted:continue
-                if s['entry_minute_min']<remaining<=s['entry_minute_max'] and s['min_price']<=ask<=s['max_price']:
+                if matching_rule(s,ask,remaining):
                     eligible.append((index,s,identity))
             for index,s,identity in sorted(eligible,key=lambda item:-item[1]['statistical_yield_percent']):
                 bid=proposed_bid(ask,s,best_bid=best_bid)
@@ -235,7 +236,8 @@ def _replay_portfolio_from_spool(sources,strategies,starting_cash_cents,fill_mod
                 matched['qualified_tickers'].add(ticker)
                 matched['qualified_events'].add(m['event'])
                 matched['entry_minutes_weighted']+=remaining*quantity
-                target=(s['entry_minute_min']+s['entry_minute_max'])/2
+                rule=matching_rule(s,ask,remaining)
+                target=(rule['entry_minute_min']+rule['entry_minute_max'])/2
                 matched['entry_minutes_distance_weighted']+=abs(remaining-target)*quantity
                 won=m['candidate']['result']==side
                 matched['qualified_wins']+=int(won)*quantity
