@@ -32,12 +32,49 @@ class Worker:
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0
         self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
+    def entry_diagnostics(self,now):
+        from .engine import entry_price
+        summary={}
+        for bot in self.bots:
+            config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=0
+            market_exposure={};bot_exposure=0
+            for order in self.orders:
+                if order['kind']!='entry':continue
+                amount=(order.get('remaining',0)+max(0,order.get('filled',0)-order.get('sold',0)))*order['price']
+                market_exposure[order['ticker']]=market_exposure.get(order['ticker'],0)+amount
+                if order['bot']==bot['id']:bot_exposure+=amount
+            for ticker,q in self.quotes.items():
+                from services.research.reports import SERIES
+                if not any(q['series'] in SERIES[s['asset']] for s in config['squares']):continue
+                available+=1
+                if now-q['at']>5:continue
+                fresh+=1
+                for index,square in enumerate(config['squares']):
+                    for side in ('yes','no'):
+                        if not qualifies(square,q,side,now,config['qualification']):continue
+                        matched+=1
+                        if ticker in self.blocked:blocked+=1;continue
+                        if self.states.get(bot['id'],{}).get(f'{ticker}/{index}/{side}',{}).get('submitted'):submitted+=1;continue
+                        price=entry_price(config,q,side)
+                        if price is None:maker+=1;continue
+                        if quantity(config,price,self.account.get('equity_cents',0),self.account.get('cash_cents',0),market_exposure.get(ticker,0),bot_exposure)<1:budget+=1
+            if bot['desired']!='running':message='New entries paused'
+            elif not available:message='No open Demo markets found for these categories yet'
+            elif not fresh:message=f'{available} Demo markets found; waiting for fresh streaming prices'
+            elif not matched:message=f'{fresh} fresh Demo markets checked; none match the selected price/time windows'
+            elif blocked==matched:message='Matching markets need ownership reconciliation'
+            elif submitted==matched:message='Matching conditions already attempted; waiting for a new qualifying cycle'
+            elif maker==matched:message='Matching conditions found; entry price would cross the ask'
+            elif budget==matched:message='Matching conditions found; spending limits cannot fund one contract'
+            else:message=f'{matched} matching conditions across {fresh} fresh Demo markets'
+            summary[bot['id']]=dict(message=message,markets=available,fresh=fresh,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget)
+        return summary
     def health(self,state,message):
         now=time.time()
         if now-self.last_health>=10:
             self.store.put('health',dict(state=state,message=message,at=now,
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled_at=self.last_reconcile,blocked_markets=sorted(self.blocked)))
+                reconciled_at=self.last_reconcile,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now)))
             self.last_health=now
         if now-self.last_diagnostic>=60:
             print(json.dumps(dict(event='demo_diagnostic',state=state,stage=self.stage,
@@ -46,7 +83,7 @@ class Worker:
                 categories=sorted({s['asset'] for b in self.bots if b['desired']=='running' for s in b['config']['squares']}),
                 watched=len(self.quotes),fresh=sum(now-q['at']<=5 for q in self.quotes.values()),
                 orders=len(self.orders),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled=self.recovered)),flush=True)
+                reconciled=self.recovered,entry_diagnostics=self.entry_diagnostics(now))),flush=True)
             self.last_diagnostic=now
     def load_bots(self):
         self.bots=[]
@@ -207,7 +244,7 @@ class Worker:
         for q in self.quotes.values():q['at']=0
     def cancel(self,order,reason):
         if not order.get('remaining',0) or not order.get('exchange_id'):return
-        self.exchange.cancel(order['exchange_id']);order['remaining']=0
+        self.exchange.cancel(order['exchange_id'],order['ticker']);order['remaining']=0
         order['status']='held' if order['kind']=='entry' and order.get('filled',0) else 'closed'
         self.save_order(order);self.record('cancel',order,reason)
         # Reconcile races/fills before considering any replacement or released cash.
@@ -221,7 +258,7 @@ class Worker:
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted maker-only '+intent['kind'])
         except ExchangeFailure as error:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
-            self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order')
+            self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
             if error.ambiguous:self.blocked.add(intent['ticker'])
             raise
         finally:self.recovered=False;self.last_reconcile=0
@@ -314,7 +351,7 @@ class Worker:
                         maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                     backoff=1
                 except ExchangeFailure as error:
-                    print(json.dumps(dict(event='demo_exchange_failure',stage=self.stage,code=error.code,ambiguous=error.ambiguous)),flush=True)
+                    print(json.dumps(dict(event='demo_exchange_failure',stage=self.stage,code=error.code,ambiguous=error.ambiguous,status=error.status,provider_code=error.provider_code,reason=error.reason)),flush=True)
                     self.recovered=False
                     self.store.alert('exchange','Demo exchange '+error.code.replace('_',' ')+'. New entries wait for complete verification.',True)
                     self.health('attention','Exchange verification incomplete')

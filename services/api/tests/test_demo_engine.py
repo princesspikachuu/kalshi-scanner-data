@@ -169,3 +169,26 @@ class SupportedDemoKeys(unittest.TestCase):
         from services.demo.exchange import CredentialInputError
         with self.assertRaises(CredentialInputError) as error:DemoSigner('id','secret-invalid-data')
         self.assertNotIn('secret-invalid-data',str(error.exception))
+
+class RejectionDiagnostics(unittest.TestCase):
+    def test_error_body_is_bounded_and_only_safe_code_and_reason_escape(self):
+        signer=type('Signer',(),{'headers':lambda *a:{}})()
+        ex=Exchange(signer,client=httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(400,json={'error':{'code':'invalid_order','message':'post-only would cross: PRIVATE PROVIDER DETAIL'}}))))
+        with self.assertRaises(ExchangeFailure) as caught:ex.call('POST','/portfolio/events/orders',body={})
+        error=caught.exception
+        self.assertEqual((error.status,error.provider_code,error.reason),(400,'invalid_order','post_only'))
+        self.assertFalse(error.ambiguous)
+        self.assertNotIn('PRIVATE',str(error.__dict__))
+    def test_cancel_routes_by_ticker_to_correct_exchange_shard(self):
+        seen=[];signer=type('Signer',(),{'headers':lambda *a:{}})()
+        ex=Exchange(signer,client=httpx.Client(transport=httpx.MockTransport(lambda request:(seen.append(request) or httpx.Response(200,json={'reduced_by':'1.00'})))))
+        ex.cancel('order-id','KXBTC15M-TEST')
+        self.assertEqual(seen[0].url.params['market_ticker'],'KXBTC15M-TEST')
+        self.assertEqual(seen[0].url.params['exchange_index'],'-1')
+    def test_health_distinguishes_stale_quotes_and_spending_limits(self):
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        b=bot();worker.bots=[b];worker.quotes={'t':quote()};worker.account={'equity_cents':10000,'cash_cents':0}
+        self.assertEqual(worker.entry_diagnostics(NOW)[b['id']]['budget_blocked'],1)
+        worker.quotes['t']['at']=NOW-6
+        info=worker.entry_diagnostics(NOW)[b['id']]
+        self.assertEqual(info['fresh'],0);self.assertIn('streaming',info['message'])

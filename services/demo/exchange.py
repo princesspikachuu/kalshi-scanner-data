@@ -9,7 +9,9 @@ ROOT='https://external-api.demo.kalshi.co'
 WS='wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2'
 PATH='/trade-api/v2'
 class ExchangeFailure(Exception):
-    def __init__(self,code,ambiguous=False):self.code,self.ambiguous=code,ambiguous
+    def __init__(self,code,ambiguous=False,*,status=None,provider_code=None,reason=None):
+        self.code,self.ambiguous=code,ambiguous
+        self.status,self.provider_code,self.reason=status,provider_code,reason
 
 class CredentialInputError(ValueError):
     """Fixed, safe form feedback; never includes submitted credential content."""
@@ -80,7 +82,21 @@ class Exchange:
                 if response.status_code==429:
                     self.next_read=self.next_write=time.monotonic()+5
                     raise ExchangeFailure('rate_limited')
-                if not 200<=response.status_code<300:raise ExchangeFailure('authentication' if response.status_code in (401,403) else 'exchange_rejected',write and response.status_code>=500)
+                if not 200<=response.status_code<300:
+                    # Bounded parsing: expose only a token code and fixed reason labels,
+                    # never raw provider messages, credentials or response bodies.
+                    raw=bytearray()
+                    for chunk in response.iter_bytes():
+                        raw.extend(chunk[:max(0,8192-len(raw))])
+                        if len(raw)>=8192:break
+                    try:
+                        info=json.loads(raw);info=info.get('error',info)
+                        token=info.get('code')
+                        provider=token if isinstance(token,str) and re.fullmatch(r'[a-zA-Z0-9_:-]{1,80}',token) else None
+                        detail=' '.join(str(info.get(k,'')) for k in ('code','message','details')).lower()
+                        reason=next((name for name,words in [('post_only',('post only','post_only','post-only')),('price_tick',('tick','price increment')),('expiration',('expiration','expired')),('balance',('balance','buying power','funds')),('routing',('shard','exchange_index')),('market',('market','ticker')),('quantity',('count','quantity'))] if any(w in detail for w in words)),None)
+                    except (ValueError,AttributeError):provider=reason=None
+                    raise ExchangeFailure('authentication' if response.status_code in (401,403) else 'exchange_rejected',write and response.status_code>=500,status=response.status_code,provider_code=provider,reason=reason)
                 data=bytearray()
                 for chunk in response.iter_bytes():
                     data.extend(chunk)
@@ -102,6 +118,6 @@ class Exchange:
     def submit(self,intent):
         from .engine import wire_order
         return self.call('POST','/portfolio/events/orders',body=wire_order(intent))
-    def cancel(self,order_id):
+    def cancel(self,order_id,ticker):
         if not re.fullmatch(r'[A-Za-z0-9-]{1,128}',order_id):raise ValueError('Invalid order ID')
-        return self.call('DELETE','/portfolio/events/orders/'+order_id)
+        return self.call('DELETE','/portfolio/events/orders/'+order_id,params=dict(market_ticker=ticker,exchange_index=-1))
