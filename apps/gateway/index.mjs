@@ -85,7 +85,8 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const liveList=url.pathname==='/api/paper/live';
  const liveDetail=new RegExp('^/api/paper/live/'+uuid+'$').test(url.pathname);
  const liveEvents=new RegExp('^/api/paper/live/'+uuid+'/events$').test(url.pathname);
- const liveStop=new RegExp('^/api/paper/live/'+uuid+'/stop
+ const liveStop=new RegExp('^/api/paper/live/'+uuid+'/stop$').test(url.pathname);
+ const liveAttach=new RegExp('^/api/paper/live/'+uuid+'/strategies$').test(url.pathname);
  const paper=liveList||liveDetail||liveEvents||liveStop||liveAttach||/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
  const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
