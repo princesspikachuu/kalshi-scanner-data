@@ -19,6 +19,11 @@ class StartLive(BaseModel):
     request_key:UUID
 
 
+class AddLiveStrategy(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    strategy_id:UUID
+
+
 def install_live_paper(app,auth,mutate,pool):
     def envelope(**data):return dict(contract='paper-v1',live_trading_enabled=False,live_paper_enabled=True,**data)
     def no_query(request):
@@ -96,12 +101,8 @@ def install_live_paper(app,auth,mutate,pool):
                     ledger.stop(time.time());save(c,row,ledger,time.time())
         return envelope(id=str(identifier),message='New bids stopped. Unfilled bids canceled. Existing positions continue through settlement.')
 
-    class _AddStrategy(BaseModel):
-        model_config=ConfigDict(extra='forbid')
-        strategy_id:UUID
-
     @app.post('/paper/live/{identifier}/strategies')
-    def add_strategy(identifier:UUID,body:_AddStrategy,request:Request):
+    def add_strategy(identifier:UUID,body:AddLiveStrategy,request:Request):
         mutate(request);no_query(request)
         with pool.connection() as c:
             row=session(c,identifier,True)
