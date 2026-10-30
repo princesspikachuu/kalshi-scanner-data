@@ -220,4 +220,10 @@ class Ledger:
 
 
 def public_state(state):
-    return {k:v for k,v in state.items() if k not in ('markets','quotes','attempted','seen_trades','sale_depth')}
+    view={k:v for k,v in state.items() if k not in ('markets','quotes','attempted','seen_trades','sale_depth','orders','positions')}
+    # Internal event keys and ranking fields are not needed by the cards.
+    # Project rows explicitly so worst-case provider identifiers still fit the
+    # gateway's existing 256 KiB response limit at full position capacity.
+    view['orders']=[{k:o[k] for k in ('id','ticker','side','bid','quantity','remaining','expires')} for o in state.get('orders',[])]
+    view['positions']=[{k:p[k] for k in ('id','ticker','side','quantity','cost','stop','bid')} for p in state.get('positions',[])]
+    return view

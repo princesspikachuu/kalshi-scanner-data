@@ -85,6 +85,11 @@ class LiveLedgerTests(unittest.TestCase):
         l=ledger();l.apply([quote()],NOW)
         self.assertNotIn('quotes',public_state(l.s));self.assertNotIn('seen_trades',public_state(l.s))
         self.assertLess(len(json.dumps(public_state(l.s))),10000)
+        s=copy.deepcopy(l.s);order=s['orders'][0];order.update(ticker='x'*256,event='y'*256)
+        s['orders']=[copy.deepcopy(order) for _ in range(100)]
+        s['positions']=[dict(id='live-10000',ticker='x'*256,event='y'*256,side='yes',quantity=100,cost=9900,stop=99,bid=99) for _ in range(200)]
+        s['recent']=[dict(sequence=i,kind='bid',ticker='x'*256,event='y'*256,strategy='😀'*80) for i in range(40)]
+        self.assertLess(len(json.dumps(dict(state=public_state(s),configuration='x'*16384),ensure_ascii=False).encode()),200000)
 
     def test_lifecycle_early_close_cancels_and_does_not_credit_unconfirmed_result(self):
         l=ledger();l.apply([quote()],NOW)
