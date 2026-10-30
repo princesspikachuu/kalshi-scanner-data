@@ -21,6 +21,7 @@ def put_verified(objects,kind,payload):
     except Exception as error:
         if getattr(error,'response',{}).get('ResponseMetadata',{}).get('HTTPStatusCode')!=412:raise
     loaded=read_verified(objects,dict(key=key,sha256=digest,size=len(body)))
+    if loaded!=json.loads(json.dumps(payload,default=str)):raise ValueError('Archive restore validation failed')
     return dict(key=key,sha256=digest,size=len(body),at=time.time())
 
 def read_verified(objects,reference):
@@ -42,7 +43,7 @@ def archive_events(store,objects,policy,pressure):
         rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
             WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
             AND NOT(progress ? 'archive') AND coalesce((progress->>'restored_at')::numeric,0)<extract(epoch from clock_timestamp())-86400 AND created_at<clock_timestamp()-%s*interval '1 day'
-            ORDER BY created_at LIMIT 50""",(7 if pressure else policy['archive_days'],)).fetchall()
+            ORDER BY created_at LIMIT 200""",(7 if pressure else policy['archive_days'],)).fetchall()
     if not rows:return
     reference=put_verified(objects,'events',rows)
     # Verify bytes before replacing event detail with a searchable pointer.
@@ -77,8 +78,7 @@ def backup(store,objects):
     if len(rows)>700:raise ValueError('Backup chunk capacity reached')
     reference=put_verified(objects,'backups',dict(version=1,created_at=time.time(),records=rows))
     # Reading and parsing the written object is a bounded restore validation.
-    restored=read_verified(objects,reference)
-    if len(restored['records'])!=len(rows):raise ValueError('Backup restore verification failed')
+    # put_verified already read, parsed and compared every record.
     store.put('backup-health',dict(at=time.time(),verified=True,reference=reference,records=len(rows),scope='Demo controls and open orders; historical R2 evidence remains intact'))
 
 def emails(store,env,enabled):

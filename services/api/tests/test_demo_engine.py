@@ -123,3 +123,19 @@ class RecoveryPreservesBids(unittest.TestCase):
         order=dict(kind='entry',bot=b['id'],revision=1,ticker='t',side='yes',square=0,remaining=1,filled=0,close=NOW+200,status='resting');worker.orders=[order]
         with patch.object(worker,'cancel') as cancel,patch('services.demo.runtime.time.time',return_value=NOW):
             worker.trade();cancel.assert_called_once()
+
+class ArchiveIntegrity(unittest.TestCase):
+    def test_verified_roundtrip_and_tamper_rejection(self):
+        from services.demo.maintenance import put_verified,read_verified
+        import io
+        class Objects:
+            bucket='private'
+            def __init__(self):self.client=self;self.objects={}
+            def put_object(self,**kw):self.objects[kw['Key']]=kw['Body']
+            def get_object(self,**kw):
+                data=self.objects[kw['Key']];return dict(ContentLength=len(data),Body=io.BytesIO(data))
+        objects=Objects();payload=[dict(id='one',parameters={'kind':'fill'},progress={'details':{'price':65}})]
+        reference=put_verified(objects,'events',payload)
+        self.assertEqual(read_verified(objects,reference),payload)
+        objects.objects[reference['key']]=objects.objects[reference['key']][:-1]+b'X'
+        self.assertRaises(ValueError,read_verified,objects,reference)

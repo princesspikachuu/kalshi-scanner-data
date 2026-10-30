@@ -50,6 +50,8 @@ class Worker:
                 self.bot_revisions[key]=row['parameters']['revision']
                 self.trigger_digest[key]=json.dumps(self.states[key],sort_keys=True)
         self.orders=self.store.active_orders()
+        active={o['client_id'] for o in self.orders}
+        self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
     def save_order(self,order):
         data={k:v for k,v in order.items() if k not in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
         state={k:v for k,v in order.items() if k in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
@@ -154,7 +156,7 @@ class Worker:
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
         rank=lambda item:(item[0] not in pinned,item[1]['close'],item[0])
         kept=[(t,q) for t,q in self.quotes.items() if t in pinned or q['close']>now]
-        self.quotes=dict(sorted(kept,key=rank)[:100]);self.last_discovery=now;self.series_index+=1
+        self.quotes=dict(sorted(kept,key=rank)[:100]);self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.series_index+=1
     def stream(self):
         desired=set(self.quotes)
         if not desired:return
@@ -182,7 +184,10 @@ class Worker:
                 if ticker not in self.quotes:continue
                 old=self.quotes[ticker]
                 if 'yes_bid_dollars' not in raw or 'yes_ask_dollars' not in raw:continue
-                self.quotes[ticker]=dict(old,bid=cents(raw['yes_bid_dollars']),ask=cents(raw['yes_ask_dollars']),at=time.time())
+                observed=number(message.get('sending_ts_ms',raw.get('ts_ms',0)))/1000
+                now=time.time()
+                if not observed or observed>now+5:continue
+                self.quotes[ticker]=dict(old,bid=cents(raw['yes_bid_dollars']),ask=cents(raw['yes_ask_dollars']),at=min(now,observed))
     def close_stream(self):
         if self.socket:
             try:self.socket.close()
@@ -320,18 +325,28 @@ def run(stop):
         with pool.connection() as lock:
             if not lock.execute('SELECT pg_try_advisory_lock(%s) AS locked',(LOCK,)).fetchone()['locked']:return
             lock.commit()
+            # Retain legacy results/checkpoints but stop obsolete queued work so
+            # collection analysis does not keep yielding to an absent replayer.
+            with pool.connection() as c:
+                c.execute("""UPDATE research_job SET status='cancelled',finished_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
+                    WHERE status IN ('queued','running') AND
+                    ((idempotency_key>='paper-replay/' AND idempotency_key<'paper-replay/zzzz')
+                    OR (idempotency_key>='paper-live/' AND idempotency_key<'paper-live/zzzz'))""")
             def guard():
                 if lock.closed:raise RuntimeError('Trading fence lost')
                 result=lock.execute("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND objid=%s) AS owned",(LOCK,)).fetchone()
                 lock.commit()
                 if not result['owned']:raise RuntimeError('Trading fence lost')
             try:
+                next_maintenance=0
                 while not stop.is_set():
                     signer=credentials(store,os.environ)
                     if signer:break
                     store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time()))
                     from .maintenance import maintenance
-                    maintenance(store,os.environ,stop);stop.wait(30)
+                    if time.time()>=next_maintenance:
+                        maintenance(store,os.environ,stop);next_maintenance=time.time()+300
+                    stop.wait(30)
                 if stop.is_set():return
                 exchange=Exchange(signer,guard=guard)
                 try:Worker(store,exchange,stop,guard).loop()
