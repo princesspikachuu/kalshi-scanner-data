@@ -28,6 +28,8 @@ def entry_price(config,quote,side):
     # The maximum is a ceiling, never an instruction to raise a lower bid.
     if config.get('maximum_cents') is not None:price=min(price,config['maximum_cents'])
     price=math.floor(price)
+    # A minimum filters cheap bids; it never raises a bid or overrides its reference.
+    if config.get('minimum_cents') is not None and price<config['minimum_cents']:return None
     return price if 1<=price<ask and price<=99 else None
 
 def quantity(config,price,equity,cash,market_exposure,bot_exposure):

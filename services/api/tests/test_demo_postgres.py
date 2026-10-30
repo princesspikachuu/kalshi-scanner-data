@@ -36,6 +36,18 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=1)).status_code,200)
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/configure',json=body).status_code,200)
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1)).status_code,409)
+    def test_minimum_bid_roundtrip_validation_and_existing_config_default(self):
+        body=config(minimum_cents=60,maximum_cents=96)
+        response=self.client.post('/demo/bots',json=body)
+        self.assertEqual(response.status_code,200,response.text)
+        saved=self.client.get('/demo/workspace').json()['bots'][0]['config']
+        self.assertEqual(saved['minimum_cents'],60);self.assertEqual(saved['maximum_cents'],96)
+        body['minimum_cents']=97
+        self.assertEqual(self.client.post('/demo/bots',json=body).status_code,422)
+        body.pop('minimum_cents')
+        response=self.client.post('/demo/bots',json=body)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertIsNone(self.demo.get('bot/'+response.json()['id'])['parameters']['config']['minimum_cents'])
     def test_activity_pagination_and_filter_includes_archive_summaries(self):
         for i in range(55):self.demo.event('fill','Event '+str(i),bot='00000000-0000-0000-0000-000000000001',ticker='T')
         first=self.client.get('/demo/activity?kind=fill').json();self.assertEqual(len(first['items']),50)

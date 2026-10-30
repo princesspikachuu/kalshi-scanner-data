@@ -27,6 +27,7 @@ class BotConfig(BaseModel):
     price_reference:Literal['bid','ask']='ask'
     adjustment_cents:int=Field(default=-1,ge=-99,le=99)
     maximum_cents:int|None=Field(default=None,ge=1,le=99)
+    minimum_cents:int|None=Field(default=None,ge=1,le=99)
     bid_percent:float=Field(default=1,gt=0,le=100)
     market_percent:float=Field(default=3,gt=0,le=100)
     bot_percent:float=Field(default=10,gt=0,le=100)
@@ -36,6 +37,7 @@ class BotConfig(BaseModel):
     @model_validator(mode='after')
     def limits(self):
         if self.bid_percent>self.market_percent or self.market_percent>self.bot_percent:raise ValueError('Limits must increase from bid to market to bot')
+        if self.minimum_cents is not None and self.maximum_cents is not None and self.minimum_cents>self.maximum_cents:raise ValueError('Minimum bid must not exceed maximum bid')
         if self.loss_mode=='manual' and self.loss_cents is None:raise ValueError('Enter an exit threshold')
         keys=[(s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes) for s in self.squares]
         if len(set(keys))!=len(keys):raise ValueError('Duplicate squares')

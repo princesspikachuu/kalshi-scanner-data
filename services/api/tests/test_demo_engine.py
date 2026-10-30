@@ -38,6 +38,29 @@ class Rules(unittest.TestCase):
         self.assertIsNone(entry_price(config(maximum_cents=96,adjustment_cents=1),quote(),'yes'))
         q=quote();q.update(bid=31,ask=35)
         self.assertEqual(entry_price(config(maximum_cents=96),q,'no'),68)
+    def test_minimum_filters_without_replacing_calculated_bid(self):
+        self.assertEqual(entry_price(config(minimum_cents=60,maximum_cents=96),quote(),'yes'),64)
+        self.assertEqual(entry_price(config(minimum_cents=64,maximum_cents=96),quote(),'yes'),64)
+        self.assertIsNone(entry_price(config(minimum_cents=65,maximum_cents=96),quote(),'yes'))
+        q=quote();q.update(bid=31,ask=35)
+        self.assertEqual(entry_price(config(minimum_cents=60,maximum_cents=96),q,'no'),68)
+        self.assertIsNone(entry_price(config(minimum_cents=69,maximum_cents=96),q,'no'))
+        self.assertEqual(entry_price(config(minimum_cents=None),quote(),'yes'),64)
+        self.assertIsNone(entry_price(config(minimum_cents=60,maximum_cents=96,adjustment_cents=1),quote(),'yes'))
+        self.assertRaises(ValueError,config,minimum_cents=97,maximum_cents=96)
+        self.assertRaises(ValueError,config,minimum_cents=0)
+        self.assertRaises(ValueError,config,minimum_cents=100)
+    def test_minimum_recovery_does_not_require_leaving_qualifying_window(self):
+        b=bot(minimum_cents=64);states={};q=quote();q['ask']=64
+        self.assertEqual(candidates([b],{'t':q},states,NOW),[])
+        q['ask']=65
+        self.assertEqual(candidates([b],{'t':q},states,NOW)[0]['price'],64)
+    def test_below_minimum_diagnostic_names_actual_reason(self):
+        b=bot(minimum_cents=65);worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        worker.bots=[b];worker.quotes={'t':quote()}
+        info=worker.entry_diagnostics(NOW)[b['id']]
+        self.assertEqual(info['minimum_blocked'],1);self.assertIn('below the minimum',info['message'])
+        self.assertEqual(info['maker_blocked'],0)
     def test_submitted_condition_requires_genuine_reentry(self):
         b=bot();states={};q=quote()
         first=candidates([b],{'t':q},states,NOW)[0]

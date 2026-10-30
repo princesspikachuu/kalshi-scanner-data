@@ -39,7 +39,7 @@ class Worker:
         from .engine import entry_price,side_quote
         summary={}
         for bot in self.bots:
-            config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=0
+            config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=0
             market_exposure={};bot_exposure=0;exit_waiting=None
             for entry in self.orders:
                 if entry['kind']!='entry' or entry['bot']!=bot['id'] or not entry.get('exit_triggered') or entry.get('filled',0)<=entry.get('sold',0):continue
@@ -67,7 +67,10 @@ class Worker:
                         if self.states.get(bot['id'],{}).get(f'{ticker}/{index}/{side}',{}).get('submitted'):submitted+=1;continue
                         if not entry_protection_matches(config,square,q,side):stop_blocked+=1;continue
                         price=entry_price(config,q,side)
-                        if price is None:maker+=1;continue
+                        if price is None:
+                            if config.get('minimum_cents') is not None and entry_price(dict(config,minimum_cents=None),q,side) is not None:minimum+=1
+                            else:maker+=1
+                            continue
                         if quantity(config,price,self.account.get('equity_cents',0),self.account.get('cash_cents',0),market_exposure.get(ticker,0),bot_exposure)<1:budget+=1
             if exit_waiting:message=exit_waiting
             elif bot['desired']!='running':message='New entries paused'
@@ -77,10 +80,11 @@ class Worker:
             elif blocked==matched:message='Matching markets need ownership reconciliation'
             elif submitted==matched:message='Matching conditions already attempted; waiting for a new qualifying cycle'
             elif stop_blocked==matched:message='Entry skipped: current ASK is already at or below the protective exit trigger'
+            elif minimum==matched:message='Matching conditions found; calculated bids are below the minimum bid'
             elif maker==matched:message='Matching conditions found; entry price would cross the ask'
             elif budget==matched:message='Matching conditions found; spending limits cannot fund one contract'
             else:message=f'{matched} matching conditions across {fresh} fresh Demo markets'
-            summary[bot['id']]=dict(message=message,markets=available,fresh=fresh,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,exit_waiting=bool(exit_waiting))
+            summary[bot['id']]=dict(message=message,markets=available,fresh=fresh,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,minimum_blocked=minimum,exit_waiting=bool(exit_waiting))
         return summary
     def health(self,state,message):
         now=time.time()
@@ -112,7 +116,7 @@ class Worker:
                 config=row['parameters']['config']
                 print(json.dumps(dict(event='demo_entry_policy',categories=sorted({s['asset'] for s in config['squares']}),
                     qualification=config['qualification'],price_reference=config['price_reference'],
-                    adjustment_cents=config['adjustment_cents'],maximum_cents=config.get('maximum_cents'))),flush=True)
+                    adjustment_cents=config['adjustment_cents'],maximum_cents=config.get('maximum_cents'),minimum_cents=config.get('minimum_cents'))),flush=True)
         self.orders=self.store.active_orders()
         active={o['client_id'] for o in self.orders}
         self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
