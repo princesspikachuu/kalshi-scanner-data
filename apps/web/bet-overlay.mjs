@@ -33,10 +33,13 @@ export function openBetOverlay(selections){
     name:$('betName').value.trim(),bid_reference:$('betReference').value,bid_adjustment_cents:Number($('betAdjustment').value),maximum_bid_cents:$('betMaximum').value===''?null:Number($('betMaximum').value),
     contracts:Number($('betContracts').value),balance_percent:Number($('betPercent').value),starting_cash_cents:10000,
     loss_trigger_cents:$('betStopEnabled').checked?Number($('betStop').value):null};
-   const results=await Promise.allSettled(selections.map(item=>paperCall('strategies',squareStrategy(item.report,item.cell,item.minutes,item.band,{
-     ...settings,name:selections.length===1?settings.name:`${settings.name} · ${item.band}¢ / ${item.minutes} min`}))));
-   const failed=results.filter(r=>r.status==='rejected');
-   $('betMessage').textContent=failed.length?`${results.length-failed.length} of ${results.length} saved. ${failed[0].reason?.message||'Check failed selections and retry.'}`:`Saved ${results.length} strategies. Open Paper trading to replay them together using one shared balance.`;
+   const rules=selections.map(item=>squareStrategy(item.report,item.cell,item.minutes,item.band,{}));
+   if(new Set(rules.map(r=>r.asset)).size!==1)throw Error('Choose squares from one category per strategy.');
+   const first=rules[0];
+   await paperCall('strategies',{...settings,...first,name:settings.name,minutes:[first.entry_minute_max],
+      rules:rules.map(r=>({report_id:r.report_id,entry_minute_min:r.entry_minute_min,
+        entry_minute_max:r.entry_minute_max,min_price:r.min_price,max_price:r.max_price}))});
+   $('betMessage').textContent='Saved one strategy with '+rules.length+' selected square(s). It is available for both live paper and historical replays.';
   }catch(error){$('betMessage').textContent=error.message}finally{button.disabled=false}
  };
  preview();dialog.showModal();
