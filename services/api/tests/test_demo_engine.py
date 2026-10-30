@@ -207,6 +207,22 @@ class CategoryRouting(unittest.TestCase):
                 intent=dict(options[0],kind='entry',client_id='test',quantity=1,close=q['close'],exchange_index=q['exchange_index'])
                 self.assertEqual(wire_order(intent)['exchange_index'],index)
                 self.assertTrue(wire_order(intent)['post_only'])
+    def test_rest_discovery_cannot_replace_stream_prices_or_borrow_their_freshness(self):
+        raw=dict(ticker='t',yes_bid_dollars='0.0100',yes_ask_dollars='0.0200',close_time=NOW+300,exchange_index=2)
+        class Ex:
+            def call(self,*args,**kw):return {'markets':[raw]}
+        for age in (1,30):
+            worker=Worker(FakeStore(),Ex(),threading.Event(),lambda:None)
+            worker.bots=[bot()];worker.quotes={'t':dict(quote(),at=NOW-age)}
+            with patch('services.demo.runtime.time.time',return_value=NOW):worker.discover()
+            self.assertEqual((worker.quotes['t']['bid'],worker.quotes['t']['ask'],worker.quotes['t']['at']),(60,65,NOW-age))
+            self.assertEqual(worker.quotes['t']['close'],NOW+300)
+            self.assertEqual(worker.quotes['t']['exchange_index'],2)
+        worker.quotes={}
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.discover()
+        self.assertEqual(worker.quotes['t']['at'],0)
+        self.assertEqual(candidates(worker.bots,worker.quotes,{},NOW),[])
+
     def test_every_configured_series_is_scanned_while_existing_positions_are_refreshed(self):
         from services.research.reports import SERIES
         class Ex:

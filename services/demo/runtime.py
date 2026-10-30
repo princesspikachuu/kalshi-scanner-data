@@ -108,6 +108,10 @@ class Worker:
                 self.states[key]=prior['progress'] if prior and prior['parameters'].get('revision')==row['parameters']['revision'] else {}
                 self.bot_revisions[key]=row['parameters']['revision']
                 self.trigger_digest[key]=json.dumps(self.states[key],sort_keys=True)
+                config=row['parameters']['config']
+                print(json.dumps(dict(event='demo_entry_policy',categories=sorted({s['asset'] for s in config['squares']}),
+                    qualification=config['qualification'],price_reference=config['price_reference'],
+                    adjustment_cents=config['adjustment_cents'],maximum_cents=config.get('maximum_cents'))),flush=True)
         self.orders=self.store.active_orders()
         active={o['client_id'] for o in self.orders}
         self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
@@ -242,7 +246,13 @@ class Worker:
             if parsed:
                 ticker,q=parsed
                 # REST discovery does not qualify a new trade; wait for stream verification.
-                q['at']=self.quotes.get(ticker,{}).get('at',0)
+                old=self.quotes.get(ticker)
+                if old:
+                    # Price and observation time are one piece of evidence. REST
+                    # metadata must not replace a verified stream price while
+                    # inheriting its timestamp (including stale stream quotes).
+                    q.update(bid=old['bid'],ask=old['ask'],at=old['at'])
+                else:q['at']=0
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
         rank=lambda item:(item[0] not in pinned,item[1]['close'],item[0])
         kept=[(t,q) for t,q in self.quotes.items() if t in pinned or q['close']>now]
@@ -301,7 +311,7 @@ class Worker:
             result=self.exchange.submit(intent)
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted maker-only '+intent['kind'])
-            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'])),flush=True)
+            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
