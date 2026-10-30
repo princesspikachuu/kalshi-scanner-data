@@ -54,3 +54,23 @@ Recovered decisions and production source. Isolated worktree build/demo-redesign
 
 ## Integration findings
 Actual PostgreSQL caught two defects before deployment: locale-dependent Unicode key range excluded bot rows, and activity serialization supplied duplicate keyword names. Fixed with the existing ASCII namespace bounds and explicit dictionary merging. All original database tests otherwise passed in the initial CI run.
+
+## Deployed — October 29, 2026, 11:22 p.m. Pacific
+- PR #56 merged to build/google-auth-foundation as c1c722d5bb452c7a8c3ebe0609a8e6df3c647a69.
+- Final functional source aa54cb254fcac95f0d6ce0b6008449bc4458354f passed CI 41012543500: 428 Python cases including actual PostgreSQL, 47 browser/gateway cases, Blueprint validation.
+- Follow-up operational-only receipt logging 4ab37471701f39f5dddaf04fcd1e2036a5687ef2 passed the 18 targeted engine/integrity tests.
+- API live dep-dbi3ckn0bdec73dqd7d0 at 06:20:19Z; collector live dep-dbi3cmijnfac73cn1n0g; Demo worker live dep-dbi3efei0phs73cod6j0 at 06:21:35Z.
+- Demo worker emitted demo_worker_ready (3 max DB connections, 100 watch limit), then demo_connection_required / trading_active=false. No Demo key or first exchange order has been verified.
+- API/worker secret configuration merged with existing env; vault key generated privately and shared only with these two services. API DEMO_ENGINE_ENABLED=true; processing WORKER_ROLE=demo.
+- Cloudflare gateway successfully uploaded and deployed version 4aef58b0-9ec5-4789-a08f-0fc258534804. Public Python/GitHub-runner HTTP checks received Cloudflare error 1010; do not remove protections or claim these checks passed. A normal live browser reached the new Money Tree sign-in page and loaded the Google sign-in button.
+- Hosted pre-deploy audits verified all nine migrations, all twelve protected history tables, history_mutation=false and owns_history=false. Git diff confirms migrations/data/backtests untouched.
+- Environment-update tool started deploys automatically; subsequently triggered API/processor deploys queued the same revision. Both queues drained successfully; no further deploys are needed.
+
+## Remaining account-dependent setup / verification
+1. User connects separate Kalshi Demo API key in Bots > Connect account. Validate first order, exchange IDs, partial fills, exit and recovery against that account before calling actual trading verified.
+2. Critical-email SMTP connection is not configured. In-app alerts and email-readiness indicators are implemented; no email delivery has been verified.
+3. Hosted Postgres storage autoscaling is still false (5GB). Blueprint requests true, but MCP cannot update that field and browser sign-in is needed. Full provider backup/restore policy is not verified. Do not conflate verified-in-code Demo-control backups with full PostgreSQL backups.
+4. Signed-in UI review and live control-backup receipt inspection remain pending an owner session. Backend service readiness and runtime namespace/schema tests passed.
+5. Existing immutable historical data is preserved. New legacy replays/simulated-live starts are disabled; historical replay results remain readable.
+
+No permission questions were raised. User directed skipping assistance-dependent work; continue independently when access becomes available.
