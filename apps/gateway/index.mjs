@@ -85,7 +85,188 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const liveList=url.pathname==='/api/paper/live';
  const liveDetail=new RegExp('^/api/paper/live/'+uuid+'$').test(url.pathname);
  const liveEvents=new RegExp('^/api/paper/live/'+uuid+'/events$').test(url.pathname);
- const liveStop=new RegExp('^/api/paper/live/'+uuid+'/stop$').test(url.pathname);
+ const liveStop=new RegExp('^/api/paper/live/'+uuid+'/stop
+ const paper=liveList||liveDetail||liveEvents||liveStop||liveAttach||/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
+ const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
+  new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
+  new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
+ const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
+ const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ if(!method)return problem(404,'Not found');
+ if(paper&&url.search){const entries=[...url.searchParams];if(!liveEvents||entries.length!==1||entries[0][0]!=='before'||!/^\d{1,12}$/.test(entries[0][1]))return problem(422,'Invalid request')}
+ if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
+ if(collection){
+  const entries=[...url.searchParams];
+  if(campaignList){
+   if(url.search.length>180||new Set(entries.map(([k])=>k)).size!==entries.length||
+      entries.some(([k])=>!['asset','before','limit','group'].includes(k))||
+      (url.searchParams.has('group')&&!['unfinished','finished'].includes(url.searchParams.get('group')))||
+      !new RegExp('^(?:'+category+'|all)$').test(url.searchParams.get('asset')||'')||
+      (url.searchParams.has('before')&&!new RegExp('^'+uuid+'$').test(url.searchParams.get('before')))||
+      (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit'))))return problem(400,'Invalid collection query');
+  }else if(url.search.length>64||entries.length>(campaignGet?1:0)||entries.some(([k,v])=>k!=='after'||!/^\d{4}-\d{2}-\d{2}$/.test(v)))return problem(400,'Invalid collection query');
+ }else if(research){
+  const detail=/\/results\/[1-9][0-9]*$/.test(url.pathname);
+  const allowed=new Set(detail?['stream','view']:['stream','cursor','limit']);
+  const params=[...url.searchParams];
+  if(url.search.length>2048||params.some(([k])=>!allowed.has(k))||new Set(params.map(([k])=>k)).size!==params.length||
+     !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(url.searchParams.get('stream')||'')||
+     (detail&&!['historical','latest'].includes(url.searchParams.get('view')))||
+     (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit')))||
+     (url.searchParams.has('cursor')&&!/^[A-Za-z0-9_-]{1,1024}$/.test(url.searchParams.get('cursor'))))return problem(400,'Invalid research query');
+ }else if(url.search&&!liveEvents)return problem(400,'Query parameters are not accepted');
+ const app=origin(env.APP_ORIGIN),api=origin(env.API_ORIGIN);
+ if(!app||!api||app===api||typeof env.API_PROXY_SECRET!=='string'||env.API_PROXY_SECRET.length<32)return problem(503,'Sign-in connection is not configured');
+ if(url.origin!==app||request.headers.get('sec-fetch-site')==='cross-site')return problem(403,'Request rejected');
+ const supplied=request.headers.get('origin');
+ if((method==='POST'&&supplied!==app)||(supplied!==null&&supplied!==app))return problem(403,'Request rejected');
+ const headers=new Headers({'accept':'application/json','x-pocket-proxy':env.API_PROXY_SECRET});
+ for(const name of ['origin','content-type','x-csrf-token','sec-fetch-site']){
+  const value=request.headers.get(name);if(value!==null)headers.set(name,value);
+ }
+ const filtered=cookies(request.headers.get('cookie'));if(filtered)headers.set('cookie',filtered);
+ let body;
+ if(method==='POST'){
+  if(!/^application\/json(?:\s*;|$)/i.test(headers.get('content-type')||''))return problem(415,'JSON required');
+  if(Number(request.headers.get('content-length'))>20480)return problem(413,'Request too large');
+  try{body=await boundedBody(request.body,20480)}catch{return problem(413,'Request too large')}
+ }
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{
+  const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
+  if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');
+  const outgoing=new Headers(BASE_HEADERS);
+  const setCookies=(research||collection||paper)?[]:responseCookies(upstream.headers);
+  let response;
+  if(!upstream.ok){
+   const messages={400:'Invalid request',401:'Sign in required',403:'Request rejected',413:'Request too large',415:'JSON required',422:'Invalid sign-in request',429:'Too many requests. Try again shortly.',503:'Sign-in connection unavailable'};
+   if(research||collection||paper){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
+   const status=Object.hasOwn(messages,upstream.status)?upstream.status:502;
+   response=problem(status,messages[status]||'Sign-in connection unavailable');
+   if(status===429)response.headers.set('retry-after','60');
+   await upstream.body?.cancel();
+  }else if(url.pathname==='/api/auth/logout'&&upstream.status===204){
+   response=new Response(null,{status:204,headers:outgoing});
+  }else{
+   if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
+   if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,(research||collection||paper)?262144:32768));
+   response=new Response(JSON.stringify(paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+  }
+  for(const value of setCookies)response.headers.append('set-cookie',value);
+  return response;
+ }catch{return problem(controller.signal.aborted?504:502,'Sign-in connection unavailable')}
+ finally{clearTimeout(timer)}
+}
+export default {
+ async fetch(request,env){
+  const url=new URL(request.url);
+  if(url.pathname.startsWith('/api/'))return proxyAuth(request,env);
+  if(!STATIC.has(url.pathname)||!['GET','HEAD'].includes(request.method))return problem(404,'Not found');
+  const app=origin(env.APP_ORIGIN);if(app&&url.origin!==app)return problem(403,'Request rejected');
+  if(!env.ASSETS)return problem(503,'Preview assets unavailable');
+  const asset=await env.ASSETS.fetch(request);
+  const response=new Response(asset.body,asset);
+  for(const [name,value] of Object.entries(BASE_HEADERS))response.headers.set(name,value);
+  response.headers.set('content-security-policy',"default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; connect-src 'self' https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+  response.headers.set('cross-origin-opener-policy','same-origin-allow-popups');
+  response.headers.set('x-frame-options','DENY');
+  response.headers.set('permissions-policy','camera=(), microphone=(), geolocation=()');
+  return response;
+ }
+};
+).test(url.pathname);
+ const liveAttach=new RegExp('^/api/paper/live/'+uuid+'/strategies
+ const paper=liveList||liveDetail||liveEvents||liveStop||/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
+ const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
+  new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
+  new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
+ const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
+ const method=collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ if(!method)return problem(404,'Not found');
+ if(paper&&url.search){const entries=[...url.searchParams];if(!liveEvents||entries.length!==1||entries[0][0]!=='before'||!/^\d{1,12}$/.test(entries[0][1]))return problem(422,'Invalid request')}
+ if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
+ if(collection){
+  const entries=[...url.searchParams];
+  if(campaignList){
+   if(url.search.length>180||new Set(entries.map(([k])=>k)).size!==entries.length||
+      entries.some(([k])=>!['asset','before','limit','group'].includes(k))||
+      (url.searchParams.has('group')&&!['unfinished','finished'].includes(url.searchParams.get('group')))||
+      !new RegExp('^(?:'+category+'|all)$').test(url.searchParams.get('asset')||'')||
+      (url.searchParams.has('before')&&!new RegExp('^'+uuid+'$').test(url.searchParams.get('before')))||
+      (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit'))))return problem(400,'Invalid collection query');
+  }else if(url.search.length>64||entries.length>(campaignGet?1:0)||entries.some(([k,v])=>k!=='after'||!/^\d{4}-\d{2}-\d{2}$/.test(v)))return problem(400,'Invalid collection query');
+ }else if(research){
+  const detail=/\/results\/[1-9][0-9]*$/.test(url.pathname);
+  const allowed=new Set(detail?['stream','view']:['stream','cursor','limit']);
+  const params=[...url.searchParams];
+  if(url.search.length>2048||params.some(([k])=>!allowed.has(k))||new Set(params.map(([k])=>k)).size!==params.length||
+     !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(url.searchParams.get('stream')||'')||
+     (detail&&!['historical','latest'].includes(url.searchParams.get('view')))||
+     (url.searchParams.has('limit')&&!/^(?:[1-9]|[1-4][0-9]|50)$/.test(url.searchParams.get('limit')))||
+     (url.searchParams.has('cursor')&&!/^[A-Za-z0-9_-]{1,1024}$/.test(url.searchParams.get('cursor'))))return problem(400,'Invalid research query');
+ }else if(url.search&&!liveEvents)return problem(400,'Query parameters are not accepted');
+ const app=origin(env.APP_ORIGIN),api=origin(env.API_ORIGIN);
+ if(!app||!api||app===api||typeof env.API_PROXY_SECRET!=='string'||env.API_PROXY_SECRET.length<32)return problem(503,'Sign-in connection is not configured');
+ if(url.origin!==app||request.headers.get('sec-fetch-site')==='cross-site')return problem(403,'Request rejected');
+ const supplied=request.headers.get('origin');
+ if((method==='POST'&&supplied!==app)||(supplied!==null&&supplied!==app))return problem(403,'Request rejected');
+ const headers=new Headers({'accept':'application/json','x-pocket-proxy':env.API_PROXY_SECRET});
+ for(const name of ['origin','content-type','x-csrf-token','sec-fetch-site']){
+  const value=request.headers.get(name);if(value!==null)headers.set(name,value);
+ }
+ const filtered=cookies(request.headers.get('cookie'));if(filtered)headers.set('cookie',filtered);
+ let body;
+ if(method==='POST'){
+  if(!/^application\/json(?:\s*;|$)/i.test(headers.get('content-type')||''))return problem(415,'JSON required');
+  if(Number(request.headers.get('content-length'))>20480)return problem(413,'Request too large');
+  try{body=await boundedBody(request.body,20480)}catch{return problem(413,'Request too large')}
+ }
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{
+  const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
+  if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');
+  const outgoing=new Headers(BASE_HEADERS);
+  const setCookies=(research||collection||paper)?[]:responseCookies(upstream.headers);
+  let response;
+  if(!upstream.ok){
+   const messages={400:'Invalid request',401:'Sign in required',403:'Request rejected',413:'Request too large',415:'JSON required',422:'Invalid sign-in request',429:'Too many requests. Try again shortly.',503:'Sign-in connection unavailable'};
+   if(research||collection||paper){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
+   const status=Object.hasOwn(messages,upstream.status)?upstream.status:502;
+   response=problem(status,messages[status]||'Sign-in connection unavailable');
+   if(status===429)response.headers.set('retry-after','60');
+   await upstream.body?.cancel();
+  }else if(url.pathname==='/api/auth/logout'&&upstream.status===204){
+   response=new Response(null,{status:204,headers:outgoing});
+  }else{
+   if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
+   if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,(research||collection||paper)?262144:32768));
+   response=new Response(JSON.stringify(paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+  }
+  for(const value of setCookies)response.headers.append('set-cookie',value);
+  return response;
+ }catch{return problem(controller.signal.aborted?504:502,'Sign-in connection unavailable')}
+ finally{clearTimeout(timer)}
+}
+export default {
+ async fetch(request,env){
+  const url=new URL(request.url);
+  if(url.pathname.startsWith('/api/'))return proxyAuth(request,env);
+  if(!STATIC.has(url.pathname)||!['GET','HEAD'].includes(request.method))return problem(404,'Not found');
+  const app=origin(env.APP_ORIGIN);if(app&&url.origin!==app)return problem(403,'Request rejected');
+  if(!env.ASSETS)return problem(503,'Preview assets unavailable');
+  const asset=await env.ASSETS.fetch(request);
+  const response=new Response(asset.body,asset);
+  for(const [name,value] of Object.entries(BASE_HEADERS))response.headers.set(name,value);
+  response.headers.set('content-security-policy',"default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; connect-src 'self' https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+  response.headers.set('cross-origin-opener-policy','same-origin-allow-popups');
+  response.headers.set('x-frame-options','DENY');
+  response.headers.set('permissions-policy','camera=(), microphone=(), geolocation=()');
+  return response;
+ }
+};
+).test(url.pathname);
  const paper=liveList||liveDetail||liveEvents||liveStop||/^\/api\/paper\/(?:workspace|strategies|replays)$/.test(url.pathname)||paperDetail||new RegExp('^/api/paper/replays/'+uuid+'/cancel$').test(url.pathname);
  const collection=workerStatus||analysisStatus||url.pathname==='/api/collection/campaigns'||campaignGet||
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
