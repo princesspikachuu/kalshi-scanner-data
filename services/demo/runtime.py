@@ -339,8 +339,18 @@ def run(stop):
         # Session advisory lock is held for the process lifetime; verify the same
         # connection before every write. DB loss aborts before any new order.
         with pool.connection() as lock:
-            if not lock.execute('SELECT pg_try_advisory_lock(%s) AS locked',(LOCK,)).fetchone()['locked']:return
-            lock.commit()
+            notice_at=0
+            while True:
+                acquired=lock.execute('SELECT pg_try_advisory_lock(%s) AS locked',(LOCK,)).fetchone()['locked']
+                lock.commit()
+                if acquired:break
+                if time.time()>=notice_at:
+                    latest=store.get('health')
+                    bots=store.rows('bot/',100)
+                    print(json.dumps(dict(event='demo_lock_wait',health=latest['progress'] if latest else None,
+                        running=sum(r['progress'].get('desired')=='running' for r in bots),bots=len(bots))),flush=True)
+                    notice_at=time.time()+60
+                if stop.wait(5):return
             print(json.dumps(dict(event='demo_worker_ready',environment='demo',max_connections=3,watch_limit=100)),flush=True)
             # Retain legacy results/checkpoints but stop obsolete queued work so
             # collection analysis does not keep yielding to an absent replayer.
