@@ -516,6 +516,9 @@ class Worker:
                         if self.socket:self.close_stream()
                         self.reset_controller.step(self.reset_row)
                         self.health('resetting',self.reset_row['progress']['message'])
+                        if now>=maintenance_at:
+                            from .maintenance import maintenance
+                            maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                         self.stop.wait(.5);continue
                     self.stage="discovery"
                     if now-self.last_discovery>=5:self.discover()

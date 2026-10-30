@@ -40,13 +40,22 @@ def request_reset(store,request):
     store.event('reset_requested','Demo cleanup requested: cancel all open orders and close primary-account holdings; bot history retained')
     return dict(params,**state)
 
-def reset_payload(ticker,position,client_id):
+def reset_payload(ticker,position,client_id,market=None):
     size=Decimal(str(position))
     if not size.is_finite() or not size or size!=size.quantize(Decimal('.01')):raise ValueError('Invalid reset quantity')
-    # Sell held YES at >=1c, or buy YES at <=99c to close held NO.
+    low,high=Decimal('.01'),Decimal('.99')
+    ranges=(market or {}).get('price_ranges') or []
+    if len(ranges)>20:raise ValueError('Invalid reset price ranges')
+    for band in ranges:
+        start,end,step=(Decimal(str(band[k])) for k in ('start','end','step'))
+        if not all(v.is_finite() for v in (start,end,step)) or not 0<step<=1:raise ValueError('Invalid reset tick')
+        if start==0:low=step
+        if end==1:high=1-step
+    if not 0<low<=high<1:raise ValueError('Invalid reset price bounds')
+    # Use valid extreme ticks so sub-cent liquidity can also close a remainder.
     # Reduce-only prevents opening/reversing exposure even if positions change.
     return dict(ticker=ticker,client_order_id=client_id,side='ask' if size>0 else 'bid',
-        count=f'{abs(size):.2f}',price='0.0100' if size>0 else '0.9900',
+        count=f'{abs(size):.2f}',price=f'{low if size>0 else high:.4f}',
         time_in_force='immediate_or_cancel',post_only=False,reduce_only=True,
         self_trade_prevention_type='taker_at_cross',subaccount=0,exchange_index=-1)
 
@@ -76,7 +85,7 @@ class ResetController:
     def __init__(self,store,exchange):self.store,self.exchange=store,exchange;self.next_check=0;self.last_logged=None
     def save(self,row,**changes):
         row['progress'].update(changes,at=time.time());self.store.put('reset',row['progress'])
-        summary={k:row['progress'].get(k) for k in ('state','message','open_orders','held_markets','cash_cents','deposit_needed_cents','cloned')}
+        summary={k:row['progress'].get(k) for k in ('state','message','open_orders','held_markets','cash_cents','deposit_needed_cents','cloned','market','market_status','close_time')}
         summary['target_balance_cents']=row['parameters']['target_balance_cents']
         summary['fresh_bots']=len(row['parameters']['sources']) if row['progress'].get('cloned') and row['parameters']['fresh_bots'] else 0
         packed=json.dumps(summary,sort_keys=True)
@@ -103,7 +112,7 @@ class ResetController:
                 self.save(row,state='attention',message='The cleanup sale is not yet terminal; waiting for exchange verification')
                 self.next_check=now+30;return
             self.store.event('reset_sale_verified','Exchange verified a reset-only reduce-only sale',ticker=pending['ticker'],details=dict(exchange_id=order['order_id'],filled=order.get('fill_count_fp',order.get('fill_count')),status=order['status']))
-            self.save(row,pending=None,state='verifying',message='Verifying remaining holdings after the cleanup sale' if Decimal(str(order.get('fill_count_fp',order.get('fill_count',0)))) else 'No contracts filled; waiting for available Demo liquidity before another attempt')
+            self.save(row,pending=None,scan_index=s.get('scan_index',0)+1,state='verifying',message='Verifying remaining holdings after the cleanup sale' if Decimal(str(order.get('fill_count_fp',order.get('fill_count',0)))) else 'No contracts filled; waiting for available Demo liquidity before another attempt')
             self.next_check=now+(5 if Decimal(str(order.get('fill_count_fp',order.get('fill_count',0)))) else 30);return
         orders=list(self.exchange.pages('/portfolio/orders','orders',status='resting',subaccount=0))
         positions=list(self.exchange.pages('/portfolio/positions','market_positions',count_filter='position',subaccount=0))
@@ -123,10 +132,10 @@ class ResetController:
             ticker,position=holdings[s.get('scan_index',0)%len(holdings)]
             result=self.exchange.call('GET','/markets/'+ticker);market=result.get('market',result)
             if market.get('status')!='active':
-                self.save(row,state='waiting',message='A held market is closed and cannot be sold; waiting for exchange settlement',market=ticker,scan_index=s.get('scan_index',0)+1)
+                self.save(row,state='waiting',message='A held market is closed and cannot be sold; waiting for exchange settlement',market=ticker,market_status=market.get('status'),close_time=market.get('close_time'),scan_index=s.get('scan_index',0)+1)
                 self.next_check=now+30;return
             attempt=s.get('attempt',0)+1;client_id=str(uuid5(NAMESPACE_URL,'demo-reset-sale/'+p['request_id']+'/'+str(attempt)))
-            body=reset_payload(ticker,position,client_id)
+            body=reset_payload(ticker,position,client_id,market)
             pending=dict(client_id=client_id,ticker=ticker,body=body,created_at=now)
             # The intent is durable before the one POST. Lost responses are
             # searched by this ID and never blindly replayed.
@@ -146,7 +155,7 @@ class ResetController:
             return
         if not s.get('cloned'):
             archive_and_clone(self.store,p)
-            self.save(row,cloned=True,market_cleared_at=now)
+            self.save(row,cloned=True,market=None,market_status=None,close_time=None,market_cleared_at=now)
             self.store.event('reset_markets_cleared','Verified zero open orders and positions; old bots archived and fresh paused copies prepared')
         if p['target_balance_cents'] is None or account['cash_cents']==p['target_balance_cents']:
             self.save(row,state='complete',message='Demo reset complete. Zero open orders and positions; target balance verified. Fresh bots are paused.',completed_at=now)

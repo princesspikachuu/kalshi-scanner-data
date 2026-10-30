@@ -34,9 +34,9 @@ def install_demo(app,auth,mutate,pool):
                 square['loss_cents']=loss.get('sell_threshold_cents') or loss.get('threshold_cents')
                 if config['loss_mode']=='research' and not square['loss_cents']:raise HTTPException(422,'This square has no verified exit recommendation; choose manual or off')
         return config
-    def reset_blocks_resume():
+    def reset_blocks_resume(c):
         from services.demo.reset import ACTIVE
-        row=store.get('reset')
+        row=c.execute("SELECT progress FROM research_job WHERE idempotency_key='demo/reset'").fetchone()
         if row and row['progress'].get('state') in ACTIVE:raise HTTPException(409,'Finish the Demo reset and verify funding before resuming bots')
     from services.demo.reset import ResetRequest,request_reset,ResetConflict
     @app.post('/demo/reset')
@@ -106,7 +106,7 @@ def install_demo(app,auth,mutate,pool):
         mutate(request);require_query(request)
         with pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
-            if body.action=='resume':reset_blocks_resume()
+            if body.action=='resume':reset_blocks_resume(c)
             row=c.execute('SELECT parameters,progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/bot/'+str(identifier),)).fetchone()
             if not row:raise HTTPException(404,'Bot not found')
             if row['parameters']['revision']!=body.revision:raise HTTPException(409,'Bot changed; refresh before retrying')
@@ -133,7 +133,7 @@ def install_demo(app,auth,mutate,pool):
         from psycopg.types.json import Jsonb
         with pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
-            if body.action=='resume':reset_blocks_resume()
+            if body.action=='resume':reset_blocks_resume(c)
             rows=c.execute('SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) FOR UPDATE',(keys,)).fetchall()
             if len(rows)!=len(keys) or any(r['parameters']['revision']!=expected[r['idempotency_key'].split('/')[-1]] for r in rows):raise HTTPException(409,'Bots changed; refresh before retrying')
             for row in rows:

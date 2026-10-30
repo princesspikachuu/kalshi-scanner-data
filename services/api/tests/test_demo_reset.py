@@ -36,6 +36,16 @@ class Reset(unittest.TestCase):
         self.assertTrue(normal['post_only']);self.assertNotIn('reduce_only',normal)
         self.assertRaises(ValueError,reset_payload,'T',0,'x')
         self.assertRaises(ValueError,reset_payload,'T','NaN','x')
+    def test_reset_uses_valid_subcent_extremes_without_changing_normal_orders(self):
+        market=dict(price_ranges=[dict(start='0',end='0.10',step='0.001'),dict(start='0.90',end='1',step='0.001')])
+        self.assertEqual(reset_payload('T',3,'c',market)['price'],'0.0010')
+        self.assertEqual(reset_payload('T',-3,'c',market)['price'],'0.9990')
+    def test_unfilled_remainder_does_not_starve_other_holdings(self):
+        store=Store();ex=Exchange();ex.positions=[dict(ticker='A',position_fp='3.00'),dict(ticker='B',position_fp='2.00')]
+        c=ResetController(store,ex);r=row();c.step(r)
+        ex.remote=dict(order_id='sale',status='canceled',fill_count_fp='0.00');c.next_check=0;c.step(r)
+        c.next_check=0;c.step(r)
+        self.assertEqual([p['ticker'] for p in ex.submitted],['A','B'])
     def test_all_resting_orders_canceled_before_any_sale(self):
         store=Store();ex=Exchange();ex.orders=[dict(order_id='manual',ticker='T')];ex.positions=[dict(ticker='T',position_fp='3.00')]
         c=ResetController(store,ex);r=row();c.step(r)
