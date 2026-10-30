@@ -28,6 +28,8 @@ projects:
                 value: api
               - key: REQUIRE_API_RUNTIME_DB
                 value: 'true'
+              - key: DEMO_VAULT_KEY
+                sync: false
               - key: API_PROXY_SECRET
                 generateValue: true
               - key: APP_ORIGIN
@@ -74,5 +76,5 @@ projects:
             region: oregon
             postgresMajorVersion: '17'
             diskSizeGB: 5
-            storageAutoscalingEnabled: false
+            storageAutoscalingEnabled: true
             ipAllowList: []

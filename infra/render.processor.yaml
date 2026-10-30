@@ -1,4 +1,4 @@
-# Additive worker only; existing services are not managed by this Blueprint.
+# Existing processor repurposed for isolated Kalshi Demo execution.
 previews:
   generation: 'off'
 services:
@@ -26,7 +26,9 @@ services:
   - key: RUNTIME_DB_PROFILE
     value: research
   - key: WORKER_ROLE
-    value: processor
+    value: demo
+  - key: DEMO_VAULT_KEY
+    sync: false
   - key: COLLECTION_ENABLED
     value: 'true'
   - key: KALSHI_READ_RATE
