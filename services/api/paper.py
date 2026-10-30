@@ -4,14 +4,25 @@ from datetime import date,timedelta
 from fastapi import Request,HTTPException
 from pydantic import BaseModel,ConfigDict,Field
 from typing import Literal
+from services.paper.rules import entry_rules
 from psycopg.types.json import Jsonb
 from services.research.reports import MINUTES,SERIES
+
+
+class SquareRule(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    report_id:int=Field(ge=1)
+    entry_minute_min:int=Field(ge=0,le=359)
+    entry_minute_max:int=Field(ge=1,le=360)
+    min_price:int=Field(ge=50,le=99)
+    max_price:int=Field(ge=50,le=99)
 
 
 class Strategy(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     name:str=Field(min_length=1,max_length=80)
     asset:str
+    rules:list[SquareRule]|None=Field(default=None,max_length=30)
     minutes:list[int]=Field(min_length=1,max_length=20)
     min_price:int=Field(ge=50,le=99)
     max_price:int=Field(ge=50,le=99)
@@ -117,17 +128,37 @@ def install_paper(app,auth,mutate,pool):
             raise HTTPException(422,'Best-bid adjustment is required')
         identifier=uuid4();snapshot=body.model_dump()
         if body.bid_offset is None:
-            if body.report_id is None or body.entry_minute_max not in body.minutes or body.minutes!=[body.entry_minute_max]:raise HTTPException(422,'Select a saved statistics square')
+            rules=body.rules or [SquareRule(report_id=body.report_id,entry_minute_min=body.entry_minute_min,
+                entry_minute_max=body.entry_minute_max,min_price=body.min_price,max_price=body.max_price)]
+            if not rules or len({(r.report_id,r.entry_minute_min,r.entry_minute_max,r.min_price,r.max_price) for r in rules})!=len(rules):
+                raise HTTPException(422,'Duplicate or missing squares')
+            if any(r.min_price>r.max_price or r.entry_minute_max not in MINUTES[body.asset] or
+                   r.entry_minute_min!=max((m for m in MINUTES[body.asset] if m<r.entry_minute_max),default=0)
+                   for r in rules):
+                raise HTTPException(422,'Invalid price range or time window')
+            ids=sorted({r.report_id for r in rules})
             with pool.connection() as c:
-                saved=c.execute('SELECT asset,report FROM research_result WHERE id=%s',(body.report_id,)).fetchone()
-            if not saved or saved['asset']!=body.asset:raise HTTPException(422,'Saved statistics not found')
-            band=f'{body.min_price:02d}-{body.max_price+1:02d}'
-            cell=next((cell for cell in saved['report']['historical']['cells'] if cell['hold']['minutes_before_close']==body.entry_minute_max and cell['hold']['price_band_cents']==band),None)
-            lower=max((m for m in MINUTES[body.asset] if m<body.entry_minute_max),default=0)
-            if not cell or body.entry_minute_min!=lower or not cell['hold']['sampled_markets']:raise HTTPException(422,'Invalid statistics square or time window')
-            snapshot['statistical_yield_percent']=cell['hold']['hypothetical_roi_percent']
-            snapshot['sampled_markets']=cell['hold']['sampled_markets']
-            snapshot['statistics_basis']='Saved hold ROI; historical bid-band statistics, ask-band entry rule'
+                saved_rows=c.execute('SELECT id,asset,report FROM research_result WHERE id=ANY(%s::bigint[])',(ids,)).fetchall()
+            saved={row['id']:row for row in saved_rows}
+            if len(saved)!=len(ids) or any(row['asset']!=body.asset for row in saved.values()):
+                raise HTTPException(422,'Saved statistics not found')
+            compiled=[]
+            for rule in rules:
+                band=f'{rule.min_price:02d}-{rule.max_price+1:02d}'
+                report=saved[rule.report_id]['report']
+                cell=next((cell for cell in report['historical']['cells'] if
+                    cell['hold']['minutes_before_close']==rule.entry_minute_max and
+                    cell['hold']['price_band_cents']==band),None)
+                if not cell or not cell['hold']['sampled_markets']:
+                    raise HTTPException(422,'Invalid statistics square')
+                compiled.append(dict(**rule.model_dump(),
+                    statistical_yield_percent=cell['hold']['hypothetical_roi_percent'],
+                    sampled_markets=cell['hold']['sampled_markets']))
+            snapshot['rules']=compiled
+            snapshot['statistical_yield_percent']=max(r['statistical_yield_percent'] for r in compiled)
+            snapshot['sampled_markets']=sum(r['sampled_markets'] for r in compiled)
+            snapshot['statistics_basis']='Maximum saved reference BID-grid ROI is priority only; independent squares may overlap'
+            snapshot['report_id']=compiled[0]['report_id']
         with pool.connection() as c:
             c.execute("""INSERT INTO research_job(id,asset,parameters,idempotency_key,status,finished_at)
                 VALUES(%s,%s,%s,%s,'succeeded',clock_timestamp())""",(identifier,body.asset,Jsonb(dict(collector='paper-strategy-v1',strategy=snapshot)),'paper-strategy/'+str(identifier)))
