@@ -4,7 +4,23 @@
 <header><div><p class="eyebrow">LIVE MARKET DATA · SIMULATED MONEY</p><h1>Live paper trading</h1><p>Follow current markets using your saved table strategies.</p></div><nav><a href="/collection">Statistics table</a> · <a href="/paper">Historical replays</a></nav></header>
 <p id="liveStatus" role="status">Loading live paper workspace…</p>
 <section class="notice"><strong>Paper orders stay in this app</strong><p>Nothing is sent to Kalshi’s order API. Results are before fees. Maker fills are simulated from public trades; real queue position is unknown. A feed interruption cancels unfilled paper bids and leaves filled positions saved for continued monitoring.</p></section>
-<section class="panel"><h2>Start a paper account</h2><p>Choose any combination of saved strategies. They share one balance across categories, with a combined 10% cap for each game or event. The highest saved statistical yield gets first use of available funds.</p><div id="liveStrategies" class="paper-options"></div>
+<section class="panel"><h2>Start a paper account</h2><p>Choose any combination of saved strategies. They share one balance across categories, with a combined 10% cap for each game or event. The highest saved statistical yield gets first use of available funds.</p><p><button id="newLiveStrategy" type="button" class="secondary">Add strategy</button> <a href="/collection">Or select squares from the statistics chart</a></p><div id="liveStrategies" class="paper-options"></div>
+<details id="liveStrategyEditor"><summary>Define a new strategy</summary><form id="liveStrategyForm">
+<div class="bet-fields">
+<label>Strategy name<input id="newStrategyName" maxlength="80" required></label>
+<label>Category<select id="newStrategyAsset"><option value="btc">Bitcoin 15-minute</option><option value="eth">Ethereum 15-minute</option><option value="crypto">All crypto 15-minute</option><option value="weather">Hourly weather</option><option value="weather_daily">Daily weather</option><option value="sports">Sports</option></select></label>
+<label>Ask price from (¢)<input id="newStrategyMin" type="number" min="50" max="99" value="70" required></label>
+<label>Ask price through (¢)<input id="newStrategyMax" type="number" min="50" max="99" value="79" required></label>
+<label>Time window upper bound (minutes before close)<select id="newStrategyMinute"></select></label>
+<label>Base maker bid on<select id="newStrategyBasis"><option value="ask">Current ask</option><option value="best_bid">Current best bid</option></select></label>
+<label>Bid adjustment (¢)<input id="newStrategyAdjust" type="number" min="-99" max="99" value="-1" required></label>
+<label>Maximum bid (¢, optional)<input id="newStrategyCap" type="number" min="1" max="99"></label>
+<label>Contracts per bid<input id="newStrategyContracts" type="number" min="1" max="100" value="1" required></label>
+<label>Maximum account balance per bid (%)<input id="newStrategyPercent" type="number" min="1" max="10" value="10" required></label>
+<label>Loss-prevention trigger (¢, optional)<input id="newStrategyStop" type="number" min="0" max="99"></label>
+</div>
+<p class="small">For manually defined rules, saved historical performance is unknown; the account will not treat this as an independently validated return. Selected chart squares remain the recommended way to attach reference statistics.</p>
+<button type="submit" id="saveLiveStrategy">Save strategy</button><p id="newStrategyStatus" role="status"></p></form></details>
 <div class="toolbar"><label>Account name<input id="liveName" value="Live paper account" maxlength="80"></label><label>Starting paper balance, dollars<input id="liveCash" type="number" min="1" max="1000000" value="100"></label><label>Fill model<select id="liveFill"><option value="conservative">Conservative · trade-through only</option><option value="estimated">Estimated · qualifying volume at bid</option><option value="all_filled">Optimistic · assume every bid fills</option></select></label><button id="startLive" type="button">Start live paper</button></div>
 <p class="small">No saved days are needed. Entries require the strategy’s current ask range and time window, a fresh quote, and a maker bid strictly below ask. Maximum bid overrides the price adjustment. Optimistic fills are a comparison assumption, not a realistic execution forecast.</p></section>
 <section class="panel"><h2>Live account</h2><div class="toolbar"><label>Account history<select id="liveSessions"></select></label><button id="refreshLive" type="button">Refresh</button><button id="stopLive" type="button" class="danger" disabled>Stop new bids and cancel unfilled</button></div><p class="small">Stopping preserves filled positions and continues monitoring them until settlement. Only one paper account runs at a time.</p><div id="liveSummary"></div><details id="liveSetup"><summary>Account setup</summary><div id="liveConfiguration"></div></details></section>
