@@ -25,6 +25,8 @@ class Exchange:
         return {'order':self.remote}
 def row():return dict(parameters=dict(request_id='00000000-0000-0000-0000-000000000001',sources=[],fresh_bots=True,target_balance_cents=100000),progress=dict(state='requested',pending=None,attempt=0,cloned=False))
 class Reset(unittest.TestCase):
+    def setUp(self):
+        self.preparation=patch('services.demo.reset.archive_and_clone');self.preparation.start();self.addCleanup(self.preparation.stop)
     def test_payload_is_reduce_only_immediate_and_normal_bots_remain_maker_only(self):
         for position,side,price in [(3,'ask','0.0100'),(-3,'bid','0.9900')]:
             body=reset_payload('T',position,'client')
@@ -69,14 +71,20 @@ class Reset(unittest.TestCase):
         ex.positions=[dict(ticker='T',position_fp='2.00')];c.next_check=0;c.step(r)
         self.assertEqual([p['count'] for p in ex.submitted],['3.00','2.00'])
         self.assertNotEqual(ex.submitted[0]['client_order_id'],ex.submitted[1]['client_order_id'])
-    def test_zero_exposure_is_verified_before_archive_and_balance_is_not_invented(self):
+    def test_zero_exposure_is_verified_before_retiring_orders_and_balance_is_not_invented(self):
         store=Store();ex=Exchange();c=ResetController(store,ex);r=row()
         with patch('services.demo.reset.archive_and_clone') as archive:c.step(r)
-        archive.assert_called_once();self.assertEqual(r['progress']['state'],'awaiting_funds')
+        self.assertEqual(archive.call_count,2);self.assertEqual(r['progress']['state'],'awaiting_funds')
         self.assertEqual(r['progress']['deposit_needed_cents'],90000)
-        self.assertEqual(store.saved[0][1]['cash_cents'],10000)
+        self.assertEqual(next(d for k,d in store.saved if k=='account')['cash_cents'],10000)
         ex.balance=100000;c.next_check=0;c.step(r)
         self.assertEqual(r['progress']['state'],'complete')
+    def test_fresh_bots_can_be_prepared_without_retiring_unsettled_exposure(self):
+        store=Store();ex=Exchange();ex.positions=[dict(ticker='T',position_fp='3.00')]
+        c=ResetController(store,ex);r=row()
+        with patch('services.demo.reset.archive_and_clone') as prepare:c.step(r)
+        prepare.assert_called_once_with(store,r['parameters'],retire_orders=False)
+        self.assertTrue(r['progress']['cloned']);self.assertNotIn('market_cleared_at',r['progress'])
     def test_no_target_completes_with_verified_resulting_cash(self):
         store=Store();ex=Exchange();c=ResetController(store,ex);r=row();r['parameters']['target_balance_cents']=None
         with patch('services.demo.reset.archive_and_clone'):c.step(r)

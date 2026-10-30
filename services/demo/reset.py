@@ -59,13 +59,13 @@ def reset_payload(ticker,position,client_id,market=None):
         time_in_force='immediate_or_cancel',post_only=False,reduce_only=True,
         self_trade_prevention_type='taker_at_cross',subaccount=0,exchange_index=-1)
 
-def archive_and_clone(store,params):
+def archive_and_clone(store,params,*,retire_orders=True):
     with store.pool.connection() as c:
         c.execute('SELECT pg_advisory_xact_lock(723741930)')
         for source in params['sources']:
             row=c.execute('SELECT progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/bot/'+source['old'],)).fetchone()
             if row:
-                state=dict(row['progress'],desired='paused',archived=params['fresh_bots'],message='Demo reset verified; historical orders and statistics retained')
+                state=dict(row['progress'],desired='paused',archived=params['fresh_bots'],message='Paused for Demo reset; historical orders and statistics retained')
                 c.execute('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',(Jsonb(state),'demo/bot/'+source['old']))
             if params['fresh_bots']:
                 config=dict(source['config'],name=(source['config']['name'][:72]+' · fresh'))
@@ -73,6 +73,7 @@ def archive_and_clone(store,params):
                     VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp()) ON CONFLICT(idempotency_key) DO NOTHING""",
                     (UUID(source['new']),Jsonb(dict(config=config,revision=1,reset_source=source['old'])),
                      Jsonb(dict(desired='paused',archived=False,state='paused',message='Fresh statistics; paused until reset and funding are verified')),'demo/bot/'+source['new']))
+        if not retire_orders:return
         # Open entry records are retired only after exchange verification proves
         # zero positions/orders. Completed history is never modified or deleted.
         rows=c.execute("""SELECT idempotency_key,progress FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
@@ -96,6 +97,12 @@ class ResetController:
         if now<self.next_check:return
         self.next_check=now+2
         p=row['parameters'];s=row['progress'];pending=s.get('pending')
+        if not s.get('cloned'):
+            # Preparing paused identities is independent of exchange settlement.
+            # Old exposure and order records remain tracked until verified clear.
+            archive_and_clone(self.store,p,retire_orders=False)
+            self.save(row,cloned=True)
+            self.store.event('reset_bots_prepared','Fresh paused bot copies prepared; previous exposure and history remain tracked')
         if pending:
             if pending.get('exchange_id'):
                 result=self.exchange.call('GET','/portfolio/orders/'+pending['exchange_id']);order=result.get('order',result)
@@ -153,9 +160,9 @@ class ResetController:
                     self.next_check=now+30
                 raise
             return
-        if not s.get('cloned'):
+        if not s.get('market_cleared_at'):
             archive_and_clone(self.store,p)
-            self.save(row,cloned=True,market=None,market_status=None,close_time=None,market_cleared_at=now)
+            self.save(row,market=None,market_status=None,close_time=None,market_cleared_at=now)
             self.store.event('reset_markets_cleared','Verified zero open orders and positions; old bots archived and fresh paused copies prepared')
         if p['target_balance_cents'] is None or account['cash_cents']==p['target_balance_cents']:
             self.save(row,state='complete',message='Demo reset complete. Zero open orders and positions; target balance verified. Fresh bots are paused.',completed_at=now)
