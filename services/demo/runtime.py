@@ -1,5 +1,5 @@
 """Single fenced Demo worker. Bounded stream, durable intents, verified recovery."""
-import json,os,time,signal,threading,hashlib,traceback
+import json,os,time,signal,threading,hashlib,traceback,math
 from datetime import datetime,timezone
 from decimal import Decimal
 from uuid import uuid5,NAMESPACE_URL
@@ -22,7 +22,7 @@ def quote(raw,now):
     try:
         ticker=raw['ticker'];bid=cents(raw['yes_bid_dollars']);ask=cents(raw['yes_ask_dollars'])
         return ticker,dict(bid=bid,ask=ask,at=now,close=timestamp(raw['close_time']),
-            series=raw.get('series_ticker') or ticker.split('-')[0],result=raw.get('result'),status=raw.get('status'))
+            exchange_index=raw.get('exchange_index',0),series=raw.get('series_ticker') or ticker.split('-')[0],result=raw.get('result'),status=raw.get('status'))
     except (KeyError,ValueError,TypeError):return None
 
 class Worker:
@@ -31,6 +31,7 @@ class Worker:
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0
+        self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def entry_diagnostics(self,now):
         from .engine import entry_price
@@ -98,6 +99,25 @@ class Worker:
         self.orders=self.store.active_orders()
         active={o['client_id'] for o in self.orders}
         self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
+    def repair_rejected_entries(self):
+        if self.rejections_repaired:return
+        with self.store.pool.connection() as c:
+            rows=c.execute("""SELECT parameters,progress FROM research_job
+                WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
+                AND parameters->>'kind'='entry' AND progress->>'status'='rejected'
+                AND NOT(parameters ? 'funding_retry_v1') ORDER BY created_at DESC LIMIT 501""").fetchall()
+        if len(rows)>500:raise ExchangeFailure('rejected_order_repair_capacity')
+        bots={b['id']:b for b in self.bots}
+        for row in rows:
+            order={**row['parameters'],**row['progress']};bot=bots.get(order['bot'])
+            if bot and order['revision']==bot['revision']:
+                key=f"{order['ticker']}/{order['square']}/{order['side']}"
+                memory=self.states.get(bot['id'],{}).get(key)
+                if memory and memory.get('submitted'):
+                    memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                    self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
+            order['funding_retry_v1']=True;self.save_order(order)
+        self.rejections_repaired=True
     def save_order(self,order):
         data={k:v for k,v in order.items() if k not in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
         state={k:v for k,v in order.items() if k in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
@@ -114,6 +134,12 @@ class Worker:
         positions=list(self.exchange.pages('/portfolio/positions','market_positions',count_filter='position'))
         # Resting orders include manual orders. Recent records resolve lost responses.
         remote=list(self.exchange.pages('/portfolio/orders','orders',status='resting'))
+        self.shard_reservations={}
+        for raw in remote:
+            index=raw.get('exchange_index',0)
+            # Conservative full contract collateral for all resting orders,
+            # including manual orders; never sweep their reserved collateral.
+            self.shard_reservations[index]=self.shard_reservations.get(index,0)+math.ceil(count(raw,'remaining_count')*100)
         earliest=min((o['created_at'] for o in self.orders),default=now)
         recent=list(self.exchange.pages('/portfolio/orders','orders',min_ts=int(earliest)-60)) if self.orders else []
         by_client={o.get('client_order_id'):o for o in remote+recent}
@@ -256,6 +282,7 @@ class Worker:
             result=self.exchange.submit(intent)
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted maker-only '+intent['kind'])
+            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'])),flush=True)
         except ExchangeFailure as error:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
@@ -314,10 +341,17 @@ class Worker:
                 if pnl<=-equity*config['daily_loss_percent']/100:continue
             amount=quantity(config,item['price'],equity,self.account['cash_cents'],market,exposure)
             if amount<1:continue
+            if self.funding is None:
+                from .funding import ShardFunding
+                self.funding=ShardFunding(self.store,self.exchange)
+            if not self.funding.ensure(self.quotes[item['ticker']].get('exchange_index',0),amount*item['price'],max(amount*item['price'],equity*config['bot_percent']/100-exposure),self.shard_reservations):return
+            # Funding requests take time: recheck prices and entry qualification
+            # on the next stream tick before preparing any order.
+            if time.time()-self.quotes[item['ticker']]['at']>5 or not qualifies(config['squares'][item['square']],self.quotes[item['ticker']],item['side'],time.time(),config['qualification']):return
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
-            identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}"))
-            self.submit(dict(client_id=identifier,kind='entry',condition=config['squares'][item['square']],bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']]['close'],created_at=now,status='intent',remaining=0,filled=0));return
+            identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
+            self.submit(dict(client_id=identifier,kind='entry',condition=config['squares'][item['square']],exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']]['close'],created_at=now,status='intent',remaining=0,filled=0));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
             packed=json.dumps(self.states[bot['id']],sort_keys=True)
@@ -337,7 +371,7 @@ class Worker:
                             if signer:self.exchange.signer=signer;self.close_stream();self.recovered=False
                         credential_version=changed
                     self.stage='controls'
-                    if now>=next_controls:self.load_bots();next_controls=now+5
+                    if now>=next_controls:self.load_bots();self.repair_rejected_entries();next_controls=now+5
                     request=self.store.get('refresh') if now>=next_controls-1 else None
                     if request and request['progress']['requested_at']>self.last_reconcile:self.last_reconcile=0
                     self.stage="discovery"
