@@ -1,5 +1,5 @@
 """Single fenced Demo worker. Bounded stream, durable intents, verified recovery."""
-import json,os,time,signal,threading,hashlib
+import json,os,time,signal,threading,hashlib,traceback
 from datetime import datetime,timezone
 from decimal import Decimal
 from uuid import uuid5,NAMESPACE_URL
@@ -29,7 +29,7 @@ class Worker:
     def __init__(self,store,exchange,stop,guard):
         self.store,self.exchange,self.stop,self.guard=store,exchange,stop,guard
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
-        self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0
+        self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0
         self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def health(self,state,message):
@@ -39,6 +39,15 @@ class Worker:
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled_at=self.last_reconcile,blocked_markets=sorted(self.blocked)))
             self.last_health=now
+        if now-self.last_diagnostic>=60:
+            print(json.dumps(dict(event='demo_diagnostic',state=state,stage=self.stage,
+                running=sum(b['desired']=='running' for b in self.bots),bots=len(self.bots),
+                conditions=sum(len(b['config']['squares']) for b in self.bots if b['desired']=='running'),
+                categories=sorted({s['asset'] for b in self.bots if b['desired']=='running' for s in b['config']['squares']}),
+                watched=len(self.quotes),fresh=sum(now-q['at']<=5 for q in self.quotes.values()),
+                orders=len(self.orders),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
+                reconciled=self.recovered)),flush=True)
+            self.last_diagnostic=now
     def load_bots(self):
         self.bots=[]
         for row in self.store.rows('bot/',100):
@@ -290,24 +299,29 @@ class Worker:
                             signer=credentials(self.store,os.environ)
                             if signer:self.exchange.signer=signer;self.close_stream();self.recovered=False
                         credential_version=changed
+                    self.stage='controls'
                     if now>=next_controls:self.load_bots();next_controls=now+5
                     request=self.store.get('refresh') if now>=next_controls-1 else None
                     if request and request['progress']['requested_at']>self.last_reconcile:self.last_reconcile=0
+                    self.stage="discovery"
                     if now-self.last_discovery>=5:self.discover()
-                    self.stream()
+                    self.stage="stream";self.stream()
+                    self.stage="reconciliation"
                     if not self.recovered or now-self.last_reconcile>=30:self.reconcile()
-                    self.trade();self.health('ready' if self.recovered else 'reconciling','Demo account verified' if self.recovered else 'Verifying exchange order state')
+                    self.stage='trade';self.trade();self.health('ready' if self.recovered else 'reconciling','Demo account verified' if self.recovered else 'Verifying exchange order state')
                     if now>=maintenance_at:
                         from .maintenance import maintenance
                         maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                     backoff=1
                 except ExchangeFailure as error:
+                    print(json.dumps(dict(event='demo_exchange_failure',stage=self.stage,code=error.code,ambiguous=error.ambiguous)),flush=True)
                     self.recovered=False
                     self.store.alert('exchange','Demo exchange '+error.code.replace('_',' ')+'. New entries wait for complete verification.',True)
                     self.health('attention','Exchange verification incomplete')
                     if error.code.startswith('stream') or error.code=='connection':self.close_stream()
                     self.stop.wait(backoff);backoff=min(60,backoff*2)
-                except Exception:
+                except Exception as error:
+                    print(json.dumps(dict(event='demo_runtime_failure',stage=self.stage,error_type=type(error).__name__,frames=[dict(function=f.name,line=f.lineno) for f in traceback.extract_tb(error.__traceback__)[-4:]])),flush=True)
                     self.recovered=False;self.close_stream()
                     self.store.alert('recovery','Trading recovery incomplete. Entries are paused until verification succeeds.',True)
                     self.health('attention','Recovery incomplete; saved orders retained')
