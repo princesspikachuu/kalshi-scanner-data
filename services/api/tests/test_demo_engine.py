@@ -247,6 +247,24 @@ class ProtectiveThresholds(unittest.TestCase):
         q=quote();q.update(bid=bid,ask=ask);worker.quotes={'t':q}
         worker.orders=[dict(client_id='held-entry',kind='entry',bot=b['id'],revision=1,ticker='t',side=side,square=0,price=65,quantity=1,remaining=0,filled=1,sold=0,close=NOW+200,status='held')]
         return worker
+    def test_stream_yields_on_first_crossing_before_later_low_quote(self):
+        worker=self.worker(bid=55,ask=61)
+        worker.subscription={'t'}
+        messages=[dict(type='ticker',sending_ts_ms=NOW*1000,msg=dict(market_ticker='t',yes_bid_dollars='0.5000',yes_ask_dollars='0.5400')),
+            dict(type='ticker',sending_ts_ms=NOW*1000,msg=dict(market_ticker='t',yes_bid_dollars='0.0100',yes_ask_dollars='0.0200'))]
+        class Socket:
+            def recv(self,**kw):
+                if not messages:raise TimeoutError
+                return json.dumps(messages.pop(0))
+        worker.socket=Socket()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.stream()
+        self.assertEqual(worker.quotes['t']['ask'],54)
+        self.assertEqual(len(messages),1)
+        self.assertTrue(worker.orders[0]['exit_triggered'])
+        with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        self.assertEqual(submit.call_args.args[0]['price'],55)
+        self.assertEqual(worker.store.events.count('exit_trigger'),1)
+
     def test_manual_exit_triggers_on_current_ask_without_waiting_for_two_cents(self):
         worker=self.worker()
         with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()

@@ -258,6 +258,27 @@ class Worker:
         kept=[(t,q) for t,q in self.quotes.items() if t in pinned or q['close']>now]
         self.quotes=dict(sorted(kept,key=rank)[:100]);self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.discovery_turn+=1
         if 'series_ticker' in params:self.series_index+=1
+    def observe_exit_triggers(self,ticker,now,previous=None):
+        """Latch the first crossing before another ticker message can replace it."""
+        from .engine import side_quote
+        q=self.quotes.get(ticker)
+        if not q or now-q['at']>5 or now>=q['close'] or ticker in self.blocked:return False
+        bots={b['id']:b for b in self.bots};triggered=False
+        for order in self.orders:
+            if order['ticker']!=ticker or order['kind']!='entry' or order.get('exit_triggered') or order.get('status')=='uncertain' or order.get('filled',0)<=order.get('sold',0):continue
+            bot=bots.get(order['bot'])
+            if not bot:continue
+            threshold=protective_threshold(bot['config'],bot['config']['squares'][order['square']])
+            bid,ask=side_quote(q,order['side'])
+            if threshold is None or not 0<=bid<ask<100 or ask>threshold:continue
+            order['exit_triggered']=True;order['exit_reference']='ask';self.save_order(order)
+            prior_ask=side_quote(previous,order['side'])[1] if previous else None
+            gap=round(q['at']-previous['at'],3) if previous and previous.get('at') else None
+            self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',previous_ask=prior_ask,observation_gap_seconds=gap)
+            print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap)),flush=True)
+            triggered=True
+        return triggered
+
     def stream(self):
         desired=set(self.quotes)
         if not desired:return
@@ -289,6 +310,9 @@ class Worker:
                 now=time.time()
                 if not observed or observed>now+5:continue
                 self.quotes[ticker]=dict(old,bid=cents(raw['yes_bid_dollars']),ask=cents(raw['yes_ask_dollars']),at=min(now,observed))
+                # Do not drain past a threshold crossing and overwrite it with a
+                # much lower quote before protection gets a turn to submit.
+                if self.observe_exit_triggers(ticker,now,old):return
     def close_stream(self):
         if self.socket:
             try:self.socket.close()
@@ -378,8 +402,7 @@ class Worker:
             bid,ask=side_quote(q,order['side'])
             if not 0<=bid<ask<=100:continue
             if not order.get('exit_triggered') and threshold is not None and 0<ask<100 and ask<=threshold:
-                order['exit_triggered']=True;order['exit_reference']='ask';self.save_order(order);self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask')
-                print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'])),flush=True)
+                self.observe_exit_triggers(order['ticker'],now)
             if order.get('exit_triggered'):
                 exiting.add(order['ticker'])
                 for other in self.orders:
