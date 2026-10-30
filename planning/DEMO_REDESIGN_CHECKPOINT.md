@@ -40,3 +40,17 @@ Demo credentials separate from production. No documented faucet endpoint: fund v
 
 ## Status
 Recovered decisions and production source. Isolated worktree build/demo-redesign. Implementation in progress.
+
+## Build checkpoint — October 29, 2026, 10:59 p.m. Pacific
+- Implemented Bots/Research/Activity, one multi-square bot builder, demo connection form, shared period controls, controls/archiving, exchange activity and research-side Demo execution summaries.
+- Dedicated worker uses fixed Demo REST/WS destinations, V2 post-only orders, deterministic durable intent identifiers, per-entry accounting, manual-market isolation, restart reconciliation, valid-bid preservation, bounded watchlist/trigger cache/pools, and capped API pacing.
+- Existing historical datasets/results/source artifacts/migrations untouched. Legacy replay records retained; new replays disabled after Demo cutover, because their worker is repurposed.
+- Verified activity archives and Demo-control backups use existing private R2; these are explicitly distinct from full database/provider backups.
+- Local: 425 Python tests: 276 passed, 149 PostgreSQL tests deferred to CI. 47 browser/gateway tests passed. Additional recovery regression tests also pass.
+- Published source via GitHub connector (shell push has no credential). PR #56, initial commit 5b8286053ed925730fc32255a1a146b95a81da6b. Actual PostgreSQL CI run 41011172477 in progress.
+- Render database currently 5GB, storage autoscaling false. Source Blueprint now true, but hosted MCP cannot update that field and browser has a sign-in wall. Per user instruction, do not interrupt for this; leave pending and continue.
+- Separate Demo key is not configured; secure connection flow is built. Critical email SMTP connection is not configured. These require user-provided account access, so continue implementation/deployment independently.
+- No Demo exchange order has been placed or verified. Do not claim actual execution success until a real Demo key and first order are confirmed.
+
+## Integration findings
+Actual PostgreSQL caught two defects before deployment: locale-dependent Unicode key range excluded bot rows, and activity serialization supplied duplicate keyword names. Fixed with the existing ASCII namespace bounds and explicit dictionary merging. All original database tests otherwise passed in the initial CI run.

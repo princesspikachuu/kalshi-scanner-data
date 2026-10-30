@@ -110,3 +110,16 @@ class WorkerRecovery(unittest.TestCase):
             def close(self):pass
         worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.socket=Socket();worker.quotes={'t':quote()}
         worker.close_stream();self.assertEqual(worker.quotes['t']['at'],0);self.assertEqual(worker.store.events,[])
+
+class RecoveryPreservesBids(unittest.TestCase):
+    def test_stale_reconnect_does_not_cancel_resting_valid_bid(self):
+        b=bot();worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        worker.bots=[b];q=quote();q['at']=0;worker.quotes={'t':q}
+        worker.orders=[dict(kind='entry',bot=b['id'],revision=1,ticker='t',side='yes',square=0,remaining=1,filled=0,close=NOW+200,status='resting')]
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        self.assertEqual(worker.store.events,[])
+    def test_fresh_invalid_condition_cancels_bid(self):
+        b=bot();worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b];q=quote();q['ask']=75;worker.quotes={'t':q}
+        order=dict(kind='entry',bot=b['id'],revision=1,ticker='t',side='yes',square=0,remaining=1,filled=0,close=NOW+200,status='resting');worker.orders=[order]
+        with patch.object(worker,'cancel') as cancel,patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.trade();cancel.assert_called_once()

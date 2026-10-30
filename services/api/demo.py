@@ -102,6 +102,27 @@ def install_demo(app,auth,mutate,pool):
             c.execute('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',(Jsonb(state),'demo/bot/'+str(identifier)))
         store.event('bot_'+body.action,body.action.title()+' requested',bot=str(identifier))
         return dict(contract='demo-v1',accepted=True)
+    class BulkItem(BaseModel):
+        id:UUID
+        revision:int=Field(ge=1)
+    class BulkControl(BaseModel):
+        model_config=ConfigDict(extra='forbid')
+        action:str
+        bots:list[BulkItem]=Field(min_length=1,max_length=100)
+    @app.post('/demo/bulk')
+    def bulk(body:BulkControl,request:Request):
+        mutate(request);require_query(request)
+        if body.action not in ('pause','resume') or len({b.id for b in body.bots})!=len(body.bots):raise HTTPException(422,'Invalid bulk control')
+        keys=['demo/bot/'+str(b.id) for b in body.bots];expected={str(b.id):b.revision for b in body.bots}
+        from psycopg.types.json import Jsonb
+        with pool.connection() as c:
+            rows=c.execute('SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) FOR UPDATE',(keys,)).fetchall()
+            if len(rows)!=len(keys) or any(r['parameters']['revision']!=expected[r['idempotency_key'].split('/')[-1]] for r in rows):raise HTTPException(409,'Bots changed; refresh before retrying')
+            for row in rows:
+                state=dict(row['progress'],desired='running' if body.action=='resume' else 'paused')
+                c.execute('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',(Jsonb(state),row['idempotency_key']))
+        store.event('bulk_'+body.action,f'{body.action.title()} requested for {len(rows)} bots')
+        return dict(contract='demo-v1',accepted=True,count=len(rows))
     @app.get('/demo/activity')
     def activity(request:Request):
         auth(request);require_query(request,('before','bot','ticker','kind'))
@@ -113,13 +134,13 @@ def install_demo(app,auth,mutate,pool):
         if ticker and len(ticker)>256 or kind and len(kind)>40:raise HTTPException(422,'Invalid filter')
         with pool.connection() as c:
             rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
-                WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
+                WHERE status='succeeded' AND idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
                 AND (%s::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM research_job WHERE id=%s::uuid))
                 AND (%s::text IS NULL OR parameters->>'bot'=%s)
                 AND (%s::text IS NULL OR parameters->>'ticker'=%s)
                 AND (%s::text IS NULL OR parameters->>'kind'=%s)
                 ORDER BY created_at DESC,id DESC LIMIT 51""",(before,before,bot,bot,ticker,ticker,kind,kind)).fetchall()
-        return dict(contract='demo-v1',items=[dict(id=r['id'],**r['parameters'],**r['progress']) for r in rows[:50]],next_before=rows[49]['id'] if len(rows)>50 else None)
+        return dict(contract='demo-v1',items=[{'id':r['id'],**r['parameters'],**r['progress']} for r in rows[:50]],next_before=rows[49]['id'] if len(rows)>50 else None)
     @app.get('/demo/orders')
     def orders(request:Request):
         auth(request);require_query(request)

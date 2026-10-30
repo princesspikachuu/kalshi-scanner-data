@@ -77,7 +77,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|bots|policy|connection|refresh|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|bots|bulk|policy|connection|refresh|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
@@ -171,9 +171,8 @@ export default {
   if(!STATIC.has(url.pathname)||!['GET','HEAD'].includes(request.method))return problem(404,'Not found');
   const app=origin(env.APP_ORIGIN);if(app&&url.origin!==app)return problem(403,'Request rejected');
   if(!env.ASSETS)return problem(503,'Preview assets unavailable');
-  const aliases={'/bots':'/bots.html','/live-paper':'/bots.html','/activity':'/activity.html'};
-  const target=aliases[url.pathname];
-  const asset=await env.ASSETS.fetch(target?new Request(new URL(target,url.origin),request):request);
+  if(url.pathname==='/live-paper')return Response.redirect(url.origin+'/bots',302);
+  const asset=await env.ASSETS.fetch(request);
   const response=new Response(asset.body,asset);
   for(const [name,value] of Object.entries(BASE_HEADERS))response.headers.set(name,value);
   response.headers.set('content-security-policy',"default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; connect-src 'self' https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");

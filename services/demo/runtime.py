@@ -31,7 +31,7 @@ class Worker:
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0
         self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0
-        self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={}
+        self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def health(self,state,message):
         now=time.time()
         if now-self.last_health>=10:
@@ -44,8 +44,10 @@ class Worker:
         for row in self.store.rows('bot/',100):
             key=row['idempotency_key'].split('/')[-1]
             self.bots.append(dict(id=key,config=row['parameters']['config'],revision=row['parameters']['revision'],**row['progress']))
-            if key not in self.states:
-                prior=self.store.get('trigger/'+key);self.states[key]=prior['progress'] if prior else {}
+            if key not in self.states or self.bot_revisions.get(key)!=row['parameters']['revision']:
+                prior=self.store.get('trigger/'+key)
+                self.states[key]=prior['progress'] if prior and prior['parameters'].get('revision')==row['parameters']['revision'] else {}
+                self.bot_revisions[key]=row['parameters']['revision']
                 self.trigger_digest[key]=json.dumps(self.states[key],sort_keys=True)
         self.orders=self.store.active_orders()
     def save_order(self,order):
@@ -103,7 +105,8 @@ class Worker:
                     self.record('realized',order,'Entry fully exited',realized_cents=order['realized_cents'])
         expected={}
         for order in self.orders:
-            if order['kind']=='entry':order['sold']=sold.get(order['client_id'],0)
+            if order['kind']=='entry':
+                order['sold']=sold.get(order['client_id'],0);self.save_order(order)
             if order['kind']=='entry' and order['status']!='closed':expected[order['ticker']]=expected.get(order['ticker'],0)+(order.get('filled',0)-sold.get(order['client_id'],0))*(1 if order['side']=='yes' else -1)
         actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
         for ticker in set(expected)|set(actual):
@@ -213,8 +216,12 @@ class Worker:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
             if order.get('status')=='uncertain':continue
             if order['kind']=='entry' and order.get('remaining',0)>0:
-                valid=bot and q and now-q['at']<=5 and bot['desired']=='running' and order['revision']==bot['revision'] and qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification'])
-                if not valid:self.cancel(order,'Entry no longer matches fresh conditions');return
+                explicitly_invalid=(not bot or bot['desired']!='running' or order['revision']!=bot['revision'] or now>=order['close'])
+                fresh=q is not None and now-q['at']<=5
+                condition_invalid=fresh and bot and not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification'])
+                # A reconnect is not evidence that a resting bid is invalid.
+                # Preserve it until fresh data verifies the condition or expiry.
+                if explicitly_invalid or condition_invalid:self.cancel(order,'Entry no longer matches verified conditions');return
             if not bot or not q or now-q['at']>5 or order['ticker'] in self.blocked:continue
             config=bot['config']
             if order['kind']=='exit' and order.get('remaining',0)>0:
@@ -255,14 +262,14 @@ class Worker:
             amount=quantity(config,item['price'],equity,self.account['cash_cents'],market,exposure)
             if amount<1:continue
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
-            self.store.put('trigger/'+item['bot'],self.states[item['bot']])
-            identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}"))
+            self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
+            identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}"))
             self.submit(dict(client_id=identifier,kind='entry',condition=config['squares'][item['square']],bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']]['close'],created_at=now,status='intent',remaining=0,filled=0));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
             packed=json.dumps(self.states[bot['id']],sort_keys=True)
             if self.trigger_digest.get(bot['id'])!=packed:
-                self.store.put('trigger/'+bot['id'],self.states[bot['id']]);self.trigger_digest[bot['id']]=packed
+                self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']));self.trigger_digest[bot['id']]=packed
     def loop(self):
         next_reconcile=0;next_controls=0;maintenance_at=0;backoff=1;credential_check=0;credential_version=None
         try:
