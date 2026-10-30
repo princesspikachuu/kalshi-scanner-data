@@ -327,6 +327,7 @@ def run(stop):
         with pool.connection() as lock:
             if not lock.execute('SELECT pg_try_advisory_lock(%s) AS locked',(LOCK,)).fetchone()['locked']:return
             lock.commit()
+            print(json.dumps(dict(event='demo_worker_ready',environment='demo',max_connections=3,watch_limit=100)),flush=True)
             # Retain legacy results/checkpoints but stop obsolete queued work so
             # collection analysis does not keep yielding to an absent replayer.
             with pool.connection() as c:
@@ -340,10 +341,12 @@ def run(stop):
                 lock.commit()
                 if not result['owned']:raise RuntimeError('Trading fence lost')
             try:
-                next_maintenance=0
+                next_maintenance=0;connection_notice=False
                 while not stop.is_set():
                     signer=credentials(store,os.environ)
                     if signer:break
+                    if not connection_notice:
+                        print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
                     store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time()))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:

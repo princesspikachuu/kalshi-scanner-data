@@ -80,6 +80,7 @@ def backup(store,objects):
     # Reading and parsing the written object is a bounded restore validation.
     # put_verified already read, parsed and compared every record.
     store.put('backup-health',dict(at=time.time(),verified=True,reference=reference,records=len(rows),scope='Demo controls and open orders; historical R2 evidence remains intact'))
+    print(json.dumps(dict(event='demo_control_backup_verified',records=len(rows),compressed_bytes=reference['size'])),flush=True)
 
 def emails(store,env,enabled):
     pending=[r for r in store.rows('alert/',30) if r['progress'].get('active') and r['progress'].get('critical') and not r['progress'].get('email_sent')]
@@ -112,7 +113,9 @@ def maintenance(store,env,stop):
         last=store.get('backup-health')
         if not last or time.time()-last['progress'].get('at',0)>policy['backup_hours']*3600:backup(store,objects)
         store.clear_alert('backup')
-    except Exception:store.alert('backup','Demo backup or archive verification failed. Original records are retained.',True)
+    except Exception:
+        store.alert('backup','Demo backup or archive verification failed. Original records are retained.',True)
+        print(json.dumps(dict(event='demo_backup_verification_failed',original_records_retained=True)),flush=True)
     finally:
         if objects:objects.client.close()
     try:emails(store,env,policy['critical_email'])
