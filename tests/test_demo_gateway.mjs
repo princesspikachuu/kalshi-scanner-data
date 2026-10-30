@@ -15,3 +15,28 @@ test('Selected chart squares form conditions of one bot',()=>{
  const report={id:'123',asset:'btc',entry_minutes:[15,10,5,3,1]};const squares=selectedSquares([{report,cell:{},minutes:5,band:'60-70'},{report,cell:{},minutes:3,band:'80-90'}]);
  assert.equal(squares.length,2);assert.equal(squares[0].max_price,69);assert.equal(squares[0].min_minutes,3);assert.equal(squares[0].report_id,123);
 });
+
+import {attentionInfo,attentionMarkup,exitEvidence} from '../apps/web/demo-client.mjs';
+test('attention names the failure, recovery action, affected market and order without a generic badge-only state',()=>{
+ const h={state:'attention',at:1000,reconciled_at:990,issue:{summary:'Saved order not returned',action:'Review Activity or retry verification',control:'retry',phase:'reconciliation',market:'KXBTC15M-TEST',order_id:'order-one',code:'not_found',http_status:404}};
+ const info=attentionInfo({key:'bot'},h,[],1001),html=attentionMarkup(info,{botId:'bot'});
+ for(const text of ['Saved order not returned','Review Activity','Retry verification','Order reconciliation','KXBTC15M-TEST','order-one','not_found','HTTP 404','Last successful check'])assert.ok(html.includes(text),text);
+ assert.ok(html.includes('ticker=KXBTC15M-TEST'));assert.ok(html.includes('bot=bot'));
+});
+test('attention explains stale worker and missing connection separately',()=>{
+ assert.equal(attentionInfo({key:'b'},{state:'connection_required'},[],1000).control,'connection');
+ const stale=attentionInfo({key:'b'},{state:'waiting',at:1,issue:{summary:'old error'}},[],1000);
+ assert.match(stale.reason,/stopped checking in/);assert.notEqual(stale.reason,'old error');
+});
+test('ownership attention is scoped to the affected bot and all inserted evidence is escaped',()=>{
+ const h={state:'ready',at:1000,blocked_markets:['market-one']},orders=[{bot:'a',ticker:'market-one'}];
+ assert.deepEqual(attentionInfo({key:'a'},h,orders,1000).markets,['market-one']);
+ assert.deepEqual(attentionInfo({key:'b'},h,orders,1000).markets,[]);
+ const html=attentionMarkup({reason:'<script>x</script>',action:'<img src=x>',phase:'" onclick="x',markets:['<bad>'],orderId:'<order>',code:'<code>',control:'<evil>'},{botId:'b'});
+ assert.ok(!html.includes('<script>'));assert.ok(!html.includes('<img'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('data-attention-action="<evil>'));
+});
+test('exit evidence distinguishes the threshold from the actual side bid and ask',()=>{
+ assert.deepEqual(exitEvidence({kind:'exit_trigger',details:{threshold:55,side:'no',quote:{bid:1,ask:99}}}),['Exit trigger: BID (previous rule) at or below 55¢','Observed NO bid 1¢ / ask 99¢']);
+ assert.deepEqual(exitEvidence({kind:'exit_trigger',details:{threshold:60,reference:'ask',side:'yes',quote:{bid:59,ask:65}}}),['Exit trigger: ASK at or below 60¢','Observed YES bid 59¢ / ask 65¢']);
+ assert.deepEqual(exitEvidence({kind:'fill',details:{price:2}}),[]);
+});

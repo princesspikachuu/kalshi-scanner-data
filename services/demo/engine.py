@@ -13,6 +13,15 @@ def qualifies(square,quote,side,now,reference):
     return (quote.get('series') in SERIES[square['asset']] and
         square['min_minutes']<minutes<=square['max_minutes'] and square['min_price']<=value<=square['max_price'])
 
+def protective_threshold(config,square):
+    if config['loss_mode']=='manual':return config.get('loss_cents')
+    if config['loss_mode']=='research':return square.get('loss_cents')
+    return None
+
+def entry_protection_matches(config,square,quote,side):
+    threshold=protective_threshold(config,square)
+    return threshold is None or side_quote(quote,side)[1]>threshold
+
 def entry_price(config,quote,side):
     bid,ask=side_quote(quote,side)
     price=(bid if config['price_reference']=='bid' else ask)+config['adjustment_cents']
@@ -42,6 +51,7 @@ def candidates(bots,quotes,states,now,blocked=()):
                     if key not in memory and sum(len(v) for v in states.values())>=10000:continue
                     memory[key]=old
                     if not match or old['submitted'] or bot['desired']!='running' or ticker in blocked:continue
+                    if not entry_protection_matches(config,square,quote,side):continue
                     price=entry_price(config,quote,side)
                     if price is not None:output.append(dict(bot=bot['id'],ticker=ticker,side=side,square=index,
                         cycle=old['cycle'],price=price,first_at=old['first_at'],expected_roi=square.get('expected_roi') or 0,key=key))
@@ -50,9 +60,13 @@ def candidates(bots,quotes,states,now,blocked=()):
             if key.split('/')[0] not in quotes:memory.pop(key)
     return sorted(output,key=lambda p:(p['first_at'],-p['expected_roi'],p['bot'],p['ticker'],p['square'],p['side']))
 
-def exit_price(quote,side):
+def exit_price(quote,side,ceiling=None):
     bid,ask=side_quote(quote,side)
-    return bid+1 if 0<bid+1<=99 else None
+    # ASK is the buy-now/taker price for this outcome. Once an exit is posted,
+    # a rising quote must be allowed to reach it instead of chasing it upward.
+    candidate=ask+1 if 0<=bid<ask<99 else None
+    if ceiling is not None:return min(ceiling,candidate) if candidate is not None else ceiling
+    return candidate
 
 def wire_order(intent):
     """V2 is one YES book: buying NO is selling YES at its complement."""

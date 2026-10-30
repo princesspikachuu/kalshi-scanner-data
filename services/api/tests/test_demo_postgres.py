@@ -51,3 +51,23 @@ class DemoPostgres(unittest.TestCase):
         self.demo.put('order/a',dict(status='held',filled=2,remaining=0),parameters=dict(kind='entry',bot='b'))
         self.demo.put('order/b',dict(status='closed',filled=2,remaining=0),parameters=dict(kind='entry',bot='b'))
         self.assertEqual(len(self.demo.active_orders()),1)
+    def test_ask_policy_upgrade_uses_saved_trigger_evidence_and_preserves_completed_sales(self):
+        import threading
+        from services.demo.runtime import Worker
+        order=dict(client_id='entry',kind='entry',bot='bot',revision=1,ticker='T',side='yes',square=0,price=96,quantity=2,sold=1,close=1800000000,exit_triggered=True,exit_ceiling_cents=2)
+        self.demo.put('order/entry',dict(status='held',filled=2,remaining=0),parameters=order)
+        self.demo.put('order/completed',dict(status='closed',filled=1,remaining=0),parameters=dict(client_id='completed',kind='exit',parent='entry',bot='bot',ticker='T',side='yes',price=2,quantity=1))
+        self.demo.event('exit_trigger','Previous bid rule',bot='bot',details=dict(client_id='entry',side='yes',threshold=55,quote=dict(bid=1,ask=99)))
+        completed=self.demo.get('order/completed')
+        worker=Worker(self.demo,object(),threading.Event(),lambda:None);worker.orders=self.demo.active_orders();worker.recovered=True
+        self.assertFalse(worker.upgrade_legacy_exits())
+        params=self.demo.get('order/entry')['parameters']
+        self.assertFalse(params['exit_triggered']);self.assertEqual(params['exit_reference'],'ask');self.assertNotIn('exit_ceiling_cents',params)
+        self.assertEqual(self.demo.get('order/completed')['progress'],completed['progress'])
+        self.assertEqual(self.demo.get('order/completed')['parameters'],completed['parameters'])
+    def test_workspace_returns_actionable_issue_evidence(self):
+        import time
+        self.demo.put('health',dict(state='attention',message='Saved order not returned',at=time.time(),issue=dict(summary='Saved order not returned',action='Review Activity',control='retry',phase='reconciliation',market='T',order_id='one',code='not_found')))
+        result=self.client.get('/demo/workspace');self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['health']['issue']['order_id'],'one')
+        self.assertEqual(result.json()['health']['issue']['action'],'Review Activity')

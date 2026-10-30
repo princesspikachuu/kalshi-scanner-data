@@ -10,3 +10,5 @@
 #botEditor{display:flex;flex-direction:column;max-height:calc(92dvh - 2px);min-height:0}
 #botEditor>.dialog-head,#botEditor>.dialog-actions{flex-shrink:0;position:static}
 #botEditor>.dialog-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+
+.bot-attention{margin-top:18px;padding:16px;border:1px solid #6d5937;border-radius:9px;background:#28251f;font-size:13px}.bot-attention>p{margin:8px 0 12px}.bot-attention details{margin-bottom:12px}.bot-attention .row{margin-top:12px}.bot-attention .button,.bot-attention button{font-size:12px;padding:7px 11px;min-height:36px}

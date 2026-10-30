@@ -60,7 +60,7 @@ class Rules(unittest.TestCase):
             self.assertEqual(payload['side'],expected_side);self.assertEqual(payload['price'],expected_price)
             self.assertTrue(payload['post_only']);self.assertNotIn('reduce_only',payload)
             self.assertEqual(payload['expiration_time'],NOW+100)
-        self.assertEqual(exit_price(quote(),'yes'),61)
+        self.assertEqual(exit_price(quote(),'yes'),66)
     def test_manual_threshold_requires_value(self):
         self.assertRaises(ValueError,config,loss_mode='manual')
 
@@ -225,23 +225,84 @@ class CategoryRouting(unittest.TestCase):
             self.assertTrue(any('tickers' in p for p in ex.calls))
 
 class ProtectiveThresholds(unittest.TestCase):
-    def worker(self,side='yes',bid=59,ask=65,mode='manual'):
+    def worker(self,side='yes',bid=55,ask=59,mode='manual'):
         b=bot(loss_mode=mode,**({'loss_cents':60} if mode=='manual' else {}))
         worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b]
         q=quote();q.update(bid=bid,ask=ask);worker.quotes={'t':q}
         worker.orders=[dict(client_id='held-entry',kind='entry',bot=b['id'],revision=1,ticker='t',side=side,square=0,price=65,quantity=1,remaining=0,filled=1,sold=0,close=NOW+200,status='held')]
         return worker
-    def test_manual_exit_triggers_at_threshold_without_waiting_for_two_cents(self):
+    def test_manual_exit_triggers_on_current_ask_without_waiting_for_two_cents(self):
         worker=self.worker()
         with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
         intent=submit.call_args.args[0]
         self.assertEqual((intent['kind'],intent['side'],intent['price']),('exit','yes',60))
         self.assertIn('exit_trigger',worker.store.events)
     def test_no_exit_uses_no_quote_rather_than_yes_quote(self):
-        worker=self.worker(side='no',bid=35,ask=41)
+        worker=self.worker(side='no',bid=41,ask=45)
         with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
         self.assertEqual(submit.call_args.args[0]['price'],60)
     def test_above_threshold_and_disabled_protection_do_not_exit(self):
-        for worker in [self.worker(bid=61),self.worker(mode='off')]:
+        for worker in [self.worker(ask=61),self.worker(mode='off')]:
             with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
             submit.assert_not_called()
+
+class AskEntryProtection(unittest.TestCase):
+    def test_wide_bid_ask_gap_does_not_trigger_a_bid_based_stop(self):
+        b=bot(loss_mode='manual',loss_cents=55,maximum_cents=96)
+        b['config']['squares'][0].update(min_price=90,max_price=99)
+        q=quote();q.update(bid=1,ask=99)
+        self.assertTrue(candidates([b],{'t':q},{},NOW))
+    def test_entry_skips_when_current_ask_already_meets_the_exit_trigger(self):
+        b=bot(loss_mode='manual',loss_cents=55)
+        b['config']['squares'][0].update(min_price=40,max_price=69)
+        q=quote();q.update(bid=1,ask=50)
+        self.assertEqual(candidates([b],{'t':q},{},NOW),[])
+        b['config']['loss_mode']='off'
+        self.assertTrue(candidates([b],{'t':q},{},NOW))
+    def test_condition_can_enter_if_ask_recovers_without_leaving_the_selected_window(self):
+        b=bot(loss_mode='manual',loss_cents=65);states={};q=quote()
+        self.assertEqual(candidates([b],{'t':q},states,NOW),[])
+        q['ask']=66
+        self.assertEqual(len(candidates([b],{'t':q},states,NOW)),1)
+    def test_resting_entry_cancels_when_fresh_ask_already_violates_exit_rule(self):
+        b=bot(loss_mode='manual',loss_cents=65)
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b];worker.quotes={'t':quote()}
+        worker.orders=[dict(kind='entry',bot=b['id'],revision=1,ticker='t',side='yes',square=0,remaining=1,filled=0,close=NOW+200,status='resting')]
+        with patch.object(worker,'cancel') as cancel,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        cancel.assert_called_once()
+
+class DownwardExitRatchet(unittest.TestCase):
+    def test_ask_reference_and_ratchet_for_both_outcomes(self):
+        q=quote();q.update(bid=1,ask=54)
+        self.assertEqual(exit_price(q,'yes'),55)
+        q['ask']=60;self.assertEqual(exit_price(q,'yes',55),55)
+        q['ask']=50;self.assertEqual(exit_price(q,'yes',55),51)
+        q.update(bid=46,ask=99);self.assertEqual(exit_price(q,'no'),55)
+        q['bid']=40;self.assertEqual(exit_price(q,'no',55),55)
+        q['bid']=50;self.assertEqual(exit_price(q,'no',55),51)
+        q['ask']=99;self.assertIsNone(exit_price(q,'yes'))
+        self.assertEqual(exit_price(q,'yes',55),55)
+    def worker(self,ask=60):
+        b=bot(loss_mode='manual',loss_cents=55)
+        w=Worker(FakeStore(),object(),threading.Event(),lambda:None);w.bots=[b];q=quote();q.update(bid=min(40,ask-1),ask=ask);w.quotes={'t':q}
+        parent=dict(client_id='entry',kind='entry',bot=b['id'],revision=1,ticker='t',side='yes',square=0,price=96,quantity=1,remaining=0,filled=1,sold=0,close=NOW+200,status='held',exit_triggered=True,exit_reference='ask',exit_ceiling_cents=55)
+        child=dict(client_id='exit',parent='entry',kind='exit',bot=b['id'],ticker='t',side='yes',price=55,remaining=1,filled=0,status='resting')
+        w.orders=[parent,child];return w,parent,child
+    def test_rising_ask_does_not_cancel_or_raise_the_resting_exit(self):
+        w,parent,child=self.worker(60)
+        with patch.object(w,'cancel') as cancel,patch.object(w,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        cancel.assert_not_called();submit.assert_not_called();self.assertEqual(parent['exit_ceiling_cents'],55)
+    def test_lower_price_is_persisted_before_cancel_and_not_raised_between_replace_steps(self):
+        w,parent,child=self.worker(50)
+        with patch.object(w,'cancel') as cancel,patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(parent['exit_ceiling_cents'],51);cancel.assert_called_once()
+        self.assertEqual(w.store.saved[-1][2]['exit_ceiling_cents'],51)
+        w.orders=[parent];w.quotes['t']['ask']=65
+        with patch.object(w,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(submit.call_args.args[0]['price'],51)
+    def test_legacy_bid_only_trigger_is_reset_without_changing_completed_sales(self):
+        w,parent,child=self.worker(99);w.orders=[parent];parent.pop('exit_reference');w.recovered=True
+        w.legacy_exit_evidence={'entry':dict(threshold=55,quote=dict(bid=1,ask=99))}
+        with patch('services.demo.runtime.time.time',return_value=NOW):self.assertFalse(w.upgrade_legacy_exits())
+        self.assertFalse(parent['exit_triggered']);self.assertEqual(parent['exit_reference'],'ask');self.assertNotIn('exit_ceiling_cents',parent)
+        self.assertIn('exit_policy_updated',w.store.events)
