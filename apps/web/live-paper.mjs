@@ -62,4 +62,38 @@ $('liveSessions').addEventListener('change',()=>{selected=$('liveSessions').valu
 $('refreshLive').addEventListener('click',()=>{hasOlder=false;void refresh()});
 for(const id of ['liveStrategies','liveCash','liveFill','liveName'])$(id).addEventListener('change',()=>{key=null});
 document.addEventListener('visibilitychange',()=>{clearTimeout(timer);if(!document.hidden)void refresh()});
+
+const minuteOptions={btc:[15,10,5,3,1],eth:[15,10,5,3,1],crypto:[15,10,5,3,1],weather:[60,45,30,20,15,10,5,3,1],weather_daily:[360,180,120,60,30,15,5],sports:[360,180,120,60,30,15,5]};
+function updateMinutes(){
+ const values=minuteOptions[$('newStrategyAsset').value],previous=Number($('newStrategyMinute').value);
+ $('newStrategyMinute').replaceChildren(...values.map(n=>{const option=document.createElement('option');option.value=n;option.textContent=n+' min';return option}));
+ if(values.includes(previous))$('newStrategyMinute').value=String(previous);
+}
+$('newStrategyAsset').addEventListener('change',updateMinutes);
+$('newStrategyBasis').addEventListener('change',()=>{$('newStrategyAdjust').value=$('newStrategyBasis').value==='ask'?'-1':'0'});
+$('newLiveStrategy').addEventListener('click',()=>{$('liveStrategyEditor').open=true;$('newStrategyName').focus()});
+$('liveStrategyForm').addEventListener('submit',async e=>{
+ e.preventDefault();if(!$('liveStrategyForm').reportValidity())return;
+ const button=$('saveLiveStrategy');button.disabled=true;
+ try{
+ const asset=$('newStrategyAsset').value,minute=Number($('newStrategyMinute').value),
+   min=Number($('newStrategyMin').value),max=Number($('newStrategyMax').value),
+   adjustment=Number($('newStrategyAdjust').value),basis=$('newStrategyBasis').value;
+ if(min>max)throw Error('Minimum ask must not exceed maximum ask.');
+ if(basis==='ask'&&adjustment>=0)throw Error('Ask-based maker bids must be below the ask.');
+ const lower=Math.max(0,...minuteOptions[asset].filter(n=>n<minute));
+ const result=await paperCall('strategies',{name:$('newStrategyName').value.trim(),asset,minutes:[minute],
+   min_price:min,max_price:max,entry_minute_min:lower,entry_minute_max:minute,
+   bid_reference:basis,bid_adjustment_cents:adjustment,
+   maximum_bid_cents:$('newStrategyCap').value===''?null:Number($('newStrategyCap').value),
+   contracts:Number($('newStrategyContracts').value),balance_percent:Number($('newStrategyPercent').value),
+   loss_trigger_cents:$('newStrategyStop').value===''?null:Number($('newStrategyStop').value),
+   starting_cash_cents:10000});
+ $('newStrategyStatus').textContent='Strategy saved. Select it above to include it when starting a paper account.';
+ await refresh();
+ const node=[...$('liveStrategies').querySelectorAll('input')].find(el=>el.value===result.id);
+ if(node)node.checked=true;
+ }catch(error){$('newStrategyStatus').textContent=error.message}finally{button.disabled=false}
+});
+updateMinutes();
 void refresh();
