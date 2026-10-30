@@ -194,9 +194,10 @@ def install_demo(app,auth,mutate,pool):
         mutate(request);require_query(request)
         key=os.environ.get('DEMO_VAULT_KEY')
         if not key:raise HTTPException(503,'Secure account connection is not configured yet')
-        from services.demo.exchange import encrypt_credentials
+        from services.demo.exchange import encrypt_credentials,CredentialInputError
         try:encrypted=encrypt_credentials(key,body.key_id,body.private_key)
-        except Exception:raise HTTPException(422,'Enter a valid Demo API key and RSA private key') from None
+        except CredentialInputError as error:raise HTTPException(422,str(error)) from None
+        except Exception:raise HTTPException(503,'The server could not securely save the connection. Your key has not been marked invalid; please retry shortly.') from None
         store.put('credentials',dict(encrypted=encrypted,changed_at=time.time()))
         store.event('connection_updated','Demo account credentials updated; verification pending')
         return dict(contract='demo-v1',saved=True)

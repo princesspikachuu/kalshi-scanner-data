@@ -139,3 +139,33 @@ class ArchiveIntegrity(unittest.TestCase):
         self.assertEqual(read_verified(objects,reference),payload)
         objects.objects[reference['key']]=objects.objects[reference['key']][:-1]+b'X'
         self.assertRaises(ValueError,read_verified,objects,reference)
+
+class SupportedDemoKeys(unittest.TestCase):
+    def test_default_ed25519_key_signs_rest_and_websocket_correctly(self):
+        import base64
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        key=ed25519.Ed25519PrivateKey.generate()
+        pem=key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode()
+        signer=DemoSigner(' demo-key ',pem)
+        for path in ['/trade-api/v2/portfolio/balance?subaccount=0','/trade-api/ws/v2']:
+            headers=signer.headers('GET',path)
+            self.assertEqual(headers['KALSHI-ACCESS-KEY'],'demo-key')
+            key.public_key().verify(base64.b64decode(headers['KALSHI-ACCESS-SIGNATURE']),(headers['KALSHI-ACCESS-TIMESTAMP']+'GET'+path.split('?')[0]).encode())
+    def test_rsa_pkcs1_and_pkcs8_and_mobile_line_formatting(self):
+        from services.demo.exchange import normalize_pem
+        key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
+        for format in [serialization.PrivateFormat.TraditionalOpenSSL,serialization.PrivateFormat.PKCS8]:
+            pem=key.private_bytes(serialization.Encoding.PEM,format,serialization.NoEncryption()).decode()
+            for text in [pem,pem.replace('\n','\\n'),'\ufeff'+pem.replace('\n','\r\n'),pem.replace('\n',' '),'```text\n'+pem+'```']:
+                self.assertEqual(DemoSigner('id',text).key.public_key().public_numbers(),key.public_key().public_numbers())
+    def test_ed25519_encrypted_storage_roundtrip(self):
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        key=ed25519.Ed25519PrivateKey.generate();pem=key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode()
+        vault=Fernet.generate_key().decode();sealed=encrypt_credentials(vault,'id',pem)
+        class Store:
+            def get(self,key):return dict(progress=dict(encrypted=sealed))
+        self.assertIsInstance(credentials(Store(),dict(DEMO_VAULT_KEY=vault)).key,ed25519.Ed25519PrivateKey)
+    def test_feedback_does_not_echo_private_input(self):
+        from services.demo.exchange import CredentialInputError
+        with self.assertRaises(CredentialInputError) as error:DemoSigner('id','secret-invalid-data')
+        self.assertNotIn('secret-invalid-data',str(error.exception))

@@ -2,7 +2,7 @@
 import base64,json,time,re
 import httpx
 from cryptography.hazmat.primitives import serialization,hashes
-from cryptography.hazmat.primitives.asymmetric import rsa,padding
+from cryptography.hazmat.primitives.asymmetric import rsa,padding,ed25519
 from cryptography.fernet import Fernet
 
 ROOT='https://external-api.demo.kalshi.co'
@@ -11,21 +11,48 @@ PATH='/trade-api/v2'
 class ExchangeFailure(Exception):
     def __init__(self,code,ambiguous=False):self.code,self.ambiguous=code,ambiguous
 
+class CredentialInputError(ValueError):
+    """Fixed, safe form feedback; never includes submitted credential content."""
+
+
+def normalize_pem(pem):
+    text=pem.strip().lstrip('\ufeff').replace('\\r\\n','\n').replace('\\n','\n').replace('\r\n','\n')
+    text=text.strip()
+    if len(text)>1 and text[0]==text[-1] and text[0] in ('"',"'"):text=text[1:-1].strip()
+    if text.startswith('```') and text.endswith('```'):text='\n'.join(text.splitlines()[1:-1]).strip()
+    if '-----BEGIN ENCRYPTED PRIVATE KEY-----' in text:
+        raise CredentialInputError('This private key is password-protected. Use the original unencrypted private-key file downloaded from Kalshi.')
+    match=re.fullmatch(r'-----BEGIN (RSA PRIVATE KEY|PRIVATE KEY)-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END \1-----',text)
+    if not match:
+        raise CredentialInputError('The private-key format could not be read. Include the complete BEGIN and END lines from the Kalshi key file.')
+    body=re.sub(r'\s+','',match[2])
+    return '-----BEGIN '+match[1]+'-----\n'+'\n'.join(body[i:i+64] for i in range(0,len(body),64))+'\n-----END '+match[1]+'-----\n'
+
 class DemoSigner:
     def __init__(self,key_id,pem):
-        if not re.fullmatch(r'[A-Za-z0-9-]{1,128}',key_id):raise ValueError('Invalid demo key identifier')
-        self.key=serialization.load_pem_private_key(pem.encode(),None)
-        if not isinstance(self.key,rsa.RSAPrivateKey) or self.key.key_size<2048:raise ValueError('A demo RSA key is required')
-        self.identifier=key_id
+        identifier=key_id.strip().lstrip('\ufeff')
+        if not re.fullmatch(r'[A-Za-z0-9-]{1,128}',identifier):
+            raise CredentialInputError('Enter the API key ID in the key-ID field, separate from the private key.')
+        normalized=normalize_pem(pem)
+        try:self.key=serialization.load_pem_private_key(normalized.encode(),None)
+        except (ValueError,TypeError):
+            raise CredentialInputError('The private-key contents could not be read. Try the complete original file downloaded from Kalshi.') from None
+        if not isinstance(self.key,(rsa.RSAPrivateKey,ed25519.Ed25519PrivateKey)):
+            raise CredentialInputError('Kalshi credentials must use an Ed25519 or RSA private key.')
+        if isinstance(self.key,rsa.RSAPrivateKey) and self.key.key_size<2048:
+            raise CredentialInputError('RSA private keys must be at least 2048 bits.')
+        self.identifier=identifier
     def headers(self,method,path):
         if not path.startswith(('/trade-api/v2/','/trade-api/ws/v2')):raise ValueError('Invalid API path')
-        timestamp=str(int(time.time()*1000))
-        signature=self.key.sign((timestamp+method+path.split('?')[0]).encode(),padding.PSS(mgf=padding.MGF1(hashes.SHA256()),salt_length=padding.PSS.DIGEST_LENGTH),hashes.SHA256())
+        timestamp=str(int(time.time()*1000));message=(timestamp+method+path.split('?')[0]).encode()
+        if isinstance(self.key,ed25519.Ed25519PrivateKey):signature=self.key.sign(message)
+        else:signature=self.key.sign(message,padding.PSS(mgf=padding.MGF1(hashes.SHA256()),salt_length=padding.PSS.DIGEST_LENGTH),hashes.SHA256())
         return {'KALSHI-ACCESS-KEY':self.identifier,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':base64.b64encode(signature).decode()}
 
 def encrypt_credentials(key,key_id,pem):
-    DemoSigner(key_id,pem)
-    return Fernet(key.encode()).encrypt(json.dumps(dict(key_id=key_id,pem=pem)).encode()).decode()
+    signer=DemoSigner(key_id,pem)
+    canonical=signer.key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode()
+    return Fernet(key.encode()).encrypt(json.dumps(dict(key_id=signer.identifier,pem=canonical)).encode()).decode()
 
 def credentials(store,env):
     if env.get('KALSHI_DEMO_API_KEY_ID') and env.get('KALSHI_DEMO_PRIVATE_KEY_PEM'):
