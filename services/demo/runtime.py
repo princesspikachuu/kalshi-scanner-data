@@ -31,7 +31,7 @@ class Worker:
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
-        self.funding=None;self.shard_reservations={};self.rejections_repaired=False
+        self.funding=None;self.shard_reservations={};self.rejections_repaired=False;self.exit_audited=False
         self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def entry_diagnostics(self,now):
         from .engine import entry_price
@@ -99,6 +99,25 @@ class Worker:
         self.orders=self.store.active_orders()
         active={o['client_id'] for o in self.orders}
         self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
+    def audit_exits(self):
+        if self.exit_audited:return
+        with self.store.pool.connection() as c:
+            triggers=c.execute("""SELECT parameters->>'bot' AS bot,progress->'details' AS details,created_at
+                FROM research_job WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
+                AND parameters->>'kind'='exit_trigger' ORDER BY created_at DESC LIMIT 12""").fetchall()
+            exits=c.execute("""SELECT parameters,progress FROM research_job
+                WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
+                AND parameters->>'kind'='exit' ORDER BY created_at DESC LIMIT 12""").fetchall()
+        from .engine import side_quote
+        records=[]
+        for row in triggers:
+            details=row['details'] or {};q=details.get('quote') or {}
+            bid,ask=side_quote(q,details['side']) if 'bid' in q and 'ask' in q and details.get('side') in ('yes','no') else (None,None)
+            records.append(dict(bot=row['bot'],at=str(row['created_at']),side=details.get('side'),threshold=details.get('threshold'),bid=bid,ask=ask,quote_at=q.get('at'),close=q.get('close'),entry_price=details.get('price')))
+        print(json.dumps(dict(event='demo_exit_audit',
+            configs=[dict(bot=b['id'],mode=b['config']['loss_mode'],manual_threshold=b['config'].get('loss_cents'),research_thresholds=sorted({s['loss_cents'] for s in b['config']['squares'] if s.get('loss_cents') is not None})) for b in self.bots],
+            triggers=records,exits=[dict(side=r['parameters']['side'],price=r['parameters']['price'],quantity=r['parameters']['quantity'],filled=r['progress'].get('filled'),status=r['progress'].get('status')) for r in exits])),flush=True)
+        self.exit_audited=True
     def repair_rejected_entries(self):
         if self.rejections_repaired:return
         with self.store.pool.connection() as c:
@@ -314,6 +333,7 @@ class Worker:
             bid,ask=side_quote(q,order['side'])
             if not order.get('exit_triggered') and threshold is not None and bid<=threshold:
                 order['exit_triggered']=True;self.save_order(order);self.record('exit_trigger',order,'Protective exit triggered',threshold=threshold)
+                print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'])),flush=True)
             if order.get('exit_triggered'):
                 exiting.add(order['ticker'])
                 for other in self.orders:
@@ -372,7 +392,7 @@ class Worker:
                             if signer:self.exchange.signer=signer;self.close_stream();self.recovered=False
                         credential_version=changed
                     self.stage='controls'
-                    if now>=next_controls:self.load_bots();self.repair_rejected_entries();next_controls=now+5
+                    if now>=next_controls:self.load_bots();self.repair_rejected_entries();self.audit_exits();next_controls=now+5
                     request=self.store.get('refresh') if now>=next_controls-1 else None
                     if request and request['progress']['requested_at']>self.last_reconcile:self.last_reconcile=0
                     self.stage="discovery"

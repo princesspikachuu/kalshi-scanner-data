@@ -223,3 +223,25 @@ class CategoryRouting(unittest.TestCase):
             observed={p['series_ticker'] for p in ex.calls if 'series_ticker' in p}
             self.assertEqual(observed,configured)
             self.assertTrue(any('tickers' in p for p in ex.calls))
+
+class ProtectiveThresholds(unittest.TestCase):
+    def worker(self,side='yes',bid=59,ask=65,mode='manual'):
+        b=bot(loss_mode=mode,**({'loss_cents':60} if mode=='manual' else {}))
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b]
+        q=quote();q.update(bid=bid,ask=ask);worker.quotes={'t':q}
+        worker.orders=[dict(client_id='held-entry',kind='entry',bot=b['id'],revision=1,ticker='t',side=side,square=0,price=65,quantity=1,remaining=0,filled=1,sold=0,close=NOW+200,status='held')]
+        return worker
+    def test_manual_exit_triggers_at_threshold_without_waiting_for_two_cents(self):
+        worker=self.worker()
+        with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        intent=submit.call_args.args[0]
+        self.assertEqual((intent['kind'],intent['side'],intent['price']),('exit','yes',60))
+        self.assertIn('exit_trigger',worker.store.events)
+    def test_no_exit_uses_no_quote_rather_than_yes_quote(self):
+        worker=self.worker(side='no',bid=35,ask=41)
+        with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        self.assertEqual(submit.call_args.args[0]['price'],60)
+    def test_above_threshold_and_disabled_protection_do_not_exit(self):
+        for worker in [self.worker(bid=61),self.worker(mode='off')]:
+            with patch.object(worker,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+            submit.assert_not_called()
