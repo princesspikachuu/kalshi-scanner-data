@@ -23,6 +23,21 @@ class PaperRouteTests(unittest.TestCase):
             if request.headers.get('x-test-csrf')!='csrf':raise HTTPException(403,'Request rejected')
         app=FastAPI();install_paper(app,auth,mutate,self.db.pool);self.client=TestClient(app)
         self.headers={'x-test-owner':'owner','x-test-csrf':'csrf'}
+    def test_date_range_lists_saved_days_without_workspace_preview_limit(self):
+        self.assertEqual(self.client.get('/paper/datasets?start=2026-10-01&end=2026-10-31&mode=all_filled&asset=all').status_code,401)
+        identifier=self.create(end='2026-10-25');self.drive(identifier)
+        url='/paper/datasets?start=2026-10-01&end=2026-10-31&mode=all_filled&asset=all'
+        result=self.client.get(url,headers=self.headers)
+        self.assertEqual(result.status_code,200,result.text)
+        data=result.json()
+        self.assertEqual(data['days_requested'],31)
+        self.assertTrue(data['datasets'])
+        self.assertTrue(all('2026-10-01'<=r['day']<='2026-10-31' for r in data['datasets']))
+        self.assertEqual(len({(r['day'],r['asset']) for r in data['datasets']}),len(data['datasets']))
+        self.assertEqual(self.client.get(url.replace('mode=all_filled','mode=estimated'),headers=self.headers).status_code,200)
+        self.assertEqual(self.client.get(url.replace('end=2026-10-31','end=2025-10-31'),headers=self.headers).status_code,422)
+        self.assertEqual(self.client.get(url.replace('asset=all','asset=illegal'),headers=self.headers).status_code,422)
+
     def test_owner_csrf_strategy_snapshot_idempotent_replay_and_persisted_results(self):
         identifier=self.create(end='2026-10-25');self.drive(identifier)
         self.assertEqual(self.client.get('/paper/workspace').status_code,401)

@@ -1,6 +1,7 @@
 import {paperCall} from './paper-client.mjs';
 import {appendActivity} from './paper-activity.mjs';
 const setupCache=new Map(),openSetups=new Set(),openAudits=new Set(),selectedDayIds=new Set();
+let rangeDays=null;
 const $=id=>document.getElementById(id);let workspace,busy=false,requestKey=null,pendingCancel=null;
 function requestCancel(run){
  pendingCancel=run.id;
@@ -29,7 +30,7 @@ function money(cents){return '$'+(cents/100).toFixed(2)}
 async function load(){try{
  workspace=await paperCall('workspace');
  options('strategies',workspace.strategies.filter(s=>s.strategy.bid_offset==null).map(s=>({id:s.id,label:`${s.strategy.name} · ${s.asset} · reference bid-grid ROI ${s.strategy.statistical_yield_percent.toFixed(2)}% (not validated for ask entries) · n=${s.strategy.sampled_markets}`})));
- const eligibleDays=workspace.datasets.filter(d=>$('fillModel').value==='all_filled'||d.has_trade_evidence);
+ const eligibleDays=(rangeDays??workspace.datasets).filter(d=>$('fillModel').value==='all_filled'||d.has_trade_evidence);
  const picked=[...selectedDayIds];
  const optionsForDays=eligibleDays.filter(d=>!$('daySearch').value.trim()||(`${d.day} ${d.asset}`).toLowerCase().includes($('daySearch').value.trim().toLowerCase())).map(d=>({id:d.id,label:`${d.day} · ${d.asset} · ${d.markets} markets · version ${d.id}${d.has_trade_evidence?'':' · candles only'}`}));
  options('datasets',optionsForDays);
@@ -113,6 +114,28 @@ $('run').addEventListener('click',async()=>{
  $('status').textContent=`Replay ${queued.id} queued. Follow its status and order activity below.`;await load();
  }catch(error){$('status').textContent=error.message}finally{busy=false;$('run').disabled=false}
 });
+const now=new Date(),today=now.toISOString().slice(0,10),monthAgo=new Date(now.getTime()-29*86400000).toISOString().slice(0,10);
+$('rangeStart').value=monthAgo;$('rangeEnd').value=today;
+$('findDays').addEventListener('click',async()=>{
+ const start=$('rangeStart').value,end=$('rangeEnd').value,asset=$('dayAsset').value,mode=$('fillModel').value;
+ if(!start||!end||end<start){$('dayRangeStatus').textContent='Choose a valid beginning and ending date.';return}
+ $('findDays').disabled=true;$('dayRangeStatus').textContent='Searching saved dates…';
+ try{
+  const query=new URLSearchParams({start,end,mode,asset});
+  const result=await paperCall('datasets?'+query.toString());
+  rangeDays=result.datasets;
+  $('dayRangeStatus').textContent=`${result.days_available} of ${result.days_requested} UTC dates have eligible saved markets · ${rangeDays.length} category versions available. Dates not shown have no qualifying saved evidence; find additional dates using the research collection page.`;
+  await load();
+ }catch(error){$('dayRangeStatus').textContent=error.message}finally{$('findDays').disabled=false}
+});
+$('selectFoundDays').addEventListener('click',()=>{
+ const options=(rangeDays??workspace?.datasets??[]).filter(d=>$('fillModel').value==='all_filled'||d.has_trade_evidence);
+ for(const d of options){if(selectedDayIds.size>=24)break;selectedDayIds.add(String(d.id))}
+ requestKey=null;void load();
+ $('dayRangeStatus').textContent+=` · ${selectedDayIds.size} selected (24-version limit per run).`;
+});
+$('clearFoundDays').addEventListener('click',()=>{selectedDayIds.clear();requestKey=null;void load()});
+$('fillModel').addEventListener('change',()=>{rangeDays=null;$('dayRangeStatus').textContent='Fill model changed. Search the date range again to see compatible saved data.';void load()});
 $('daySearch').addEventListener('input',()=>{void load()});
 for(const id of ['strategies','datasets','cash','fillModel','runName'])$(id).addEventListener('change',()=>{requestKey=null});
 $('datasets').addEventListener('change',event=>{if(event.target?.type==='checkbox'){if(event.target.checked)selectedDayIds.add(event.target.value);else selectedDayIds.delete(event.target.value)}});

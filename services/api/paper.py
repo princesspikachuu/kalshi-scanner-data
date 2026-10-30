@@ -1,5 +1,6 @@
 """Owner-only paper replay controls, with immutable strategy snapshots."""
 from uuid import UUID,uuid4
+from datetime import date,timedelta
 from fastapi import Request,HTTPException
 from pydantic import BaseModel,ConfigDict,Field
 from typing import Literal
@@ -43,6 +44,50 @@ class ReplayBody(BaseModel):
 def install_paper(app,auth,mutate,pool):
     def no_query(request):
         if request.query_params:raise HTTPException(422,'Query parameters are not accepted')
+    @app.get('/paper/datasets')
+    def list_datasets(request:Request):
+        """Find the newest usable saved version per UTC date and category.
+
+        The workspace's 800-item preview must not limit historical range searches.
+        This only lists existing immutable datasets; missing dates are not invented.
+        """
+        auth(request)
+        query=request.query_params
+        if set(query.keys())!={'start','end','mode','asset'} or any(len(query.getlist(k))!=1 for k in query):
+            raise HTTPException(422,'Choose an explicit date range, category and fill model')
+        try:
+            begin=date.fromisoformat(query['start'])
+            end=date.fromisoformat(query['end'])
+        except (ValueError,TypeError):
+            raise HTTPException(422,'Use ISO dates') from None
+        if begin.isoformat()!=query['start'] or end.isoformat()!=query['end'] or end<begin or end-begin>timedelta(days=365):
+            raise HTTPException(422,'Choose up to 366 consecutive UTC dates')
+        mode=query['mode']
+        asset=query['asset']
+        if mode not in ('all_filled','estimated','conservative') or asset not in ('all',*SERIES.keys()):
+            raise HTTPException(422,'Invalid model or category')
+        with pool.connection() as c:
+            rows=c.execute("""SELECT DISTINCT ON (ds.day,coalesce(r.asset,substring(ds.stream_key from 10)))
+                    ds.id,ds.day,s.summary->>'candidate_count' AS markets,
+                    (s.summary->'resources' ? 'trades') AS has_trade_evidence,
+                    coalesce(r.asset,substring(ds.stream_key from 10)) AS asset
+                FROM research_dataset ds
+                JOIN research_summary s ON s.dataset_id=ds.id
+                LEFT JOIN research_campaign r ON ds.stream_key='campaign-'||replace(r.id::text,'-','')
+                WHERE ds.day BETWEEN %s AND %s
+                    AND (r.id IS NOT NULL OR ds.stream_key IN
+                        ('analysis-btc','analysis-eth','analysis-crypto','analysis-weather','analysis-weather_daily','analysis-sports'))
+                    AND s.summary->'resources' ? 'candles'
+                    AND (%s='all_filled' OR s.summary->'resources' ? 'trades')
+                    AND (%s='all' OR coalesce(r.asset,substring(ds.stream_key from 10))=%s)
+                    AND coalesce((s.summary->>'candidate_count')::integer,0)>0
+                ORDER BY ds.day,coalesce(r.asset,substring(ds.stream_key from 10)),ds.id DESC""",
+                (begin,end,mode,asset,asset)).fetchall()
+        datasets=sorted(rows,key=lambda d:(d['day'],d['asset']),reverse=True)
+        return dict(contract='paper-v1',live_trading_enabled=False,datasets=datasets,
+            days_requested=(end-begin).days+1,days_available=len({r['day'] for r in rows}),
+            start=begin.isoformat(),end=end.isoformat(),asset=asset,mode=mode)
+
     @app.get('/paper/workspace')
     def workspace(request:Request):
         auth(request);no_query(request)
