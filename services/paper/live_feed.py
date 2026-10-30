@@ -187,6 +187,12 @@ class LiveFeed:
     def run(self):
         """Failures back off locally; never bring down the collection process."""
         with KalshiInventory(signer=self.signer) as provider:
+            # One bounded, read-only startup check is visible in Render logs.
+            # It creates no paper account and sends no exchange order.
+            try:
+                probe=check_feed(pool=self.store.pool,signer=self.signer)
+            except Exception:probe=dict(ok=False,reason='feed probe unavailable; active accounts will retry with backoff')
+            print(json.dumps(dict(event='paper_live_feed_probe',**probe)),flush=True)
             while not self.stop.is_set():
                 try:
                     self.health('ready; waiting for a live paper account')
@@ -199,18 +205,20 @@ class LiveFeed:
                     self.stop.wait(5)
 
 
-def check_feed():
+def check_feed(*,pool=None,signer=None):
     """One bounded read-only deployment probe; no paper account is created."""
     import os
+    from contextlib import nullcontext
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
     from services.research.kalshi_auth import signer_from_env
     from services.research.budget import ReadBudget
     from websockets.sync.client import connect
-    signer=signer_from_env(os.environ)
+    signer=signer or signer_from_env(os.environ)
     if signer is None:raise ValueError('Market-data authentication is required')
-    with ConnectionPool(os.environ['DATABASE_URL'],min_size=1,max_size=1,
-            kwargs=dict(row_factory=dict_row,connect_timeout=5,options='-c statement_timeout=5000')) as pool:
+    manager=nullcontext(pool) if pool is not None else ConnectionPool(os.environ['DATABASE_URL'],min_size=1,max_size=1,
+            kwargs=dict(row_factory=dict_row,connect_timeout=5,options='-c statement_timeout=5000'))
+    with manager as pool:
         budget=ReadBudget(pool)
         if budget.take(1):return dict(ok=False,reason='shared read budget busy; retry later')
         with KalshiInventory(signer=signer) as provider:
