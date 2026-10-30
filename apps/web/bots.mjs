@@ -1,11 +1,16 @@
 import {createAuthClient} from './auth-client.mjs';
-import {demoCall,escapeHTML as e,money,attentionInfo,attentionMarkup} from './demo-client.mjs';
+import {demoCall,escapeHTML as e,money,attentionInfo,attentionMarkup,resetMarkup} from './demo-client.mjs';
 import {openBotBuilder} from './bot-builder.mjs';
 const $=id=>document.getElementById(id);let workspace,orders=[],period=localStorage.getItem('money-period')||'24H',busy=false,delay=15000,timer;
 if(!['24H','7D','30D'].includes(period))period='24H';
 const setMessage=text=>$('message').textContent=text;
 function group(bot){if(bot.desired!=='running')return 'Paused';if(workspace.health.bots?.[bot.key]?.exit_waiting||workspace.health.state!=='ready'||workspace.health.blocked_markets?.some(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';return 'Running'}
 function draw(){
+ $('resetStatus').innerHTML=resetMarkup(workspace.reset);
+ const resetting=workspace.reset&&workspace.reset.state!=='complete';
+ $('resetDemo').disabled=Boolean(resetting);$('resumeAll').disabled=Boolean(resetting);
+ if($('resetFunding'))$('resetFunding').onclick=()=>$('fundsDialog').showModal();
+ $('fundsTarget').textContent=workspace.reset?.state==='awaiting_funds'?`Add ${money(workspace.reset.deposit_needed_cents)} in mock funds to reach ${money(workspace.reset.target_balance_cents)}. The app verifies the actual exchange balance.`:'';
  const account=workspace.account;$('accountValue').textContent=money(account?.equity_cents);$('cash').textContent=money(account?.cash_cents);$('positions').textContent=money(account?.position_value_cents);$('accountChange').textContent=money(workspace.account_change_cents);$('fundsBalance').textContent=money(account?.cash_cents);
  $('accountTime').textContent=account?`Verified ${new Date(account.at*1000).toLocaleString()}`:'Connect your Demo account to load its actual balance.';
  $('health').textContent=workspace.health.message;$('health').className='health-pill '+workspace.health.state;
@@ -32,6 +37,13 @@ function card(bot){const own=orders.filter(o=>o.bot===bot.key),name=group(bot),e
 async function control(id,action,button){const bot=workspace.bots.find(b=>b.key===id);button.disabled=true;try{await demoCall(`bots/${id}/control`,{action,revision:bot.revision});setMessage(action==='pause'?'Pause requested. Open bids will be canceled; filled entries remain protected.':'Resume requested. Entries wait for verified exchange state.');await load()}catch(error){setMessage(error.message)}finally{button.disabled=false}}
 async function load(){if(busy)return;busy=true;try{[workspace,{items:orders}]=await Promise.all([demoCall('workspace?period='+period),demoCall('orders')]);draw();delay=15000;if($('equityDetails').open)await chart()}catch(error){setMessage(error.message);delay=Math.min(120000,delay*2)}finally{busy=false;clearTimeout(timer);if(!document.hidden)timer=setTimeout(load,delay)}}
 async function chart(){try{const data=await demoCall('chart?period='+period);const points=data.points;if(points.length<2){$('equityChart').innerHTML='<p class="small">Account history appears after two verified snapshots, taken 15 minutes apart.</p>';$('accountChange').textContent='—';return}const values=points.map(p=>p.value),low=Math.min(...values),range=Math.max(100,Math.max(...values)-low),path=points.map((p,i)=>`${i?'L':'M'} ${10+i*780/(points.length-1)} ${175-(p.value-low)*150/range}`).join(' ');$('equityChart').innerHTML=`<svg class="chart" viewBox="0 0 800 190" role="img" aria-label="Verified Demo account value over ${period}"><line x1="0" y1="175" x2="800" y2="175"/><path d="${path}"/></svg>`;$('accountChange').textContent=money(values.at(-1)-values[0])}catch(error){setMessage(error.message)}}
+let resetRequestId;
+$('resetDemo').onclick=()=>{resetRequestId=crypto.randomUUID();$('resetMessage').textContent='';$('resetDialog').showModal()};
+$('resetForm').onsubmit=async event=>{
+ event.preventDefault();$('confirmReset').disabled=true;
+ try{await demoCall('reset',{request_id:resetRequestId,fresh_bots:$('resetFreshBots').checked,target_balance_cents:$('resetTarget').value===''?null:Math.round(Number($('resetTarget').value)*100)});$('resetDialog').close();setMessage('Reset requested. Bots are paused; exchange verification tracks actual cancellation and sales.');await load()}
+ catch(error){$('resetMessage').textContent=error.message}finally{$('confirmReset').disabled=false}
+};
 $('newBot').onclick=()=>openBotBuilder({onSave:load});$('find').oninput=draw;$('filter').onchange=draw;
 $('copyDemoCard').onclick=async()=>{try{await navigator.clipboard.writeText('4000056655665556');$('copyCardStatus').textContent='Test card number copied.'}catch{$('copyCardStatus').textContent='Copy this number: 4000 0566 5566 5556'}};
 $('funds').onclick=()=>$('fundsDialog').showModal();$('connect').onclick=()=>$('connectionDialog').showModal();

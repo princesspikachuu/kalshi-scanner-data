@@ -42,3 +42,9 @@ export function exitEvidence(item){
  if(Number.isFinite(d.previous_ask))lines.push(`Previous ASK ${d.previous_ask}¢${Number.isFinite(d.observation_gap_seconds)?' · '+d.observation_gap_seconds+'s between observations':''}`);
  return lines;
 }
+
+export function resetMarkup(reset){
+ if(!reset)return '';
+ const e=escapeHTML,active=reset.state!=='complete',funding=reset.state==='awaiting_funds';
+ return `<section class="panel" role="status"><h2>${active?'Demo reset in progress':'Demo reset verified'}</h2><p>${e(reset.message)}</p><p class="small">Open orders: ${e(reset.open_orders??'Checking')} · Held markets: ${e(reset.held_markets??'Checking')}${reset.cash_cents!=null?' · Verified cash: '+money(reset.cash_cents):''}</p>${reset.target_balance_cents!=null?`<p>Target: <strong>${money(reset.target_balance_cents)}</strong>${funding&&reset.deposit_needed_cents>0?' · Add '+money(reset.deposit_needed_cents)+' in mock funds':''}</p>`:''}${funding?'<button type="button" class="secondary" id="resetFunding">Add remaining demo funds</button>':''}${reset.market?'<p class="small">Waiting on market: '+e(reset.market)+'</p>':''}<p class="small">Old history is retained. Fresh bots stay paused.</p></section>`;
+}

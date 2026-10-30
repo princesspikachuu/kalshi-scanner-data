@@ -34,7 +34,7 @@ class Worker:
         self.socket=None;self.subscription=set();self.book_sid=None;self.stream_command=2;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
-        self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
+        self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
         summary={}
@@ -104,6 +104,7 @@ class Worker:
                 reconciled=self.recovered,entry_diagnostics=self.entry_diagnostics(now))),flush=True)
             self.last_diagnostic=now
     def load_bots(self):
+        self.reset_row=self.store.get('reset')
         self.bots=[]
         for row in self.store.rows('bot/',100):
             key=row['idempotency_key'].split('/')[-1]
@@ -489,6 +490,10 @@ class Worker:
             if self.trigger_digest.get(bot['id'])!=packed:
                 self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']));self.trigger_digest[bot['id']]=packed
     def loop(self):
+        from .reset import ResetController,ResetRequest,request_reset,ACTIVE
+        self.reset_controller=ResetController(self.store,self.exchange)
+        bootstrap=os.environ.get('DEMO_RESET_REQUEST_JSON')
+        if bootstrap and not self.store.get('reset'):request_reset(self.store,ResetRequest.model_validate_json(bootstrap))
         next_reconcile=0;next_controls=0;maintenance_at=0;backoff=1;credential_check=0;credential_version=None
         try:
             while not self.stop.is_set():
@@ -506,6 +511,12 @@ class Worker:
                     if now>=next_controls:self.load_bots();self.repair_rejected_entries();next_controls=now+5
                     request=self.store.get('refresh') if now>=next_controls-1 else None
                     if request and request['progress']['requested_at']>self.last_reconcile:self.last_reconcile=0
+                    if self.reset_row and self.reset_row['progress'].get('state') in ACTIVE:
+                        self.stage='reset'
+                        if self.socket:self.close_stream()
+                        self.reset_controller.step(self.reset_row)
+                        self.health('resetting',self.reset_row['progress']['message'])
+                        self.stop.wait(.5);continue
                     self.stage="discovery"
                     if now-self.last_discovery>=5:self.discover()
                     self.stage="stream";self.stream()

@@ -34,6 +34,17 @@ def install_demo(app,auth,mutate,pool):
                 square['loss_cents']=loss.get('sell_threshold_cents') or loss.get('threshold_cents')
                 if config['loss_mode']=='research' and not square['loss_cents']:raise HTTPException(422,'This square has no verified exit recommendation; choose manual or off')
         return config
+    def reset_blocks_resume():
+        from services.demo.reset import ACTIVE
+        row=store.get('reset')
+        if row and row['progress'].get('state') in ACTIVE:raise HTTPException(409,'Finish the Demo reset and verify funding before resuming bots')
+    from services.demo.reset import ResetRequest,request_reset,ResetConflict
+    @app.post('/demo/reset')
+    def reset_demo(body:ResetRequest,request:Request):
+        mutate(request);require_query(request)
+        try:result=request_reset(store,body)
+        except ResetConflict as error:raise HTTPException(409,str(error)) from None
+        return dict(contract='demo-v1',request_id=result['request_id'],state=result['state'])
     @app.get('/demo/workspace')
     def workspace(request:Request):
         auth(request);require_query(request,('period',))
@@ -42,9 +53,10 @@ def install_demo(app,auth,mutate,pool):
         bots=[]
         for row in store.rows('bot/',101):
             data=row['parameters'];state=row['progress']
-            bots.append(dict(id=row['id'],key=row['idempotency_key'].split('/')[-1],config=data['config'],revision=data['revision'],**state))
+            bots.append(dict(id=row['id'],key=row['idempotency_key'].split('/')[-1],config=data['config'],revision=data['revision'],fresh_test=bool(data.get('reset_source')),**state))
         health=store.get('health');account=store.get('account');policy=store.get('policy')
         alerts=[dict(key=r['idempotency_key'].split('/')[-1],**r['progress']) for r in store.rows('alert/',30) if r['progress'].get('active')]
+        reset=store.get('reset')
         status=health['progress'] if health else dict(state='waiting',message='Trading worker has not checked in yet')
         if time.time()-status.get('at',0)>90:status=dict(status,state='waiting',message='Trading worker heartbeat is stale; entries require verified recovery')
         values=account['progress'] if account else None
@@ -55,9 +67,11 @@ def install_demo(app,auth,mutate,pool):
             first=c.execute("SELECT progress FROM research_job WHERE idempotency_key>='demo/equity/' AND idempotency_key<'demo/equity/zzzz' AND created_at>clock_timestamp()-%s*interval '1 hour' ORDER BY created_at LIMIT 1",(hours,)).fetchone()
             performance=c.execute("SELECT parameters->>'bot' AS bot,coalesce(sum((progress->>'realized_cents')::numeric),0) AS pnl,count(*) AS closed FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress ? 'realized_cents' AND (progress->>'closed_at')::numeric>%s GROUP BY parameters->>'bot'",(time.time()-hours*3600,)).fetchall()
         metrics={r['bot']:dict(realized_cents=int(r['pnl']),closed=r['closed']) for r in performance}
+        for b in bots:
+            if b.get('fresh_test'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
         account_change=values['equity_cents']-first['progress']['value'] if values and first else None
         monitoring={r['idempotency_key'].split('/')[-1].split('-')[0]:r['progress'] for r in health_rows}
-        return dict(contract='demo-v1',environment='demo',bots=bots[:100],capacity_reached=len(bots)>100,
+        return dict(contract='demo-v1',environment='demo',reset=({**reset['progress'],'target_balance_cents':reset['parameters']['target_balance_cents'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
             health=status,account=values,alerts=alerts,policy=policy['progress'] if policy else Policy().model_dump(),
             connection_configured=bool(store.get('credentials') or os.environ.get('KALSHI_DEMO_API_KEY_ID')),
             vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,account_change_cents=account_change,period=period)
@@ -91,6 +105,8 @@ def install_demo(app,auth,mutate,pool):
     def control(identifier:UUID,body:Controls,request:Request):
         mutate(request);require_query(request)
         with pool.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(723741930)')
+            if body.action=='resume':reset_blocks_resume()
             row=c.execute('SELECT parameters,progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/bot/'+str(identifier),)).fetchone()
             if not row:raise HTTPException(404,'Bot not found')
             if row['parameters']['revision']!=body.revision:raise HTTPException(409,'Bot changed; refresh before retrying')
@@ -116,6 +132,8 @@ def install_demo(app,auth,mutate,pool):
         keys=['demo/bot/'+str(b.id) for b in body.bots];expected={str(b.id):b.revision for b in body.bots}
         from psycopg.types.json import Jsonb
         with pool.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(723741930)')
+            if body.action=='resume':reset_blocks_resume()
             rows=c.execute('SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) FOR UPDATE',(keys,)).fetchall()
             if len(rows)!=len(keys) or any(r['parameters']['revision']!=expected[r['idempotency_key'].split('/')[-1]] for r in rows):raise HTTPException(409,'Bots changed; refresh before retrying')
             for row in rows:

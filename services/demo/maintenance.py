@@ -74,7 +74,7 @@ def backup(store,objects):
         rows=c.execute("""SELECT id::text,idempotency_key,parameters,progress FROM research_job
             WHERE (idempotency_key>='demo/bot/' AND idempotency_key<'demo/bot/zzzz')
             OR (idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress->>'status' NOT IN ('closed','rejected'))
-            OR idempotency_key IN ('demo/policy','demo/account','demo/funding') LIMIT 701""").fetchall()
+            OR idempotency_key IN ('demo/policy','demo/account','demo/funding','demo/reset') LIMIT 701""").fetchall()
     if len(rows)>700:raise ValueError('Backup chunk capacity reached')
     reference=put_verified(objects,'backups',dict(version=1,created_at=time.time(),records=rows))
     # Reading and parsing the written object is a bounded restore validation.

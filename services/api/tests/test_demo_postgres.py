@@ -48,6 +48,26 @@ class DemoPostgres(unittest.TestCase):
         response=self.client.post('/demo/bots',json=body)
         self.assertEqual(response.status_code,200,response.text)
         self.assertIsNone(self.demo.get('bot/'+response.json()['id'])['parameters']['config']['minimum_cents'])
+    def test_reset_is_idempotent_pauses_bots_blocks_resume_and_preserves_history(self):
+        from uuid import uuid4
+        from services.demo.reset import archive_and_clone
+        created=self.client.post('/demo/bots',json=config()).json()['id']
+        self.client.post('/demo/bots/'+created+'/control',json=dict(action='resume',revision=1))
+        self.demo.event('fill','Existing historical execution')
+        history=self.demo.rows('event/',100)
+        body=dict(request_id=str(uuid4()),fresh_bots=True,target_balance_cents=100000)
+        response=self.client.post('/demo/reset',json=body);self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.client.post('/demo/reset',json=body).status_code,200)
+        self.assertEqual(self.client.post('/demo/bots/'+created+'/control',json=dict(action='resume',revision=1)).status_code,409)
+        page=self.client.get('/demo/workspace').json();self.assertEqual(page['bots'][0]['desired'],'paused')
+        self.assertEqual(page['reset']['target_balance_cents'],100000)
+        reset=self.demo.get('reset');archive_and_clone(self.demo,reset['parameters']);archive_and_clone(self.demo,reset['parameters'])
+        bots=self.demo.rows('bot/',100);self.assertEqual(len(bots),2)
+        old=self.demo.get('bot/'+created);self.assertTrue(old['progress']['archived'])
+        fresh=next(b for b in bots if b['idempotency_key']!='demo/bot/'+created)
+        self.assertEqual(fresh['progress']['desired'],'paused');self.assertEqual(fresh['parameters']['config']['squares'],config()['squares'])
+        for prior in history:self.assertEqual(self.demo.get(prior['idempotency_key'][5:])['progress'],prior['progress'])
+        self.client.headers.pop('x-csrf-token');self.assertEqual(self.client.post('/demo/reset',json=body).status_code,403)
     def test_activity_pagination_and_filter_includes_archive_summaries(self):
         for i in range(55):self.demo.event('fill','Event '+str(i),bot='00000000-0000-0000-0000-000000000001',ticker='T')
         first=self.client.get('/demo/activity?kind=fill').json();self.assertEqual(len(first['items']),50)

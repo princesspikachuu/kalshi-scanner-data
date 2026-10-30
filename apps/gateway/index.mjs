@@ -77,7 +77,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|bots|bulk|policy|connection|refresh|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|bots|bulk|policy|connection|refresh|reset|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
