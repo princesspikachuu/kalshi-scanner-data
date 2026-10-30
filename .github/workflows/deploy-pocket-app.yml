@@ -69,7 +69,7 @@ jobs:
         with:
           node-version: '24'
       - name: Test staging gateway boundaries
-        run: node --test tests/test_login_bridge.mjs tests/test_research_dashboard.mjs tests/test_demo_gateway.mjs
+        run: node --test tests/test_login_bridge.mjs tests/test_research_dashboard.mjs tests/test_demo_gateway.mjs tests/test_bot_table.mjs
       - name: Validate isolated deployment configuration
         run: node scripts/check_staging_gateway.mjs
       - name: Validate existing Cloudflare connection

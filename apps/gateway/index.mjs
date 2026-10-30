@@ -5,7 +5,7 @@ const ROUTES=new Map([
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
 const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/live-paper');STATIC.add('/live-paper.html');STATIC.add('/live-paper.mjs');STATIC.add('/live-paper-view.mjs');STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
-for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs'])STATIC.add(path);
+for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs'])STATIC.add(path);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
