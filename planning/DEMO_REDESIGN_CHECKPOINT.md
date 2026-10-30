@@ -74,3 +74,17 @@ Actual PostgreSQL caught two defects before deployment: locale-dependent Unicode
 5. Existing immutable historical data is preserved. New legacy replays/simulated-live starts are disabled; historical replay results remain readable.
 
 No permission questions were raised. User directed skipping assistance-dependent work; continue independently when access becomes available.
+
+
+## Verified Demo execution — October 30, 2026, 10:05 a.m. Pacific
+This section supersedes earlier connection/first-order setup notes.
+- User connected a valid Demo key and saw funded cash. Ed25519/RSA support is deployed. Four running bots contain 53 conditions.
+- Root cause of zero accepted orders: API returned HTTP 404, code `insufficient_shard_balance`. Aggregate account cash was displayed correctly, but crypto markets live on shard 2 and the original engine did not move collateral from shard 0.
+- Fixed with on-demand primary-account, event-contract-only transfers of existing Demo funds. Authoritative market `exchange_index` is retained. Each transfer has a durable intent and unique client ID before POST; ambiguous responses are reconciled by transfer history without retrying POST; completion and destination balances are verified. Numbered subaccounts are excluded, resting-order collateral is conservatively retained, and prefunding is bounded by remaining bot budget. The transfer does not add funds or alter spending limits.
+- Existing definitively rejected entry attempts are released once for recovery. Accepted, open and uncertain orders are never released. Funding state joins Demo control backups; no migration or historical evidence mutation.
+- Fixed cancellation shard routing by market ticker. Worker handoff waits for its exclusive lock rather than restart cycling. Existing Render shutdown delay can keep the previous instance active for about two minutes; avoid redundant redeploys.
+- Per-bot entry diagnostics show discovered Demo markets, fresh quotes, matches and constraints. Safe exchange codes/statuses are captured without raw provider responses or secrets.
+- Functional source b48381872282652bccdc5ec080fedfe3a4627228. Worker deploy dep-dbiconff3r2c73cm78vg is live. Full validation run 41094467163 passed. Local Python: 441 cases, 292 passed and 149 database-dependent cases skipped; 31 targeted engine/funding cases passed. Frontend: 52 cases passed.
+- Live receipt 17:05:15.349506125Z: `demo_shard_funded`, source 0, destination 2, amount_cents 21000. Immediately afterward at 17:05:15.366922748Z, `demo_order_accepted`: maker entry, exchange_index 2, remaining 10.0, filled 0.0. This verifies a resting maker bid, not a fill. Protective exit/partial-fill recovery still require live evidence.
+- Frontend diagnostics gateway deployment succeeded in workflow 41093066513; its credential-free public smoke check still encounters the existing Cloudflare boundary. No API or collector redeploy was necessary for this worker fix.
+- Critical email, hosted storage autoscaling and full provider backup verification remain as described above. Preserve all existing history.
