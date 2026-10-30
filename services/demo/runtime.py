@@ -35,11 +35,18 @@ class Worker:
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
     def entry_diagnostics(self,now):
-        from .engine import entry_price
+        from .engine import entry_price,side_quote
         summary={}
         for bot in self.bots:
             config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=0
-            market_exposure={};bot_exposure=0
+            market_exposure={};bot_exposure=0;exit_waiting=None
+            for entry in self.orders:
+                if entry['kind']!='entry' or entry['bot']!=bot['id'] or not entry.get('exit_triggered') or entry.get('filled',0)<=entry.get('sold',0):continue
+                q=self.quotes.get(entry['ticker']);ceiling=entry.get('exit_ceiling_cents')
+                working=any(o.get('parent')==entry['client_id'] and o['status'] not in ('closed','rejected') for o in self.orders)
+                if q and now-q['at']<=5 and now<q['close'] and ceiling is not None and not working and side_quote(q,entry['side'])[0]>=ceiling:
+                    exit_waiting=f'Protective exit retains its {ceiling}¢ limit, which would now cross the current bid; waiting for a maker-only quote'
+                    break
             for order in self.orders:
                 if order['kind']!='entry':continue
                 amount=(order.get('remaining',0)+max(0,order.get('filled',0)-order.get('sold',0)))*order['price']
@@ -61,7 +68,8 @@ class Worker:
                         price=entry_price(config,q,side)
                         if price is None:maker+=1;continue
                         if quantity(config,price,self.account.get('equity_cents',0),self.account.get('cash_cents',0),market_exposure.get(ticker,0),bot_exposure)<1:budget+=1
-            if bot['desired']!='running':message='New entries paused'
+            if exit_waiting:message=exit_waiting
+            elif bot['desired']!='running':message='New entries paused'
             elif not available:message='No open Demo markets found for these categories yet'
             elif not fresh:message=f'{available} Demo markets found; waiting for fresh streaming prices'
             elif not matched:message=f'{fresh} fresh Demo markets checked; none match the selected price/time windows'
@@ -71,7 +79,7 @@ class Worker:
             elif maker==matched:message='Matching conditions found; entry price would cross the ask'
             elif budget==matched:message='Matching conditions found; spending limits cannot fund one contract'
             else:message=f'{matched} matching conditions across {fresh} fresh Demo markets'
-            summary[bot['id']]=dict(message=message,markets=available,fresh=fresh,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked)
+            summary[bot['id']]=dict(message=message,markets=available,fresh=fresh,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,exit_waiting=bool(exit_waiting))
         return summary
     def health(self,state,message):
         now=time.time()
@@ -368,7 +376,7 @@ class Worker:
                     if other['ticker']==order['ticker'] and other['kind']=='entry' and other.get('remaining',0)>0:self.cancel(other,'Protective exit blocks new entries');return
                 if any(o.get('parent')==order['client_id'] and o['status'] not in ('closed','rejected') for o in self.orders):continue
                 price=exit_price(q,order['side'],order.get('exit_ceiling_cents'))
-                if price:
+                if price and price>bid:
                     order['exit_ceiling_cents']=price
                     attempt=order.get('exit_attempt',0)+1;order['exit_attempt']=attempt;self.save_order(order)
                     identifier=str(uuid5(NAMESPACE_URL,f"demo-exit/{order['client_id']}/{attempt}"))

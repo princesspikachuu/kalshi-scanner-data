@@ -306,3 +306,9 @@ class DownwardExitRatchet(unittest.TestCase):
         with patch('services.demo.runtime.time.time',return_value=NOW):self.assertFalse(w.upgrade_legacy_exits())
         self.assertFalse(parent['exit_triggered']);self.assertEqual(parent['exit_reference'],'ask');self.assertNotIn('exit_ceiling_cents',parent)
         self.assertIn('exit_policy_updated',w.store.events)
+
+    def test_rebound_between_cancel_and_replace_never_raises_or_crosses_maker_limit(self):
+        w,parent,child=self.worker(65);w.orders=[parent];w.quotes['t'].update(bid=60,ask=65)
+        with patch.object(w,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        submit.assert_not_called();self.assertEqual(parent['exit_ceiling_cents'],55)
+        self.assertTrue(w.entry_diagnostics(NOW)[parent['bot']]['exit_waiting'])

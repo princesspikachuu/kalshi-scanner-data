@@ -4,7 +4,7 @@ import {openBotBuilder} from './bot-builder.mjs';
 const $=id=>document.getElementById(id);let workspace,orders=[],period=localStorage.getItem('money-period')||'24H',busy=false,delay=15000,timer;
 if(!['24H','7D','30D'].includes(period))period='24H';
 const setMessage=text=>$('message').textContent=text;
-function group(bot){if(bot.desired!=='running')return 'Paused';if(workspace.health.state!=='ready'||workspace.health.blocked_markets?.some(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';return 'Running'}
+function group(bot){if(bot.desired!=='running')return 'Paused';if(workspace.health.bots?.[bot.key]?.exit_waiting||workspace.health.state!=='ready'||workspace.health.blocked_markets?.some(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';return 'Running'}
 function draw(){
  const account=workspace.account;$('accountValue').textContent=money(account?.equity_cents);$('cash').textContent=money(account?.cash_cents);$('positions').textContent=money(account?.position_value_cents);$('accountChange').textContent=money(workspace.account_change_cents);$('fundsBalance').textContent=money(account?.cash_cents);
  $('accountTime').textContent=account?`Verified ${new Date(account.at*1000).toLocaleString()}`:'Connect your Demo account to load its actual balance.';

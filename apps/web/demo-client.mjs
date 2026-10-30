@@ -13,6 +13,8 @@ export async function demoCall(path,body){
 }
 
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
+ const blockedExit=health.bots?.[bot.key];
+ if(blockedExit?.exit_waiting)return {reason:blockedExit.message,action:'The downward-only limit is retained. The app retries when it can rest maker-only; review Activity for the position.',control:'activity',phase:'Protective exit',markets:[],lastVerified:health.reconciled_at,lastSeen:health.at};
  const markets=(health.blocked_markets||[]).filter(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t));
  const base={markets,lastVerified:health.reconciled_at,lastSeen:health.at,control:'retry'};
  if(markets.length)return {...base,reason:'These markets have manual or unreconciled exposure.',action:'Review their orders and positions in Activity. New entries wait in affected markets while unrelated trading continues.',control:'activity',phase:'Ownership reconciliation'};
