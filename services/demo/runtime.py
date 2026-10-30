@@ -89,8 +89,10 @@ class Worker:
             if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
             if prior_status not in ('closed','held') and order['status']=='closed':self.record('cancel',order,'Exchange order is no longer resting')
         # Reload includes fills committed above and closed exits for per-entry allocation.
+        parents=[o['client_id'] for o in self.orders if o['kind']=='entry']
         with self.store.pool.connection() as c:
-            exits=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND parameters->>'kind'='exit' AND progress->>'filled' IS NOT NULL ORDER BY created_at DESC LIMIT 2000").fetchall()
+            exits=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND parameters->>'kind'='exit' AND parameters->>'parent'=ANY(%s) AND progress->>'filled' IS NOT NULL LIMIT 5001",(parents,)).fetchall()
+        if len(exits)>5000:raise ExchangeFailure('entry_exit_reconciliation_capacity')
         sold={};exit_fees={}
         for row in exits:
             parent=row['parameters'].get('parent')
