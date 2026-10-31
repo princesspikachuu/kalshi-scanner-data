@@ -179,11 +179,11 @@ class CampaignStore:
                     WHERE d.campaign_id=%s AND d.dataset_id IS NOT NULL AND (
                         EXISTS(SELECT 1 FROM research_summary s WHERE s.dataset_id=d.dataset_id AND s.summary->'resources' ? 'trades')
                         OR EXISTS(SELECT 1 FROM research_job a WHERE a.idempotency_key='analysis-source/'||d.dataset_id::text AND a.status='succeeded'))''',(UUID(str(identifier)),)).fetchone()['n']
-                result=c.execute('''SELECT rr.id::text AS id,rr.report->'publication' AS publication FROM research_result rr
+                result=c.execute('''SELECT rr.id::text AS id,rr.model_version,rr.report->'publication' AS publication FROM research_result rr
                     WHERE rr.stream_key=%s ORDER BY rr.id DESC LIMIT 1''',('campaign-'+UUID(str(identifier)).hex,)).fetchone()
                 row['reported_sections']=0;row['report_complete']=False
                 if result:
-                    row['result_id']=row['result_id'] or result['id']
+                    row['result_id']=result['id'] if result['model_version']=='research-return-window-v2' else row['result_id'] or result['id']
                     publication=result['publication'] or dict(complete=True,reported_sections=row['completed_sections'])
                     row['reported_sections']=publication['reported_sections'];row['report_complete']=publication['complete']
                 sample=c.execute('''SELECT id::text AS id,report->'publication' AS publication FROM research_result
@@ -269,7 +269,7 @@ class CampaignStore:
                     WHERE b.id=%s AND (%s='all' OR b.asset=%s)))
                 ORDER BY {ordering} {direction},r.id {direction} LIMIT %s)
                 SELECT r.id::text AS id,r.asset,r.mode,r.start_at,r.end_at,r.created_at,
-                    j.status,j.error_code,cr.result_id::text AS result_id,
+                    j.status,j.error_code,COALESCE((SELECT rr.id::text FROM research_result rr WHERE rr.stream_key='campaign-'||replace(r.id::text,'-','') AND rr.model_version='research-return-window-v2' ORDER BY rr.id DESC LIMIT 1),cr.result_id::text) AS result_id,
                     d.total_sections,d.completed_sections
                 FROM chosen r JOIN research_job j ON j.id=r.job_id
                 LEFT JOIN research_campaign_result cr ON cr.campaign_id=r.id

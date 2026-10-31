@@ -104,11 +104,11 @@ class RuntimePrivilegesTests(unittest.TestCase):
             with self.api.connection() as c: c.execute("INSERT INTO public.research_artifact VALUES('x','x','x','x',1)")
         with self.assertRaisesRegex(psycopg.Error, 'sealed'):
             with self.worker.connection() as c:
-                c.execute("INSERT INTO research_observation VALUES(%s,'2026-10-25','late',1,'{}')",(result,))
+                c.execute("INSERT INTO research_observation(result_id,day,ticker,minute,observation) VALUES(%s,'2026-10-25','late',1,'{}')",(result,))
 
     def test_catalog_audit_identifies_operator_and_does_not_mutate_database(self):
         result = audit_database(URL)
-        self.assertTrue(result['migrations_match']); self.assertEqual(result['migration_count'],9)
+        self.assertTrue(result['migrations_match']); self.assertEqual(result['migration_count'],10)
         self.assertEqual(result['history_flags']['found'],len(HISTORY))
         self.assertFalse(result['privilege_boundary_ready'])
         with psycopg.connect(URL) as c:
@@ -184,7 +184,7 @@ class RuntimePrivilegesTests(unittest.TestCase):
                 self.assertTrue(audit_database(direct,profile)['privilege_boundary_ready'])
                 with self.assertRaises(RuntimeError):deployment_check(direct,'research' if profile=='api' else 'api')
             with psycopg.connect(URL) as c:
-                self.assertEqual(c.execute('SELECT count(*) FROM public.schema_migration').fetchone()[0],9)
+                self.assertEqual(c.execute('SELECT count(*) FROM public.schema_migration').fetchone()[0],10)
         finally:
             with psycopg.connect(URL,autocommit=True) as c:
                 for role in RUNTIME_ROLES:c.execute(sql.SQL('ALTER ROLE {} NOLOGIN PASSWORD NULL').format(sql.Identifier(role)))

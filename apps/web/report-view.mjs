@@ -19,7 +19,7 @@ export function renderTable(container,report,options,onSelect){
  for(const band of report.price_bands)tr.append(el('th',band+'¢'));head.append(tr);table.append(head);
  const body=el('tbody');
  for(const row of tableModel(report,options)){
-  const tr=el('tr'),th=el('th',row.minutes+' min');th.setAttribute('scope','row');tr.append(th);
+  const tr=el('tr'),th=el('th',report.model_version==='research-return-window-v2'?row.minutes+'–'+Math.max(0,...report.entry_minutes.filter(m=>m<row.minutes))+' min':row.minutes+' min (snapshot)');th.setAttribute('scope','row');tr.append(th);
   for(const model of row.cells){
    const td=el('td');
    if(model.empty){td.append(el('span','No observations'))}
@@ -35,10 +35,10 @@ export function renderTable(container,report,options,onSelect){
 
 
 export function reportCsv(report){
- const header=['report_id','asset','minutes_before_close','price_band_cents','policy','sampled_markets','sampled_days','wins','win_rate_percent','average_purchase_price_cents','average_profit_loss_cents_per_contract','hypothetical_roi_percent','threshold_cents','exit_coverage','early_exits','sell_label','collection_complete','reported_sections','total_sections','sampled_preview','sample_limit'];
+ const header=['report_id','asset','minutes_before_close','time_window_min_minutes','sampling_model','price_band_cents','policy','sampled_markets','sampled_days','wins','win_rate_percent','average_purchase_price_cents','average_profit_loss_cents_per_contract','hypothetical_roi_percent','threshold_cents','exit_coverage','early_exits','sell_label','collection_complete','reported_sections','total_sections','sampled_preview','sample_limit'];
  const rows=[header];
  for(const cell of report.cells)for(const policy of ['hold','loss_prevention']){
-  const r=cell[policy];rows.push([report.id,r.asset,r.minutes_before_close,r.price_band_cents,policy,cell.hold.sampled_markets,cell.hold.sampled_days,r.wins,r.win_rate_percent,r.average_purchase_price_cents,r.average_profit_loss_cents_per_contract,r.hypothetical_roi_percent,r.threshold_cents??'',r.exit_coverage??'',r.early_exits??'',r.sell_label??'',report.collection_complete!==false,report.reported_sections??'',report.total_sections??'',report.sampled_preview===true,report.sample_limit??'']);
+  const r=cell[policy];rows.push([report.id,r.asset,r.minutes_before_close,report.model_version==='research-return-window-v2'?Math.max(0,...report.entry_minutes.filter(m=>m<r.minutes_before_close)):'',report.model_version,r.price_band_cents,policy,cell.hold.sampled_markets,cell.hold.sampled_days,r.wins,r.win_rate_percent,r.average_purchase_price_cents,r.average_profit_loss_cents_per_contract,r.hypothetical_roi_percent,r.threshold_cents??'',r.exit_coverage??'',r.early_exits??'',r.sell_label??'',report.collection_complete!==false,report.reported_sections??'',report.total_sections??'',report.sampled_preview===true,report.sample_limit??'']);
  }
  return rows.map(row=>row.map(value=>'"'+String(value).replaceAll('"','""')+'"').join(',')).join('\r\n')+'\r\n';
 }

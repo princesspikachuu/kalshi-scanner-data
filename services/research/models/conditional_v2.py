@@ -12,11 +12,11 @@ CHECKPOINTS = (360,180,120,60,45,30,20,15,10,5,3,1)
 EXIT_COST_STRESS_CENTS = 2
 EXIT_COST_CENTS = 2
 
-def canonical(rows):
+def canonical(rows,window_entries=False):
     picked = {}
     for row in rows:
         check_priority()
-        key = (row['date'], row['ticker'], int(row['minutes_before_close']))
+        key = (row['date'], row['ticker'], int(row['minutes_before_close'])) + ((row['price_band'],) if window_entries else ())
         if key not in picked or float(row['maker_bid']) > float(picked[key]['maker_bid']):
             picked[key] = row
     return list(picked.values())
@@ -70,8 +70,8 @@ def summarize(items):
             'sale_advantage_upper_cents': None if has_zero_bid else round(mean_bid - EXIT_COST_STRESS_CENTS - 100*(1-upper), 4)})
     return bins
 
-def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
-    saved = canonical(rows)
+def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False, window_entries=False):
+    saved = canonical(rows,window_entries)
     representatives = {}
     eligible = 0
     # Older archives have checkpoint entry quotes but no full candle sidecar.
@@ -84,7 +84,7 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
             close = int(dt.datetime.fromisoformat(r['close_time'].replace('Z', '+00:00')).timestamp())
             age = float(r.get('quote_age_seconds') or 0)
             bid = 100 * float(r['maker_bid'])
-            ts = close - 60*int(r['minutes_before_close']) - age
+            ts = r['quote_period_ts'] if window_entries else close - 60*int(r['minutes_before_close']) - age
         except (KeyError, ValueError, TypeError):
             continue
         if 0 <= age <= 60 and math.isfinite(bid) and 0 <= bid <= 100:
@@ -138,6 +138,8 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
             except (KeyError, ValueError, TypeError):
                 continue
             target = close - 60*decision
+            entry_ts=r.get('entry_ts',close-60*minute) if window_entries else close-60*minute
+            if target<=entry_ts:continue
             bid = None
             source = 'minute_path'
             if path is not None:
@@ -145,12 +147,12 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
                 index = bisect_right(times, target) - 1
                 if index >= 0:
                     b = bars[index]
-                    if 0 <= target-int(b[0]) <= 60 and int(b[0]) > close-60*minute:
+                    if 0 <= target-int(b[0]) <= 60 and int(b[0]) > entry_ts:
                         bid = b[1 if r['side'] == 'yes' else 2]
             if bid is None:
                 quotes, times = quote_index.get((r['date'], r['ticker'], r['side']), ([], []))
                 index = bisect_right(times, target) - 1
-                if index >= 0 and 0 <= target-times[index] <= 60 and times[index] > close-60*minute:
+                if index >= 0 and 0 <= target-times[index] <= 60 and times[index] > entry_ts:
                     bid = quotes[index][1]
                     source = 'saved_checkpoint'
             if not isinstance(bid, (int, float)) or not math.isfinite(bid) or not 0 <= bid <= 100:
@@ -160,7 +162,7 @@ def analyze_risk(rows, paths, asset, include_snapshots=False, compact=False):
             if not compact or decision==next((t for t in CHECKPOINTS if t<=minute/2),None):
                 grid[group].append({'event': event, 'bid': bid, 'won': int(r['won']),
                                     'entry': 100*float(r['maker_bid']), 'source': source,
-                                    'key': (r['date'], r['ticker'], minute), 'close_ts': close, 'decision_ts': target})
+                                    'key': (r['date'], r['ticker'], minute) + ((band,) if window_entries else ()), 'close_ts': close, 'decision_ts': target})
             covered.add(key)
     records = []
     for (family, minute, band, decision), count in (sorted(requested.items()) if not compact else []):

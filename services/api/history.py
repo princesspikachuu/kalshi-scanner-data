@@ -45,7 +45,7 @@ class Metadata(Closed):
 
 
 class Result(Metadata):
-    model_version:Literal['research-return-conditional-v1']
+    model_version:Literal['research-return-conditional-v1','research-return-window-v2']
     asset:Asset
     latest_membership_known:bool=Field(strict=True)
     dataset_count:Annotated[int,Field(strict=True,ge=1,le=3661)]
@@ -143,7 +143,7 @@ class Cell(Closed):
 
 
 class Detail(Metadata):
-    model_version:Literal['research-return-conditional-v1']
+    model_version:Literal['research-return-conditional-v1','research-return-window-v2']
     asset:Asset
     latest_membership_known:bool=Field(strict=True)
     source_commit:Annotated[str,Field(pattern=r'^[a-f0-9]{40}$')]

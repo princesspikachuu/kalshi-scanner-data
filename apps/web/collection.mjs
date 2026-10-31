@@ -95,8 +95,9 @@ function drawReport(){
  renderTable($('table'),report,{loss:$('loss').checked,metric:$('metric').value,minimum:Number($('minimum').value)},(cell,minutes,band)=>{
   if(choosingBet){const k=betKey(minutes,band);if(betSelections.has(k))betSelections.delete(k);else betSelections.set(k,{report,cell,minutes,band});betSelectionStatus();drawReport();return}
   const row=$('loss').checked?cell.loss_prevention:cell.hold,p=cell.loss_prevention,doc=document;
-  const heading=doc.createElement('h3');heading.textContent=`${minutes} minutes before close · ${band}¢`;
+  const heading=doc.createElement('h3');heading.textContent=`${report.model_version==='research-return-window-v2'?minutes+'–'+Math.max(0,...report.entry_minutes.filter(m=>m<minutes))+' minutes remaining':minutes+' minutes remaining (legacy snapshot)'} · ${band}¢`;
   const lines=[`${report.sampled_preview?'Preliminary sampled cohort':'Full original sample'}: ${cell.hold.sampled_markets} observations across ${cell.hold.sampled_days} days.`,
+   report.model_version==='research-return-window-v2'?'First qualifying saved quote per market in this square. Each square is evaluated separately; these are hypothetical entries, not confirmed fills.':'Legacy report: quotes sampled near a fixed time, not the full window.',
    `Wins: ${row.wins} · Win rate: ${row.win_rate_percent.toFixed(2)}%`,
    `Average P/L: ${row.average_profit_loss_cents_per_contract.toFixed(2)}¢ · ROI: ${row.hypothetical_roi_percent.toFixed(2)}%`,
    `Exit coverage: ${p.exit_coverage} of ${cell.hold.sampled_markets} · Early exits: ${p.early_exits}`,

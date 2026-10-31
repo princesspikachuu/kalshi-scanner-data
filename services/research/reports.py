@@ -1,7 +1,7 @@
 """Versioned full-hold-cohort research summaries; no trades or hosting actions."""
 from .telemetry import timed,timing,count
 
-from bisect import bisect_right
+from bisect import bisect_right,bisect_left
 from collections import defaultdict
 from .cache import ByteCache
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ from .normalize import _closed
 from .queue import EvidenceConflict, text_key
 from . import report_jobs
 
-MODEL = 'research-return-conditional-v1'
+MODEL = 'research-return-window-v2'
 MAX_REPORT_BYTES=96*1024*1024
 MAX_PATH_BARS=1000000
 PUBLICATION_BATCH_ROWS=1000
@@ -74,7 +74,7 @@ def _observations(asset,datasets,*,candidate_filter=None):
         payload=decoded['payload']
         if payload.get('format')!=FORMAT:
             raise EvidenceConflict('Published raw dataset integrity mismatch')
-        key=f"{asset}/{dataset['id']}/{dataset['fingerprint']}"
+        key=f"{MODEL}/{asset}/{dataset['id']}/{dataset['fingerprint']}"
         saved=_daily_inputs.get(key)
         if saved is None:
             contribution=_raw_observations(asset,[decoded])
@@ -98,7 +98,7 @@ def _observations(asset,datasets,*,candidate_filter=None):
         missing.extend(daily_coverage['missing_entry_slots'])
         bar_count+=daily_coverage['_path_bars']
         if bar_count>MAX_PATH_BARS:raise ValueError('Report path limit exceeded; split the range')
-        if slots>250000:raise ValueError('Report entry limit exceeded; split the range')
+        if slots>250000 or len(rows)>250000:raise ValueError('Report entry limit exceeded; split the range')
         del decoded,payload,dataset
     return rows,paths,origin,dict(candidate_count=candidate_count,requested_entry_slots=slots,
         missing_entry_slots=missing,observation_count=len(rows))
@@ -146,25 +146,32 @@ def _raw_observations(asset,datasets,*,candidate_filter=None):
                 float(_bid(b,'yes')*100) if _bid(b,'yes') is not None else None,
                 float(_bid(b,'no')*100) if _bid(b,'no') is not None else None] for b in retained]}
             for minute in MINUTES[asset]:
-                target=close-minute*60
-                index=bisect_right(times,target)-1
-                selected=[]
-                if index>=0 and 0<=target-times[index]<=120:
-                    candle=candles[index]
+                lower=max((m for m in MINUTES[asset] if m<minute),default=0)
+                start,end=close-minute*60,close-lower*60
+                # The first observed quote in EACH price square, without
+                # hindsight or repeated-minute inflation. End belongs to the
+                # next window, matching the Demo engine's lower<remaining<=upper.
+                selected={}
+                for index in range(bisect_left(times,start),bisect_left(times,end)):
+                    choices=[]
                     for side in ('yes','no'):
-                        bid=_bid(candle,side)
-                        if bid is not None and Decimal('.5')<=bid<1: selected.append((bid,side))
+                        bid=_bid(candles[index],side)
+                        if bid is not None and Decimal('.5')<=bid<1:choices.append((bid,side))
+                    if not choices:continue
+                    bid,side=max(choices,key=lambda v:(v[0],v[1]=='yes'))
+                    low=int(bid*100)//10*10
+                    selected.setdefault(low,(bid,side,times[index]))
                 if not selected:
                     missing.append(dict(dataset_id=dataset['id'],date=day,ticker=ticker,minutes_before_close=minute))
-                    continue
-                # Highest entry bid, YES on an exact tie, before examining outcome.
-                bid,side=max(selected,key=lambda v:(v[0],v[1]=='yes'))
-                low=int(bid*100)//10*10
-                row=dict(date=day,asset=asset,series=candidate['series'],ticker=ticker,event_ticker=candidate['event_ticker'],
-                    close_time=candidate['close_time'],side=side,minutes_before_close=minute,price_band=f'{low:02d}-{low+10:02d}',
-                    maker_bid=str(bid),won=int(candidate['result']==side),quote_age_seconds=target-times[index],
-                    dataset_id=dataset['id'],dataset_fingerprint=dataset['fingerprint'],quote_period_ts=times[index])
-                rows.append(row);origin[(day,ticker,minute)]=dataset['id']
+                for low,(bid,side,observed) in sorted(selected.items()):
+                    band=f'{low:02d}-{low+10:02d}'
+                    row=dict(date=day,asset=asset,series=candidate['series'],ticker=ticker,event_ticker=candidate['event_ticker'],
+                        close_time=candidate['close_time'],side=side,minutes_before_close=minute,price_band=band,
+                        entry_min_minutes=lower,entry_max_minutes=minute,entry_ts=observed,
+                        maker_bid=str(bid),won=int(candidate['result']==side),quote_age_seconds=0,
+                        dataset_id=dataset['id'],dataset_fingerprint=dataset['fingerprint'],quote_period_ts=observed)
+                    rows.append(row);origin[(day,ticker,minute,band)]=dataset['id']
+                    if len(rows)>250000:raise ValueError('Report entry limit exceeded; split the range')
         del payload,dataset,bars,candles,times,retained,candidates
     coverage=dict(candidate_count=candidate_count,requested_entry_slots=candidate_count*len(MINUTES[asset]),
         missing_entry_slots=missing,observation_count=len(rows),_path_bars=bar_count)
@@ -272,11 +279,11 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     latest_keys=None if latest is None else {k for k,v in origin.items() if v in latest}
     del origin
     report_jobs.check_priority()
-    risk=analyze_risk(rows,paths,asset,include_snapshots=True,compact=True)
+    risk=analyze_risk(rows,paths,asset,include_snapshots=True,compact=True,window_entries=True)
     del paths
     historical_policy,latest_policy=policy_cells(risk.pop('_snapshot_groups'),latest_keys)
     risk.pop('records',None)
-    latest_rows=[r for r in rows if latest_keys is not None and (r['date'],r['ticker'],r['minutes_before_close']) in latest_keys]
+    latest_rows=[r for r in rows if latest_keys is not None and (r['date'],r['ticker'],r['minutes_before_close'],r['price_band']) in latest_keys]
     historical_cells=_cells(rows,historical_policy);latest_cells=_cells(latest_rows,latest_policy)
     for policies,cells in ((historical_policy,historical_cells),(latest_policy,latest_cells)):
         bases={(c['hold']['minutes_before_close'],c['hold']['price_band_cents']):c['hold'] for c in cells}
@@ -286,7 +293,7 @@ def prepare_report_stream(asset,datasets,*,latest_ids,candidate_filter=None):
     days=sorted({d['day'] for d in datasets})
     latest_days=sorted({d['day'] for d in datasets if latest is not None and d['id'] in latest})
     latest_candidates=None if latest is None else sum(d['candidate_count'] for d in datasets if d['id'] in latest)
-    payload=dict(model_version=MODEL,source_commit=SOURCE_COMMIT,asset=asset,entry_minutes=list(MINUTES[asset]),
+    payload=dict(entry_sampling='first-qualifying-quote-per-price-time-square',model_version=MODEL,source_commit=SOURCE_COMMIT,asset=asset,entry_minutes=list(MINUTES[asset]),
         price_bands=['50-60','60-70','70-80','80-90','90-100'],
         datasets=[dict(id=d['id'],fingerprint=d['fingerprint'],latest=latest is not None and d['id'] in latest) for d in sorted(datasets,key=lambda d:d['id'])],
         latest_membership_known=latest is not None,coverage=coverage,risk_coverage=risk,
@@ -327,7 +334,7 @@ class ReportStore:
         return self._save(stream_key,asset,prepared)
 
     @timed('report.save')
-    def _save(self,stream_key,asset,prepared,*,minimum_revision=None):
+    def _save(self,stream_key,asset,prepared,*,minimum_revision=None,expected_result_id=None):
         payload=json.loads(prepared.payload_json)
         # Preview cells retain full source cohorts; raw datasets already retain
         # every observation input. Avoid O(days squared) observation duplication.
@@ -335,6 +342,9 @@ class ReportStore:
         batches=() if preview else observation_batches(prepared.observations_json)
         with self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91028))',(stream_key,))
+            if expected_result_id is not None:
+                current=c.execute('SELECT id FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1',(stream_key,)).fetchone()
+                if current and current['id']!=expected_result_id:return current['id']
             if stream_key.startswith('campaign-') and 'publication' in payload:
                 latest=c.execute('SELECT id,report FROM research_result WHERE stream_key=%s ORDER BY id DESC LIMIT 1',(stream_key,)).fetchone()
                 if latest:
@@ -355,8 +365,8 @@ class ReportStore:
             # this SAME publication transaction, preserving all-or-nothing sealing.
             for batch in batches:
                 report_jobs.check_priority()
-                c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation)
-                    SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
+                c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation,entry_band)
+                    SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r,r->>'price_band'
                     FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(batch)))
             return result
 

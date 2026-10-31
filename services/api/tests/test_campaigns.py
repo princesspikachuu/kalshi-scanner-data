@@ -48,8 +48,8 @@ class RangeTests(unittest.TestCase):
         full=prepare_report('btc',inputs,latest_ids=[19,20])
         streamed=prepare_report_stream('btc',(d for d in inputs),latest_ids=[19,20])
         self.assertEqual(full,streamed)
-        # Golden computed using the unmodified e63e093 model, before the streaming refactor.
-        self.assertEqual(streamed.fingerprint,'bc634c20ca1daf3ad8fcf0e6d6c378b4c6e8beea6296c75a993c6fe54ae6466a')
+        # Golden for window-v2: first observed quote per price/time square.
+        self.assertEqual(streamed.fingerprint,'8bec9d331207f355505783a1d068c19c5dc6b7bd1e72739af9a27ce04326565b')
         self.assertEqual(json.loads(streamed.payload_json)['historical']['candidate_count'],20)
         with self.assertRaises(ValueError):prepare_report_stream('btc',iter(reversed(inputs)),latest_ids=[])
 

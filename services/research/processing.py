@@ -128,9 +128,11 @@ class ProcessingWorker(CampaignWorker):
             lease_token=NULL,lease_expires_at=NULL WHERE id=%s""",(job['id'],))
 
     def run_once(self,*,deadline):
+        from .window_rebuild import WindowRebuild
+        if not hasattr(self,"_window_upgrade"):self._window_upgrade=WindowRebuild(self.pool,self.cancelled)
         worked=False
         try:
-            worked=self._run_once(deadline=deadline)
+            worked=self._window_upgrade.run_once() or self._run_once(deadline=deadline)
             return worked
         finally:
             if worked:

@@ -39,6 +39,33 @@ def row(ticker='T',won=0):
 class ReportTests(unittest.TestCase):
     def report(self,rows,latest=None):return json.loads(prepare_report('btc',rows,latest_ids=latest).payload_json)
 
+    def test_window_uses_first_quote_in_each_price_square_and_exact_boundary(self):
+        d=dataset();close=int(datetime.fromisoformat(d['payload']['candidates'][0]['close_time']).timestamp())
+        ticker=d['payload']['candidates'][0]['ticker']
+        d['payload']['records']=[dict(resource='candles',ticker=ticker,record=dict(end_period_ts=close-60*m,yes_bid={'close':price}))
+            for m,price in [(14,'.72'),(12,'.65'),(11,'.61'),(10,'.82'),(9,'.68'),(0,'.99')]]
+        d['fingerprint']=digest(d['payload'])
+        prepared=prepare_report('btc',[d],latest_ids=[1]);rows=json.loads(prepared.observations_json)
+        early={r['price_band']:r for r in rows if r['minutes_before_close']==15}
+        self.assertEqual(set(early),{'60-70','70-80'})
+        self.assertEqual(early['60-70']['maker_bid'],'0.65')
+        self.assertEqual(early['60-70']['entry_ts'],close-12*60)
+        self.assertEqual(early['60-70']['entry_min_minutes'],10)
+        self.assertEqual(len([r for r in rows if r['minutes_before_close']==10 and r['price_band']=='80-90']),1)
+        self.assertFalse(any(r['entry_ts']==close for r in rows))
+        report=json.loads(prepared.payload_json)
+        self.assertEqual(report['model_version'],'research-return-window-v2')
+        self.assertEqual(report['risk_coverage']['saved_observations'],len(rows))
+        self.assertEqual(report['latest']['observation_count'],len(rows))
+        self.assertEqual(sum(c['hold']['sampled_markets'] for c in report['historical']['cells']),len(rows))
+    def test_upper_boundary_is_included_without_borrowing_older_quotes(self):
+        d=dataset();close=int(datetime.fromisoformat(d['payload']['candidates'][0]['close_time']).timestamp())
+        ticker=d['payload']['candidates'][0]['ticker']
+        d['payload']['records']=[dict(resource='candles',ticker=ticker,record=dict(end_period_ts=close-60*m,yes_bid={'close':'.75'})) for m in [16,15]]
+        d['fingerprint']=digest(d['payload'])
+        rows=json.loads(prepare_report('btc',[d],latest_ids=[1]).observations_json)
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['entry_ts'],close-900)
+
     def test_compact_policy_inputs_preserve_exact_report_and_fingerprint(self):
         import services.research.reports as model
         selected=[dataset(i,day=i,decision=None if i%3==0 else '.55',
@@ -163,13 +190,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(p['coverage']['missing_entry_slots']),5)
         self.assertEqual(p['coverage']['requested_entry_slots'],5)
 
-    def test_120_second_hold_quote_stays_in_full_sample_but_not_fresh_exit_training(self):
+    def test_quote_before_window_is_not_borrowed_into_next_window(self):
         p=self.report([dataset(age=120,decision=None)],[1])
         cells=[c for c in p['historical']['cells'] if c['hold']['minutes_before_close']==10]
-        self.assertEqual(len(cells),1)
-        self.assertEqual(cells[0]['hold']['sampled_markets'],1)
-        self.assertEqual(cells[0]['loss_prevention']['exit_coverage'],0)
-        self.assertEqual(p['risk_coverage']['eligible_entry_observations'],0)
+        self.assertEqual(cells,[])
+        previous=[c for c in p['historical']['cells'] if c['hold']['minutes_before_close']==15]
+        self.assertEqual(previous[0]['hold']['sampled_markets'],1)
+        self.assertEqual(p['risk_coverage']['eligible_entry_observations'],1)
 
     def test_higher_bid_side_is_chosen_without_looking_at_settlement_and_no_bid_uses_yes_ask(self):
         d=dataset(entry='.20');d['payload']['records'][0]['record']['yes_ask']={'close':'.25'}
@@ -233,6 +260,41 @@ class ReportPostgresTests(unittest.TestCase):
     def counts(self):
         with self.store.pool.connection() as c:
             return tuple(c.execute('SELECT count(*) AS n FROM '+t).fetchone()['n'] for t in ('research_result','research_result_dataset','research_observation'))
+
+    def test_window_upgrade_reuses_saved_sources_and_preserves_original_report(self):
+        import services.research.reports as model
+        from services.research.window_rebuild import WindowRebuild
+        with self.store.pool.connection() as c:
+            source=c.execute('SELECT id,fingerprint,payload FROM research_dataset WHERE id=%s',(self.dataset_id,)).fetchone()
+        prepared=prepare_report('btc',[source],latest_ids=[self.dataset_id])
+        legacy=json.loads(prepared.payload_json);legacy['model_version']='research-return-conditional-v1'
+        encoded=json.dumps(legacy,sort_keys=True,separators=(',',':'))
+        saved=replace(prepared,payload_json=encoded,fingerprint=model.report_fingerprint(encoded,prepared.observations_json))
+        with patch.object(model,'MODEL','research-return-conditional-v1'):
+            old=self.reports._save('category-btc','btc',saved)
+        upgrade=WindowRebuild(self.store.pool,lambda:False)
+        self.assertTrue(upgrade.run_once());self.assertFalse(upgrade.run_once())
+        with self.store.pool.connection() as c:
+            rows=c.execute('SELECT id,report FROM research_result ORDER BY id').fetchall()
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_dataset').fetchone()['n'],1)
+            members=c.execute('SELECT dataset_id FROM research_result_dataset WHERE result_id=%s',(rows[-1]['id'],)).fetchall()
+        self.assertEqual(len(rows),2);self.assertEqual(rows[0]['id'],old);self.assertEqual(rows[0]['report'],legacy)
+        self.assertEqual(rows[-1]['report']['model_version'],model.MODEL)
+        self.assertEqual(members,[dict(dataset_id=self.dataset_id)])
+        self.assertFalse(WindowRebuild(self.store.pool,lambda:False).run_once())
+    def test_separate_price_squares_in_same_time_window_publish_without_key_collision(self):
+        d=dataset();close=int(datetime.fromisoformat(d['payload']['candidates'][0]['close_time']).timestamp())
+        ticker=d['payload']['candidates'][0]['ticker']
+        d['payload']['records']=[dict(resource='candles',ticker=ticker,record=dict(end_period_ts=close-60*m,yes_bid={'close':price})) for m,price in [(14,'.65'),(12,'.85')]]
+        d['fingerprint']=digest(d['payload'])
+        prepared=prepare_report('btc',[d],latest_ids=[1]);payload=json.loads(prepared.payload_json)
+        payload['datasets']=[dict(id=self.dataset_id,latest=True)]
+        result=self.reports._save('window-bands','btc',replace(prepared,payload_json=json.dumps(payload)))
+        with self.store.pool.connection() as c:
+            rows=c.execute('SELECT minute,entry_band FROM research_observation WHERE result_id=%s ORDER BY entry_band',(result,)).fetchall()
+        self.assertEqual(rows,[dict(minute=15,entry_band='60-70'),dict(minute=15,entry_band='80-90')])
+        # A rebuild that started before this newer version cannot overwrite it.
+        self.assertEqual(self.reports._save('window-bands','btc',prepared,expected_result_id=result-1),result)
 
     def test_publish_is_atomic_idempotent_and_keeps_exact_dataset_membership(self):
         result=self.reports.publish('btc-results','btc',[self.dataset_id],latest_ids=[self.dataset_id])
@@ -308,7 +370,7 @@ class ReportPostgresTests(unittest.TestCase):
     def test_committed_versions_reject_late_child_insertions(self):
         result=self.reports.publish('btc-results','btc',[self.dataset_id],latest_ids=[self.dataset_id])
         attempts=[
-            ("INSERT INTO research_observation VALUES(%s,'2026-10-25','late-new-ticker',1,'{}'::jsonb)",(result,)),
+            ("INSERT INTO research_observation(result_id,day,ticker,minute,observation) VALUES(%s,'2026-10-25','late-new-ticker',1,'{}'::jsonb)",(result,)),
             ('INSERT INTO research_result_dataset VALUES(%s,%s,false)',(result,self.dataset_id)),
             ("INSERT INTO research_summary VALUES(%s,'late','{}'::jsonb)",(self.dataset_id,)),
             ("INSERT INTO research_dataset_artifact VALUES(%s,'late-missing-object')",(self.dataset_id,))]

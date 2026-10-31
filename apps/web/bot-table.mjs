@@ -57,7 +57,7 @@ export function renderOfferings(container,asset,report,squares,onToggle,{loading
  for(const model of rows[0]?.cells||[])heading.append(element('th',`${model.square.min_price}–${model.square.max_price}¢`));head.append(heading);table.append(head);
  const body=element('tbody');
  for(const row of rows){
-  const tr=element('tr'),th=element('th',`${row.minutes} min`);th.setAttribute('scope','row');tr.append(th);
+  const tr=element('tr'),th=element('th',`${row.minutes}–${row.cells[0].square.min_minutes} min`);th.setAttribute('scope','row');tr.append(th);
   for(const model of row.cells){
    const td=element('td'),button=element('button'),square=model.square;
    const chosen=selected.has(conditionKey(square)),hold=model.cell?.hold,loss=model.cell?.loss_prevention;
