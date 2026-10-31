@@ -53,7 +53,9 @@ class EvidenceScope:
 
     @property
     def key(self): return digest(asdict(self))
-    def parameters(self): return {'collector':'evidence-v1','scope':asdict(self)}
+    def parameters(self):
+        from .scope_storage import stored_scope
+        return {'collector':'evidence-v1','scope':stored_scope(asdict(self))}
     def manifest_receipt(self):
         return dict(object_key=self.manifest_key,sha256=self.manifest_sha256,byte_length=self.manifest_bytes,
                     provider='research',content_type='application/gzip')
@@ -130,7 +132,8 @@ def scope_for_job(job,archives):
     p = job['parameters']
     if not isinstance(p,dict) or set(p) != {'collector','scope'} or p['collector'] != 'evidence-v1':
         raise ValueError('Not an evidence job')
-    scope = EvidenceScope(**p['scope'])
+    from .scope_storage import decode_scope
+    scope = EvidenceScope(**decode_scope(p['scope']))
     if hasattr(archives,'validated_candidate'):
         candidate=archives.validated_candidate(scope)
     else:

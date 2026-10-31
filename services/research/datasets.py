@@ -321,7 +321,8 @@ def prepare_dataset(plan,attempts,archives,inventory_loader,*,max_rows=250000,ar
         if n>=100000: raise ValueError('Too many evidence attempts')
         p = job['parameters']
         if p.get('collector')!='evidence-v1': raise EvidenceConflict('Unexpected evidence collector')
-        scope = EvidenceScope(**p['scope'])
+        from .scope_storage import decode_scope
+        scope = EvidenceScope(**decode_scope(p['scope']))
         if scope.key not in wanted: continue
         state = inspect_pages(scope,pages)
         jid = str(job['id'])

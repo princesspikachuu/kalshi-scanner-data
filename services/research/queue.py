@@ -58,7 +58,8 @@ class ResearchQueue:
                 (uuid4(), asset, payload, idempotency_key, max_attempts)).fetchone()
             if row is None:
                 row = c.execute('SELECT * FROM research_job WHERE idempotency_key=%s', (idempotency_key,)).fetchone()
-                if row['asset'] != asset or row['parameters'] != parameters or row['max_attempts'] != max_attempts:
+                from .scope_storage import canonical_parameters
+                if row['asset'] != asset or canonical_parameters(row['parameters']) != canonical_parameters(parameters) or row['max_attempts'] != max_attempts:
                     raise EvidenceConflict('Idempotency key belongs to different job parameters')
             return row
 

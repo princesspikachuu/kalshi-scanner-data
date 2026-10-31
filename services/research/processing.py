@@ -130,6 +130,9 @@ class ProcessingWorker(CampaignWorker):
     def run_once(self,*,deadline):
         from .window_rebuild import WindowRebuild
         if not hasattr(self,"_window_upgrade"):self._window_upgrade=WindowRebuild(self.pool,self.cancelled)
+        from .storage_compaction import ScopeCompaction
+        if not hasattr(self,"_scope_compaction"):self._scope_compaction=ScopeCompaction(self.pool)
+        self._scope_compaction.tick()
         worked=False
         try:
             worked=self._window_upgrade.run_once() or self._run_once(deadline=deadline)

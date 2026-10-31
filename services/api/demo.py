@@ -57,7 +57,7 @@ def install_demo(app,auth,mutate,pool):
         if time.time()-status.get('at',0)>90:status=dict(status,state='waiting',message='Trading worker heartbeat is stale; entries require verified recovery')
         values=account['progress'] if account else None
         with pool.connection() as c:
-            health_rows=c.execute("SELECT idempotency_key,progress FROM research_job WHERE idempotency_key=ANY(%s)",(['demo/storage-health','demo/backup-health','demo/email-health'],)).fetchall()
+            health_rows=c.execute("SELECT idempotency_key,progress FROM research_job WHERE idempotency_key=ANY(%s)",(['demo/storage-health','demo/backup-health','demo/email-health','demo/compaction-health'],)).fetchall()
         hours={'24H':24,'7D':168,'30D':720}[period]
         with pool.connection() as c:
             first=c.execute("SELECT progress FROM research_job WHERE idempotency_key>='demo/equity/' AND idempotency_key<'demo/equity/zzzz' AND created_at>clock_timestamp()-%s*interval '1 hour' ORDER BY created_at LIMIT 1",(hours,)).fetchone()
