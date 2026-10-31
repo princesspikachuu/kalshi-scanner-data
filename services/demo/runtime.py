@@ -515,6 +515,7 @@ class Worker:
                         self.stage='reset'
                         if self.socket:self.close_stream()
                         self.reset_controller.step(self.reset_row)
+                        self.recovered=False
                         self.health('resetting',self.reset_row['progress']['message'])
                         if now>=maintenance_at:
                             from .maintenance import maintenance

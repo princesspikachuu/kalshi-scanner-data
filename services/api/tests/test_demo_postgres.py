@@ -48,30 +48,52 @@ class DemoPostgres(unittest.TestCase):
         response=self.client.post('/demo/bots',json=body)
         self.assertEqual(response.status_code,200,response.text)
         self.assertIsNone(self.demo.get('bot/'+response.json()['id'])['parameters']['config']['minimum_cents'])
-    def test_reset_is_idempotent_pauses_bots_blocks_resume_and_preserves_history(self):
+    def test_reset_archives_and_copies_without_funding_or_order_mutation(self):
         from uuid import uuid4
-        from services.demo.reset import archive_and_clone
         created=self.client.post('/demo/bots',json=config()).json()['id']
         self.client.post('/demo/bots/'+created+'/control',json=dict(action='resume',revision=1))
         self.demo.event('fill','Existing historical execution')
         history=self.demo.rows('event/',100)
-        body=dict(request_id=str(uuid4()),fresh_bots=True,target_balance_cents=100000)
-        response=self.client.post('/demo/reset',json=body);self.assertEqual(response.status_code,200,response.text)
-        self.assertEqual(self.client.post('/demo/reset',json=body).status_code,200)
-        self.assertEqual(self.client.post('/demo/bots/'+created+'/control',json=dict(action='resume',revision=1)).status_code,409)
-        page=self.client.get('/demo/workspace').json();self.assertEqual(page['bots'][0]['desired'],'paused')
-        self.assertEqual(page['reset']['target_balance_cents'],100000)
-        reset=self.demo.get('reset')
+        self.demo.put('account',dict(cash_cents=53627,equity_cents=53627))
         self.demo.put('order/unsettled',dict(status='held',filled=1,remaining=0),parameters=dict(kind='entry',bot=created,ticker='T'))
-        archive_and_clone(self.demo,reset['parameters'],retire_orders=False)
-        self.assertEqual(self.demo.get('order/unsettled')['progress']['status'],'held')
-        archive_and_clone(self.demo,reset['parameters']);archive_and_clone(self.demo,reset['parameters'])
+        prior=self.demo.get('order/unsettled')
+        # Old cached clients may still send these fields: neither is a gate.
+        body=dict(request_id=str(uuid4()),fresh_bots=False,target_balance_cents=100000)
+        response=self.client.post('/demo/reset',json=body);self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['state'],'complete')
+        self.assertEqual(self.client.post('/demo/reset',json=body).status_code,200)
         bots=self.demo.rows('bot/',100);self.assertEqual(len(bots),2)
-        old=self.demo.get('bot/'+created);self.assertTrue(old['progress']['archived'])
+        old=self.demo.get('bot/'+created);self.assertTrue(old['progress']['archived']);self.assertEqual(old['progress']['desired'],'paused')
         fresh=next(b for b in bots if b['idempotency_key']!='demo/bot/'+created)
         self.assertEqual(fresh['progress']['desired'],'paused');self.assertEqual(fresh['parameters']['config']['squares'],config()['squares'])
-        for prior in history:self.assertEqual(self.demo.get(prior['idempotency_key'][5:])['progress'],prior['progress'])
+        fresh_id=fresh['idempotency_key'].split('/')[-1]
+        self.assertEqual(self.client.post('/demo/bots/'+fresh_id+'/control',json=dict(action='resume',revision=1)).status_code,200)
+        self.assertEqual(self.demo.get('account')['progress']['cash_cents'],53627)
+        self.assertEqual(self.demo.get('order/unsettled')['progress'],prior['progress'])
+        self.assertEqual(self.demo.get('order/unsettled')['parameters'],prior['parameters'])
+        for previous in history:self.assertEqual(self.demo.get(previous['idempotency_key'][5:])['progress'],previous['progress'])
         self.client.headers.pop('x-csrf-token');self.assertEqual(self.client.post('/demo/reset',json=body).status_code,403)
+    def test_legacy_reset_unblocks_resumes_and_reuses_existing_copies(self):
+        from uuid import uuid4
+        from services.demo.reset import ResetController
+        from unittest.mock import MagicMock
+        identifier=self.client.post('/demo/bots',json=config()).json()['id']
+        self.client.post('/demo/reset',json=dict(request_id=str(uuid4())))
+        reset=self.demo.get('reset');params=dict(reset['parameters'],target_balance_cents=100000)
+        pending=dict(client_id='legacy-unknown-sale')
+        self.demo.put('reset',dict(reset['progress'],state='awaiting_funds',pending=pending,cash_cents=100001),parameters=params)
+        fresh=next(b for b in self.demo.rows('bot/',100) if not b['progress'].get('archived'))
+        fresh_id=fresh['idempotency_key'].split('/')[-1]
+        result=self.client.post('/demo/bulk',json=dict(action='resume',bots=[dict(id=fresh_id,revision=1)]))
+        self.assertEqual(result.status_code,200,result.text)
+        exchange=MagicMock();ResetController(self.demo,exchange).step(self.demo.get('reset'))
+        self.assertEqual(exchange.mock_calls,[])
+        self.assertEqual(self.demo.get('reset')['progress']['state'],'complete')
+        self.assertEqual(self.demo.get('reset')['progress']['pending'],pending)
+        self.assertEqual(len(self.demo.rows('bot/',100)),2)
+        self.assertEqual(self.demo.get('bot/'+fresh_id)['progress']['desired'],'running')
+        ResetController(self.demo,exchange).step(self.demo.get('reset'))
+        self.assertEqual(len(self.demo.rows('bot/',100)),2)
     def test_activity_pagination_and_filter_includes_archive_summaries(self):
         for i in range(55):self.demo.event('fill','Event '+str(i),bot='00000000-0000-0000-0000-000000000001',ticker='T')
         first=self.client.get('/demo/activity?kind=fill').json();self.assertEqual(len(first['items']),50)

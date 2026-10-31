@@ -34,10 +34,6 @@ def install_demo(app,auth,mutate,pool):
                 square['loss_cents']=loss.get('sell_threshold_cents') or loss.get('threshold_cents')
                 if config['loss_mode']=='research' and not square['loss_cents']:raise HTTPException(422,'This square has no verified exit recommendation; choose manual or off')
         return config
-    def reset_blocks_resume(c):
-        from services.demo.reset import ACTIVE
-        row=c.execute("SELECT progress FROM research_job WHERE idempotency_key='demo/reset'").fetchone()
-        if row and row['progress'].get('state') in ACTIVE:raise HTTPException(409,'Finish the Demo reset and verify funding before resuming bots')
     from services.demo.reset import ResetRequest,request_reset,ResetConflict
     @app.post('/demo/reset')
     def reset_demo(body:ResetRequest,request:Request):
@@ -71,7 +67,7 @@ def install_demo(app,auth,mutate,pool):
             if b.get('fresh_test'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
         account_change=values['equity_cents']-first['progress']['value'] if values and first else None
         monitoring={r['idempotency_key'].split('/')[-1].split('-')[0]:r['progress'] for r in health_rows}
-        return dict(contract='demo-v1',environment='demo',reset=({**reset['progress'],'target_balance_cents':reset['parameters']['target_balance_cents'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
+        return dict(contract='demo-v1',environment='demo',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
             health=status,account=values,alerts=alerts,policy=policy['progress'] if policy else Policy().model_dump(),
             connection_configured=bool(store.get('credentials') or os.environ.get('KALSHI_DEMO_API_KEY_ID')),
             vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,account_change_cents=account_change,period=period)
@@ -106,7 +102,6 @@ def install_demo(app,auth,mutate,pool):
         mutate(request);require_query(request)
         with pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
-            if body.action=='resume':reset_blocks_resume(c)
             row=c.execute('SELECT parameters,progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/bot/'+str(identifier),)).fetchone()
             if not row:raise HTTPException(404,'Bot not found')
             if row['parameters']['revision']!=body.revision:raise HTTPException(409,'Bot changed; refresh before retrying')
@@ -133,7 +128,6 @@ def install_demo(app,auth,mutate,pool):
         from psycopg.types.json import Jsonb
         with pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
-            if body.action=='resume':reset_blocks_resume(c)
             rows=c.execute('SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) FOR UPDATE',(keys,)).fetchall()
             if len(rows)!=len(keys) or any(r['parameters']['revision']!=expected[r['idempotency_key'].split('/')[-1]] for r in rows):raise HTTPException(409,'Bots changed; refresh before retrying')
             for row in rows:
