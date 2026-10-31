@@ -41,3 +41,41 @@ test('inline table selects and deselects cells without opening another strategy 
  assert.equal(button().attrs['aria-pressed'],'false');button().listeners.click();assert.equal(selected.length,1);assert.equal(button().attrs['aria-pressed'],'true');button().listeners.click();assert.equal(selected.length,0);
  renderOfferings(container,'btc',report,selected,()=>assert.fail('Not interactive during load'),{loading:true});assert.equal(button().disabled,true);
 });
+
+import {BOT_DRAFT_KEY,createBotDraftStore,duplicateBotConfig,resolveBotDraft} from '../apps/web/bot-builder.mjs';
+function draft(){return {version:1,mode:'new',fields:{botName:'My unfinished bot',qualification:'ask',priceReference:'bid',adjustment:'',minimum:'60',maximum:'96',bidPercent:'1.5',marketPercent:'3',botPercent:'10',lossMode:'manual',lossCents:'55',dailyLoss:'',tableAsset:'weather',squareAsset:'sports',squareLow:'70',squareHigh:'79',squareAfter:'5',squareThrough:'30'},squares:[offeringRows('btc',report)[2].cells[1].square,offeringRows('weather')[0].cells[2].square],details:[true,true]}}
+function storage(){const values=new Map();return {writes:0,getItem:key=>values.get(key)||null,setItem(key,value){this.writes++;values.set(key,value)},removeItem:key=>values.delete(key),values}}
+test('duplicate copies conditions and every setting independently, without identity or execution state',()=>{
+ const source={key:'existing',revision:7,desired:'running',config:{name:'Source',version:1,squares:[offeringRows('btc',report)[2].cells[1].square],minimum_cents:60,maximum_cents:96,loss_mode:'manual',loss_cents:55}};
+ const copy=duplicateBotConfig(source);
+ assert.equal(copy.name,'Source · copy');assert.equal(copy.minimum_cents,60);assert.equal(copy.maximum_cents,96);
+ assert.equal(copy.loss_cents,55);assert.deepEqual(copy.squares,source.config.squares);
+ for(const key of ['key','revision','desired','orders','stats'])assert.equal(copy[key],undefined);
+ copy.squares[0].min_price=80;assert.equal(source.config.squares[0].min_price,60);
+ assert.ok(duplicateBotConfig({config:{name:'x'.repeat(80),squares:[]}}).name.length<=80);
+});
+test('draft survives a fresh storage instance with raw blank fields and all condition inputs intact',()=>{
+ const memory=storage(),first=createBotDraftStore(memory),input=draft();
+ assert.equal(first.save(input),true);
+ const restored=createBotDraftStore(memory).load();
+ assert.deepEqual(restored.fields,input.fields);assert.deepEqual(restored.squares,input.squares);assert.deepEqual(restored.details,[true,true]);
+ assert.equal(restored.fields.adjustment,'');assert.equal(restored.fields.dailyLoss,'');
+ assert.equal(restored.fields.squareAsset,'sports');assert.equal(restored.fields.tableAsset,'weather');
+ assert.equal(first.save(input),true);assert.equal(memory.writes,1);
+ first.clear();assert.equal(createBotDraftStore(memory).load(),null);
+});
+test('draft stores only bounded builder inputs and tolerates disabled browser storage',()=>{
+ const memory=storage(),store=createBotDraftStore(memory),input=draft();input.api_key='NEVER_SAVE_THIS';input.fields.private_key='NEVER_SAVE_THIS';
+ assert.equal(store.save(input),true);assert.ok(!memory.getItem(BOT_DRAFT_KEY).includes('NEVER_SAVE_THIS'));
+ assert.equal(store.save({...draft(),squares:Array(46).fill(draft().squares[0])}),false);
+ memory.setItem(BOT_DRAFT_KEY,'broken JSON');assert.equal(store.load(),null);assert.equal(memory.getItem(BOT_DRAFT_KEY),null);
+ const blocked=createBotDraftStore({getItem(){throw Error('blocked')},setItem(){throw Error('quota')},removeItem(){throw Error('blocked')}});
+ assert.equal(blocked.save(draft()),false);assert.equal(blocked.load(),null);assert.doesNotThrow(()=>blocked.clear());
+});
+test('edit recovery binds only the same saved revision; changed or missing bots become new drafts',()=>{
+ const input={...draft(),mode:'edit',botKey:'bot-one',revision:3},current={key:'bot-one',revision:3,config:{}};
+ assert.equal(resolveBotDraft(input,[current]).bot,current);
+ assert.equal(resolveBotDraft(input,[{...current,revision:4}]).bot,null);
+ assert.equal(resolveBotDraft(input,[]).recoveredAsNew,true);
+ assert.equal(resolveBotDraft(draft(),[current]).recoveredAsNew,false);
+});
