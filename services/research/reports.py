@@ -236,6 +236,36 @@ def observation_batches(encoded,batch_size=None):
     if batch:yield batch
 
 
+def window_observation_batches(encoded,batch_size=None):
+    """Store up to five square samples in one existing market/window row.
+
+    Canonical report inputs stay flat. Shared fields are stored once; expansion
+    is lossless. Group across batch boundaries with only one window buffered.
+    """
+    limit=PUBLICATION_BATCH_ROWS if batch_size is None else batch_size
+    batch=[];group=[];identity=None
+    def pack(items):
+        if len(items)==1:return items[0]
+        if len(items)>5 or len({r['price_band'] for r in items})!=len(items):raise EvidenceConflict('Duplicate price square in window')
+        common={k:v for k,v in items[0].items() if all(k in r and r[k]==v for r in items[1:])}
+        return dict(common,price_square_observations=[{k:v for k,v in r.items() if k not in common} for r in items])
+    for source_batch in observation_batches(encoded,limit):
+        for row in source_batch:
+            key=(row['date'],row['ticker'],row['minutes_before_close'])
+            if group and identity!=key:
+                batch.append(pack(group));group=[]
+                if len(batch)>=limit:yield batch;batch=[]
+            group.append(row);identity=key
+    if group:batch.append(pack(group))
+    if batch:yield batch
+
+
+def expand_observation(row):
+    if 'price_square_observations' not in row:return [row]
+    shared={k:v for k,v in row.items() if k!='price_square_observations'}
+    return [dict(shared,**square) for square in row['price_square_observations']]
+
+
 def report_fingerprint(report_json,observations_json):
     """Hash the exact canonical envelope without another full observation copy."""
     checksum=hashlib.sha256()
@@ -339,7 +369,7 @@ class ReportStore:
         # Preview cells retain full source cohorts; raw datasets already retain
         # every observation input. Avoid O(days squared) observation duplication.
         preview=payload.get('publication',{}).get('complete') is False
-        batches=() if preview else observation_batches(prepared.observations_json)
+        batches=() if preview else window_observation_batches(prepared.observations_json)
         with self.pool.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,91028))',(stream_key,))
             if expected_result_id is not None:
@@ -365,8 +395,8 @@ class ReportStore:
             # this SAME publication transaction, preserving all-or-nothing sealing.
             for batch in batches:
                 report_jobs.check_priority()
-                c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation,entry_band)
-                    SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r,r->>'price_band'
+                c.execute('''INSERT INTO research_observation(result_id,day,ticker,minute,observation)
+                    SELECT %s,(r->>'date')::date,r->>'ticker',(r->>'minutes_before_close')::integer,r
                     FROM jsonb_array_elements(%s::jsonb) AS t(r)''',(result,Jsonb(batch)))
             return result
 

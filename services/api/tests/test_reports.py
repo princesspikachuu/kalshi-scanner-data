@@ -67,6 +67,14 @@ class ReportTests(unittest.TestCase):
         rows=json.loads(prepare_report('btc',[d],latest_ids=[1]).observations_json)
         self.assertEqual(len(rows),1);self.assertEqual(rows[0]['entry_ts'],close-900)
 
+    def test_compact_window_storage_is_lossless_across_input_batch_boundaries(self):
+        from services.research.reports import window_observation_batches,expand_observation
+        rows=[dict(date='2026-10-01',ticker='T',minutes_before_close=m,price_band=band,maker_bid=price)
+            for m in [15,10] for band,price in [('60-70','.65'),('80-90','.85')]]
+        batches=list(window_observation_batches(json.dumps(rows),1))
+        self.assertEqual(len(batches),2);self.assertTrue(all(len(b)==1 for b in batches))
+        self.assertEqual([r for b in batches for stored in b for r in expand_observation(stored)],rows)
+
     def test_compact_policy_inputs_preserve_exact_report_and_fingerprint(self):
         import services.research.reports as model
         selected=[dataset(i,day=i,decision=None if i%3==0 else '.55',
@@ -292,8 +300,13 @@ class ReportPostgresTests(unittest.TestCase):
         payload['datasets']=[dict(id=self.dataset_id,latest=True)]
         result=self.reports._save('window-bands','btc',replace(prepared,payload_json=json.dumps(payload)))
         with self.store.pool.connection() as c:
-            rows=c.execute('SELECT minute,entry_band FROM research_observation WHERE result_id=%s ORDER BY entry_band',(result,)).fetchall()
-        self.assertEqual(rows,[dict(minute=15,entry_band='60-70'),dict(minute=15,entry_band='80-90')])
+            rows=c.execute('SELECT minute,observation FROM research_observation WHERE result_id=%s ORDER BY minute',(result,)).fetchall()
+        from services.research.reports import expand_observation
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['minute'],15)
+        expanded=expand_observation(rows[0]['observation'])
+        self.assertEqual([r['price_band'] for r in expanded],['60-70','80-90'])
+        self.assertEqual(expanded,json.loads(prepared.observations_json))
         # A rebuild that started before this newer version cannot overwrite it.
         self.assertEqual(self.reports._save('window-bands','btc',prepared,expected_result_id=result-1),result)
 
