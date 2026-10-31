@@ -128,6 +128,9 @@ def run(settings,stop):
         with pool.connection() as c:
             if not c.execute("SELECT to_regclass('research_campaign_result') IS NOT NULL AS ready").fetchone()['ready']:
                 raise ConfigurationError('Apply the committed migrations before starting collection')
+        if settings.role in ('collector','combined'):
+            from .storage_audit import log_storage
+            log_storage(pool)
         objects=R2Objects.connect(account_id=settings.account_id,bucket=settings.bucket,
             access_key_id=settings.access_key_id,secret_access_key=settings.secret_access_key)
         stack.callback(objects.client.close)
