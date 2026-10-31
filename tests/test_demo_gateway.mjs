@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {pro
 const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
 test('Demo routes preserve owner gateway and correct method',async()=>{
- for(const path of ['workspace','orders','activity?kind=fill','chart?period=7D','research?asset=btc&start=2026-10-01&end=2026-10-30']){
+ for(const path of ['performance?bot=00000000-0000-0000-0000-000000000001','workspace','orders','activity?kind=fill','chart?period=7D','research?asset=btc&start=2026-10-01&end=2026-10-30']){
   const r=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,options());assert.equal(r.status,200,path);
  }
  let called=false;const r=await proxyAuth(new Request('https://app.test/api/demo/bots',{method:'POST',headers:{origin:'https://other.test','content-type':'application/json'},body:'{}'}),env,{fetcher:async()=>{called=true}});assert.equal(r.status,403);assert.equal(called,false);
@@ -50,4 +50,13 @@ test('Demo reset is an owner POST route and renders real remaining funds safely'
  const html=resetMarkup({state:'awaiting_funds',message:'<unsafe>',market:'<market>',cash_cents:10000,target_balance_cents:100000,deposit_needed_cents:90000,open_orders:0,held_markets:0});
  assert.ok(html.includes('$900.00'));assert.ok(html.includes('$1,000.00'));assert.ok(!html.includes('<unsafe>'));assert.ok(!html.includes('<market>'));
  assert.ok(html.includes('Fresh bots stay paused'));assert.equal(resetMarkup(null),'');
+});
+
+import {squarePerformanceMarkup} from '../apps/web/demo-client.mjs';
+test('Square performance labels estimates, empty denominators and original revisions safely',()=>{
+ const empty={revision:2,square:0,condition:{asset:'<img>',min_price:60,max_price:69,min_minutes:0,max_minutes:5},orders:0,filled_orders:0,contracts:0,resting_contracts:0,held_contracts:0,scored:0,wins:0,recorded_pnl_cents:null,unscored_resets:1};
+ const html=squarePerformanceMarkup({items:[empty],at:0,limited:true});
+ assert.match(html,/&lt;img&gt;/);assert.doesNotMatch(html,/<img>/);assert.match(html,/v2 · square 1/);assert.match(html,/Estimated net/);assert.doesNotMatch(html,/NaN|Infinity/);assert.match(html,/Unscored reset closures: 1/);assert.match(html,/view is partial/);
+ const traded=squarePerformanceMarkup({items:[{...empty,orders:4,filled_orders:2,scored:2,wins:1,recorded_pnl_cents:-35}],at:0});
+ assert.match(traded,/50.0% filled/);assert.match(traded,/50.0% positive/);assert.match(traded,/-\$0.35/);
 });

@@ -77,7 +77,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|bots|bulk|policy|connection|refresh|reset|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|bots|bulk|policy|connection|refresh|reset|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
@@ -94,7 +94,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(demo&&url.search){const query=[...url.searchParams];if(url.search.length>1024||new Set(query.map(([k])=>k)).size!==query.length||query.some(([k,v])=>!['period','before','bot','ticker','kind','asset','start','end'].includes(k)||v.length>256))return problem(422,'Invalid filters')}
  if(paper&&url.search){const entries=[...url.searchParams];if(!liveEvents||entries.length!==1||entries[0][0]!=='before'||!/^\d{1,12}$/.test(entries[0][1]))return problem(422,'Invalid request')}

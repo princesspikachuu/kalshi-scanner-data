@@ -175,6 +175,31 @@ def install_demo(app,auth,mutate,pool):
         # At most 192 points on mobile, independent of underlying snapshot count.
         points=[r['progress'] for r in reversed(rows)];step=max(1,(len(points)+191)//192)
         return dict(contract='demo-v1',points=points[::step],period=period)
+    @app.get('/demo/performance')
+    def square_performance(request:Request):
+        auth(request);require_query(request,('bot',))
+        try:identifier=str(UUID(request.query_params.get('bot','')))
+        except ValueError:raise HTTPException(422,'Choose a bot') from None
+        bot=bot_get(identifier)
+        with pool.connection() as c:
+            rows=c.execute("""SELECT parameters->'revision' AS revision,parameters->'square' AS square,
+                parameters->'condition' AS condition,count(*) AS orders,
+                count(*) FILTER (WHERE coalesce((progress->>'filled')::numeric,0)>0) AS filled_orders,
+                coalesce(sum((progress->>'filled')::numeric),0) AS contracts,
+                coalesce(sum(CASE WHEN progress->>'status'='resting' THEN (progress->>'remaining')::numeric ELSE 0 END),0) AS resting_contracts,
+                coalesce(sum(CASE WHEN progress->>'status' NOT IN ('closed','rejected') AND NOT coalesce((progress->>'reset_closed')::boolean,false)
+                    THEN greatest(0,coalesce((progress->>'filled')::numeric,0)-coalesce((parameters->>'sold')::numeric,0)) ELSE 0 END),0) AS held_contracts,
+                count(*) FILTER (WHERE progress ? 'realized_cents' AND progress->>'status'='closed') AS scored,
+                count(*) FILTER (WHERE progress->>'status'='closed' AND (progress->>'realized_cents')::numeric>0) AS wins,
+                sum((progress->>'realized_cents')::numeric) FILTER (WHERE progress->>'status'='closed') AS recorded_pnl_cents,
+                count(*) FILTER (WHERE coalesce((progress->>'reset_closed')::boolean,false) AND NOT (progress ? 'realized_cents')) AS unscored_resets
+                FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
+                AND parameters->>'kind'='entry' AND parameters->>'bot'=%s
+                GROUP BY parameters->'revision',parameters->'square',parameters->'condition'
+                ORDER BY parameters->'revision' DESC,parameters->'square',parameters->'condition' LIMIT 251""",(identifier,)).fetchall()
+        from .demo_performance import performance_rows
+        items=performance_rows(bot['parameters'],rows[:250])
+        return dict(contract='demo-v1',bot=identifier,period='Lifetime',items=items,limited=len(rows)>250,at=time.time())
     @app.get('/demo/research')
     def research(request:Request):
         auth(request);require_query(request,('asset','bot','start','end'))

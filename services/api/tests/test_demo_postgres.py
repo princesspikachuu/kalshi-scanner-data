@@ -107,3 +107,26 @@ class DemoPostgres(unittest.TestCase):
         result=self.client.get('/demo/workspace');self.assertEqual(result.status_code,200,result.text)
         self.assertEqual(result.json()['health']['issue']['order_id'],'one')
         self.assertEqual(result.json()['health']['issue']['action'],'Review Activity')
+
+    def test_per_square_performance_separates_revisions_and_reset_closures(self):
+        identifier=self.client.post('/demo/bots',json=config()).json()['id']
+        condition=self.demo.get('bot/'+identifier)['parameters']['config']['squares'][0]
+        for name,state,params in [
+            ('open',dict(status='held',filled=3,remaining=0),dict(sold=1)),
+            ('closed',dict(status='closed',filled=2,remaining=0,realized_cents=35),{}),
+            ('reset',dict(status='closed',filled=2,remaining=0,reset_closed=True),{}),
+            ('rejected',dict(status='rejected',filled=0,remaining=0),{}),
+            ('old',dict(status='closed',filled=1,remaining=0,realized_cents=-20),dict(revision=0)),
+        ]:
+            self.demo.put('order/'+name,state,parameters=dict(dict(bot=identifier,kind='entry',revision=1,square=0,condition=condition),**params))
+        self.demo.put('order/exit',dict(status='closed',filled=1,realized_cents=999),parameters=dict(bot=identifier,kind='exit',revision=1,square=0))
+        response=self.client.get('/demo/performance?bot='+identifier);self.assertEqual(response.status_code,200,response.text)
+        rows=response.json()['items'];self.assertEqual(len(rows),2)
+        current=next(r for r in rows if r['revision']==1)
+        self.assertEqual(current['orders'],4);self.assertEqual(current['contracts'],7)
+        self.assertEqual(current['held_contracts'],2);self.assertEqual(current['scored'],1)
+        self.assertEqual(current['unscored_resets'],1);self.assertEqual(current['recorded_pnl_cents'],35)
+        self.assertEqual(next(r for r in rows if r['revision']==0)['recorded_pnl_cents'],-20)
+        for query in ['','?bot=bad','?bot='+identifier+'&period=7D','?bot='+identifier+'&bot='+identifier]:
+            self.assertEqual(self.client.get('/demo/performance'+query).status_code,422)
+        self.client.cookies.clear();self.assertEqual(self.client.get('/demo/performance?bot='+identifier).status_code,401)
