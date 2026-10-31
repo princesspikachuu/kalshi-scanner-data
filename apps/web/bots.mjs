@@ -9,7 +9,7 @@ function group(bot){if(bot.desired!=='running')return 'Paused';if(workspace.heal
 function draw(){
  for(const id of performance.keys())if(!workspace.bots.some(b=>b.key===id))performance.delete(id);
  $('resetStatus').innerHTML=resetMarkup(workspace.reset);
- const resetting=$('confirmReset').disabled;
+ const resetting=$('confirmReset').disabled||workspace.reset_mode!=='archive_copy';
  $('resetDemo').disabled=Boolean(resetting);$('resumeAll').disabled=false;
 
  const account=workspace.account;$('accountValue').textContent=money(account?.equity_cents);$('cash').textContent=money(account?.cash_cents);$('positions').textContent=money(account?.position_value_cents);$('accountChange').textContent=money(workspace.account_change_cents);$('fundsBalance').textContent=money(account?.cash_cents);
@@ -59,7 +59,7 @@ $('resetDemo').onclick=()=>{resetRequestId=crypto.randomUUID();$('resetMessage')
 $('resetForm').onsubmit=async event=>{
  event.preventDefault();$('confirmReset').disabled=true;
  try{await demoCall('reset',{request_id:resetRequestId});$('resetDialog').close();setMessage('Bots archived and fresh paused copies created. You can resume them now.');await load()}
- catch(error){$('resetMessage').textContent=error.message}finally{$('confirmReset').disabled=false;$('resetDemo').disabled=false}
+ catch(error){$('resetMessage').textContent=error.message}finally{$('confirmReset').disabled=false;$('resetDemo').disabled=workspace.reset_mode!=='archive_copy'}
 };
 $('newBot').onclick=()=>openBotBuilder({onSave:load});$('find').oninput=draw;$('filter').onchange=draw;
 $('copyDemoCard').onclick=async()=>{try{await navigator.clipboard.writeText('4000056655665556');$('copyCardStatus').textContent='Test card number copied.'}catch{$('copyCardStatus').textContent='Copy this number: 4000 0566 5566 5556'}};

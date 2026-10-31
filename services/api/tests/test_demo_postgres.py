@@ -61,6 +61,7 @@ class DemoPostgres(unittest.TestCase):
         body=dict(request_id=str(uuid4()),fresh_bots=False,target_balance_cents=100000)
         response=self.client.post('/demo/reset',json=body);self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['state'],'complete')
+        self.assertEqual(self.client.get('/demo/workspace').json()['reset_mode'],'archive_copy')
         self.assertEqual(self.client.post('/demo/reset',json=body).status_code,200)
         bots=self.demo.rows('bot/',100);self.assertEqual(len(bots),2)
         old=self.demo.get('bot/'+created);self.assertTrue(old['progress']['archived']);self.assertEqual(old['progress']['desired'],'paused')
