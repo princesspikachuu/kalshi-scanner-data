@@ -1,0 +1,80 @@
+# DRAFT ONLY. Creating/syncing a Blueprint provisions and can deploy resources.
+# Existing staging Blueprint is paused. Review before any manual sync.
+previews:
+  generation: 'off'
+projects:
+  - name: Pocket Analytics
+    environments:
+      - name: staging
+        services:
+          - type: web
+            name: pocket-api-staging
+            runtime: python
+            branch: build/google-auth-foundation
+            region: oregon
+            plan: 0.5c-512mb
+            numInstances: 1
+            autoDeployTrigger: 'off'
+            buildCommand: pip install -r services/api/requirements.txt
+            preDeployCommand: python -m services.api.manage verify-runtime --profile api
+            startCommand: uvicorn services.api.app:create_app --factory --host 0.0.0.0 --port $PORT --no-access-log
+            healthCheckPath: /health/ready
+            envVars:
+              - key: PYTHON_VERSION
+                value: 3.12.12
+              - key: DATABASE_URL
+                sync: false
+              - key: RUNTIME_DB_PROFILE
+                value: api
+              - key: REQUIRE_API_RUNTIME_DB
+                value: 'true'
+              - key: DEMO_VAULT_KEY
+                sync: false
+              - key: API_PROXY_SECRET
+                generateValue: true
+              - key: APP_ORIGIN
+                sync: false
+              - key: GOOGLE_CLIENT_ID
+                sync: false
+              - key: OWNER_GOOGLE_EMAIL
+                sync: false
+          - type: worker
+            name: pocket-research-staging
+            runtime: python
+            branch: build/google-auth-foundation
+            region: oregon
+            plan: 0.5c-512mb
+            numInstances: 1
+            autoDeployTrigger: 'off'
+            maxShutdownDelaySeconds: 120
+            buildCommand: pip install -r services/api/requirements.txt
+            preDeployCommand: python -m services.api.manage verify-runtime --profile research
+            startCommand: python -m services.research.runtime
+            envVars:
+              - fromGroup: pocket-r2-staging
+              - key: PYTHON_VERSION
+                value: 3.12.12
+              - key: DATABASE_URL
+                sync: false
+              - key: RUNTIME_DB_PROFILE
+                value: research
+              - key: WORKER_ROLE
+                value: collector
+              - key: COLLECTION_ENABLED
+                value: 'true'
+              - key: KALSHI_READ_RATE
+                value: '4'
+              - key: KALSHI_READ_CAPACITY
+                value: '1'
+              - key: KALSHI_ENDPOINT_COST
+                value: '1'
+        databases:
+          - name: pocket-db-staging
+            databaseName: pocket_staging
+            user: pocket_staging
+            plan: 0.5c-1g
+            region: oregon
+            postgresMajorVersion: '17'
+            diskSizeGB: 5
+            storageAutoscalingEnabled: true
+            ipAllowList: []

@@ -1,0 +1,40 @@
+# Existing processor repurposed for isolated Kalshi Demo execution.
+previews:
+  generation: 'off'
+services:
+- type: worker
+  name: pocket-processing-staging
+  runtime: python
+  branch: build/google-auth-foundation
+  region: oregon
+  plan: 0.5c-512mb
+  numInstances: 1
+  autoDeployTrigger: 'off'
+  maxShutdownDelaySeconds: 120
+  buildCommand: pip install -r services/api/requirements.txt
+  preDeployCommand: python -m services.api.manage verify-runtime --profile research
+  startCommand: python -m services.research.runtime
+  envVars:
+  - fromGroup: pocket-r2-staging
+  - key: PYTHON_VERSION
+    value: 3.12.12
+  - key: DATABASE_URL
+    fromService:
+      name: pocket-research-staging
+      type: worker
+      envVarKey: DATABASE_URL
+  - key: RUNTIME_DB_PROFILE
+    value: research
+  - key: WORKER_ROLE
+    value: demo
+  - key: DEMO_VAULT_KEY
+    sync: false
+  - key: COLLECTION_ENABLED
+    value: 'true'
+  - key: KALSHI_READ_RATE
+    value: '4'
+  - key: KALSHI_READ_CAPACITY
+    value: '1'
+  - key: KALSHI_ENDPOINT_COST
+    value: '1'
+  repo: https://github.com/princesspikachuu/kalshi-scanner-data

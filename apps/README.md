@@ -1,0 +1,159 @@
+# Staging gateway connection
+
+Current October 27, 2026: the separate Render API/worker/database are running;
+collection remains disabled. The staging gateway was published from af11bd8 by workflow
+40543386602. Its deploy step passed, but HTTP smoke checks failed with 403. The
+browser loads the page and reports missing proxy-secret configuration. Login
+acceptance remains pending. Earlier preparation notes below describe the original state.
+
+## Manual development-branch launch
+
+Use the existing **Deploy Pocket Analytics dynamic Worker** workflow in GitHub
+Actions. Choose **Run workflow**, branch **build/google-auth-foundation**, then run.
+Do not choose main for this staging action. The development version gates its
+existing production job to main and adds a separate staging job only for an
+explicit workflow_dispatch on the development branch. A branch push or PR cannot
+deploy staging. Main's existing workflow and live Worker are unchanged.
+
+The staging job runs gateway tests and destination checks, then uses the existing
+repository Cloudflare credentials to deploy only **pocket-analytics-staging** with
+infra/wrangler.staging.json (Wrangler 4.153.0). No new GitHub token or trading
+secret is copied to it. Public workers.dev access is enabled only for this staging
+Worker; preview URLs stay off. Public APP_ORIGIN and API_ORIGIN are in source;
+API_PROXY_SECRET must remain a private Cloudflare secret. keep_vars preserves
+Dashboard bindings across later manual deployments. No paid Cloudflare upgrade.
+
+After initial deployment, the owner must securely copy API_PROXY_SECRET from the
+Render **pocket-api-staging** Environment settings to Cloudflare **Workers & Pages
+→ pocket-analytics-staging → Settings → Variables and Secrets**, type **Secret**,
+with the same name. Copy directly between private consoles; do not paste it in
+chat, GitHub, frontend code or workflow inputs. Do not change the existing Render
+value or use the R2 secret. Until configured, API routes fail closed with 503.
+This transfer has not been completed or independently verified.
+
+Run `python scripts/check_staging_http.py` after deployment. It checks readiness,
+direct-backend denial, staging CSP/no-store headers, blocked trading routes and
+unauthenticated session handling. It deliberately never prints response bodies,
+cookies or tokens. A 503 is reported as unresolved connection configuration or
+availability, not proof of correct credentials. A 401 means the request requires
+login, not proof that Google sign-in succeeds. The real owner Google popup,
+wrong-account rejection and logout round trip still need browser acceptance.
+
+Verify Google Authorized JavaScript origins includes exactly:
+https://pocket-analytics-staging.ezrealrose831.workers.dev
+The existing public client ID is already configured privately on Render. No
+Google client secret is needed. Keep COLLECTION_ENABLED false throughout setup.
+
+See planning/OVERNIGHT_CHECKPOINT.md for deployed resource IDs and current CI.
+
+---
+
+# Undeployed app connection preview
+
+`gateway/index.mjs` is the future staging Cloudflare Worker. It is separate from
+`worker/src/index.js`, which serves the live research app. Neither that Worker
+nor the existing production Wrangler configuration is changed by this draft.
+
+`web/` is a small Google-only sign-in test page and reusable auth client. It is
+not the full React research interface. Its purpose is to verify the browser →
+Cloudflare → API → PostgreSQL connection before migrating the research app.
+
+## Connection behavior
+
+- Only the four explicit `/api/auth/*` routes are proxied, with fixed methods.
+- The API origin is server configuration, never a caller-supplied destination.
+- A server-only proxy secret replaces any incoming header with the same name.
+- Only the four Pocket login/session cookies are forwarded to the API.
+- Multiple Set-Cookie headers are preserved separately, including Expires dates.
+- Cross-origin writes, query credentials, oversized bodies, unsafe cookie
+  attributes, redirects and malformed provider responses are rejected.
+- Errors are sanitized; backend diagnostics and unrelated response fields do
+  not reach the browser. Proxy calls have a bounded timeout.
+- The browser uses same-origin cookie credentials. ID tokens and challenge
+  state stay in memory, not URLs, localStorage or sessionStorage.
+- Google's current client library is loaded from its official URL only after a
+  challenge is available. One Tap/automatic sign-in is not enabled.
+- The sign-in page renders a single Google button and authenticated account/
+  sign-out state. Expired or consumed challenges require a fresh page/challenge.
+- The page is protected by CSP and popup-compatible opener policy; session
+  authorization remains the API's responsibility, not the page's display state.
+
+## Configuration — prepare, do not deploy yet
+
+`infra/wrangler.staging.json` gives this Worker a separate staging name and
+assets directory. Public workers.dev and preview URLs are disabled. It has no
+routes and is not referenced by a deployment workflow.
+
+Before any staging deployment is authorized, agree on the staging hostname and
+set these server-side values through supported Cloudflare settings/secrets:
+
+| Name | Meaning |
+| --- | --- |
+| APP_ORIGIN | Exact HTTPS staging browser origin, also configured in the API and Google Web client |
+| API_ORIGIN | Exact HTTPS origin of the staging API, with no path/query or credentials |
+| API_PROXY_SECRET | Same randomly generated secret stored on the API; never a frontend variable |
+
+The Google web client ID is returned by the API's challenge response. No Google
+client secret is needed in the browser. Keep the owner account configured only
+on the API. No credentials or live configuration values are checked into source.
+
+## Validation
+
+Run `node --test tests/test_login_bridge.mjs`. The draft PR CI runs this alongside
+API and actual PostgreSQL tests. The Node tests exercise proxy boundaries,
+cookies, request limits, redirects, timeout handling and client session behavior.
+
+A real browser sign-in still requires the owner's Google OAuth client and an
+authorized staging hostname/API. Node tests are not a substitute for a live
+Google popup/FedCM and deployed Cloudflare acceptance check. Nothing in this
+folder has been deployed or used to create hosted resources.
+
+Official implementation references:
+
+- https://developers.cloudflare.com/workers/runtime-apis/headers/
+- https://developers.cloudflare.com/workers/runtime-apis/request/
+- https://developers.cloudflare.com/workers/wrangler/configuration/
+- https://developers.google.com/identity/gsi/web/reference/js-reference
+- https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid
+
+The staging gateway also allowlists the four authenticated read-only research
+history routes documented in `services/api/README.md`. Only those GET paths and
+bounded unique query parameters are forwarded; arbitrary provider/trading paths
+remain unavailable. Saved results require an explicit historical/latest view.
+Nested response validation remains in the API. Research responses are bounded,
+`no-store` and cannot set auth cookies. No research shell or deployment is included.
+
+`/collection.html` is a separate undeployed collection controller. It includes UTC
+inclusive date controls, section progress/pause/resume, saved recheck option and
+opt-in hourly last-24-hours settings. Only selection, campaign IDs and an ambiguous
+request's retry key are stored locally; session/CSRF credentials remain in their
+existing cookies. Progress polling does NOT drive collection; the injected server
+runner owns all work. The account smoke page links to the controller. The live
+research Worker/table remains unchanged. Backend/worker resource setup is pending.
+
+## Current staging dashboard
+
+The existing staging gateway is deployed separately from the production Worker.
+After authentication, the root sign-in screen redirects to `/collection.html`.
+The dashboard includes date-range request preparation, server-backed newest-first
+collection history, section progress, pause/resume, hourly-refresh preferences and
+precomputed reports for completed collections. Sign-out is available directly on
+the dashboard. Category, dates, selected campaign and metric/minimum/loss display
+choices persist locally; identity/session material never does. Expired sessions
+hide the workspace and provide a sign-in link.
+
+History GET is owner-only with bounded metadata pages and created_at/UUID keysets.
+It reads no archives or observations. Its current metadata ordering needs an
+(asset,created_at,id) index before very large campaign counts; no new hosted
+migration is introduced here. Existing runtime grants support this SELECT path.
+Saved-report requests retain string bigint IDs and resolve the selected campaign's
+explicit immutable stream. The table switches between saved hold/loss rows, keeps
+original n and missing-exit outcomes, and uses the saved threshold/rejection label.
+A display minimum hides the value only; it never resamples or changes the report.
+All server-derived text uses textContent, never HTML interpolation.
+
+Collection remains paused in staging. The dashboard states that saved requests
+wait until the worker is enabled. No sample fixtures or fabricated reports are
+published. Each report combines that campaign's sections; a separate deduplicated
+category-wide cumulative report across multiple campaigns remains future work.
+Do not label campaign results as a union of all category history.
