@@ -40,7 +40,7 @@ class WindowRebuild:
             for identifier in ids:
                 report_jobs.check_priority()
                 with self.pool.connection() as c:
-                    row=c.execute('SELECT id,fingerprint,payload,COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s',(identifier,)).fetchone()
+                    row=c.execute("SELECT id,fingerprint,payload,COALESCE((payload->>'uncompressed_bytes')::bigint,octet_length(payload::text)) AS bytes FROM research_dataset WHERE id=%s",(identifier,)).fetchone()
                 if not row or row['bytes']>64*1024*1024:raise EvidenceConflict('Window rebuild source missing or exceeds memory limit')
                 yield row
         if 'selection' in old:

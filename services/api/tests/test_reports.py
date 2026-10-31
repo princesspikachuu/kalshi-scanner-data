@@ -16,6 +16,7 @@ from services.research.datasets import DatasetStore
 from services.research.inventory import digest
 from services.research.queue import EvidenceConflict
 from services.research.reports import prepare_report,ReportStore,_cells
+from services.research.window_rebuild import WindowRebuild
 from test_datasets import Fixture
 
 URL=os.environ.get('POCKET_TEST_DATABASE_URL')
