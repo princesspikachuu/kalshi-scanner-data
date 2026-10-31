@@ -373,7 +373,10 @@ class ReportPostgresTests(unittest.TestCase):
             prepared=original(*args,**kwargs)
             rows=json.loads(prepared.observations_json)
             self.assertTrue(rows)
-            rows=rows+rows
+            # Separate the duplicate with another window so the database,
+            # rather than the new adjacent-square validator, rejects it after
+            # earlier observation batches have already been inserted.
+            rows=[rows[0],dict(rows[0],ticker=rows[0]['ticker']+'-rollback-probe'),rows[0]]
             payload=json.loads(prepared.payload_json)
             return replace(prepared,observations_json=json.dumps(rows),fingerprint=digest(dict(report=payload,observations=rows)))
         with patch.object(model,'prepare_report',side_effect=duplicate),patch.object(model,'PUBLICATION_BATCH_ROWS',1):
