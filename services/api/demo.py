@@ -170,8 +170,14 @@ def install_demo(app,auth,mutate,pool):
             if before:UUID(before)
             if bot:UUID(bot)
         except ValueError:raise HTTPException(422,'Invalid identifier') from None
-        if ticker and len(ticker)>256 or kind and len(kind)>40:raise HTTPException(422,'Invalid filter')
-        kinds=['order_intent','order','order_rejected','order_uncertain','fill','fill_recovered','cancel','settlement','realized','position_offset'] if kind=='transactions' else [kind] if kind else None
+        if ticker and len(ticker)>256 or kind and len(kind)>800:raise HTTPException(422,'Invalid filter')
+        kinds=None
+        if kind:
+            import re
+            selected=kind.split(',')
+            if len(selected)>20 or any(not re.fullmatch('[a-z_]{1,40}',part) for part in selected):raise HTTPException(422,'Invalid activity types')
+            transactions=['order_intent','order','order_rejected','order_uncertain','fill','fill_recovered','cancel','settlement','realized','position_offset']
+            kinds=list(dict.fromkeys(k for part in selected for k in (transactions if part=='transactions' else [part])))
         with pool.connection() as c:
             rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
                 WHERE status='succeeded' AND idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
@@ -183,8 +189,36 @@ def install_demo(app,auth,mutate,pool):
         return dict(contract='demo-v1',items=[{'id':r['id'],**r['parameters'],**r['progress']} for r in rows[:50]],next_before=rows[49]['id'] if len(rows)>50 else None)
     @app.get('/demo/orders')
     def orders(request:Request):
-        auth(request);require_query(request)
-        return dict(contract='demo-v1',items=store.active_orders())
+        auth(request);require_query(request,('client_id',))
+        if 'client_id' not in request.query_params:return dict(contract='demo-v1',items=store.active_orders())
+        try:identifier=str(UUID(request.query_params['client_id']))
+        except ValueError:raise HTTPException(422,'Choose a valid order') from None
+        selected=store.get('order/'+identifier)
+        if not selected:raise HTTPException(404,'Saved order not found')
+        chosen=dict(selected['parameters'],**selected['progress'])
+        if chosen.get('kind')=='exit':
+            parent=chosen.get('parent')
+            if not isinstance(parent,str):raise HTTPException(409,'This sell has no verified buy link')
+            root=store.get('order/'+parent)
+        else:root=selected
+        if not root:raise HTTPException(409,'The linked buy is unavailable')
+        entry=dict(root['parameters'],**root['progress'])
+        if entry.get('kind')!='entry' or not entry.get('client_id'):raise HTTPException(409,'The linked buy could not be verified')
+        def same_lot(order):return all(order.get(k)==entry.get(k) for k in ('bot','ticker','side'))
+        if chosen.get('kind')=='exit' and not same_lot(chosen):raise HTTPException(409,'Order links need reconciliation')
+        with pool.connection() as c:
+            rows=c.execute("""SELECT parameters,progress,finished_at FROM research_job
+                WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
+                AND parameters->>'kind'='exit' AND parameters->>'parent'=%s
+                ORDER BY (progress->>'status' NOT IN ('closed','rejected')) DESC,created_at DESC,id DESC LIMIT 101""",(entry['client_id'],)).fetchall()
+        exits=[dict(r['parameters'],**r['progress'],saved_at=r['finished_at']) for r in rows[:100]]
+        if any(not same_lot(o) for o in exits):raise HTTPException(409,'Order links need reconciliation')
+        with pool.connection() as c:
+            settled=c.execute("""SELECT progress FROM research_job WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
+                AND parameters->>'kind'='settlement' AND parameters->>'bot'=%s
+                AND progress#>>'{details,client_id}'=%s ORDER BY created_at DESC,id DESC LIMIT 1""",(entry.get('bot'),entry['client_id'])).fetchone()
+        return dict(contract='demo-v1',entry=entry,exits=exits,selected=identifier,settlement=settled['progress'] if settled else None,
+            saved_at=root['finished_at'],limited=len(rows)>100,at=time.time())
     @app.get('/demo/chart')
     def chart(request:Request):
         auth(request);require_query(request,('period',))
@@ -204,10 +238,10 @@ def install_demo(app,auth,mutate,pool):
         except ValueError:raise HTTPException(422,'Choose a bot') from None
         bot=bot_get(identifier)
         group=request.query_params.get('group','square');period=request.query_params.get('period','all');zone=request.query_params.get('timezone','America/Los_Angeles')
-        from .demo_performance import query_performance
+        from .demo_performance import query_performance,time_bounds
         try:items,limited=query_performance(pool,bot['parameters'],identifier,group,period,zone,request.query_params.get('start') or None,request.query_params.get('end') or None)
         except (ValueError,KeyError,OverflowError):raise HTTPException(422,'Invalid performance filters') from None
-        return dict(contract='demo-v1',bot=identifier,period='Lifetime' if period=='all' else period,group=group,timezone=zone,start=request.query_params.get('start'),end=request.query_params.get('end'),items=items,limited=limited,at=time.time())
+        return dict(contract='demo-v1',bot=identifier,period='Lifetime' if period=='all' else period,group=group,timezone=zone,time_bounds=time_bounds(bot['parameters']),default_entry_price=bot['parameters']['config'].get('cycle_buy_cents'),start=request.query_params.get('start'),end=request.query_params.get('end'),items=items,limited=limited,at=time.time())
     @app.get('/demo/research')
     def research(request:Request):
         auth(request);require_query(request,('asset','bot','start','end'))

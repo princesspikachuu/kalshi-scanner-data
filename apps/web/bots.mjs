@@ -1,3 +1,4 @@
+import './order-detail.mjs';
 import {createAuthClient} from './auth-client.mjs';
 import {demoCall,escapeHTML as e,money,botGroup,botExposure,botExposureMarkup,historicalExposureMarkup,attentionInfo,attentionMarkup,resetMarkup,squarePerformanceMarkup,latestTransactionsMarkup} from './demo-client.mjs';
 import {openBotBuilder,duplicateBotConfig,restoreBotDraft,clearBotDraft} from './bot-builder.mjs';
@@ -32,7 +33,11 @@ function draw(){
   const id=detail.dataset.performance;
   detail.querySelector('form').onsubmit=event=>{event.preventDefault();loadPerformance(id,true)};
   for(const input of detail.querySelectorAll('[data-performance-filter]'))input.onchange=()=>{
-   const state=performance.get(id)||{};state.filters={...state.filters,[input.dataset.performanceFilter]:input.value};performance.set(id,state);
+   const state=performance.get(id)||{};state.filters={...state.filters,[input.dataset.performanceFilter]:input.value};
+   if(input.dataset.performanceFilter==='period'&&input.value!=='all'){
+    state.filters.start='';state.filters.end='';for(const date of detail.querySelectorAll('input[type=date]'))date.value='';
+   }else if(['start','end'].includes(input.dataset.performanceFilter)&&input.value){state.filters.period='all';detail.querySelector('[data-performance-filter=period]').value='all'}
+   performance.set(id,state);
   };
  }
  for(const detail of document.querySelectorAll('[data-transactions]')){
@@ -57,8 +62,9 @@ function card(bot){const own=orders.filter(o=>o.bot===bot.key),name=group(bot),e
 function exposurePanel(bot,own){const {positions,waiting}=botExposure(own),open=exposureOpen.has(bot.key);return `<details class="advanced" data-exposure="${e(bot.key)}" ${open?'open':''}><summary>Positions &amp; waiting orders · ${positions.length} positions · ${waiting.length} orders</summary><div data-exposure-content>${open?botExposureMarkup(own,bot.key)+historicalExposureMarkup(bot,workspace.health,own):''}</div></details>`}
 function performancePanel(bot){
  const state=performance.get(bot.key),f=state?.filters||{};
- const options=[['square','Square'],['time','Time remaining at entry'],['hour','Local hour of entry']].map(([value,label])=>`<option value="${value}" ${(f.group||'square')===value?'selected':''}>${label}</option>`).join('');
- return `<details class="advanced" data-performance="${e(bot.key)}" ${state?.open?'open':''}><summary>Performance by square or time</summary><form class="row" data-performance-filters><label>Group by<select data-performance-filter="group">${options}</select></label><label>From<input type="date" data-performance-filter="start" value="${e(f.start||'')}"></label><label>Through<input type="date" data-performance-filter="end" value="${e(f.end||'')}"></label><label>Timezone<select data-performance-filter="timezone"><option value="America/Los_Angeles" ${(f.timezone||'America/Los_Angeles')==='America/Los_Angeles'?'selected':''}>Pacific time</option><option value="UTC" ${f.timezone==='UTC'?'selected':''}>UTC</option></select></label><button class="secondary" type="submit" ${state?.pending?'disabled':''}>Apply / refresh statistics</button></form><div data-performance-content>${state?.data?squarePerformanceMarkup(state.data):'<p class="small">Expand to load saved statistics. Dates filter when entries were submitted.</p>'}</div></details>`
+ const timeGroup=bot.config.strategy==='buy_low_sell_high'?'time_price':'time';
+ const options=[['square','Square'],[timeGroup,'Time remaining at entry'],['hour','Local hour of entry']].map(([value,label])=>`<option value="${value}" ${(f.group||(bot.config.strategy==='buy_low_sell_high'?'time_price':'square'))===value?'selected':''}>${label}</option>`).join('');
+ return `<details class="advanced" data-performance="${e(bot.key)}" ${state?.open?'open':''}><summary>Performance by square or time</summary><form class="row" data-performance-filters><label>Group by<select data-performance-filter="group">${options}</select></label><label>Entries from<select data-performance-filter="period">${[['all','Lifetime / custom dates'],['1H','Last hour'],['24H','Last day'],['7D','Last week'],['30D','Last month (30 days)']].map(([value,label])=>`<option value="${value}" ${(f.period||'all')===value?'selected':''}>${label}</option>`).join('')}</select></label><label>From<input type="date" data-performance-filter="start" value="${e(f.start||'')}"></label><label>Through<input type="date" data-performance-filter="end" value="${e(f.end||'')}"></label><label>Timezone<select data-performance-filter="timezone"><option value="America/Los_Angeles" ${(f.timezone||'America/Los_Angeles')==='America/Los_Angeles'?'selected':''}>Pacific time</option><option value="UTC" ${f.timezone==='UTC'?'selected':''}>UTC</option></select></label><button class="secondary" type="submit" ${state?.pending?'disabled':''}>Apply / refresh statistics</button></form><div data-performance-content>${state?.data?squarePerformanceMarkup(state.data):'<p class="small">Expand to load saved statistics. Dates filter when entries were submitted.</p>'}</div></details>`
 }
 async function loadPerformance(id,force=false){
  const state=performance.get(id)||{};performance.set(id,state);
@@ -66,7 +72,7 @@ async function loadPerformance(id,force=false){
  state.pending=true;
  const content=()=>[...document.querySelectorAll('[data-performance]')].find(d=>d.dataset.performance===id);
  if(content())content().querySelector('button').disabled=true;
- const query=new URLSearchParams({bot:id,...state.filters});
+ const query=new URLSearchParams({bot:id,group:workspace.bots.find(b=>b.key===id)?.config.strategy==='buy_low_sell_high'?'time_price':'square',...state.filters});
  try{state.data=await demoCall('performance?'+query);state.loaded=Date.now();if(content())content().querySelector('[data-performance-content]').innerHTML=squarePerformanceMarkup(state.data)}
  catch(error){if(content())content().querySelector('[data-performance-content]').textContent=error.message}
  finally{state.pending=false;if(content())content().querySelector('button').disabled=false}

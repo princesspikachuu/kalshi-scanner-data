@@ -52,7 +52,53 @@ test('Demo reset is an owner POST route without any funding prerequisite',async(
  assert.ok(html.includes('Funding is optional'));assert.equal(resetMarkup(null),'');
 });
 
-import {squarePerformanceMarkup} from '../apps/web/demo-client.mjs';
+import {squarePerformanceMarkup,transactionBadge,orderDetailButton} from '../apps/web/demo-client.mjs';
+import {orderDetailMarkup} from '../apps/web/order-detail.mjs';
+import {matchingOrders,matchesActivity} from '../apps/web/activity-filters.mjs';
+import {marketLink,squareGridMarkup,timePriceGridMarkup} from '../apps/web/demo-client.mjs';
+test('History and current order filters agree on the bot and union of selected types',()=>{
+ const filters={bot:'daily',ticker:'WEATHER',kinds:['fill','settlement']};
+ assert.ok(matchesActivity({bot:'daily',ticker:'WEATHER',kind:'fill'},filters));
+ assert.ok(matchesActivity({bot:'daily',ticker:'WEATHER',kind:'settlement'},filters));
+ assert.ok(!matchesActivity({bot:'sports',ticker:'WEATHER',kind:'fill'},filters));
+ const rows=[{bot:'daily',ticker:'WEATHER',filled:1},{bot:'sports',ticker:'SPORT',filled:1},{bot:'hilo',ticker:'BTC',filled:2}];
+ assert.deepEqual(matchingOrders(rows,filters),[rows[0]]);
+ assert.deepEqual(matchingOrders(rows,{...filters,kinds:['settlement']}),[]);
+});
+test('Performance grids retain square axes, empty standard time bands and unknown clocks',()=>{
+ const metric={orders:2,filled_orders:1,scored:1,wins:1,resting_contracts:0,held_contracts:0,recorded_pnl_cents:3};
+ const html=timePriceGridMarkup({time_bounds:[1,3,5,10,15],default_entry_price:3,items:[{...metric,bucket:15,entry_price:3},{...metric,bucket:null,entry_price:1}]});
+ for(const text of ['10–15 min','5–10 min','3–5 min','1–3 min','0–1 min','3¢ entry limit','Time unavailable','No entries'])assert.ok(html.includes(text),text);
+ const grid=squareGridMarkup({items:[{...metric,revision:1,square:0,condition:{asset:'btc',min_price:60,max_price:69,min_minutes:3,max_minutes:5}}]});
+ assert.match(grid,/60–69¢/);assert.match(grid,/3–5 min/);assert.match(grid,/v1 · square 1/);
+});
+test('Activity market links stay in Kalshi Demo and cannot inject an arbitrary destination',()=>{
+ assert.match(marketLink('KXBTC15M-26NOV011100-00'),/https:\/\/demo.kalshi.co\/markets\/kx\/m\/kxbtc15m-26nov011100/);
+ assert.match(marketLink('KXBTC15M-26NOV011100-00',null),/demo.kalshi.co/);
+ assert.doesNotMatch(marketLink('javascript:alert(1)'),/href=/);
+ assert.doesNotMatch(marketLink('T-ONE',{event_ticker:'https://evil.test'}),/href=/);
+});
+test('Buy and sell details preserve parent context, partial fills and pending sells',()=>{
+ const buy={client_id:'00000000-0000-0000-0000-000000000001',kind:'entry',bot:'b',ticker:'<ticker>',side:'yes',price:3,quantity:10,filled:4,sold:1,remaining:6,status:'resting'};
+ const sell={client_id:'00000000-0000-0000-0000-000000000002',parent:buy.client_id,kind:'exit',exit_role:'profit',price:6,quantity:4,filled:1,remaining:3,status:'resting'};
+ const html=orderDetailMarkup({entry:buy,exits:[sell],selected:sell.client_id});
+ assert.match(html,/3 contracts still held/);assert.match(html,/Profit SELL · EXIT/);assert.match(html,/aria-current="true"/);assert.match(html,/&lt;ticker&gt;/);assert.doesNotMatch(html,/<ticker>/);
+ assert.match(orderDetailMarkup({entry:{...buy,filled:0,sold:0},exits:[]}),/Waiting for the buy to fill/);
+ assert.match(orderDetailButton(buy.client_id,'Buy → linked sells'),/data-order-detail=/);assert.equal(orderDetailButton('bad" onclick="x'),'');
+});
+test('Settlement badges use verified resolved sides independently of net P&L; fills distinguish entry and exit',()=>{
+ assert.match(transactionBadge({kind:'settlement',details:{side:'yes',quote:{result:'yes'},realized_cents:-3}}),/WIN · SETTLED/);
+ assert.match(transactionBadge({kind:'settlement',details:{side:'no',quote:{result:'yes'},realized_cents:3}}),/LOSS · SETTLED/);
+ assert.match(transactionBadge({kind:'settlement',details:{realized_cents:10}}),/OUTCOME UNAVAILABLE/);
+ assert.match(transactionBadge({kind:'fill',details:{order_kind:'entry'}}),/BUY FILL · ENTRY/);
+ assert.match(transactionBadge({kind:'fill',details:{order_kind:'exit'}}),/SELL FILL · EXIT/);
+});
+test('Order detail remains an owner GET route with a bounded identifier filter',async()=>{
+ const path='https://app.test/api/demo/orders?client_id=00000000-0000-0000-0000-000000000001';
+ assert.equal((await proxyAuth(new Request(path),env,options())).status,200);
+ assert.equal((await proxyAuth(new Request(path,{method:'POST'}),env,options())).status,405);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/workspace?client_id=x'),env,options())).status,422);
+});
 import {latestTransactionsMarkup} from '../apps/web/demo-client.mjs';
 test('Latest transaction dropdown distinguishes order events and fills and escapes evidence',()=>{
  const html=latestTransactionsMarkup({loadedAt:1,items:[{kind:'order_rejected',time:'2026-11-01T08:00:00Z',ticker:'<bad>',message:'Rejected <unsafe>',details:{order_kind:'entry',side:'yes',price:3,quantity:10}},{kind:'fill',time:'2026-11-01T08:01:00Z',details:{order_kind:'exit',side:'no',filled:2,exchange_id:'<order>'}}]},'bot-one');

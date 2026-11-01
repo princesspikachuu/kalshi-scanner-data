@@ -38,13 +38,36 @@ export function botExposure(orders=[]){
  }
  return {positions:[...positions.values()].map(p=>({...p,price:p.cost/p.quantity})),waiting:orders.filter(o=>(o.remaining||0)>0||['intent','uncertain','cancel_pending'].includes(o.status))};
 }
+export function orderDetailButton(identifier,label='Follow order'){
+ return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(identifier||'')?`<button class="secondary" type="button" data-order-detail="${escapeHTML(identifier)}">${escapeHTML(label)}</button>`:'';
+}
+export function marketLink(ticker,quote={}){
+ if(typeof ticker!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(ticker))return escapeHTML(ticker||'—');
+ const event=quote?.event_ticker||ticker.split('-').slice(0,-1).join('-');
+ if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(event))return escapeHTML(ticker);
+ const href='https://demo.kalshi.co/markets/kx/m/'+encodeURIComponent(event.toLowerCase());
+ return `<a href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer" title="Open related market in Kalshi Demo">${escapeHTML(ticker)} ↗</a>`;
+}
+export function transactionBadge(item){
+ const d=item.details||{};let label='',style='';
+ if(item.kind==='settlement'){
+  const result=d.settlement_winning_side||d.quote?.result;
+  const outcome=['yes','no'].includes(result)&&['yes','no'].includes(d.side)?(result===d.side?'win':'loss'):null;
+  label=outcome==='win'?'✓ WIN · SETTLED':outcome==='loss'?'✕ LOSS · SETTLED':'SETTLED · OUTCOME UNAVAILABLE';style=outcome||'neutral';
+ }else if(['fill','fill_recovered'].includes(item.kind)){
+  label=d.order_kind==='entry'?'BUY FILL · ENTRY':d.order_kind==='exit'?'SELL FILL · EXIT':'FILL · TYPE UNAVAILABLE';style=d.order_kind==='entry'?'entry':d.order_kind==='exit'?'exit':'neutral';
+ }else if(['order','order_intent','order_rejected','order_uncertain','cancel'].includes(item.kind)&&['entry','exit'].includes(d.order_kind)){
+  label=d.order_kind==='entry'?'BUY · ENTRY':'SELL · EXIT';style=d.order_kind;
+ }
+ return label?`<span class="trade-badge ${style}">${escapeHTML(label)}</span>`:'';
+}
 export function botExposureMarkup(orders=[],botId=''){
  const {positions,waiting}=botExposure(orders),e=escapeHTML;
  const market=ticker=>`<a href="/activity?${e(new URLSearchParams({bot:botId,ticker}))}">${e(ticker)}</a>`;
  const qty=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);
  const price=n=>Number.isFinite(n)?qty(n)+'¢':'—';
  const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
- return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${o.kind==='entry'?'Entry bid':o.exit_role==='profit'?'Profit sell':'Protective exit'}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain','cancel_pending'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
+ return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${orderDetailButton(o.client_id,o.kind==='entry'?'Buy → linked sells':o.exit_role==='profit'?'Profit sell → buy':'Protective sell → buy')||escapeHTML(o.kind==='entry'?'Entry bid':o.exit_role==='profit'?'Profit sell':'Protective exit')}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain','cancel_pending'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
 }
 export function historicalExposureMarkup(bot,health,orders=[]){
  if(!bot)return '';
@@ -89,11 +112,11 @@ export function resetMarkup(reset){
 }
 
 export function squarePerformanceMarkup(data){
- const e=escapeHTML,group=data.group||'square',heading={square:'Square',remaining:'Time remaining at entry',time:'Time remaining at entry',hour:'Local hour of entry'}[group]||'Square';
+ const e=escapeHTML,group=data.group||'square',heading={square:'Square',remaining:'Time remaining at entry',time:'Time remaining at entry',time_price:'Time remaining at entry',hour:'Local hour of entry'}[group]||'Square';
  const rows=data.items.map(r=>{const s=r.condition,label=r.label||(s?`${s.asset} · ${s.min_price}–${s.max_price}¢ · >${s.min_minutes}–${s.max_minutes} min`:'Legacy square · condition unavailable');
  return `<tr><td>${e(label)}${group==='square'?`<br><span class="small">v${e(r.revision??'?')} · square ${e(Number.isInteger(r.square)?r.square+1:'?')}</span>`:''}</td><td>${e(r.orders)}</td><td>${e(r.filled_orders)} / ${e(r.contracts)}<br><span class="small">${r.orders?(100*r.filled_orders/r.orders).toFixed(1)+'%':'—'} filled</span></td><td>${e(r.resting_contracts)} / ${e(r.held_contracts)}</td><td>${e(r.scored)}<br><span class="small">${r.scored?(100*r.wins/r.scored).toFixed(1)+'% positive':'—'}</span></td><td>${money(r.recorded_pnl_cents)}</td></tr>`}).join('');
  const resets=data.items.reduce((n,r)=>n+r.unscored_resets,0);
- return `<p class="small">${e(data.start||data.end?`${data.start||'Earliest'} through ${data.end||'latest'}`:data.period||'Lifetime')} · ${e(data.timezone||'America/Los_Angeles')} · saved ${e(new Date(data.at*1000).toLocaleTimeString())}. ${group==='square'?'Each revision keeps its original squares.':'Entries are grouped by submission time across revisions. Date filters use entry submission dates; P&L follows those entry lots.'} Entry attempts include rejected and unfilled orders; fill rate counts attempts with any fill. Quantities are contracts.</p><div class="scroll" tabindex="0" role="region" aria-label="Performance by ${e(heading.toLowerCase())}"><table class="activity-table"><thead><tr><th>${e(heading)}</th><th>Entry attempts</th><th>Filled orders / contracts</th><th>Resting / held</th><th>Closed / estimated win rate</th><th>Estimated net P&amp;L</th></tr></thead><tbody>${rows||'<tr><td colspan="6">No saved entries for these filters.</td></tr>'}</tbody></table></div><p class="small">P&amp;L uses recorded limit prices less recorded fees, and may differ from actual execution proceeds. Positive closed entry lots count as wins; open lots and reset closures without assigned P&amp;L are excluded.${resets?' Unscored reset closures: '+e(resets)+'.':''}${['remaining','time'].includes(group)?' Older low/high orders without their original market clock appear as time remaining unavailable.':''}${data.limited?' History exceeds the display limit; this view is partial.':''}</p>`;
+ return `<p class="small">${e(data.start||data.end?`${data.start||'Earliest'} through ${data.end||'latest'}`:data.period||'Lifetime')} · ${e(data.timezone||'America/Los_Angeles')} · saved ${e(new Date(data.at*1000).toLocaleTimeString())}. ${group==='square'?'Each revision keeps its original squares.':'Entries are grouped by submission time across revisions. Date filters use entry submission dates; P&L follows those entry lots.'} Entry attempts include rejected and unfilled orders; fill rate counts attempts with any fill. Quantities are contracts.</p>${group==='time_price'?timePriceGridMarkup(data):group==='square'?squareGridMarkup(data):`<div class="scroll" tabindex="0" role="region" aria-label="Performance by ${e(heading.toLowerCase())}"><table class="activity-table"><thead><tr><th>${e(heading)}</th><th>Entry attempts</th><th>Filled orders / contracts</th><th>Resting / held</th><th>Closed / estimated win rate</th><th>Estimated net P&amp;L</th></tr></thead><tbody>${rows||'<tr><td colspan="6">No saved entries for these filters.</td></tr>'}</tbody></table></div>`}<p class="small">P&amp;L uses recorded limit prices less recorded fees, and may differ from actual execution proceeds. Positive closed entry lots count as wins; open lots and reset closures without assigned P&amp;L are excluded.${resets?' Unscored reset closures: '+e(resets)+'.':''}${['remaining','time'].includes(group)?' Older low/high orders without their original market clock appear as time remaining unavailable.':''}${data.limited?' History exceeds the display limit; this view is partial.':''}</p>`;
 }
 
 export function latestTransactionsMarkup(data,botId){
@@ -101,7 +124,42 @@ export function latestTransactionsMarkup(data,botId){
  const rows=data.items.slice(0,10).map(item=>{
   const d=item.details||{},clock=new Date(item.time),when=Number.isFinite(clock.getTime())?clock.toLocaleString():'Time unavailable';
   const evidence=[d.order_kind==='entry'?'Buy':d.order_kind==='exit'?'Sell':null,d.side?.toUpperCase(),Number.isFinite(d.price)?`${d.price}¢ limit`:null,Number.isFinite(d.quantity)?`${d.quantity} contracts`:null].filter(Boolean).join(' · ');
-  return `<tr><td>${e(when)}</td><td><strong>${e(labels[item.kind]||item.kind)}</strong><br>${e(evidence)}<br><span class="small">${e(item.message||item.summary)}</span>${item.archived?'<br><span class="small">Archived details · restore in Activity</span>':''}</td><td>${e(item.ticker||'—')}${Number.isFinite(d.filled)?`<br><span class="small">Filled so far: ${e(d.filled)} contracts</span>`:''}${Number.isFinite(d.realized_cents)?`<br><span class="small">Estimated net ${money(d.realized_cents)}</span>`:''}${d.exchange_id?`<br><span class="small">Order ${e(d.exchange_id)}</span>`:''}</td></tr>`;
+  return `<tr><td>${e(when)}</td><td>${transactionBadge(item)}<br><strong>${e(labels[item.kind]||item.kind)}</strong><br>${orderDetailButton(d.client_id,d.order_kind==='entry'?'Buy → linked sells':'Follow order')}<br>${e(evidence)}<br><span class="small">${e(item.message||item.summary)}</span>${item.archived?'<br><span class="small">Archived details · restore in Activity</span>':''}</td><td>${marketLink(item.ticker,d.quote)}${Number.isFinite(d.filled)?`<br><span class="small">Filled so far: ${e(d.filled)} contracts</span>`:''}${Number.isFinite(d.realized_cents)?`<br><span class="small">Estimated net ${money(d.realized_cents)}</span>`:''}${d.exchange_id?`<br><span class="small">Order ${e(d.exchange_id)}</span>`:''}</td></tr>`;
  }).join('');
  return `<p class="small">Latest 10 saved transaction events · ${e(new Date(data.loadedAt||Date.now()).toLocaleTimeString())}. Prepared or rejected orders are shown separately from confirmed fills.</p><div class="scroll" tabindex="0" role="region" aria-label="Latest bot transactions"><table class="activity-table"><thead><tr><th>Time</th><th>Transaction</th><th>Market / evidence</th></tr></thead><tbody>${rows||'<tr><td colspan="3">No saved transactions for this bot yet.</td></tr>'}</tbody></table></div><a class="button secondary" href="/activity?bot=${e(encodeURIComponent(botId))}">View all bot activity</a>`;
 }
+
+export function squareGridMarkup(data){
+ const groups=new Map(),legacy=[];
+ for(const row of data.items){
+  if(!row.condition){legacy.push(row);continue}
+  const key=JSON.stringify([row.revision,row.condition.asset]);
+  if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);
+ }
+ const cell=r=>performanceCell(r);
+ let html='<p class="small">Estimated net P&amp;L by price column and time-remaining row, matching the bot setup grid. Each asset and revision stays separate. Blank cells were not configured.</p>';
+ for(const rows of groups.values()){
+  const price=new Map(),time=new Map(),cells=new Map();
+  for(const r of rows){
+   const s=r.condition,p=JSON.stringify([s.min_price,s.max_price]),t=JSON.stringify([s.min_minutes,s.max_minutes]);
+   price.set(p,[s.min_price,s.max_price]);time.set(t,[s.min_minutes,s.max_minutes]);
+   const key=JSON.stringify([p,t]);if(!cells.has(key))cells.set(key,[]);cells.get(key).push(r);
+  }
+  const columns=[...price].sort((a,b)=>a[1][0]-b[1][0]||a[1][1]-b[1][1]),windows=[...time].sort((a,b)=>b[1][1]-a[1][1]||b[1][0]-a[1][0]);
+  html+=`<h4>${escapeHTML(rows[0].condition.asset)} · v${escapeHTML(rows[0].revision??'?')}</h4><div class="bot-table-scroll" tabindex="0" role="region" aria-label="Square performance grid"><table class="bot-offerings performance-grid"><thead><tr><th>Time left</th>${columns.map(([key,[min,max]])=>`<th>${escapeHTML(min)}–${escapeHTML(max)}¢</th>`).join('')}</tr></thead><tbody>${windows.map(([t,[min,max]])=>`<tr><th>&gt;${escapeHTML(min)}–${escapeHTML(max)} min</th>${columns.map(([p])=>{const variants=cells.get(JSON.stringify([p,t]));return `<td>${variants?variants.map(cell).join(''):'<span class="small">—</span>'}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+ }
+ if(legacy.length)html+='<h4>Historical squares with unavailable conditions</h4>'+legacy.map(cell).join('');
+ return html+(data.items.length?'':'<p class="small">No saved squares or trading history.</p>');
+}
+
+export function timePriceGridMarkup(data){
+ const bounds=[...(data.time_bounds||[1,3,5,10,15])].sort((a,b)=>a-b);
+ const prices=[...new Set([...data.items.map(r=>r.entry_price),...(Number.isFinite(data.default_entry_price)?[data.default_entry_price]:[])])].sort((a,b)=>a===null?1:b===null?-1:a-b);
+ if(!prices.length)prices.push(null);
+ const windows=[...bounds].reverse();for(const r of data.items)if(!windows.includes(r.bucket))windows.push(r.bucket);
+ const empty={orders:0,filled_orders:0,scored:0,wins:0,resting_contracts:0,held_contracts:0,recorded_pnl_cents:null};
+ const label=upper=>upper===null?'Time unavailable':upper===0?'At / after close':upper===1441?'Over 1 day':`>${Math.max(0,...bounds.filter(b=>b<upper))}–${upper} min`;
+ return `<p class="small">Time remaining when each low buy was submitted, grouped by its actual entry limit. Empty bands stay visible; older buys without a verified market clock appear separately.</p><div class="bot-table-scroll" tabindex="0" role="region" aria-label="Low high performance by time and entry price"><table class="bot-offerings performance-grid"><thead><tr><th>Time left</th>${prices.map(p=>`<th>${p===null?'Unknown limit':escapeHTML(p)+'¢ entry limit'}</th>`).join('')}</tr></thead><tbody>${windows.map(window=>`<tr><th>${escapeHTML(label(window))}</th>${prices.map(price=>{const row=data.items.find(r=>r.bucket===window&&r.entry_price===price);return `<td>${performanceCell(row||empty,false)}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function performanceCell(r,showSquare=true){return `<div class="performance-cell ${r.recorded_pnl_cents>0?'gain':r.recorded_pnl_cents<0?'loss':''}"><strong>${money(r.recorded_pnl_cents)}</strong><small>${r.orders?`${escapeHTML(r.filled_orders)} / ${escapeHTML(r.orders)} entries · ${(100*r.filled_orders/r.orders).toFixed(1)}% filled`:'No entries'}</small><small>${escapeHTML(r.scored)} closed · ${r.scored?(100*r.wins/r.scored).toFixed(1)+'% positive':'—'}</small><small>${escapeHTML(r.resting_contracts)} resting / ${escapeHTML(r.held_contracts)} held</small>${showSquare?`<small>v${escapeHTML(r.revision??'?')} · square ${escapeHTML(Number.isInteger(r.square)?r.square+1:'?')}</small>`:''}</div>`;}

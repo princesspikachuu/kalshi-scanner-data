@@ -16,14 +16,14 @@ AGGREGATES="""count(*) AS orders,
 
 def query_performance(pool,bot,identifier,group='square',period='all',timezone='America/Los_Angeles',start=None,end=None):
     from zoneinfo import ZoneInfo
-    if group not in ('square','time','hour') or period not in ('all','24H','7D','30D'):raise ValueError('Invalid performance filters')
+    if group not in ('square','time','time_price','hour') or period not in ('all','1H','24H','7D','30D'):raise ValueError('Invalid performance filters')
     tz=ZoneInfo(timezone)
     from datetime import date,datetime,time as midnight,timedelta
     first=date.fromisoformat(start) if start else None;last=date.fromisoformat(end) if end else None
     if first and last and last<first:raise ValueError('Invalid dates')
     lower=datetime.combine(first,midnight.min,tz).timestamp() if first else None
     upper=datetime.combine(last+timedelta(days=1),midnight.min,tz).timestamp() if last else None
-    since=None if period=='all' else time.time()-{'24H':24,'7D':168,'30D':720}[period]*3600
+    since=None if period=='all' else time.time()-{'1H':1,'24H':24,'7D':168,'30D':720}[period]*3600
     sql="""WITH base AS (SELECT parameters,progress,
         coalesce((parameters->>'created_at')::numeric,extract(epoch FROM created_at)) AS entered_at
         FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
@@ -33,7 +33,7 @@ def query_performance(pool,bot,identifier,group='square',period='all',timezone='
     if group=='square':
         sql+=" SELECT parameters->'revision' AS revision,parameters->'square' AS square,parameters->'condition' AS condition,"+AGGREGATES+" FROM selected GROUP BY 1,2,3 ORDER BY 1 DESC,2,3 LIMIT 251"
     else:
-        if group=='time':
+        if group in ('time','time_price'):
             sql+=""", legacy AS (SELECT progress#>>'{details,client_id}' AS client_id,
                 max(coalesce((progress#>>'{details,quote,entry_close}')::numeric,(progress#>>'{details,quote,close}')::numeric)) AS market_close
                 FROM research_job WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
@@ -45,11 +45,13 @@ def query_performance(pool,bot,identifier,group='square',period='all',timezone='
                 FROM selected b LEFT JOIN legacy l ON l.client_id=b.parameters->>'client_id'),
                 grouped AS (SELECT *,CASE WHEN minutes IS NULL THEN NULL WHEN minutes<=0 THEN 0 WHEN minutes>1440 THEN 1441
                     ELSE (SELECT min(bound) FROM unnest(%s::numeric[]) AS bound WHERE minutes<=bound) END AS bucket FROM timed)"""
-            args.extend([identifier,bot['revision'],bot['config'].get('cycle_cutoff_minutes',0)*60,list(TIME_BOUNDS)])
+            args.extend([identifier,bot['revision'] if group=='time' else -1,bot['config'].get('cycle_cutoff_minutes',0)*60,sorted(set(time_bounds(bot)+[1440])) if group=='time_price' else list(TIME_BOUNDS)])
         else:
             sql+=", grouped AS (SELECT *,extract(hour FROM to_timestamp(entered_at::double precision) AT TIME ZONE %s)::integer AS bucket FROM selected)"
             args.append(timezone)
-        sql+=" SELECT bucket,"+AGGREGATES+" FROM grouped GROUP BY bucket ORDER BY bucket NULLS LAST LIMIT 251"
+        dimensions="bucket,(parameters->>'price')::numeric AS entry_price" if group=='time_price' else 'bucket'
+        grouping='bucket,entry_price' if group=='time_price' else 'bucket'
+        sql+=" SELECT "+dimensions+","+AGGREGATES+" FROM grouped GROUP BY "+grouping+" ORDER BY bucket NULLS LAST LIMIT 251"
     with pool.connection() as c:
         c.execute('SET LOCAL statement_timeout=5000')
         rows=c.execute(sql,args).fetchall()
@@ -60,7 +62,7 @@ def query_performance(pool,bot,identifier,group='square',period='all',timezone='
         for field in COUNTS:row[field]=float(row[field] or 0)
         row['recorded_pnl_cents']=float(row['recorded_pnl_cents']) if row['scored'] and row['recorded_pnl_cents'] is not None else None
         value=row['bucket'];value=None if value is None else int(value)
-        row['label']='Time unavailable' if value is None else f'{value:02d}:00–{(value+1)%24:02d}:00' if group=='hour' else 'At / after close' if value==0 else 'Over 1 day' if value==1441 else f'>{max((b for b in TIME_BOUNDS if b<value),default=0)}–{value} min remaining'
+        row['label']='Time unavailable' if value is None else f'{value:02d}:00–{(value+1)%24:02d}:00' if group=='hour' else 'At / after close' if value==0 else 'Over 1 day' if value==1441 else f'>{max((b for b in (time_bounds(bot) if group=='time_price' else TIME_BOUNDS) if b<value),default=0)}–{value} min remaining'
         items.append(row)
     return items,len(rows)>250
 
@@ -84,3 +86,8 @@ def performance_rows(bot,rows):
         row['recorded_pnl_cents']=float(row['recorded_pnl_cents']) if row.get('scored') and row.get('recorded_pnl_cents') is not None else None
         result[key(row['revision'],row['square'],condition)]=row
     return list(result.values())
+
+
+def time_bounds(bot):
+    from services.research.reports import MINUTES
+    return sorted({bound for square in bot['config']['squares'] for bound in MINUTES[square['asset']]})

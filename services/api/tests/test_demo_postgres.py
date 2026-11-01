@@ -39,6 +39,52 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual((saved['revision'],saved['desired']),(2,'running'))
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=1)).status_code,409)
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=2)).status_code,200)
+    def test_order_detail_follows_exact_parent_after_closure_and_rejects_cross_lot_links(self):
+        from uuid import uuid4
+        bot=str(uuid4());buy=str(uuid4());sell=str(uuid4());other=str(uuid4())
+        entry=dict(client_id=buy,kind='entry',bot=bot,ticker='T',side='yes',price=3,quantity=5,created_at=1000)
+        self.demo.put('order/'+buy,dict(status='closed',filled=5,remaining=0),parameters=entry)
+        child=dict(client_id=sell,parent=buy,kind='exit',bot=bot,ticker='T',side='yes',exit_role='profit',price=6,quantity=5,created_at=1001)
+        self.demo.put('order/'+sell,dict(status='resting',filled=1,remaining=4),parameters=child)
+        self.demo.put('order/'+other,dict(status='closed',filled=5,remaining=0),parameters=dict(child,client_id=other,parent=str(uuid4())))
+        self.demo.event('settlement','Verified',bot=bot,details=dict(client_id=buy,side='yes',quote=dict(result='yes')))
+        for selected in (buy,sell):
+            response=self.client.get('/demo/orders?client_id='+selected);self.assertEqual(response.status_code,200,response.text)
+            data=response.json();self.assertEqual(data['entry']['client_id'],buy)
+            self.assertEqual([o['client_id'] for o in data['exits']],[sell]);self.assertEqual(data['selected'],selected)
+            self.assertEqual(data['settlement']['details']['quote']['result'],'yes')
+        self.demo.put('order/'+sell,dict(status='resting',filled=1,remaining=4),parameters=dict(child,side='no'))
+        self.assertEqual(self.client.get('/demo/orders?client_id='+buy).status_code,409)
+        self.assertEqual(self.client.get('/demo/orders?client_id='+str(uuid4())).status_code,404)
+        self.assertEqual(self.client.get('/demo/orders?client_id=bad').status_code,422)
+        self.client.cookies.clear();self.assertEqual(self.client.get('/demo/orders?client_id='+buy).status_code,401)
+    def test_activity_combines_event_types_without_crossing_bot_or_market_filters(self):
+        from uuid import uuid4
+        daily=str(uuid4());sports=str(uuid4())
+        for bot,ticker,kind in [(daily,'WEATHER','fill'),(daily,'WEATHER','settlement'),(daily,'WEATHER','order'),(sports,'SPORTS','fill'),(daily,'OTHER','settlement')]:
+            self.demo.event(kind,'Saved',bot=bot,ticker=ticker)
+        response=self.client.get('/demo/activity?bot='+daily+'&ticker=WEATHER&kind=fill,settlement')
+        self.assertEqual(response.status_code,200,response.text)
+        rows=response.json()['items'];self.assertEqual({r['kind'] for r in rows},{'fill','settlement'})
+        self.assertEqual(len(rows),2);self.assertTrue(all(r['bot']==daily and r['ticker']=='WEATHER' for r in rows))
+        self.assertEqual(self.client.get('/demo/activity?kind=fill,,settlement').status_code,422)
+    def test_low_high_time_grid_uses_standard_windows_entry_prices_and_last_hour_filter(self):
+        from uuid import uuid4
+        from types import SimpleNamespace
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        bot=self.client.post('/demo/bots',json=config(strategy='buy_low_sell_high',cycle_buy_cents=3,cycle_sell_cents=6)).json()['id']
+        now=1800000000
+        for minutes,price in [(12,3),(7,3),(4,3),(2,1),(.5,1)]:
+            key=str(uuid4());at=now-120
+            self.demo.put('order/'+key,dict(status='closed',filled=1,remaining=0,realized_cents=2),parameters=dict(client_id=key,bot=bot,kind='entry',revision=1,square=0,entry_strategy='buy_low_sell_high',price=price,created_at=at,market_close_at=at+minutes*60))
+        self.demo.put('order/older',dict(status='closed',filled=1,remaining=0,realized_cents=100),parameters=dict(bot=bot,kind='entry',revision=1,price=3,created_at=now-7200,market_close_at=now-6300))
+        with patch('services.api.demo_performance.time',SimpleNamespace(time=lambda:now)):
+            response=self.client.get('/demo/performance?bot='+bot+'&group=time_price&period=1H')
+        self.assertEqual(response.status_code,200,response.text)
+        data=response.json();self.assertEqual(data['time_bounds'],[1,3,5,10,15])
+        self.assertEqual({r['bucket'] for r in data['items']},{1,3,5,10,15})
+        self.assertEqual({r['entry_price'] for r in data['items']},{1,3})
+        self.assertEqual(sum(r['orders'] for r in data['items']),5)
     def test_minimum_bid_roundtrip_validation_and_existing_config_default(self):
         body=config(minimum_cents=60,maximum_cents=96)
         response=self.client.post('/demo/bots',json=body)
