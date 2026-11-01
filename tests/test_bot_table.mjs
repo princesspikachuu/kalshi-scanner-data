@@ -79,3 +79,15 @@ test('edit recovery binds only the same saved revision; changed or missing bots 
  assert.equal(resolveBotDraft(input,[]).recoveredAsNew,true);
  assert.equal(resolveBotDraft(draft(),[current]).recoveredAsNew,false);
 });
+
+import {columnCaps} from '../apps/web/bot-builder.mjs';
+test('per-column bid limits preserve blanks, draft reloads and independent duplicate copies',()=>{
+ assert.deepEqual(columnCaps({'50-60':'','60-70':'65','90-100':'94',private_key:'ignored'}),{'60-70':65,'90-100':94});
+ const original=draft();const memory=storage(),store=createBotDraftStore(memory);
+ original.fields.columnCap60='65';original.fields.columnCap90='';
+ assert.equal(store.save(original),true);
+ assert.deepEqual(createBotDraftStore(memory).load().fields,original.fields);
+ const source={config:{name:'Column caps',squares:[],column_maximum_cents:{'60-70':65}}};
+ const copy=duplicateBotConfig(source);copy.column_maximum_cents['60-70']=62;
+ assert.equal(source.config.column_maximum_cents['60-70'],65);
+});

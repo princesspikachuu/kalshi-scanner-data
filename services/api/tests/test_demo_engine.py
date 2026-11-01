@@ -374,3 +374,24 @@ class DownwardExitRatchet(unittest.TestCase):
         with patch.object(w,'submit') as submit,patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
         submit.assert_not_called();self.assertEqual(parent['exit_ceiling_cents'],55)
         self.assertTrue(w.entry_diagnostics(NOW)[parent['bot']]['exit_waiting'])
+
+class ColumnMaximums(unittest.TestCase):
+    def test_column_cap_is_a_ceiling_combined_with_overall_cap_and_minimum_filter(self):
+        q=quote()
+        self.assertEqual(entry_price(config(column_maximum_cents={'60-70':62}),q,'yes'),62)
+        self.assertEqual(entry_price(config(maximum_cents=61,column_maximum_cents={'60-70':62}),q,'yes'),61)
+        self.assertEqual(entry_price(config(adjustment_cents=-10,column_maximum_cents={'60-70':62}),q,'yes'),55)
+        self.assertIsNone(entry_price(config(minimum_cents=63,column_maximum_cents={'60-70':62}),q,'yes'))
+        self.assertEqual(entry_price(config(column_maximum_cents={'70-80':50}),q,'yes'),64)
+    def test_cap_column_uses_the_qualification_quote_not_adjusted_bid_or_other_reference(self):
+        q=quote();q.update(bid=65,ask=75)
+        caps={'50-60':51,'60-70':63,'70-80':72}
+        self.assertEqual(entry_price(config(qualification='ask',adjustment_cents=-20,column_maximum_cents=caps),q,'yes'),55)
+        self.assertEqual(entry_price(config(qualification='bid',column_maximum_cents=caps),q,'yes'),63)
+        q.update(bid=25,ask=30)
+        self.assertEqual(entry_price(config(column_maximum_cents=caps),q,'no'),72)
+    def test_schema_rejects_unknown_columns_invalid_cents_and_keeps_legacy_default(self):
+        self.assertEqual(config()['column_maximum_cents'],{})
+        for value in [{'bogus':65},{'60-70':0},{'60-70':100},{'60-70':True},{'60-70':'65'}]:
+            with self.subTest(value=value),self.assertRaises(ValueError):config(column_maximum_cents=value)
+        self.assertEqual(config(minimum_cents=65,column_maximum_cents={'60-70':60})['column_maximum_cents'],{'60-70':60})

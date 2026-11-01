@@ -27,6 +27,12 @@ def entry_price(config,quote,side):
     price=(bid if config['price_reference']=='bid' else ask)+config['adjustment_cents']
     # The maximum is a ceiling, never an instruction to raise a lower bid.
     if config.get('maximum_cents') is not None:price=min(price,config['maximum_cents'])
+    column_caps=config.get('column_maximum_cents')
+    if column_caps:
+        reference=bid if config.get('qualification','ask')=='bid' else ask
+        low=math.floor(reference/10)*10
+        column_cap=column_caps.get(f'{low}-{low+10}')
+        if column_cap is not None:price=min(price,column_cap)
     price=math.floor(price)
     # A minimum filters cheap bids; it never raises a bid or overrides its reference.
     if config.get('minimum_cents') is not None and price<config['minimum_cents']:return None

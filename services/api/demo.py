@@ -16,6 +16,9 @@ def install_demo(app,auth,mutate,pool):
         return row
     def verify_config(config):
         config=config.model_dump();verified=[]
+        if config['column_maximum_cents']:
+            health=store.get('health')
+            if not health or 'column_bid_caps_v1' not in health['progress'].get('features',[]):raise HTTPException(409,'Column bid limits are temporarily unavailable; your draft has been kept')
         with pool.connection() as c:
             for square in config['squares']:
                 square['expected_roi']=None;square['loss_cents']=None
@@ -67,7 +70,7 @@ def install_demo(app,auth,mutate,pool):
             if b.get('fresh_test'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
         account_change=values['equity_cents']-first['progress']['value'] if values and first else None
         monitoring={r['idempotency_key'].split('/')[-1].split('-')[0]:r['progress'] for r in health_rows}
-        return dict(contract='demo-v1',environment='demo',reset_mode='archive_copy',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
+        return dict(contract='demo-v1',environment='demo',column_bid_caps=bool(health and 'column_bid_caps_v1' in health['progress'].get('features',[])),reset_mode='archive_copy',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
             health=status,account=values,alerts=alerts,policy=policy['progress'] if policy else Policy().model_dump(),
             connection_configured=bool(store.get('credentials') or os.environ.get('KALSHI_DEMO_API_KEY_ID')),
             vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,account_change_cents=account_change,period=period)

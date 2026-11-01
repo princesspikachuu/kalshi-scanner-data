@@ -1,5 +1,5 @@
 """Versioned shared configuration for multi-square Kalshi Demo bots."""
-from typing import Literal
+from typing import Literal,Annotated
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.research.reports import SERIES
 
@@ -28,6 +28,7 @@ class BotConfig(BaseModel):
     adjustment_cents:int=Field(default=-1,ge=-99,le=99)
     maximum_cents:int|None=Field(default=None,ge=1,le=99)
     minimum_cents:int|None=Field(default=None,ge=1,le=99)
+    column_maximum_cents:dict[Literal['50-60','60-70','70-80','80-90','90-100'],Annotated[int,Field(strict=True,ge=1,le=99)]]=Field(default_factory=dict,max_length=5)
     bid_percent:float=Field(default=1,gt=0,le=100)
     market_percent:float=Field(default=3,gt=0,le=100)
     bot_percent:float=Field(default=10,gt=0,le=100)

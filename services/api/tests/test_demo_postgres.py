@@ -153,3 +153,15 @@ class DemoPostgres(unittest.TestCase):
         for query in ['','?bot=bad','?bot='+identifier+'&period=7D','?bot='+identifier+'&bot='+identifier]:
             self.assertEqual(self.client.get('/demo/performance'+query).status_code,422)
         self.client.cookies.clear();self.assertEqual(self.client.get('/demo/performance?bot='+identifier).status_code,401)
+
+    def test_column_limits_roundtrip_and_clear_with_verified_worker_capability(self):
+        import time
+        body=config(column_maximum_cents={'60-70':65,'90-100':94})
+        self.assertEqual(self.client.post('/demo/bots',json=body).status_code,409)
+        self.demo.put('health',dict(state='ready',at=time.time(),features=['column_bid_caps_v1']))
+        response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text)
+        identifier=response.json()['id'];page=self.client.get('/demo/workspace').json()
+        self.assertTrue(page['column_bid_caps']);self.assertEqual(page['bots'][0]['config']['column_maximum_cents'],body['column_maximum_cents'])
+        body.pop('column_maximum_cents')
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=body);self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.demo.get('bot/'+identifier)['parameters']['config']['column_maximum_cents'],{})

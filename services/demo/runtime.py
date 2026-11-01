@@ -99,7 +99,7 @@ class Worker:
         now=time.time()
         if state=='ready':self.issue=None
         if now-self.last_health>=10 or state!=self.last_health_state:
-            self.store.put('health',dict(state=state,message=message,at=now,
+            self.store.put('health',dict(state=state,message=message,at=now,features=['column_bid_caps_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled_at=self.last_reconcile,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
@@ -629,7 +629,7 @@ def run(stop):
                     if signer:break
                     if not connection_notice:
                         print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
-                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time()))
+                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['column_bid_caps_v1']))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:
                         maintenance(store,os.environ,stop);next_maintenance=time.time()+300
