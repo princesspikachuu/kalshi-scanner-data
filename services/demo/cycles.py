@@ -3,6 +3,18 @@ from services.research.reports import SERIES
 
 STRATEGY='buy_low_sell_high'
 
+def retry_ready(retry,quote,now):
+    return (not retry or (now>=retry['after'] and
+        (quote.get('clock'),quote.get('seq'))!=(retry.get('clock'),retry.get('seq'))))
+
+def rejection_prices(order):
+    """Move away from a rejected price in outcome cents, including NO orders."""
+    if order['kind']=='entry':
+        buy=order['price']-2;sell=order['profit_target_cents']-2
+        return (buy,sell) if 1<=buy<50 and buy<sell<=99 else None
+    sell=order['price']+2
+    return (None,sell) if sell<=99 else None
+
 def eligible(config,square,quote,now):
     return (quote.get('status')=='active' and quote['series'] in SERIES[square['asset']]
         and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-config['cycle_cutoff_minutes']*60)
@@ -20,11 +32,11 @@ def candidates(bot,quotes,states,now,blocked):
             if key not in memory and sum(len(v) for v in states.values())>=10000:continue
             state=memory.setdefault(key,dict(cycle=1,submitted=False,first_at=now))
             state['expires_at']=q.get('entry_close',q['close'])
-            if state['submitted'] or bot['desired']!='running':continue
-            _,ask=side_quote(q,side);price=config['cycle_buy_cents']
+            if state['submitted'] or bot['desired']!='running' or not retry_ready(state.get('price_retry'),q,now):continue
+            _,ask=side_quote(q,side);price=state.get('retry_buy_cents',config['cycle_buy_cents'])
             if not price<ask or not entry_protection_matches(config,square,q,side):continue
             result.append(dict(bot=bot['id'],ticker=ticker,side=side,square=index,key=key,cycle=state['cycle'],
-                first_at=state['first_at'],price=price,expected_roi=0))
+                first_at=state['first_at'],price=price,profit_target_cents=state.get('retry_sell_cents',config['cycle_sell_cents']),expected_roi=0))
     for key in list(memory):
         if key.split('/')[0] not in quotes and memory[key].get('expires_at',now+1)<=now:memory.pop(key)
     return result

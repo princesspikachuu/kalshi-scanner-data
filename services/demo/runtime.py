@@ -154,13 +154,14 @@ class Worker:
         with self.store.pool.connection() as c:
             rows=c.execute("""SELECT parameters,progress FROM research_job
                 WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
-                AND parameters->>'kind'='entry' AND progress->>'status'='rejected'
+                AND (parameters->>'kind'='entry' OR parameters->>'exit_role'='profit') AND progress->>'status'='rejected'
                 AND NOT(parameters ? 'funding_retry_v1') ORDER BY created_at DESC LIMIT 501""").fetchall()
         if len(rows)>500:raise ExchangeFailure('rejected_order_repair_capacity')
         bots={b['id']:b for b in self.bots}
         for row in rows:
             order={**row['parameters'],**row['progress']};bot=bots.get(order['bot'])
-            if bot and order['revision']==bot['revision']:
+            if self.retry_cycle_rejection(order):continue
+            if order['kind']=='entry' and bot and order['revision']==bot['revision']:
                 key=f"{order['ticker']}/{order['square']}/{order['side']}"
                 memory=self.states.get(bot['id'],{}).get(key)
                 if memory and memory.get('submitted'):
@@ -168,6 +169,34 @@ class Worker:
                     self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
             order['funding_retry_v1']=True;self.save_order(order)
         self.rejections_repaired=True
+    def retry_cycle_rejection(self,order):
+        from .cycles import STRATEGY,rejection_prices
+        if (order.get('entry_strategy')!=STRATEGY and order.get('exit_role')!='profit') or order.get('rejection_reason') not in ('post_only','price_tick'):return False
+        now=time.time();quote=self.quotes.get(order['ticker'],{})
+        retry=dict(after=now+.5,clock=quote.get('clock'),seq=quote.get('seq'),source=order['client_id'])
+        prices=rejection_prices(order)
+        if order['kind']=='entry':
+            bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
+            key=f"{order['ticker']}/{order['square']}/{order['side']}"
+            memory=self.states.get(order['bot'],{}).get(key)
+            if not bot or not memory or memory.get('cycle')!=order['cycle']:return False
+            if (memory.get('price_retry') or {}).get('source')!=order['client_id']:
+                memory.update(submitted=prices is None,attempt=max(memory.get('attempt',0),order.get('entry_attempt',0)+1),price_retry=retry)
+                if prices:memory.update(retry_buy_cents=prices[0],retry_sell_cents=prices[1])
+                self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=order['revision']))
+        else:
+            parent=next((o for o in self.orders if o['client_id']==order.get('parent')),None)
+            if not parent:return False
+            if (parent.get('profit_price_retry') or {}).get('source')!=order['client_id']:
+                parent.update(profit_price_retry=retry,profit_retry_exhausted=prices is None)
+                if prices:parent['profit_target_cents']=prices[1]
+                self.save_order(parent)
+        order['funding_retry_v1']=True;self.save_order(order)
+        self.record('cycle_price_retry',order,
+            ('Buy retry lowered 2¢; future profit sell lowered 2¢' if order['kind']=='entry' else 'Profit sell retry raised 2¢') if prices else 'Price retry reached the market price boundary; no further price retry',
+            previous_price_cents=order['price'],retry_price_cents=(prices[0] if order['kind']=='entry' else prices[1]) if prices else None,
+            profit_target_cents=prices[1] if prices else None)
+        return True
     def save_order(self,order):
         data={k:v for k,v in order.items() if k not in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
         state={k:v for k,v in order.items() if k in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
@@ -220,9 +249,12 @@ class Worker:
         memory=self.states.setdefault(bot['id'],{}).get(key)
         if not memory or memory['cycle']!=order['cycle'] or not memory['submitted']:return
         memory.update(cycle=memory['cycle']+1,submitted=False,first_at=now,attempt=0)
+        for field in ('retry_buy_cents','retry_sell_cents','price_retry'):memory.pop(field,None)
         self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
     def profit_sell(self,order,quote,now):
         if order.get('entry_strategy')!='buy_low_sell_high' or order.get('exit_triggered') or not self.recovered:return False
+        from .cycles import retry_ready
+        if order.get('profit_retry_exhausted') or not retry_ready(order.get('profit_price_retry'),quote,now):return False
         if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']!=order['side'] and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
         children=[o for o in self.orders if o.get('parent')==order['client_id'] and o['status'] not in ('closed','rejected')]
         if any(o['status'] in ('intent','uncertain') for o in children):return False
@@ -537,9 +569,13 @@ class Worker:
             self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
             print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
+            if not error.ambiguous:intent['rejection_reason']=error.reason if error.code=='exchange_rejected' else None
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
             if error.ambiguous:self.blocked.add(intent['ticker'])
+            if not error.ambiguous and self.retry_cycle_rejection(intent):
+                reconcile_needed=False
+                return
             if not error.ambiguous and error.reason=='post_only':
                 q=self.quotes.get(intent['ticker'],{})
                 self.maker_retries[intent['ticker']]=dict(clock=q.get('clock'),seq=q.get('seq'),after=time.time()+.5)
@@ -713,7 +749,7 @@ class Worker:
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
-            extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=config['cycle_sell_cents']) if is_cycle else {}
+            extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(config['cycle_cutoff_minutes']*60 if is_cycle else 0)
             self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
         for bot in self.bots:

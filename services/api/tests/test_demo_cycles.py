@@ -5,6 +5,7 @@ from services.api.tests.test_demo_engine import NOW,FakeStore,config,quote
 from services.demo.engine import candidates,wire_order
 from services.demo.cycles import offset_plan
 from services.demo.runtime import Worker
+from services.demo.exchange import ExchangeFailure
 
 def bot(**changes):
     return dict(id='bot-1',revision=1,desired='running',config=config(**dict(dict(strategy='buy_low_sell_high',cycle_cutoff_minutes=1),**changes)))
@@ -20,6 +21,70 @@ def worker():
     w=Worker(FakeStore(),object(),threading.Event(),lambda:None);w.bots=[bot()];w.quotes={'t':book()}
     w.recovered=True;w.last_reconcile=NOW;w.account=dict(cash_cents=10000,equity_cents=10000)
     w.funding=Mock();w.funding.ensure.return_value=True;w.submit=Mock();return w
+
+class RejectionPrices(unittest.TestCase):
+    def rejecting_worker(self,reason='post_only',ambiguous=False):
+        w=worker();w.quotes['t'].update(clock=1,seq=1)
+        w.exchange=Mock();w.exchange.submit.side_effect=ExchangeFailure('exchange_rejected',ambiguous,status=400,reason=reason)
+        w.states={'bot-1':{'t/0/yes':dict(cycle=1,submitted=True,first_at=NOW),
+                           't/0/no':dict(cycle=1,submitted=True,first_at=NOW)}}
+        return w
+    def test_rejected_buys_shift_both_prices_from_last_attempt_on_either_outcome(self):
+        for side in ('yes','no'):
+            w=self.rejecting_worker();order=entry(side=side,remaining=0,status='intent')
+            with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,order)
+            self.assertTrue(w.recovered);self.assertEqual(order['status'],'rejected')
+            self.assertEqual(candidates(w.bots,w.quotes,w.states,NOW+1),[])
+            w.quotes['t'].update(seq=2,at=NOW+1)
+            result=candidates(w.bots,w.quotes,w.states,NOW+1)
+            self.assertEqual([(r['side'],r['price'],r['profit_target_cents']) for r in result],[(side,8,18)])
+            with patch('services.demo.runtime.time.time',return_value=NOW+1):w.trade()
+            retry=w.submit.call_args.args[0];self.assertEqual((retry['price'],retry['profit_target_cents']),(8,18))
+            self.assertNotEqual(retry['client_id'],order['client_id'])
+            with patch('services.demo.runtime.time.time',return_value=NOW+1):Worker.submit(w,retry)
+            w.quotes['t'].update(seq=3,at=NOW+2)
+            result=candidates(w.bots,w.quotes,w.states,NOW+2)
+            self.assertEqual((result[0]['price'],result[0]['profit_target_cents']),(6,16))
+    def test_profit_rejection_raises_target_waits_for_new_quote_and_preserves_inventory(self):
+        w=self.rejecting_worker('price_tick');parent=entry(filled=3,remaining=0);w.orders=[parent]
+        self.assertTrue(w.profit_sell(parent,w.quotes['t'],NOW));sell=w.submit.call_args.args[0]
+        with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,sell)
+        self.assertEqual(parent['profit_target_cents'],22);self.assertEqual(parent['filled'],3)
+        w.submit.reset_mock();self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+1))
+        w.quotes['t']['seq']=2
+        self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+.1))
+        self.assertTrue(w.profit_sell(parent,w.quotes['t'],NOW+1))
+        retry=w.submit.call_args.args[0];self.assertEqual((retry['price'],retry['quantity']),(22,3))
+        self.assertNotEqual(retry['client_id'],sell['client_id'])
+    def test_bounds_stop_retries_and_protective_exit_still_takes_over(self):
+        w=self.rejecting_worker();order=entry(price=2,profit_target_cents=12)
+        with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,order)
+        w.quotes['t']['seq']=2
+        self.assertEqual(candidates(w.bots,w.quotes,w.states,NOW+1),[])
+        parent=entry(filled=3,remaining=0,profit_target_cents=99);w.orders=[parent]
+        sell=dict(parent,client_id='high',kind='exit',exit_role='profit',parent=parent['client_id'],price=99)
+        with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,sell)
+        self.assertTrue(parent['profit_retry_exhausted']);self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+1))
+        parent.update(exit_triggered=True,exit_ceiling_cents=40);w.submit.reset_mock()
+        w.quotes['t'].update(bid=30,ask=35)
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['kind'],'exit')
+        self.assertNotEqual(w.submit.call_args.args[0].get('exit_role'),'profit')
+    def test_ambiguous_and_funding_errors_do_not_adjust_prices(self):
+        for reason,ambiguous in [('balance',False),('post_only',True),('routing',False),('quantity',False)]:
+            w=self.rejecting_worker(reason,ambiguous);order=entry()
+            with self.assertRaises(ExchangeFailure):Worker.submit(w,order)
+            self.assertNotIn('retry_buy_cents',w.states['bot-1']['t/0/yes'])
+            self.assertEqual(order['profit_target_cents'],20)
+    def test_retry_recovery_is_idempotent_and_new_cycle_starts_at_configured_prices(self):
+        w=self.rejecting_worker();order=entry(rejection_reason='post_only',status='rejected')
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            self.assertTrue(w.retry_cycle_rejection(order));self.assertTrue(w.retry_cycle_rejection(order))
+        state=w.states['bot-1']['t/0/yes'];self.assertEqual((state['attempt'],state['retry_buy_cents']),(1,8))
+        state['submitted']=True;order.update(status='closed',filled=10,sold=10,remaining=0)
+        w.rearm_cycle(order,NOW+1);w.quotes['t'].update(seq=2,at=NOW+1)
+        result=candidates(w.bots,w.quotes,w.states,NOW+1)
+        self.assertEqual((result[0]['cycle'],result[0]['price'],result[0]['profit_target_cents']),(2,10,20))
 
 class CycleEntries(unittest.TestCase):
     def test_both_sides_post_at_fixed_low_on_a_verified_open_book(self):

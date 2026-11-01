@@ -332,6 +332,38 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(worker.research_stop(identifier,'60-70',4),70)
         self.assertEqual(worker.research_stop(identifier,'60-70',5),70)
 
+    def test_cycle_price_rejection_recovers_after_restart_without_shifting_twice(self):
+        import threading
+        from unittest.mock import Mock
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import entry,book,NOW
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        identifier=self.client.post('/demo/bots',json=config(strategy='buy_low_sell_high',cycle_cutoff_minutes=1)).json()['id']
+        key='t/0/yes'
+        self.demo.put('trigger/'+identifier,{key:dict(cycle=1,submitted=True,first_at=NOW)},parameters=dict(revision=1))
+        first=Worker(self.demo,object(),threading.Event(),lambda:None)
+        # Simulate a crash after saving a definitive rejection, before its retry state.
+        first.save_order(entry(bot=identifier,status='rejected',remaining=0,rejection_reason='post_only',entry_attempt=0))
+        recovered=Worker(self.demo,object(),threading.Event(),lambda:None);recovered.load_bots()
+        with patch('services.demo.runtime.time.time',return_value=NOW):recovered.repair_rejected_entries()
+        state=self.demo.get('trigger/'+identifier)['progress'][key]
+        self.assertEqual((state['retry_buy_cents'],state['retry_sell_cents'],state['attempt']),(8,18,1))
+        again=Worker(self.demo,object(),threading.Event(),lambda:None);again.load_bots();again.repair_rejected_entries()
+        self.assertEqual(self.demo.get('trigger/'+identifier)['progress'][key],state)
+        parent=entry(bot=identifier,client_id='parent',price=8,profit_target_cents=18,filled=3,remaining=0,profit_attempt=1)
+        again.save_order(parent)
+        rejected=dict(client_id='profit-rejected',kind='exit',exit_role='profit',parent='parent',bot=identifier,revision=1,
+            ticker='t',side='yes',price=18,quantity=3,close=NOW+900,created_at=NOW,status='rejected',remaining=0,filled=0,rejection_reason='price_tick')
+        again.save_order(rejected)
+        final=Worker(self.demo,object(),threading.Event(),lambda:None);final.load_bots()
+        with patch('services.demo.runtime.time.time',return_value=NOW):final.repair_rejected_entries()
+        self.assertEqual(self.demo.get('order/parent')['parameters']['profit_target_cents'],20)
+        final.recovered=True;final.submit=Mock()
+        holding=next(o for o in final.orders if o['client_id']=='parent')
+        self.assertTrue(final.profit_sell(holding,dict(book(),clock=2),NOW+1))
+        retry=final.submit.call_args.args[0];self.assertEqual((retry['price'],retry['quantity']),(20,3))
+        self.assertEqual(self.demo.get('order/profit-rejected')['progress']['status'],'rejected')
+
     def test_fractional_profit_fills_complete_cycle_without_float_dust(self):
         import threading
         from services.demo.runtime import Worker
