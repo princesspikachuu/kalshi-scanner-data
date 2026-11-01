@@ -68,7 +68,7 @@ test('routine confirmed-order verification keeps bots running; stalled, uncertai
  assert.equal(botGroup(bot,health,[],1046),'Needs attention');
  assert.equal(botGroup(bot,{...health,reconciled_at:0},[],1003),'Needs attention');
  assert.equal(botGroup(bot,{...health,issue:{code:'ambiguous'}},[],1003),'Needs attention');
- assert.equal(botGroup(bot,{...health,bots:{one:{exit_waiting:true}}},[],1003),'Needs attention');
+ assert.equal(botGroup(bot,{...health,bots:{one:{exit_waiting:true}}},[],1003),'Running');
  assert.equal(botGroup(bot,{...health,blocked_markets:['BTC']},[{bot:'one',ticker:'BTC'}],1003),'Needs attention');
  assert.equal(botGroup(bot,{...health,blocked_markets:['BTC']},[{bot:'two',ticker:'BTC'}],1003),'Running');
  assert.equal(botGroup(bot,{...health,state:'attention'},[],1003),'Needs attention');
@@ -85,4 +85,13 @@ test('bot dropdown separates held contracts, partial entry remainders, exits and
  assert.equal(result.waiting.length,3);
  const html=botExposureMarkup(orders,'bot-one');assert.match(html,/BTC&lt;test&gt;/);assert.doesNotMatch(html,/BTC<test>/);assert.match(html,/Protective exit/);assert.match(html,/Unconfirmed/);assert.match(html,/both sections/);
  const empty=botExposureMarkup([]);assert.match(empty,/No open positions/);assert.match(empty,/No waiting orders/);
+});
+
+test('protective exits and rejected maker orders are informational while actual failures keep their explanation',()=>{
+ const bot={key:'one',desired:'running'},health={state:'ready',at:1000,reconciled_at:999,bots:{one:{exit_waiting:true,message:'Waiting for a maker-only quote'}}};
+ const orders=[{bot:'one',kind:'exit',status:'rejected',ticker:'BTC',remaining:0}];
+ assert.equal(botGroup(bot,health,orders,1001),'Running');
+ const failed={...health,state:'attention',issue:{summary:'Exchange connection unavailable',action:'Reconnecting automatically',phase:'stream',code:'connection'}};
+ assert.equal(botGroup(bot,failed,orders,1001),'Needs attention');
+ assert.equal(attentionInfo(bot,failed,orders,1001).reason,'Exchange connection unavailable');
 });
