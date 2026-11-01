@@ -54,12 +54,8 @@ class Worker:
         for bot in self.bots:
             config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=incomplete=0
             if config.get('strategy')=='buy_low_sell_high':
-                from .cycles import eligible
-                markets=[q for q in self.quotes.values() if any(q['series'] in SERIES[s['asset']] for s in config['squares'])]
-                ready=[q for q in markets if now-q['at']<=5 and q.get('book_verified') and any(eligible(config,s,q,now) for s in config['squares'])]
-                own=[o for o in self.orders if o['bot']==bot['id'] and o['status'] not in ('closed','rejected')]
-                lows=sum(o['kind']=='entry' and o.get('remaining',0)>0 for o in own);highs=sum(o.get('exit_role')=='profit' and o.get('remaining',0)>0 for o in own)
-                summary[bot['id']]=dict(message=f'Buy {config["cycle_buy_cents"]}¢ / sell {config["cycle_sell_cents"]}¢ · {lows} waiting buys · {highs} profit sells · {len(ready)} markets before cutoff',markets=len(markets),fresh=len(ready),matches=len(ready)*2,exit_waiting=False,categories=sorted({s['asset'] for s in config['squares']}))
+                from .cycles import diagnostics
+                summary[bot['id']]=diagnostics(bot,self.quotes,self.states,self.orders,now,self.blocked,self.netting_pending,self.account,self.recovered)
                 continue
             market_exposure={};bot_exposure=0;exit_waiting=None
             for entry in self.orders:
@@ -231,7 +227,7 @@ class Worker:
         changes=[]
         for order in self.orders:
             amount=offsets.get(order['client_id'],0)
-            if amount:changes.append((order,dict(offset_quantity=order.get('offset_quantity',0)+amount,offset_credit_cents=order.get('offset_credit_cents',0)+50*amount)))
+            if amount:changes.append((order,dict(offset_quantity=round(order.get('offset_quantity',0)+amount,2),offset_credit_cents=round(order.get('offset_credit_cents',0)+50*amount,2))))
         with self.store.pool.connection() as c:
             for order,data in changes:
                 result=c.execute("""UPDATE research_job SET parameters=parameters||%s
@@ -252,11 +248,23 @@ class Worker:
         memory.update(cycle=memory['cycle']+1,submitted=False,first_at=now,attempt=0)
         for field in ('retry_buy_cents','retry_sell_cents','price_retry'):memory.pop(field,None)
         self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
+    def restore_filled_cycle_claim(self,order):
+        if order['kind']!='entry' or order.get('entry_strategy')!='buy_low_sell_high' or order.get('filled',0)<=0:return
+        bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
+        key=f"{order['ticker']}/{order['square']}/{order['side']}"
+        memory=self.states.get(order['bot'],{}).get(key)
+        # A parked buy can fill before cancellation reaches the exchange.
+        if bot and memory and memory.get('cycle')==order['cycle'] and not memory.get('submitted'):
+            memory['submitted']=True
+            self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
     def profit_sell(self,order,quote,now):
         if order.get('entry_strategy')!='buy_low_sell_high' or order.get('exit_triggered') or not self.recovered:return False
+        if order['ticker'] in self.blocked or order['ticker'] in self.netting_pending:return False
         from .cycles import retry_ready
         if order.get('profit_retry_exhausted') or not retry_ready(order.get('profit_price_retry'),quote,now):return False
-        if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']!=order['side'] and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
+        if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']!=order['side'] and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0) or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
+        if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']==order['side'] and o['price']>=order['profit_target_cents']
+            and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
         children=[o for o in self.orders if o.get('parent')==order['client_id'] and o['status'] not in ('closed','rejected')]
         if any(o['status'] in ('intent','uncertain') for o in children):return False
         amount=round(order['filled']-order.get('sold',0)-sum(o.get('remaining',0) for o in children),2)
@@ -343,6 +351,7 @@ class Worker:
             order['status']='resting' if raw['status']=='resting' else 'held' if order['kind']=='entry' and order['filled'] else 'closed'
             if order['kind']=='exit' and raw['status'] in TERMINAL:order['status']='closed'
             self.save_order(order)
+            self.restore_filled_cycle_claim(order)
             if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
             if prior_status not in ('closed','held') and order['status']=='closed':self.record('cancel',order,'Exchange order is no longer resting')
         # Reload includes fills committed above and closed exits for per-entry allocation.
@@ -622,24 +631,31 @@ class Worker:
                 self.record('exit_policy_updated',order,'Old BID-only trigger cleared; protection now follows current ASK')
             order['exit_reference']='ask';self.save_order(order)
         return False
+    def park_cycle_entry(self,order,message):
+        self.cancel(order,message)
+        if order.get('entry_strategy')!='buy_low_sell_high' or order.get('filled',0):return
+        bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
+        key=f"{order['ticker']}/{order['square']}/{order['side']}"
+        memory=self.states.get(order['bot'],{}).get(key)
+        if bot and memory and memory.get('cycle')==order['cycle']:
+            memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+            self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
     def trade(self):
         now=time.time();bots={b['id']:b for b in self.bots}
         if self.recovered and self.upgrade_legacy_exits():return
         for order in self.orders:
             if order['ticker'] in self.netting_pending and order['kind']=='exit' and order.get('remaining',0)>0:
                 self.cancel(order,'Canceling sells before reconciling offsetting YES and NO fills');return
-        held_cycles=[o for o in self.orders if o.get('entry_strategy')=='buy_low_sell_high' and o.get('filled',0)>o.get('sold',0)]
+        from .cycles import park_reason,entry_block_reason
+        market_orders={}
+        for order in self.orders:market_orders.setdefault(order['ticker'],[]).append(order)
         for order in self.orders:
-            if order.get('entry_strategy')=='buy_low_sell_high' and order.get('remaining',0)>0 and any(o['ticker']==order['ticker'] and o['side']!=order['side'] for o in held_cycles):
-                self.cancel(order,'Parking opposite low bid while filled inventory has a profit sell')
-                bot=bots.get(order['bot'])
-                if bot and bot['revision']==order['revision'] and not order.get('filled',0):
-                    key=f"{order['ticker']}/{order['square']}/{order['side']}";memory=self.states.get(bot['id'],{}).get(key)
-                    if memory:
-                        memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
-                        self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
+            reason=park_reason(order,market_orders[order['ticker']])
+            if reason:
+                self.park_cycle_entry(order,'Parking opposite low bid while filled inventory has a profit sell' if reason=='opposite_inventory' else 'Parking a low bid that would cross a bot profit sell')
                 return
-        exiting={o['ticker'] for o in self.orders if o.get('kind')=='exit' and o.get('exit_role')!='profit' and o.get('status') not in ('closed','rejected')}
+        exiting={o['ticker'] for o in self.orders if o.get('status') not in ('closed','rejected') and
+            (o.get('kind')=='exit' and o.get('exit_role')!='profit' or o.get('kind')=='entry' and o.get('exit_triggered') and o.get('filled',0)>o.get('sold',0))}
         for order in self.orders:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
             if order.get('status')=='uncertain':continue
@@ -702,7 +718,8 @@ class Worker:
             if order.get('exit_triggered'):
                 exiting.add(order['ticker'])
                 for other in self.orders:
-                    if other['ticker']==order['ticker'] and other['kind']=='entry' and other.get('remaining',0)>0:self.cancel(other,'Protective exit blocks new entries');return
+                    if other['ticker']==order['ticker'] and other['kind']=='entry' and other.get('remaining',0)>0:self.park_cycle_entry(other,'Protective exit blocks new entries');return
+                if any(o['ticker']==order['ticker'] and o['kind']=='entry' and o.get('status') in ('intent','uncertain','cancel_pending') for o in self.orders):continue
                 if any(o.get('parent')==order['client_id'] and o['status'] not in ('closed','rejected') for o in self.orders):continue
                 price=exit_price(q,order['side'],order.get('exit_ceiling_cents'))
                 if price and price>bid:
@@ -724,7 +741,7 @@ class Worker:
             active_entries=[o for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'] and o['status'] not in ('closed','rejected')]
             if item['ticker'] in self.netting_pending:continue
             if is_cycle:
-                if any(o['bot']!=item['bot'] or o.get('entry_strategy')!='buy_low_sell_high' or o['revision']!=bot['revision'] or o['side']==item['side'] or o.get('filled',0)>o.get('sold',0) or o.get('status') in ('intent','uncertain','cancel_pending') for o in active_entries):continue
+                if entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):continue
             else:
                 if any(o.get('entry_strategy')=='buy_low_sell_high' for o in active_entries):continue
                 if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue

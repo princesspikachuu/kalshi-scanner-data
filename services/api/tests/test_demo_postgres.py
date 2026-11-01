@@ -332,6 +332,77 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(worker.research_stop(identifier,'60-70',4),70)
         self.assertEqual(worker.research_stop(identifier,'60-70',5),70)
 
+    def test_shared_cycle_partial_and_complete_exits_keep_each_bots_profit_and_repeat(self):
+        import threading
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import entry,book,NOW
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        ids=[self.client.post('/demo/bots',json=config(strategy='buy_low_sell_high',cycle_buy_cents=buy,cycle_sell_cents=sell)).json()['id'] for buy,sell in [(10,20),(6,9)]]
+        entries=[entry(bot=ids[0],client_id='a',quantity=3,filled=3,remaining=0),
+                 entry(bot=ids[1],client_id='b',price=6,profit_target_cents=9,quantity=5,filled=5,remaining=0)]
+        sells=[dict(client_id='sell-'+o['client_id'],kind='exit',exit_role='profit',parent=o['client_id'],bot=o['bot'],revision=1,
+            ticker='t',side='yes',price=o['profit_target_cents'],quantity=o['filled'],created_at=NOW,close=NOW+900,status='resting',filled=0,remaining=o['filled']) for o in entries]
+        class Ex:
+            complete=False
+            def call(self,*args,**kwargs):return dict(balance=10000,portfolio_value=0 if self.complete else 500)
+            def pages(self,path,key,**params):
+                if key=='market_positions':return [] if self.complete else [dict(ticker='t',position_fp='5.00')]
+                rows=[]
+                for i,o in enumerate(entries+sells):
+                    filled=o['quantity'] if i<2 or self.complete else i-1
+                    rows.append(dict(ticker='t',order_id='ex-'+o['client_id'],client_order_id=o['client_id'],
+                        status='executed' if filled==o['quantity'] else 'resting',fill_count_fp=str(filled),remaining_count_fp=str(o['quantity']-filled)))
+                return [r for r in rows if r['status']=='resting'] if params.get('status')=='resting' else rows
+        ex=Ex();w=Worker(self.demo,ex,threading.Event(),lambda:None);w.quotes={'t':book()}
+        for o in entries+sells:w.save_order(dict(o,filled=0,status='cancel_pending',remaining=0) if o['client_id']=='a' else o)
+        for i,identifier in enumerate(ids):self.demo.put('trigger/'+identifier,{'t/0/yes':dict(cycle=1,submitted=i!=0,first_at=NOW)},parameters=dict(revision=1))
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.reconcile()
+        self.assertFalse(w.blocked);self.assertTrue(w.recovered)
+        self.assertTrue(self.demo.get('trigger/'+ids[0])['progress']['t/0/yes']['submitted'])
+        self.assertEqual([self.demo.get('order/'+o['client_id'])['parameters']['sold'] for o in entries],[1,2])
+        self.assertFalse(w.profit_sell(next(o for o in w.orders if o['client_id']=='a'),book(),NOW))
+        ex.complete=True
+        with patch('services.demo.runtime.time.time',return_value=NOW+1):w.reconcile()
+        self.assertEqual([self.demo.get('order/'+o['client_id'])['progress']['realized_cents'] for o in entries],[30,15])
+        self.assertEqual([self.demo.get('trigger/'+i)['progress']['t/0/yes']['cycle'] for i in ids],[2,2])
+        metrics=self.client.get('/demo/workspace').json()['metrics']
+        self.assertEqual([metrics[i]['realized_cents'] for i in ids],[30,15])
+        restarted=Worker(self.demo,ex,threading.Event(),lambda:None)
+        with patch('services.demo.runtime.time.time',return_value=NOW+2):restarted.reconcile()
+        self.assertEqual([self.demo.get('trigger/'+i)['progress']['t/0/yes']['cycle'] for i in ids],[2,2])
+
+    def test_cross_bot_opposite_fills_offset_atomically_and_remaining_sell_keeps_parent(self):
+        import threading
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import entry,book,NOW
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        ids=[self.client.post('/demo/bots',json=config(strategy='buy_low_sell_high',cycle_buy_cents=buy,cycle_sell_cents=sell)).json()['id'] for buy,sell in [(10,20),(6,9)]]
+        entries=[entry(bot=ids[0],client_id='yes-a',quantity=3,filled=3,remaining=0),
+                 entry(bot=ids[1],client_id='no-b',side='no',price=6,profit_target_cents=9,quantity=2,filled=2,remaining=0)]
+        sell=dict(client_id='last-sell',kind='exit',exit_role='profit',parent='yes-a',bot=ids[0],revision=1,ticker='t',side='yes',
+            price=20,quantity=1,created_at=NOW,close=NOW+900,status='resting',filled=0,remaining=1)
+        class Ex:
+            complete=False
+            def call(self,*args,**kwargs):return dict(balance=10000,portfolio_value=0 if self.complete else 100)
+            def pages(self,path,key,**params):
+                if key=='market_positions':return [] if self.complete else [dict(ticker='t',position_fp='1.00')]
+                if params.get('status')=='resting':return []
+                return [dict(ticker='t',order_id='ex-'+o['client_id'],client_order_id=o['client_id'],status='executed',fill_count_fp=str(o['quantity']),remaining_count_fp='0.00') for o in entries+([sell] if self.complete else [])]
+        ex=Ex();w=Worker(self.demo,ex,threading.Event(),lambda:None);w.quotes={'t':book()}
+        for o in entries:w.save_order(o)
+        for identifier,side in zip(ids,['yes','no']):self.demo.put('trigger/'+identifier,{'t/0/'+side:dict(cycle=1,submitted=True,first_at=NOW)},parameters=dict(revision=1))
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.reconcile()
+        self.assertTrue(w.recovered);self.assertFalse(w.blocked)
+        self.assertEqual([self.demo.get('order/'+o['client_id'])['parameters']['offset_quantity'] for o in entries],[2,2])
+        self.assertEqual(self.demo.get('order/no-b')['progress']['realized_cents'],88)
+        self.assertEqual(self.demo.get('order/yes-a')['parameters']['sold'],2)
+        w.save_order(sell);ex.complete=True
+        with patch('services.demo.runtime.time.time',return_value=NOW+1):w.reconcile()
+        self.assertEqual(self.demo.get('order/yes-a')['progress']['realized_cents'],90)
+        self.assertEqual(self.demo.get('order/last-sell')['parameters']['bot'],ids[0])
+        self.assertEqual(self.demo.get('trigger/'+ids[0])['progress']['t/0/yes']['cycle'],2)
+        self.assertEqual(self.demo.get('trigger/'+ids[1])['progress']['t/0/no']['cycle'],2)
+
     def test_cycle_price_rejection_recovers_after_restart_without_shifting_twice(self):
         import threading
         from unittest.mock import Mock

@@ -3,7 +3,7 @@ from unittest.mock import Mock,patch
 from services.api.demo_models import BotConfig
 from services.api.tests.test_demo_engine import NOW,FakeStore,config,quote
 from services.demo.engine import candidates,wire_order
-from services.demo.cycles import offset_plan
+from services.demo.cycles import offset_plan,entry_block_reason,park_reason
 from services.demo.runtime import Worker
 from services.demo.exchange import ExchangeFailure
 
@@ -120,6 +120,101 @@ class CycleEntries(unittest.TestCase):
     def test_validates_non_crossing_two_sided_low_and_higher_sell_prices(self):
         for changes in [dict(cycle_buy_cents=50),dict(cycle_buy_cents=20,cycle_sell_cents=20),dict(cycle_cutoff_minutes=-1)]:
             with self.assertRaises(ValueError):bot(**changes)
+
+class SharedMarkets(unittest.TestCase):
+    def test_five_bots_can_each_bid_both_outcomes_without_stealing_ownership(self):
+        w=worker();w.bots=[]
+        for low in (3,6,9,12,15):
+            b=bot(cycle_buy_cents=low,cycle_sell_cents=low+3,bid_percent=1,market_percent=100,bot_percent=100)
+            b['id']=f'bot-{low}';w.bots.append(b)
+        for _ in range(10):
+            w.submit.reset_mock()
+            with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+            self.assertIsNotNone(w.submit.call_args)
+            order=w.submit.call_args.args[0];order.update(status='resting',remaining=order['quantity']);w.orders.append(order)
+        self.assertEqual({(o['bot'],o['side']) for o in w.orders},{(b['id'],s) for b in w.bots for s in ('yes','no')})
+        self.assertEqual(len({o['client_id'] for o in w.orders}),10)
+        w.submit.reset_mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.submit.assert_not_called()
+    def test_sharing_keeps_duplicate_manual_strategy_and_verification_fences(self):
+        item=dict(bot='bot-2',side='yes',price=6)
+        self.assertIsNone(entry_block_reason(item,[entry()]))
+        self.assertEqual(entry_block_reason(dict(item,bot='bot-1'),[entry()]),'duplicate')
+        self.assertEqual(entry_block_reason(item,[entry(entry_strategy='conditions')]),'other_strategy')
+        self.assertEqual(entry_block_reason(item,[entry(status='cancel_pending',remaining=0)]),'verification')
+        self.assertEqual(entry_block_reason(item,[],True),'netting')
+    def test_same_side_inventory_is_shared_but_opposite_low_bids_wait(self):
+        parent=entry(filled=3,remaining=0,price=12,profit_target_cents=15)
+        w=worker();other=bot(cycle_buy_cents=6,cycle_sell_cents=9);other['id']='bot-2'
+        w.bots.append(other);w.orders=[parent]
+        self.assertIsNone(entry_block_reason(dict(bot='bot-2',side='yes',price=6),w.orders))
+        self.assertEqual(entry_block_reason(dict(bot='bot-2',side='no',price=6),w.orders),'opposite_inventory')
+        sell=dict(kind='exit',exit_role='profit',client_id='high',parent='low',bot='bot-1',ticker='t',side='yes',price=15,status='resting',remaining=3)
+        w.orders.append(sell)
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual((w.submit.call_args.args[0]['bot'],w.submit.call_args.args[0]['side']),('bot-2','yes'))
+    def test_crossing_buys_cancel_and_confirm_before_another_bots_profit_sell(self):
+        w=worker();parent=entry(filled=3,remaining=0,price=3,profit_target_cents=6)
+        other=entry(bot='bot-2',client_id='other',price=15,profit_target_cents=18)
+        b=bot(cycle_buy_cents=15,cycle_sell_cents=18);b['id']='bot-2';w.bots.append(b)
+        w.orders=[parent,other];w.states={'bot-2':{'t/0/yes':dict(cycle=1,submitted=True,first_at=NOW)}};w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.cancel.call_args.args[0]['client_id'],'other');w.submit.assert_not_called()
+        self.assertFalse(w.states['bot-2']['t/0/yes']['submitted'])
+        other.update(status='cancel_pending',remaining=0);w.submit.reset_mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.submit.assert_not_called()
+        other['status']='closed'
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual((w.submit.call_args.args[0]['parent'],w.submit.call_args.args[0]['price']),('low',6))
+    def test_existing_profit_sell_blocks_only_crossing_prices_not_all_bots(self):
+        parent=entry(price=3,profit_target_cents=6,filled=3,remaining=0)
+        sell=dict(parent,kind='exit',parent='low',client_id='high',exit_role='profit',price=6,filled=0,remaining=3)
+        rows=[parent,sell]
+        self.assertEqual(entry_block_reason(dict(bot='b',side='yes',price=6),rows),'self_trade')
+        self.assertIsNone(entry_block_reason(dict(bot='b',side='yes',price=3),rows))
+        self.assertIsNone(park_reason(entry(bot='b',price=3),rows))
+        self.assertEqual(park_reason(entry(bot='b',price=15),rows),'self_trade')
+        self.assertFalse(worker().profit_sell(dict(parent,exit_triggered=True),book(),NOW))
+    def test_offsets_across_bots_keep_quantities_and_cancel_pending_sells_fenced(self):
+        a=entry(filled=3,remaining=0);b=entry(bot='bot-2',client_id='other',side='no',filled=2,remaining=0)
+        self.assertEqual(offset_plan([a,b],{}, {'t':1},set()),({'low':2,'other':2},set()))
+        high=dict(a,kind='exit',parent='low',client_id='high',filled=0,remaining=0,status='cancel_pending')
+        self.assertEqual(offset_plan([a,b,high],{}, {'t':1},set()),({}, {'t'}))
+        w=worker();w.orders=[a,b];self.assertFalse(w.profit_sell(a,book(),NOW))
+    def test_late_fill_after_parking_claims_the_cycle_and_respects_repeat_off(self):
+        w=worker();w.bots[0]['config']['cycle_repeat']=False
+        w.states={'bot-1':{'t/0/yes':dict(cycle=1,submitted=False,first_at=NOW,attempt=1)}}
+        late=entry(filled=3,remaining=0)
+        w.restore_filled_cycle_claim(late)
+        self.assertTrue(w.states['bot-1']['t/0/yes']['submitted'])
+        late.update(status='closed',sold=3);w.rearm_cycle(late,NOW+1)
+        self.assertTrue(w.states['bot-1']['t/0/yes']['submitted'])
+    def test_shared_budget_still_limits_entries_and_diagnostics_name_the_blocker(self):
+        w=worker();other=bot(cycle_buy_cents=6,cycle_sell_cents=9);other['id']='bot-2';w.bots.append(other)
+        w.orders=[entry(quantity=100,remaining=100)]
+        info=w.entry_diagnostics(NOW)['bot-2']
+        self.assertEqual(info['entry_blockers'].get('budget'),2)
+        self.assertIn('insufficient available funds or allocation',info['message'])
+        w.orders=[entry(price=3,profit_target_cents=6,filled=3,remaining=0)]
+        info=w.entry_diagnostics(NOW)['bot-2']
+        self.assertEqual(info['entry_blockers'].get('self_trade'),1)
+        self.assertEqual(info['entry_blockers'].get('opposite_inventory'),1)
+        self.assertIn('would cross your own sell',info['message'])
+    def test_protective_exit_parks_other_bots_bid_without_permanently_using_its_cycle(self):
+        w=worker();parent=entry(filled=3,remaining=0,exit_triggered=True,exit_ceiling_cents=40)
+        other=entry(bot='bot-2',client_id='other',price=6,profit_target_cents=9)
+        b=bot(cycle_buy_cents=6,cycle_sell_cents=9);b['id']='bot-2';w.bots.append(b)
+        w.orders=[parent,other];w.states={'bot-2':{'t/0/yes':dict(cycle=1,submitted=True,first_at=NOW)}};w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertFalse(w.states['bot-2']['t/0/yes']['submitted'])
+        other.update(status='cancel_pending',remaining=0)
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.submit.assert_not_called()
+        w.orders=[];w.bots[0]['desired']='paused'
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['bot'],'bot-2')
 
 class ProfitSells(unittest.TestCase):
     def test_partial_fills_get_only_uncovered_inventory_at_fixed_target(self):
