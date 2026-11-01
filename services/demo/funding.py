@@ -21,7 +21,7 @@ class ShardFunding:
     def __init__(self,store,exchange):
         self.store,self.exchange=store,exchange
         self.balances={};self.checked_at=0;self.poll_at=0;self.notice_at={}
-        self.waits={}
+        self.waits={};self.pending_transfer=None
     def balances_now(self):
         rows=self.exchange.call('GET','/portfolio/subaccounts/balances').get('subaccount_balances')
         if not isinstance(rows,list) or len(rows)>6464:raise ExchangeFailure('shard_balance_contract')
@@ -38,6 +38,7 @@ class ShardFunding:
     def pending(self):
         row=self.store.get('funding')
         pending=row['progress'] if row else None
+        self.pending_transfer=pending
         if not pending or pending['status'] in ('complete','rejected'):return False
         now=time.time()
         if now<self.poll_at:return True
@@ -70,8 +71,9 @@ class ShardFunding:
         if transfer.get('status')!='complete':
             self.store.put('funding',pending);return True
         self.balances_now() # Verify exchange balances after confirmed completion.
-        if self.balances.get(body['destination_exchange_shard'],0)<pending.get('destination_before_cents',0)+body['amount']//100:
-            self.store.put('funding',pending);return True
+        # A confirmed transfer can be followed by fills, fees or another client.
+        # Current cash need not retain the historical before + transfer balance.
+        # Verify the balance response, then size new orders from actual cash only.
         pending['status']='complete';pending['completed_at']=now
         self.store.put('funding',pending);self.store.clear_alert('funding')
         self.store.event('funding_transfer','Existing Demo funds moved to the trading shard',details=dict(source=body['source_exchange_shard'],destination=body['destination_exchange_shard'],amount_cents=body['amount']//100))
@@ -79,15 +81,24 @@ class ShardFunding:
         return False
     def ensure(self,index,required,target,reservations):
         if not isinstance(index,int) or not 0<=index<=100:raise ExchangeFailure('market_shard_contract')
-        if self.pending():self.waits[index]=dict(reason='transfer',at=time.time());return False
+        pending=self.pending()
         if time.time()-self.checked_at>=30:self.balances_now()
         available={i:max(0,v-reservations.get(i,0)) for i,v in self.balances.items()}
+        if pending:
+            transfer=self.pending_transfer;body=transfer['body']
+            source=body['source_exchange_shard'];destination=body['destination_exchange_shard']
+            # Reserve the uncertain debit and never credit unconfirmed incoming cash.
+            available[source]=max(0,available.get(source,0)-body['amount']/100)
+            available[destination]=min(available.get(destination,0),max(0,transfer.get('destination_before_cents',0)-reservations.get(destination,0)))
         current=available.get(index,0)
         if current>=required:
             self.waits.pop(index,None)
             if index not in self.notice_at or self.notice_at[index]!=-1:
                 self.store.clear_alert('funding-cash-'+str(index));self.notice_at[index]=-1
             return True
+        if pending:
+            self.waits[index]=dict(reason='transfer',at=time.time(),required_cents=required,available_cents=current,reserved_cents=sum(reservations.values()))
+            return False
         donors=sorted(((v,i) for i,v in available.items() if i!=index),reverse=True)
         if not donors or sum(v for v,_ in donors)<required-current:
             self.waits[index]=dict(reason='funding',at=time.time(),required_cents=required,available_cents=current,transferable_cents=sum(v for v,_ in donors),reserved_cents=sum(reservations.values()))

@@ -43,6 +43,30 @@ class Funding(unittest.TestCase):
         self.assertEqual(store.data['funding']['status'],'complete')
         self.assertEqual(store.events[0][0],'funding_transfer')
         self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+    def test_pending_transfer_does_not_block_verified_cash_on_other_shards(self):
+        store,exchange,funding=self.setup();funding.ensure(2,90,1000,{})
+        self.assertTrue(funding.ensure(0,90,1000,{}))
+        self.assertFalse(funding.ensure(0,9500,10000,{})) # Pending source debit stays reserved.
+        self.assertFalse(funding.ensure(0,90,1000,{0:10000}))
+        self.assertFalse(funding.ensure(2,90,1000,{}))
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+        self.assertEqual(funding.waits[2]['available_cents'],0)
+        self.assertEqual(store.data['funding']['status'],'pending')
+    def test_completed_transfer_is_not_stuck_when_current_cash_has_already_changed(self):
+        store,exchange,funding=self.setup();funding.ensure(2,90,1000,{})
+        original=exchange.call
+        def changed_cash(method,path,**kw):
+            result=original(method,path,**kw)
+            if path=='/portfolio/subaccounts/balances':
+                for row in result['subaccount_balances']:
+                    if row['exchange_index']==2:row['balance']='0.25'
+            return result
+        exchange.call=changed_cash;funding.poll_at=0
+        self.assertFalse(funding.pending())
+        self.assertEqual(store.data['funding']['status'],'complete')
+        self.assertEqual(funding.balances[2],25)
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+        self.assertEqual(len(store.events),1)
     def test_ambiguous_transfer_survives_restart_without_duplicate_write(self):
         store,exchange,funding=self.setup();exchange.lose_response=True
         with self.assertRaises(ExchangeFailure):funding.ensure(2,90,1000,{})
