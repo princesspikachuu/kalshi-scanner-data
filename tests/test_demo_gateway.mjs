@@ -60,3 +60,17 @@ test('Square performance labels estimates, empty denominators and original revis
  const traded=squarePerformanceMarkup({items:[{...empty,orders:4,filled_orders:2,scored:2,wins:1,recorded_pnl_cents:-35}],at:0});
  assert.match(traded,/50.0% filled/);assert.match(traded,/50.0% positive/);assert.match(traded,/-\$0.35/);
 });
+
+import {botGroup} from '../apps/web/demo-client.mjs';
+test('routine confirmed-order verification keeps bots running; stalled, uncertain and scoped problems stay visible',()=>{
+ const bot={key:'one',desired:'running'},health={state:'syncing',at:1002,reconciled_at:1000,sync_pending:{action:'accepted',bot:'two'},bots:{},blocked_markets:[]};
+ assert.equal(botGroup(bot,health,[],1003),'Running');
+ assert.equal(botGroup(bot,health,[],1046),'Needs attention');
+ assert.equal(botGroup(bot,{...health,reconciled_at:0},[],1003),'Needs attention');
+ assert.equal(botGroup(bot,{...health,issue:{code:'ambiguous'}},[],1003),'Needs attention');
+ assert.equal(botGroup(bot,{...health,bots:{one:{exit_waiting:true}}},[],1003),'Needs attention');
+ assert.equal(botGroup(bot,{...health,blocked_markets:['BTC']},[{bot:'one',ticker:'BTC'}],1003),'Needs attention');
+ assert.equal(botGroup(bot,{...health,blocked_markets:['BTC']},[{bot:'two',ticker:'BTC'}],1003),'Running');
+ assert.equal(botGroup(bot,{...health,state:'attention'},[],1003),'Needs attention');
+ assert.equal(botGroup({...bot,desired:'paused'},health,[],1003),'Paused');
+});

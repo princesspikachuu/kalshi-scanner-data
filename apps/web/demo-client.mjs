@@ -13,6 +13,13 @@ export async function demoCall(path,body){
  }finally{clearTimeout(timer)}
 }
 
+export function botGroup(bot,health,orders=[],now=Date.now()/1000){
+ if(bot.desired!=='running')return 'Paused';
+ const recent=health.at>0&&now-health.at<=90;
+ const routine=health.state==='syncing'&&health.sync_pending&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
+ if(!recent||health.bots?.[bot.key]?.exit_waiting||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
+ return 'Running';
+}
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  const blockedExit=health.bots?.[bot.key];
  if(blockedExit?.exit_waiting)return {reason:blockedExit.message,action:'The downward-only limit is retained. The app retries when it can rest maker-only; review Activity for the position.',control:'activity',phase:'Protective exit',markets:[],lastVerified:health.reconciled_at,lastSeen:health.at};

@@ -40,6 +40,7 @@ class Worker:
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.book_sid=None;self.stream_command=2;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
+        self.last_verified=0;self.sync_pending=None
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
     def entry_diagnostics(self,now):
@@ -101,7 +102,7 @@ class Worker:
         if now-self.last_health>=10 or state!=self.last_health_state:
             self.store.put('health',dict(state=state,message=message,at=now,features=['column_bid_caps_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled_at=self.last_reconcile,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
+                reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
         if now-self.last_diagnostic>=60:
             print(json.dumps(dict(event='demo_diagnostic',state=state,stage=self.stage,
@@ -110,8 +111,13 @@ class Worker:
                 categories=sorted({s['asset'] for b in self.bots if b['desired']=='running' for s in b['config']['squares']}),
                 watched=len(self.quotes),fresh=sum(now-q['at']<=5 for q in self.quotes.values()),
                 orders=len(self.orders),stream_buffer=self.socket.stats() if hasattr(self.socket,'stats') else None,read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled=self.recovered,entry_diagnostics=self.entry_diagnostics(now))),flush=True)
+                reconciled=self.recovered,last_verified=self.last_verified,sync_action=self.sync_pending['action'] if self.sync_pending else None,entry_diagnostics=self.entry_diagnostics(now))),flush=True)
             self.last_diagnostic=now
+    def trading_health(self):
+        if self.recovered:self.health('ready','Demo account verified')
+        elif self.sync_pending and self.last_verified>0 and time.time()-self.last_verified<=45 and self.issue is None:
+            self.health('syncing','Order '+self.sync_pending['action']+' · checking updated balances and positions before the next entry')
+        else:self.health('reconciling','Verifying exchange order state')
     def load_bots(self):
         self.reset_row=self.store.get('reset')
         self.bots=[]
@@ -241,7 +247,7 @@ class Worker:
         self.store.put('account',self.account)
         if int(now//900)!=int(self.last_snapshot//900):
             self.store.put('equity/'+str(int(now//900)),dict(at=now,value=self.account['equity_cents']));self.last_snapshot=now
-        self.last_reconcile=now;self.recovered=True
+        self.last_reconcile=now;self.last_verified=time.time();self.recovered=True;self.sync_pending=None;self.issue=None
         self.store.clear_alert('recovery');self.store.clear_alert('exchange')
     def discover(self):
         now=time.time()
@@ -369,6 +375,7 @@ class Worker:
         self.exchange.cancel(order['exchange_id'],order['ticker']);order['remaining']=0
         order['status']='held' if order['kind']=='entry' and order.get('filled',0) else 'closed'
         self.save_order(order);self.record('cancel',order,reason)
+        self.sync_pending=dict(action='canceled',bot=order['bot'],market=order['ticker'],at=time.time())
         # Reconcile races/fills before considering any replacement or released cash.
         self.recovered=False;self.last_reconcile=0
     def submit(self,intent):
@@ -380,6 +387,7 @@ class Worker:
             result=self.exchange.submit(intent)
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted maker-only '+intent['kind'])
+            self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
             print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
@@ -560,7 +568,7 @@ class Worker:
                     self.stage="stream";self.stream()
                     self.stage="reconciliation"
                     if not self.recovered or now-self.last_reconcile>=30:self.reconcile()
-                    self.stage='trade';self.trade();self.health('ready' if self.recovered else 'reconciling','Demo account verified' if self.recovered else 'Verifying exchange order state')
+                    self.stage='trade';self.trade();self.trading_health()
                     if now>=maintenance_at:
                         from .maintenance import maintenance
                         maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
