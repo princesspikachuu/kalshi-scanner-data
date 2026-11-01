@@ -99,7 +99,7 @@ class MakerRejection(unittest.TestCase):
         intent=dict(client_id='x',ticker='t',bot='bot-1',kind='exit',price=65,quantity=1,side='yes',status='intent',remaining=0,filled=0)
         with patch('services.demo.runtime.time.time',return_value=NOW):worker.submit(intent)
         self.assertEqual(intent['status'],'rejected');self.assertTrue(worker.recovered);self.assertEqual(worker.last_reconcile,NOW)
-        self.assertEqual(worker.maker_retries['t'],dict(clock=123,after=NOW+.5))
+        self.assertEqual(worker.maker_retries['t'],dict(clock=123,seq=None,after=NOW+.5))
         self.assertEqual(worker.blocked,set())
 
     def test_quote_retry_gate_keeps_unrelated_market_active_and_requires_new_clock(self):
@@ -107,12 +107,24 @@ class MakerRejection(unittest.TestCase):
         worker.quotes={t:dict(quote(),clock=123) for t in ('t','u')}
         worker.recovered=True;worker.last_reconcile=NOW;worker.account=dict(cash_cents=10000,equity_cents=10000)
         worker.funding=Mock();worker.funding.ensure.return_value=True;worker.submit=Mock()
-        worker.maker_retries={'t':dict(clock=123,after=NOW+.5)}
+        worker.maker_retries={'t':dict(clock=123,seq=None,after=NOW+.5)}
         with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
         self.assertEqual(worker.submit.call_args.args[0]['ticker'],'u')
         worker.submit.reset_mock()
         with patch('services.demo.runtime.time.time',return_value=NOW+1):worker.trade()
         worker.submit.assert_not_called()
-        worker.quotes['t']['clock']=124
+        worker.quotes['t']['seq']=124
         with patch('services.demo.runtime.time.time',return_value=NOW+1):worker.trade()
         self.assertEqual(worker.submit.call_args.args[0]['ticker'],'t')
+
+    def test_unaccepted_entry_rearms_with_a_new_attempt_id_without_replaying_ambiguous_writes(self):
+        class Ex:
+            def submit(self,intent):raise ExchangeFailure('exchange_rejected',False,status=400,reason='post_only')
+        worker=Worker(FakeStore(),Ex(),threading.Event(),lambda:None);worker.recovered=True
+        worker.quotes={'t':dict(quote(),clock=123,seq=10)}
+        worker.states={'bot-1':{'t/0/yes':dict(submitted=True,cycle=1,attempt=0)}}
+        intent=dict(client_id='x',ticker='t',bot='bot-1',revision=1,square=0,kind='entry',price=64,quantity=1,side='yes',status='intent',remaining=0,filled=0)
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.submit(intent)
+        self.assertFalse(worker.states['bot-1']['t/0/yes']['submitted'])
+        self.assertEqual(worker.states['bot-1']['t/0/yes']['attempt'],1)
+        self.assertTrue(worker.recovered)

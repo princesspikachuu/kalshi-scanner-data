@@ -380,14 +380,20 @@ class Worker:
             result=self.exchange.submit(intent)
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted maker-only '+intent['kind'])
-            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
+            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
             if error.ambiguous:self.blocked.add(intent['ticker'])
             if not error.ambiguous and error.reason=='post_only':
                 q=self.quotes.get(intent['ticker'],{})
-                self.maker_retries[intent['ticker']]=dict(clock=q.get('clock'),after=time.time()+.5)
+                self.maker_retries[intent['ticker']]=dict(clock=q.get('clock'),seq=q.get('seq'),after=time.time()+.5)
+                if intent['kind']=='entry':
+                    key=f"{intent['ticker']}/{intent['square']}/{intent['side']}"
+                    memory=self.states.get(intent['bot'],{}).get(key)
+                    if memory:
+                        memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                        self.store.put('trigger/'+intent['bot'],self.states[intent['bot']],parameters=dict(revision=intent['revision']))
                 reconcile_needed=False
                 return
             raise
@@ -454,7 +460,7 @@ class Worker:
                 if explicitly_invalid or condition_invalid:self.cancel(order,'Entry no longer matches verified conditions');return
             if not bot or not q or now-q['at']>5 or now>=q['close'] or order['ticker'] in self.blocked:continue
             retry=self.maker_retries.get(order['ticker'])
-            if retry and (now<retry['after'] or q.get('clock')==retry['clock']):continue
+            if retry and (now<retry['after'] or (q.get('clock'),q.get('seq'))==(retry['clock'],retry.get('seq'))):continue
             config=bot['config']
             if order['kind']=='exit' and order.get('remaining',0)>0:
                 parent=next((o for o in self.orders if o.get('client_id')==order.get('parent')),None)
@@ -482,7 +488,7 @@ class Worker:
                     identifier=str(uuid5(NAMESPACE_URL,f"demo-exit/{order['client_id']}/{attempt}"))
                     self.submit(dict(client_id=identifier,kind='exit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],ticker=order['ticker'],side=order['side'],price=price,quantity=order['filled']-order.get('sold',0),close=q['close'],created_at=now,exit_reference='ask',status='intent',remaining=0,filled=0));return
         if not self.recovered or now-self.last_reconcile>35:return
-        retrying={t for t,r in self.maker_retries.items() if now<r['after'] or self.quotes.get(t,{}).get('clock')==r['clock']}
+        retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
         options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         for item in options:
