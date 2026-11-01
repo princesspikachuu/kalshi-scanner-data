@@ -19,6 +19,16 @@ def protective_threshold(config,square):
     if config['loss_mode']=='research':return square.get('loss_cents')
     return None
 
+def order_threshold(bot,order):
+    """Existing positions retain the threshold from their strategy revision."""
+    revision=order.get('revision',bot['revision'])
+    if revision==bot['revision']:
+        return protective_threshold(bot['config'],bot['config']['squares'][order['square']])
+    thresholds=bot.get('prior_protection',{}).get(str(revision))
+    if not isinstance(thresholds,list) or not 0<=order['square']<len(thresholds):
+        raise ValueError('Protective settings for saved order revision are missing')
+    return thresholds[order['square']]
+
 def entry_protection_matches(config,square,quote,side):
     threshold=protective_threshold(config,square)
     return threshold is None or side_quote(quote,side)[1]>threshold

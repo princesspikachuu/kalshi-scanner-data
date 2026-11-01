@@ -416,3 +416,25 @@ class SquareLossPrevention(unittest.TestCase):
         self.assertEqual(protective_threshold(config(loss_mode='research'),blank),57)
         self.assertIsNone(protective_threshold(config(),blank))
         with self.assertRaises(ValueError):BotConfig(**dict(config(),squares=[dict(s,loss_prevention_cents=0)]))
+
+class EditableBotRules(unittest.TestCase):
+    def test_independent_spending_percentages_still_obey_the_smallest_limit(self):
+        c=config(bid_percent=20,market_percent=10,bot_percent=5)
+        self.assertEqual(quantity(c,50,10000,10000,0,0),10)
+    def test_old_remaining_order_cancels_without_indexing_removed_squares(self):
+        from unittest.mock import Mock
+        b=bot();b['revision']=2;b['prior_protection']={'1':[55,60]}
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b];worker.quotes={'t':quote()}
+        worker.orders=[dict(kind='entry',bot=b['id'],revision=1,square=1,ticker='t',close=NOW+200,status='resting',remaining=3,filled=0,exchange_id='one',side='yes',price=82)]
+        worker.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        worker.cancel.assert_called_once()
+    def test_old_position_uses_its_saved_threshold_after_conditions_are_removed(self):
+        from services.demo.engine import order_threshold
+        b=bot(loss_mode='manual',loss_cents=70);b['revision']=2;b['prior_protection']={'1':[55,60]}
+        order=dict(client_id='entry',kind='entry',bot=b['id'],revision=1,square=1,ticker='t',side='yes',price=82,filled=2,remaining=0,status='held')
+        self.assertEqual(order_threshold(b,order),60)
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b];worker.orders=[order];worker.quotes={'t':dict(quote(),ask=59,bid=55)}
+        with patch('services.demo.runtime.time.time',return_value=NOW):self.assertTrue(worker.observe_exit_triggers('t',NOW))
+        self.assertTrue(order['exit_triggered'])
+        self.assertEqual(worker.store.events[-1],'exit_trigger')

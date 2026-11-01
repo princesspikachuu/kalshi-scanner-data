@@ -95,3 +95,11 @@ test('protective exits and rejected maker orders are informational while actual 
  assert.equal(botGroup(bot,failed,orders,1001),'Needs attention');
  assert.equal(attentionInfo(bot,failed,orders,1001).reason,'Exchange connection unavailable');
 });
+
+import {demoError} from '../apps/web/demo-client.mjs';
+test('bot save errors identify the field without exposing submitted values or raw error objects',()=>{
+ const message=demoError([{loc:['body','squares',2,'maximum_cents'],msg:'Input should be less than or equal to 99',input:'SECRET'}, {loc:['body','bot_percent'],msg:'Input should be greater than 0'}],422);
+ assert.match(message,/Square 3 · Maximum bid/);assert.match(message,/Bot allocation/);assert.doesNotMatch(message,/SECRET/);
+ assert.equal(demoError('Bot settings changed elsewhere',409),'Bot settings changed elsewhere');
+ assert.equal(demoError([{msg:'PRIVATE'}],500),'Unable to complete the request.');
+});

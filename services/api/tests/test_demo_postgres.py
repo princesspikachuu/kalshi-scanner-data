@@ -33,10 +33,12 @@ class DemoPostgres(unittest.TestCase):
         bot=page.json()['bots'][0];self.assertEqual(bot['key'],identifier);self.assertEqual(len(bot['config']['squares']),2);self.assertEqual(bot['desired'],'paused')
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1)).status_code,200)
         body['adjustment_cents']=-2
-        self.assertEqual(self.client.post('/demo/bots/'+identifier+'/configure',json=body).status_code,409)
-        self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=1)).status_code,200)
+        self.demo.put('health',dict(state='ready',features=['editable_rules_v1']))
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/configure',json=body).status_code,200)
-        self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1)).status_code,409)
+        saved=self.client.get('/demo/workspace').json()['bots'][0]
+        self.assertEqual((saved['revision'],saved['desired']),(2,'running'))
+        self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=1)).status_code,409)
+        self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=2)).status_code,200)
     def test_minimum_bid_roundtrip_validation_and_existing_config_default(self):
         body=config(minimum_cents=60,maximum_cents=96)
         response=self.client.post('/demo/bots',json=body)
@@ -211,3 +213,28 @@ class DemoPostgres(unittest.TestCase):
         self.assertIsNone(bot['config']['squares'][0]['loss_prevention_cents'])
         body=config(loss_mode='research');body['squares'][0]['loss_prevention_cents']=58
         response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text)
+
+    def test_any_rule_edit_with_positions_preserves_prior_protection_for_active_and_paused_bots(self):
+        for desired in ['running','paused']:
+            with self.subTest(desired=desired):
+                body=config(loss_mode='manual',loss_cents=55)
+                body['squares'].append(dict(body['squares'][0],min_price=80,max_price=89,loss_prevention_cents=60))
+                self.demo.put('health',dict(state='ready',features=['editable_rules_v1','square_loss_prevention_v1']))
+                identifier=self.client.post('/demo/bots',json=body).json()['id']
+                if desired=='running':self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1))
+                self.demo.put('order/held-'+identifier,dict(status='held',filled=2,remaining=0),parameters=dict(kind='entry',bot=identifier,ticker='T',revision=1,square=1,price=82))
+                prior=self.demo.get('order/held-'+identifier)
+                edited=config(loss_mode='manual',loss_cents=70,adjustment_cents=-3)
+                edited['squares'][0]['asset']='sports'
+                response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(edited,expected_settings_revision=1))
+                self.assertEqual(response.status_code,200,response.text)
+                saved=self.demo.get('bot/'+identifier)
+                self.assertEqual(saved['progress']['desired'],desired)
+                self.assertEqual(saved['parameters']['revision'],2)
+                self.assertEqual(saved['parameters']['prior_protection']['1'],[55,60])
+                self.assertEqual(self.demo.get('order/held-'+identifier),prior)
+                edited['loss_cents']=75
+                response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(edited,expected_settings_revision=2))
+                self.assertEqual(response.status_code,200,response.text)
+                snapshots=self.demo.get('bot/'+identifier)['parameters']['prior_protection']
+                self.assertEqual(snapshots,{'1':[55,60],'2':[70]})

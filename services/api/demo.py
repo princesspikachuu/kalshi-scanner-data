@@ -28,15 +28,17 @@ def install_demo(app,auth,mutate,pool):
             if square_caps and 'square_bid_caps_v1' not in features:raise HTTPException(409,'Square bid limits are temporarily unavailable; your draft has been kept')
             if square_exits and 'square_loss_prevention_v1' not in features:raise HTTPException(409,'Square loss prevention is temporarily unavailable; your draft has been kept')
         with pool.connection() as c:
+            identifiers=sorted({s['report_id'] for s in config['squares'] if s['report_id']})
+            reports={r['id']:r for r in c.execute("SELECT id,asset,report#>'{historical,cells}' AS cells FROM research_result WHERE id=ANY(%s)",(identifiers,)).fetchall()} if identifiers else {}
             for square in config['squares']:
                 square['expected_roi']=None;square['loss_cents']=None
                 if not square['report_id']:
                     if config['loss_mode']=='research' and square.get('loss_prevention_cents') is None:raise HTTPException(422,'Select saved research or enter this square’s loss prevention')
                     continue
-                row=c.execute('SELECT asset,report FROM research_result WHERE id=%s',(square['report_id'],)).fetchone()
+                row=reports.get(square['report_id'])
                 if not row or row['asset']!=square['asset']:raise HTTPException(422,'Research source not found')
                 band=f"{square['min_price']:02d}-{square['max_price']+1:02d}"
-                cell=next((x for x in row['report']['historical']['cells'] if x['hold']['minutes_before_close']==square['max_minutes'] and x['hold']['price_band_cents']==band),None)
+                cell=next((x for x in row['cells'] if x['hold']['minutes_before_close']==square['max_minutes'] and x['hold']['price_band_cents']==band),None)
                 from services.research.reports import MINUTES
                 lower=max((m for m in MINUTES[square['asset']] if m<square['max_minutes']),default=0)
                 if not cell or not cell['hold']['sampled_markets'] or square['min_minutes']!=lower:raise HTTPException(422,'Choose an available research square')
@@ -110,8 +112,12 @@ def install_demo(app,auth,mutate,pool):
             same_rules=[{k:v for k,v in s.items() if k not in ('maximum_cents','loss_prevention_cents')} for s in config['squares']]==[{k:v for k,v in s.items() if k not in ('maximum_cents','loss_prevention_cents')} for s in old['squares']]
             live_settings=changed<={'name','bid_percent','market_percent','bot_percent','squares','column_maximum_cents'} and same_rules
             if not live_settings:
-                if row['progress'].get('desired')=='running':raise HTTPException(409,'Pause the bot before changing entry or exit rules. Name, spending percentages and square risk values can be changed while running.')
-                if any(o['bot']==str(identifier) for o in store.active_orders()):raise HTTPException(409,'Wait for existing orders and positions to close before changing entry or exit rules. Spending percentages and square risk values can be changed now.')
+                health=store.get('health')
+                if not health or 'editable_rules_v1' not in health['progress'].get('features',[]):raise HTTPException(409,'Bot rule editing is being updated. Your draft is saved; try saving again shortly.')
+                from services.demo.engine import protective_threshold
+                prior=dict(parameters.get('prior_protection',{}))
+                prior[str(parameters['revision'])]=[protective_threshold(old,square) for square in old['squares']]
+                parameters=dict(parameters,prior_protection=prior)
             from psycopg.types.json import Jsonb
             parameters=dict(parameters,config=config,revision=parameters['revision']+(0 if live_settings else 1),settings_revision=settings_revision+1)
             c.execute('UPDATE research_job SET parameters=%s WHERE idempotency_key=%s',(Jsonb(parameters),'demo/bot/'+str(identifier)))

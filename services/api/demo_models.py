@@ -39,7 +39,6 @@ class BotConfig(BaseModel):
     daily_loss_percent:float|None=Field(default=None,gt=0,le=100)
     @model_validator(mode='after')
     def limits(self):
-        if self.bid_percent>self.market_percent or self.market_percent>self.bot_percent:raise ValueError('Limits must increase from bid to market to bot')
         if self.minimum_cents is not None and self.maximum_cents is not None and self.minimum_cents>self.maximum_cents:raise ValueError('Minimum bid must not exceed maximum bid')
         if self.loss_mode=='manual' and self.loss_cents is None:raise ValueError('Enter an exit threshold')
         keys=[(s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes) for s in self.squares]

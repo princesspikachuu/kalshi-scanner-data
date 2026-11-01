@@ -9,7 +9,7 @@ from .store import DemoStore
 from .orderbook import OrderBooks
 from .exchange import Exchange,ExchangeFailure,credentials,WS
 from .stream_buffer import BufferedSocket,close_details
-from .engine import candidates,quantity,qualifies,exit_price,wire_order,protective_threshold,entry_protection_matches
+from .engine import candidates,quantity,qualifies,exit_price,wire_order,protective_threshold,order_threshold,entry_protection_matches
 
 LOCK=723741931
 TERMINAL=('executed','canceled','cancelled')
@@ -100,7 +100,7 @@ class Worker:
         now=time.time()
         if state=='ready':self.issue=None
         if now-self.last_health>=10 or state!=self.last_health_state:
-            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1'],
+            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
@@ -123,7 +123,7 @@ class Worker:
         self.bots=[]
         for row in self.store.rows('bot/',100):
             key=row['idempotency_key'].split('/')[-1]
-            self.bots.append(dict(id=key,config=row['parameters']['config'],revision=row['parameters']['revision'],**row['progress']))
+            self.bots.append(dict(id=key,config=row['parameters']['config'],revision=row['parameters']['revision'],prior_protection=row['parameters'].get('prior_protection',{}),**row['progress']))
             if key not in self.states or self.bot_revisions.get(key)!=row['parameters']['revision']:
                 prior=self.store.get('trigger/'+key)
                 self.states[key]=prior['progress'] if prior and prior['parameters'].get('revision')==row['parameters']['revision'] else {}
@@ -293,7 +293,7 @@ class Worker:
             if order['ticker']!=ticker or order['kind']!='entry' or order.get('exit_triggered') or order.get('status')=='uncertain' or order.get('filled',0)<=order.get('sold',0):continue
             bot=bots.get(order['bot'])
             if not bot:continue
-            threshold=protective_threshold(bot['config'],bot['config']['squares'][order['square']])
+            threshold=order_threshold(bot,order)
             bid,ask=side_quote(q,order['side'])
             if threshold is None or not 0<=bid<ask<100 or ask>threshold:continue
             if q.get('source')=='orderbook' and not q.get('book_ready'):continue
@@ -445,7 +445,7 @@ class Worker:
         for order in self.orders:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
             if order.get('status')=='uncertain':continue
-            if self.recovered and order['kind']=='entry' and order.get('remaining',0)>0 and bot and bot['config'].get('maximum_cents') is not None and order.get('entry_pricing')!='cap_v2':
+            if self.recovered and order.get('revision',(bot or {}).get('revision'))==(bot or {}).get('revision') and order['kind']=='entry' and order.get('remaining',0)>0 and bot and bot['config'].get('maximum_cents') is not None and order.get('entry_pricing')!='cap_v2':
                 self.cancel(order,'Replacing the old fixed maximum with a capped calculated bid')
                 order['entry_pricing']='cap_v2';self.save_order(order)
                 if not order.get('filled',0):
@@ -458,11 +458,11 @@ class Worker:
             if order['kind']=='entry' and order.get('remaining',0)>0:
                 explicitly_invalid=(not bot or bot['desired']!='running' or order['revision']!=bot['revision'] or now>=order['close'])
                 fresh=q is not None and now-q['at']<=5
-                if bot and q:
+                if bot and order['revision']==bot['revision'] and q:
                     square=bot['config']['squares'][order['square']]
                     remaining_minutes=(q.get('entry_close',q['close'])-now)/60
                     explicitly_invalid=explicitly_invalid or not square['min_minutes']<remaining_minutes<=square['max_minutes']
-                if bot and self.recovered:
+                if bot and order['revision']==bot['revision'] and self.recovered:
                     square=bot['config']['squares'][order['square']]
                     if square.get('maximum_cents') is not None and order['price']>square['maximum_cents']:
                         self.cancel(order,'Square maximum lowered below this resting entry bid')
@@ -473,7 +473,7 @@ class Worker:
                                 memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
                                 self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
                         return
-                condition_invalid=fresh and bot and (not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification']) or not entry_protection_matches(bot['config'],bot['config']['squares'][order['square']],q,order['side']))
+                condition_invalid=fresh and bot and order['revision']==bot['revision'] and (not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification']) or not entry_protection_matches(bot['config'],bot['config']['squares'][order['square']],q,order['side']))
                 # A reconnect is not evidence that a resting bid is invalid.
                 # Preserve it until fresh data verifies the condition or expiry.
                 if explicitly_invalid or condition_invalid:self.cancel(order,'Entry no longer matches verified conditions');return
@@ -489,7 +489,7 @@ class Worker:
                     if parent:parent['exit_ceiling_cents']=price;self.save_order(parent)
                     self.cancel(order,'Lowering protective maker exit as current ASK falls');return
             if order['kind']!='entry' or order.get('filled',0)<=order.get('sold',0):continue
-            threshold=protective_threshold(config,config['squares'][order['square']])
+            threshold=order_threshold(bot,order)
             from .engine import side_quote
             bid,ask=side_quote(q,order['side'])
             if not 0<=bid<ask<=100:continue
@@ -648,7 +648,7 @@ def run(stop):
                     if signer:break
                     if not connection_notice:
                         print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
-                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1']))
+                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1']))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:
                         maintenance(store,os.environ,stop);next_maintenance=time.time()+300
