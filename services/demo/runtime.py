@@ -30,7 +30,7 @@ def quote(raw,now):
             expected=timestamp(raw['expected_expiration_time'])
             if math.isfinite(expected) and 0<expected<=close:entry_close=expected;entry_clock='expected_expiration'
         return ticker,dict(bid=bid,ask=ask,at=now,close=close,entry_close=entry_close,entry_clock=entry_clock,
-            exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
+            open=timestamp(raw['open_time']) if raw.get('open_time') else 0,exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
     except (KeyError,ValueError,TypeError):return None
 
 class Worker:
@@ -38,16 +38,25 @@ class Worker:
         self.store,self.exchange,self.stop,self.guard=store,exchange,stop,guard
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
-        self.socket=None;self.subscription=set();self.book_sid=None;self.stream_command=2;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
+        self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.stream_command=3;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
-        self.last_verified=0;self.sync_pending=None
+        self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
+        from services.research.reports import SERIES
         summary={}
         for bot in self.bots:
             config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=incomplete=0
+            if config.get('strategy')=='buy_low_sell_high':
+                from .cycles import eligible
+                markets=[q for q in self.quotes.values() if any(q['series'] in SERIES[s['asset']] for s in config['squares'])]
+                ready=[q for q in markets if now-q['at']<=5 and q.get('book_verified') and any(eligible(config,s,q,now) for s in config['squares'])]
+                own=[o for o in self.orders if o['bot']==bot['id'] and o['status'] not in ('closed','rejected')]
+                lows=sum(o['kind']=='entry' and o.get('remaining',0)>0 for o in own);highs=sum(o.get('exit_role')=='profit' and o.get('remaining',0)>0 for o in own)
+                summary[bot['id']]=dict(message=f'Buy {config["cycle_buy_cents"]}¢ / sell {config["cycle_sell_cents"]}¢ · {lows} waiting buys · {highs} profit sells · {len(ready)} markets before cutoff',markets=len(markets),fresh=len(ready),matches=len(ready)*2,exit_waiting=False,categories=sorted({s['asset'] for s in config['squares']}))
+                continue
             market_exposure={};bot_exposure=0;exit_waiting=None
             for entry in self.orders:
                 if entry['kind']!='entry' or entry['bot']!=bot['id'] or not entry.get('exit_triggered') or entry.get('filled',0)<=entry.get('sold',0):continue
@@ -100,7 +109,7 @@ class Worker:
         now=time.time()
         if state=='ready':self.issue=None
         if now-self.last_health>=10 or state!=self.last_health_state:
-            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1'],
+            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
@@ -164,6 +173,45 @@ class Worker:
             self.order_cache[order['client_id']]=packed
     def record(self,kind,order,message,**detail):
         self.store.event(kind,message,bot=order.get('bot'),ticker=order.get('ticker'),details=dict(order_kind=order.get('kind'),client_id=order.get('client_id'),exchange_id=order.get('exchange_id'),side=order.get('side'),price=order.get('price'),quantity=order.get('quantity'),condition=order.get('condition'),quote=self.quotes.get(order.get('ticker')),**detail))
+    def apply_cycle_offsets(self,offsets):
+        if not offsets:return
+        from psycopg.types.json import Jsonb
+        changes=[]
+        for order in self.orders:
+            amount=offsets.get(order['client_id'],0)
+            if amount:changes.append((order,dict(offset_quantity=order.get('offset_quantity',0)+amount,offset_credit_cents=order.get('offset_credit_cents',0)+50*amount)))
+        with self.store.pool.connection() as c:
+            for order,data in changes:
+                result=c.execute("""UPDATE research_job SET parameters=parameters||%s
+                    WHERE idempotency_key=%s AND coalesce((parameters->>'offset_quantity')::numeric,0)=%s
+                    AND progress->>'status' NOT IN ('closed','rejected')""",
+                    (Jsonb(data),'demo/order/'+order['client_id'],order.get('offset_quantity',0)))
+                if result.rowcount!=1:raise ExchangeFailure('cycle_offset_conflict')
+        for order,data in changes:
+            order.update(data);self.record('position_offset',order,'Confirmed opposite fills offset inventory; estimated $1 pair credit split between lots',offset_quantity=offsets[order['client_id']])
+    def rearm_cycle(self,order,now):
+        if order.get('entry_strategy')!='buy_low_sell_high' or order.get('exit_triggered'):return
+        if order.get('status')!='closed' or order.get('remaining',0)>0 or order.get('filled',0)<=0 or order.get('sold',0)<order['filled']:return
+        bot=next((b for b in self.bots if b['id']==order['bot']),None)
+        if not bot or bot['revision']!=order['revision'] or not bot['config'].get('cycle_repeat'):return
+        key=f"{order['ticker']}/{order['square']}/{order['side']}"
+        memory=self.states.setdefault(bot['id'],{}).get(key)
+        if not memory or memory['cycle']!=order['cycle'] or not memory['submitted']:return
+        memory.update(cycle=memory['cycle']+1,submitted=False,first_at=now,attempt=0)
+        self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
+    def profit_sell(self,order,quote,now):
+        if order.get('entry_strategy')!='buy_low_sell_high' or order.get('exit_triggered') or not self.recovered:return False
+        if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']!=order['side'] and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
+        children=[o for o in self.orders if o.get('parent')==order['client_id'] and o['status'] not in ('closed','rejected')]
+        if any(o['status'] in ('intent','uncertain') for o in children):return False
+        amount=order['filled']-order.get('sold',0)-sum(o.get('remaining',0) for o in children)
+        if amount<=.001:return False
+        attempt=order.get('profit_attempt',0)+1;order['profit_attempt']=attempt;self.save_order(order)
+        identifier=str(uuid5(NAMESPACE_URL,f"demo-profit/{order['client_id']}/{attempt}"))
+        self.submit(dict(client_id=identifier,kind='exit',exit_role='profit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],
+            ticker=order['ticker'],side=order['side'],price=order['profit_target_cents'],quantity=amount,close=quote['close'],exchange_index=order.get('exchange_index',-1),
+            created_at=now,status='intent',remaining=0,filled=0))
+        return True
     def reconcile(self):
         """Complete paginated exchange state; gaps never manufacture fills."""
         now=time.time();self.load_bots()
@@ -209,22 +257,27 @@ class Worker:
             sold[parent]=sold.get(parent,0)+row['progress'].get('filled',0)
             exit_fees[parent]=exit_fees.get(parent,0)+row['progress'].get('fees',0)
         self.orders=self.store.active_orders()
+        from .cycles import offset_plan
+        actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
+        offsets,self.netting_pending=offset_plan(self.orders,sold,actual,blocked)
+        self.apply_cycle_offsets(offsets)
         for order in self.orders:
             if order['kind']=='entry':
-                order['sold']=sold.get(order['client_id'],0)
+                order['sold']=sold.get(order['client_id'],0)+order.get('offset_quantity',0)
                 if order.get('filled',0)>0 and order['sold']>=order['filled'] and order.get('remaining',0)==0:
                     sale_total=sum(r['progress'].get('filled',0)*r['parameters']['price'] for r in exits if r['parameters'].get('parent')==order['client_id'])
-                    order['realized_cents']=round(sale_total-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
+                    order['realized_cents']=round(sale_total+order.get('offset_credit_cents',0)-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
                     order['status']='closed';order['closed_at']=now;self.save_order(order)
                     self.record('realized',order,'Entry fully exited',realized_cents=order['realized_cents'])
+                    self.rearm_cycle(order,now)
         expected={}
         for order in self.orders:
             if order['kind']=='entry':
-                order['sold']=sold.get(order['client_id'],0)
-                posted=[r['parameters']['price'] for r in exits if r['parameters'].get('parent')==order['client_id'] and r['progress'].get('status')!='rejected' and r['parameters'].get('created_at',0)>=order.get('exit_rule_started_at',0)]
+                order['sold']=sold.get(order['client_id'],0)+order.get('offset_quantity',0)
+                posted=[r['parameters']['price'] for r in exits if r['parameters'].get('exit_role')!='profit' and r['parameters'].get('parent')==order['client_id'] and r['progress'].get('status')!='rejected' and r['parameters'].get('created_at',0)>=order.get('exit_rule_started_at',0)]
                 if posted:order['exit_ceiling_cents']=min(order.get('exit_ceiling_cents',99),*posted)
                 self.save_order(order)
-            if order['kind']=='entry' and order['status']!='closed':expected[order['ticker']]=expected.get(order['ticker'],0)+(order.get('filled',0)-sold.get(order['client_id'],0))*(1 if order['side']=='yes' else -1)
+            if order['kind']=='entry' and order['status']!='closed':expected[order['ticker']]=expected.get(order['ticker'],0)+(order.get('filled',0)-order.get('sold',0))*(1 if order['side']=='yes' else -1)
         actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
         for ticker in set(expected)|set(actual):
             q=self.quotes.get(ticker)
@@ -233,7 +286,7 @@ class Worker:
                     if order['kind']=='entry' and order['ticker']==ticker and order.get('filled',0)>order.get('sold',0):
                         payout=100 if q.get('result')==order['side'] else 0
                         sale_total=sum(r['progress'].get('filled',0)*r['parameters']['price'] for r in exits if r['parameters'].get('parent')==order['client_id'])
-                        order['realized_cents']=round(sale_total+(order['filled']-order.get('sold',0))*payout-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
+                        order['realized_cents']=round(sale_total+order.get('offset_credit_cents',0)+(order['filled']-order.get('sold',0))*payout-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
                         order.update(status='closed',closed_at=now);self.save_order(order)
                         self.record('settlement',order,'Exchange-confirmed settlement',realized_cents=order['realized_cents'])
                 continue
@@ -254,7 +307,9 @@ class Worker:
         from services.research.reports import SERIES
         series=sorted({s for b in self.bots if b['desired']=='running' for q in b['config']['squares'] for s in SERIES[q['asset']]})
         pinned={o['ticker'] for o in self.orders}
-        if pinned and (self.discovery_turn%5==0 or not series):params=dict(tickers=','.join(sorted(pinned)[:100]),limit=200)
+        if self.pending_markets:
+            params=dict(tickers=','.join(sorted(self.pending_markets)),limit=200);self.pending_markets.clear()
+        elif pinned and (self.discovery_turn%5==0 or not series):params=dict(tickers=','.join(sorted(pinned)[:100]),limit=200)
         elif series:
             current=series[self.series_index%len(series)];params=dict(series_ticker=current,status='open',limit=200,min_close_ts=int(now))
             if current not in SERIES['sports']:params['max_close_ts']=int(now+86400)
@@ -274,12 +329,13 @@ class Worker:
                     # Price and observation time are one piece of evidence. REST
                     # metadata must not replace a verified stream price while
                     # inheriting its timestamp (including stale stream quotes).
-                    q=dict(old,close=q['close'],entry_close=q['entry_close'],entry_clock=q['entry_clock'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'])
+                    q=dict(old,close=q['close'],entry_close=q['entry_close'],entry_clock=q['entry_clock'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'],open=q.get('open',0))
                 else:q['at']=0
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
         from .watchlist import select_markets
         eligible={t:q for t,q in self.quotes.items() if t in pinned or q['series'] in series}
-        self.quotes=select_markets(eligible,pinned,now)
+        cycle_series={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
+        self.quotes=select_markets(eligible,pinned,now,cycle_series=cycle_series)
         self.maker_retries={t:r for t,r in self.maker_retries.items() if t in self.quotes}
         self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.discovery_turn+=1
         if 'series_ticker' in params:self.series_index+=1
@@ -314,7 +370,7 @@ class Worker:
             connection=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
                 max_size=262144,max_queue=8,open_timeout=8,close_timeout=2,ping_interval=10,ping_timeout=10,compression=None)
             self.socket=BufferedSocket(connection)
-            self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0))))
+            self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0,use_yes_price=False))))
             self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['fill','user_orders']))))
             self.subscription=desired;self.sequence={};self.recovered=False
         elif desired!=self.subscription and self.book_sid is not None:
@@ -326,6 +382,11 @@ class Worker:
                     self.socket.send(json.dumps(dict(id=self.stream_command,cmd='update_subscription',params=dict(sids=[self.book_sid],market_tickers=sorted(markets),action=action))))
             self.subscription=desired
             self.books.books={t:b for t,b in self.books.books.items() if t in desired}
+        want_lifecycle=any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots)
+        if want_lifecycle and not self.lifecycle_requested:
+            self.stream_command+=1;self.socket.send(json.dumps(dict(id=self.stream_command,cmd='subscribe',params=dict(channels=['market_lifecycle_v2']))));self.lifecycle_requested=True
+        elif not want_lifecycle and self.lifecycle_sid is not None:
+            self.stream_command+=1;self.socket.send(json.dumps(dict(id=self.stream_command,cmd='unsubscribe',params=dict(sids=[self.lifecycle_sid]))));self.lifecycle_sid=None;self.lifecycle_requested=False
         for index in range(100):
             try:message=json.loads(self.socket.recv(timeout=.5 if index==0 else 0))
             except TimeoutError:
@@ -343,12 +404,19 @@ class Worker:
             if message.get('type')=='error':raise ExchangeFailure('stream_subscription')
             if message.get('type')=='subscribed':
                 if message.get('msg',{}).get('channel')=='orderbook_delta':self.book_sid=message['msg']['sid']
+                if message.get('msg',{}).get('channel')=='market_lifecycle_v2':self.lifecycle_sid=message['msg']['sid']
                 continue
             if 'seq' in message and 'sid' in message:
                 sid=message['sid'];seq=message['seq']
                 if sid in self.sequence and seq!=self.sequence[sid]+1:raise ExchangeFailure('stream_gap')
                 self.sequence[sid]=seq
             raw=message.get('msg',{})
+            if message.get('type')=='market_lifecycle_v2' and raw.get('event_type') in ('activated','created'):
+                ticker=raw.get('market_ticker','')
+                from services.research.reports import SERIES
+                wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
+                if any(ticker.startswith(series+'-') for series in wanted) and len(self.pending_markets)<100:
+                    self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type') in ('fill','user_orders'):self.last_reconcile=0
             # Verify newly filled exposure before consuming later price changes;
             # otherwise its first stop crossing could arrive while filled=0.
@@ -367,13 +435,13 @@ class Worker:
         if self.socket:
             try:self.socket.close()
             except Exception:pass
-        self.socket=None;self.subscription=set();self.book_sid=None;self.book_pong=None;self.last_book_ping=0;self.books.clear()
+        self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.book_pong=None;self.last_book_ping=0;self.books.clear()
         for q in self.quotes.values():q['at']=0
     def cancel(self,order,reason):
         self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
         if not order.get('remaining',0) or not order.get('exchange_id'):return
         self.exchange.cancel(order['exchange_id'],order['ticker']);order['remaining']=0
-        order['status']='held' if order['kind']=='entry' and order.get('filled',0) else 'closed'
+        order['status']='cancel_pending'
         self.save_order(order);self.record('cancel',order,reason)
         self.sync_pending=dict(action='canceled',bot=order['bot'],market=order['ticker'],at=time.time())
         # Reconcile races/fills before considering any replacement or released cash.
@@ -386,7 +454,7 @@ class Worker:
         try:
             result=self.exchange.submit(intent)
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
-            self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted maker-only '+intent['kind'])
+            self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted '+('profit sell' if intent.get('exit_role')=='profit' else 'maker-only '+intent['kind']))
             self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
             print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
@@ -441,7 +509,21 @@ class Worker:
     def trade(self):
         now=time.time();bots={b['id']:b for b in self.bots}
         if self.recovered and self.upgrade_legacy_exits():return
-        exiting={o['ticker'] for o in self.orders if o.get('kind')=='exit' and o.get('status') not in ('closed','rejected')}
+        for order in self.orders:
+            if order['ticker'] in self.netting_pending and order['kind']=='exit' and order.get('remaining',0)>0:
+                self.cancel(order,'Canceling sells before reconciling offsetting YES and NO fills');return
+        held_cycles=[o for o in self.orders if o.get('entry_strategy')=='buy_low_sell_high' and o.get('filled',0)>o.get('sold',0)]
+        for order in self.orders:
+            if order.get('entry_strategy')=='buy_low_sell_high' and order.get('remaining',0)>0 and any(o['ticker']==order['ticker'] and o['side']!=order['side'] for o in held_cycles):
+                self.cancel(order,'Parking opposite low bid while filled inventory has a profit sell')
+                bot=bots.get(order['bot'])
+                if bot and bot['revision']==order['revision'] and not order.get('filled',0):
+                    key=f"{order['ticker']}/{order['square']}/{order['side']}";memory=self.states.get(bot['id'],{}).get(key)
+                    if memory:
+                        memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                        self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
+                return
+        exiting={o['ticker'] for o in self.orders if o.get('kind')=='exit' and o.get('exit_role')!='profit' and o.get('status') not in ('closed','rejected')}
         for order in self.orders:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
             if order.get('status')=='uncertain':continue
@@ -458,11 +540,12 @@ class Worker:
             if order['kind']=='entry' and order.get('remaining',0)>0:
                 explicitly_invalid=(not bot or bot['desired']!='running' or order['revision']!=bot['revision'] or now>=order['close'])
                 fresh=q is not None and now-q['at']<=5
-                if bot and order['revision']==bot['revision'] and q:
+                is_cycle=order.get('entry_strategy')=='buy_low_sell_high'
+                if bot and order['revision']==bot['revision'] and q and not is_cycle:
                     square=bot['config']['squares'][order['square']]
                     remaining_minutes=(q.get('entry_close',q['close'])-now)/60
                     explicitly_invalid=explicitly_invalid or not square['min_minutes']<remaining_minutes<=square['max_minutes']
-                if bot and order['revision']==bot['revision'] and self.recovered:
+                if bot and order['revision']==bot['revision'] and self.recovered and not is_cycle:
                     square=bot['config']['squares'][order['square']]
                     if square.get('maximum_cents') is not None and order['price']>square['maximum_cents']:
                         self.cancel(order,'Square maximum lowered below this resting entry bid')
@@ -473,14 +556,19 @@ class Worker:
                                 memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
                                 self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
                         return
-                condition_invalid=fresh and bot and order['revision']==bot['revision'] and (not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification']) or not entry_protection_matches(bot['config'],bot['config']['squares'][order['square']],q,order['side']))
+                condition_invalid=fresh and bot and order['revision']==bot['revision'] and (not is_cycle and not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification']) or not entry_protection_matches(bot['config'],bot['config']['squares'][order['square']],q,order['side']))
                 # A reconnect is not evidence that a resting bid is invalid.
                 # Preserve it until fresh data verifies the condition or expiry.
                 if explicitly_invalid or condition_invalid:self.cancel(order,'Entry no longer matches verified conditions');return
-            if not bot or not q or now-q['at']>5 or now>=q['close'] or order['ticker'] in self.blocked:continue
+            if not bot or not q or now-q['at']>5 or now>=q['close'] or order['ticker'] in self.blocked or order['ticker'] in self.netting_pending:continue
             retry=self.maker_retries.get(order['ticker'])
             if retry and (now<retry['after'] or (q.get('clock'),q.get('seq'))==(retry['clock'],retry.get('seq'))):continue
             config=bot['config']
+            if order.get('exit_role')=='profit':
+                parent=next((o for o in self.orders if o.get('client_id')==order.get('parent')),None)
+                if parent and parent.get('exit_triggered') and order.get('remaining',0)>0:
+                    self.cancel(order,'Protective exit replaces the fixed profit sell');return
+                continue
             if order['kind']=='exit' and order.get('remaining',0)>0:
                 parent=next((o for o in self.orders if o.get('client_id')==order.get('parent')),None)
                 ceiling=min(order['price'],parent.get('exit_ceiling_cents',99) if parent else 99)
@@ -506,6 +594,7 @@ class Worker:
                     attempt=order.get('exit_attempt',0)+1;order['exit_attempt']=attempt;self.save_order(order)
                     identifier=str(uuid5(NAMESPACE_URL,f"demo-exit/{order['client_id']}/{attempt}"))
                     self.submit(dict(client_id=identifier,kind='exit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],ticker=order['ticker'],side=order['side'],price=price,quantity=order['filled']-order.get('sold',0),close=q['close'],created_at=now,exit_reference='ask',status='intent',remaining=0,filled=0));return
+            elif self.profit_sell(order,q,now):return
         if not self.recovered or now-self.last_reconcile>35:return
         retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
         options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
@@ -514,8 +603,15 @@ class Worker:
             self.context_market=item['ticker'];self.context_order=None;self.context_bot=item['bot']
             if len({o['ticker'] for o in self.orders})>=100 and item['ticker'] not in {o['ticker'] for o in self.orders}:continue
             if len(self.orders)>=490:continue
-            if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue
             bot=bots[item['bot']];config=bot['config'];equity=self.account['equity_cents']
+            is_cycle=config.get('strategy')=='buy_low_sell_high'
+            active_entries=[o for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'] and o['status'] not in ('closed','rejected')]
+            if item['ticker'] in self.netting_pending:continue
+            if is_cycle:
+                if any(o['bot']!=item['bot'] or o.get('entry_strategy')!='buy_low_sell_high' or o['revision']!=bot['revision'] or o['side']==item['side'] or o.get('filled',0)>o.get('sold',0) or o.get('status') in ('intent','uncertain','cancel_pending') for o in active_entries):continue
+            else:
+                if any(o.get('entry_strategy')=='buy_low_sell_high' for o in active_entries):continue
+                if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue
             market=sum((o.get('remaining',0)+max(0,o.get('filled',0)-o.get('sold',0)))*o['price'] for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'])
             exposure=sum((o.get('remaining',0)+max(0,o.get('filled',0)-o.get('sold',0)))*o['price'] for o in self.orders if o['kind']=='entry' and o['bot']==item['bot'])
             if config.get('daily_loss_percent') is not None:
@@ -532,11 +628,15 @@ class Worker:
             if not self.funding.ensure(self.quotes[item['ticker']].get('exchange_index',0),amount*item['price'],max(amount*item['price'],equity*config['bot_percent']/100-exposure),self.shard_reservations):continue
             # Funding requests take time: recheck prices and entry qualification
             # on the next stream tick before preparing any order.
-            if time.time()-self.quotes[item['ticker']]['at']>5 or not qualifies(config['squares'][item['square']],self.quotes[item['ticker']],item['side'],time.time(),config['qualification']):return
+            from .cycles import eligible
+            still_matches=eligible(config,config['squares'][item['square']],self.quotes[item['ticker']],time.time()) if is_cycle else qualifies(config['squares'][item['square']],self.quotes[item['ticker']],item['side'],time.time(),config['qualification'])
+            if time.time()-self.quotes[item['ticker']]['at']>5 or not still_matches:return
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
-            self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close']),created_at=now,status='intent',remaining=0,filled=0));return
+            extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=config['cycle_sell_cents']) if is_cycle else {}
+            end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(config['cycle_cutoff_minutes']*60 if is_cycle else 0)
+            self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
             packed=json.dumps(self.states[bot['id']],sort_keys=True)
@@ -648,7 +748,7 @@ def run(stop):
                     if signer:break
                     if not connection_notice:
                         print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
-                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1']))
+                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1']))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:
                         maintenance(store,os.environ,stop);next_maintenance=time.time()+300

@@ -24,6 +24,11 @@ class BotConfig(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     version:Literal[1]=1
     name:str=Field(min_length=1,max_length=80)
+    strategy:Literal['conditions','buy_low_sell_high']='conditions'
+    cycle_buy_cents:int=Field(default=10,ge=1,le=49)
+    cycle_sell_cents:int=Field(default=20,ge=2,le=99)
+    cycle_cutoff_minutes:int=Field(default=5,ge=0,le=1439)
+    cycle_repeat:bool=True
     squares:list[Square]=Field(min_length=1,max_length=45)
     qualification:Literal['bid','ask']='ask'
     price_reference:Literal['bid','ask']='ask'
@@ -39,6 +44,9 @@ class BotConfig(BaseModel):
     daily_loss_percent:float|None=Field(default=None,gt=0,le=100)
     @model_validator(mode='after')
     def limits(self):
+        if self.strategy=='buy_low_sell_high':
+            if self.cycle_sell_cents<=self.cycle_buy_cents:raise ValueError('The profit sell price must be higher than the low buy price')
+            if self.loss_mode=='research':raise ValueError('Use manual or off loss prevention for buy low, sell high')
         if self.minimum_cents is not None and self.maximum_cents is not None and self.minimum_cents>self.maximum_cents:raise ValueError('Minimum bid must not exceed maximum bid')
         if self.loss_mode=='manual' and self.loss_cents is None:raise ValueError('Enter an exit threshold')
         keys=[(s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes) for s in self.squares]

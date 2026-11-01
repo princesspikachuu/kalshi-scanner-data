@@ -6,7 +6,7 @@ def family(series):
         if series in SERIES[asset]:return asset
     return 'crypto'
 
-def select_markets(quotes,pinned,now,limit=100):
+def select_markets(quotes,pinned,now,limit=100,cycle_series=()):
     chosen={t:q for t,q in sorted(quotes.items()) if t in pinned}
     if len(chosen)>limit:raise ValueError('Held market capacity exceeded')
     buckets={}
@@ -14,7 +14,7 @@ def select_markets(quotes,pinned,now,limit=100):
         end=q.get('entry_close',q['close'])
         if ticker not in chosen and q.get('status')=='active' and now<end<=now+86400:
             buckets.setdefault(family(q['series']),[]).append((ticker,q))
-    for items in buckets.values():items.sort(key=lambda p:(p[1].get('entry_close',p[1]['close']),p[0]))
+    for items in buckets.values():items.sort(key=lambda p:(p[1]['series'] not in cycle_series,-p[1].get('open',0) if p[1]['series'] in cycle_series else p[1].get('entry_close',p[1]['close']),p[0]))
     counts={asset:sum(family(q['series'])==asset for q in chosen.values()) for asset in buckets}
     while len(chosen)<limit and buckets:
         asset=min(buckets,key=lambda a:(counts[a],a!='sports',a))

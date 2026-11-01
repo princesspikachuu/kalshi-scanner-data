@@ -54,6 +54,9 @@ def candidates(bots,quotes,states,now,blocked=()):
     output=[]
     for bot in bots:
         config=bot['config'];memory=states.setdefault(bot['id'],{})
+        if config.get('strategy')=='buy_low_sell_high':
+            from .cycles import candidates as cycle_candidates
+            output.extend(cycle_candidates(bot,quotes,states,now,blocked));continue
         for ticker,quote in quotes.items():
             if now-quote['at']>5 or quote.get('entry_close',quote['close'])<=now or not (0<quote['bid']<quote['ask']<100):continue
             for index,square in enumerate(config['squares']):
@@ -91,4 +94,4 @@ def wire_order(intent):
     return dict(ticker=intent['ticker'],client_order_id=intent['client_id'],side=book,
         count=f"{intent['quantity']:.2f}",price=f'{price/100:.4f}',
         time_in_force='good_till_canceled',expiration_time=int(intent['close']),exchange_index=intent.get('exchange_index',-1),
-        self_trade_prevention_type='taker_at_cross',post_only=True,cancel_order_on_pause=True)
+        self_trade_prevention_type='taker_at_cross',post_only=intent.get('exit_role')!='profit',cancel_order_on_pause=True)

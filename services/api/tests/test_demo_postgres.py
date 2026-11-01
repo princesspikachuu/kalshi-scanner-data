@@ -238,3 +238,66 @@ class DemoPostgres(unittest.TestCase):
                 self.assertEqual(response.status_code,200,response.text)
                 snapshots=self.demo.get('bot/'+identifier)['parameters']['prior_protection']
                 self.assertEqual(snapshots,{'1':[55,60],'2':[70]})
+
+    def test_cycle_roundtrip_capability_and_atomic_offset_recovery(self):
+        import threading
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import entry,book,NOW
+        body=config(strategy='buy_low_sell_high',cycle_buy_cents=10,cycle_sell_cents=20,cycle_cutoff_minutes=1)
+        self.assertEqual(self.client.post('/demo/bots',json=body).status_code,409)
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text);identifier=response.json()['id']
+        saved=self.client.get('/demo/workspace').json()['bots'][0]
+        self.assertEqual((saved['config']['strategy'],saved['config']['cycle_buy_cents'],saved['config']['cycle_sell_cents']),('buy_low_sell_high',10,20))
+        self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1))
+        records=[entry(bot=identifier,client_id='yes',side='yes',filled=2,remaining=0),entry(bot=identifier,client_id='no',side='no',filled=2,remaining=0)]
+        for order in records:
+            data={k:v for k,v in order.items() if k not in ('status','filled','remaining')}
+            self.demo.put('order/'+order['client_id'],dict(status='held',filled=2,remaining=0),parameters=data)
+        self.demo.put('trigger/'+identifier,{'t/0/'+side:dict(cycle=1,submitted=True,first_at=NOW) for side in ['yes','no']},parameters=dict(revision=1))
+        class Ex:
+            def call(self,*args,**kwargs):return dict(balance=10160,portfolio_value=0)
+            def pages(self,path,key,**params):
+                if key=='market_positions' or params.get('status')=='resting':return []
+                return [dict(order_id='ex-'+o['client_id'],client_order_id=o['client_id'],status='executed',fill_count_fp='2.00',remaining_count_fp='0.00') for o in records]
+        worker=Worker(self.demo,Ex(),threading.Event(),lambda:None);worker.quotes={'t':book()}
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.reconcile()
+        self.assertTrue(worker.recovered);self.assertFalse(worker.blocked)
+        for side in ['yes','no']:
+            row=self.demo.get('order/'+side);self.assertEqual(row['parameters']['offset_quantity'],2)
+            self.assertEqual((row['progress']['status'],row['progress']['realized_cents']),('closed',80))
+            self.assertEqual(self.demo.get('trigger/'+identifier)['progress']['t/0/'+side]['cycle'],2)
+        self.assertEqual(self.demo.active_orders(),[])
+        restarted=Worker(self.demo,Ex(),threading.Event(),lambda:None)
+        with patch('services.demo.runtime.time.time',return_value=NOW+1):restarted.reconcile()
+        self.assertEqual(self.demo.get('trigger/'+identifier)['progress']['t/0/yes']['cycle'],2)
+        # Compare-and-update fences both offset legs in one transaction.
+        fresh=[entry(client_id='fresh-a',filled=2,remaining=0),entry(client_id='fresh-b',side='no',filled=2,remaining=0)]
+        for o in fresh:self.demo.put('order/'+o['client_id'],dict(status='held',filled=2,remaining=0),parameters=o)
+        worker.orders=fresh
+        with self.store.pool.connection() as c:c.execute("UPDATE research_job SET parameters=parameters||'{\"offset_quantity\":1}'::jsonb WHERE idempotency_key='demo/order/fresh-b'")
+        from services.demo.exchange import ExchangeFailure
+        with self.assertRaises(ExchangeFailure):worker.apply_cycle_offsets({'fresh-a':2,'fresh-b':2})
+        self.assertNotIn('offset_quantity',self.demo.get('order/fresh-a')['parameters'])
+
+    def test_cancel_remains_tracked_until_final_fill_counts_are_reconciled(self):
+        import threading
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import entry,book,NOW
+        body=config(strategy='buy_low_sell_high',cycle_cutoff_minutes=1)
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        identifier=self.client.post('/demo/bots',json=body).json()['id']
+        order=entry(bot=identifier)
+        class Ex:
+            def cancel(self,*args):return {}
+            def call(self,*args,**kwargs):return dict(balance=9980,portfolio_value=20)
+            def pages(self,path,key,**params):
+                if key=='market_positions':return [dict(ticker='t',position_fp='2.00')]
+                if params.get('status')=='resting':return []
+                return [dict(order_id='ex-low',client_order_id='low',status='canceled',fill_count_fp='2.00',remaining_count_fp='0.00')]
+        worker=Worker(self.demo,Ex(),threading.Event(),lambda:None);worker.orders=[order];worker.quotes={'t':book()}
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.cancel(order,'Cutoff')
+        self.assertEqual(self.demo.active_orders()[0]['status'],'cancel_pending')
+        with patch('services.demo.runtime.time.time',return_value=NOW+1):worker.reconcile()
+        saved=self.demo.get('order/low');self.assertEqual((saved['progress']['status'],saved['progress']['filled']),('held',2))
+        self.assertFalse(worker.blocked)

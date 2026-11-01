@@ -39,7 +39,7 @@ class OrderBooks:
             return ticker,dict(bid=float(bid*100) if bid is not None else 0,
                 ask=float((1-opposite)*100) if opposite is not None else 100,
                 at=min(received_at,float(event_at)),event_at=float(event_at),source='orderbook',clock=clock,seq=message['seq'],
-                received_at=received_at,change=dict(kind=kind,side=raw.get('side'),price=raw.get('price_dollars'),delta=raw.get('delta_fp')),book_ready=bid is not None and opposite is not None,
+                received_at=received_at,change=dict(kind=kind,side=raw.get('side'),price=raw.get('price_dollars'),delta=raw.get('delta_fp')),book_verified=True,book_ready=bid is not None and opposite is not None,
                 best_yes_size=str(book['yes'].get(bid,0)),best_no_size=str(book['no'].get(opposite,0)))
         except (KeyError,ValueError,TypeError,InvalidOperation,OverflowError):
             self.clear();raise ExchangeFailure('stream_book_invalid') from None

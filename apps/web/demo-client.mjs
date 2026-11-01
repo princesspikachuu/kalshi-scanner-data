@@ -36,7 +36,7 @@ export function botExposure(orders=[]){
   const key=JSON.stringify([order.ticker,order.side]),position=positions.get(key)||{ticker:order.ticker,side:order.side,quantity:0,cost:0};
   position.quantity+=held;position.cost+=held*order.price;positions.set(key,position);
  }
- return {positions:[...positions.values()].map(p=>({...p,price:p.cost/p.quantity})),waiting:orders.filter(o=>(o.remaining||0)>0||['intent','uncertain'].includes(o.status))};
+ return {positions:[...positions.values()].map(p=>({...p,price:p.cost/p.quantity})),waiting:orders.filter(o=>(o.remaining||0)>0||['intent','uncertain','cancel_pending'].includes(o.status))};
 }
 export function botExposureMarkup(orders=[],botId=''){
  const {positions,waiting}=botExposure(orders),e=escapeHTML;
@@ -44,7 +44,7 @@ export function botExposureMarkup(orders=[],botId=''){
  const qty=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);
  const price=n=>Number.isFinite(n)?qty(n)+'¢':'—';
  const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
- return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${o.kind==='entry'?'Entry bid':'Protective exit'}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
+ return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${o.kind==='entry'?'Entry bid':o.exit_role==='profit'?'Profit sell':'Protective exit'}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain','cancel_pending'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
 }
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  const markets=(health.blocked_markets||[]).filter(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t));

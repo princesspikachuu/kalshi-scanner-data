@@ -22,9 +22,10 @@ def install_demo(app,auth,mutate,pool):
         config['column_maximum_cents']={} # Legacy configs remain readable; column limits are retired.
         square_caps=any(s.get('maximum_cents') is not None for s in config['squares'])
         square_exits=any(s.get('loss_prevention_cents') is not None for s in config['squares'])
-        if square_caps or square_exits:
+        if square_caps or square_exits or config['strategy']=='buy_low_sell_high':
             health=store.get('health')
             features=health['progress'].get('features',[]) if health else []
+            if config['strategy']=='buy_low_sell_high' and 'buy_low_sell_high_v1' not in features:raise HTTPException(409,'Buy low, sell high is being updated. Your draft is saved; try saving again shortly.')
             if square_caps and 'square_bid_caps_v1' not in features:raise HTTPException(409,'Square bid limits are temporarily unavailable; your draft has been kept')
             if square_exits and 'square_loss_prevention_v1' not in features:raise HTTPException(409,'Square loss prevention is temporarily unavailable; your draft has been kept')
         with pool.connection() as c:

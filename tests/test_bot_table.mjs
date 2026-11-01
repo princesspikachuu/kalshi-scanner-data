@@ -101,3 +101,11 @@ test('selected table squares have independent editable maximums and preserve the
  assert.equal(store.load().squares[1].maximum_cents,61);assert.equal(store.load().squares[0].loss_prevention_cents,55);
  const copy=duplicateBotConfig({config:{name:'Per square',squares:selected}});copy.squares[0].maximum_cents=55;assert.equal(selected[0].maximum_cents,63);
 });
+
+import {cycleSquare} from '../apps/web/bot-builder.mjs';
+test('buy low sell high drafts and duplicate preserve prices, cutoff, repeat and chosen category',()=>{
+ const memory=storage(),store=createBotDraftStore(memory),input=draft();Object.assign(input.fields,{strategy:'buy_low_sell_high',cycleBuy:'8',cycleSell:'18',cycleCutoff:'3',cycleRepeat:'no',cycleAsset:'weather'});
+ input.squares=[cycleSquare('weather')];assert.equal(store.save(input),true);assert.deepEqual(store.load().fields,input.fields);
+ const source={config:{name:'Cycles',strategy:'buy_low_sell_high',cycle_buy_cents:8,cycle_sell_cents:18,cycle_cutoff_minutes:3,cycle_repeat:false,squares:input.squares}};
+ const copy=duplicateBotConfig(source);assert.equal(copy.cycle_sell_cents,18);assert.equal(copy.cycle_repeat,false);copy.squares[0].asset='btc';assert.equal(source.config.squares[0].asset,'weather');
+});
