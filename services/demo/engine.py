@@ -25,13 +25,13 @@ def order_threshold(bot,order,quote,now,research_lookup=None):
     if not condition and order.get('revision',bot['revision'])==bot['revision'] and 0<=order['square']<len(config['squares']):condition=config['squares'][order['square']]
     minutes=max(1e-9,(quote.get('entry_close',quote['close'])-now)/60)
     matches=[s for s in config['squares'] if condition and s['min_price']==condition['min_price'] and s['max_price']==condition['max_price'] and quote['series'] in SERIES[s['asset']]]
-    current=sorted([s for s in matches if s['min_minutes']<minutes<=s['max_minutes']],key=lambda s:(s['max_minutes']-s['min_minutes'],s['max_minutes'],s['asset']))
+    current=sorted([s for s in matches if s['min_minutes']<minutes<=s['max_minutes']],key=lambda s:(s['asset']!=(condition or {}).get('asset'),s['max_minutes']-s['min_minutes'],s['max_minutes'],s['asset']))
     if current and current[0].get('loss_prevention_cents') is not None:return current[0]['loss_prevention_cents']
     if config['loss_mode']=='manual':return config.get('loss_cents')
     if config['loss_mode']=='off':return None
     if current and current[0].get('loss_cents') is not None:return current[0]['loss_cents']
-    sources=[s['report_id'] for s in matches if s.get('report_id')]
-    source=max(sources) if sources else (condition or {}).get('report_id')
+    sources=[s['report_id'] for s in matches if s.get('report_id') and s['asset']==(condition or {}).get('asset')] or [s['report_id'] for s in matches if s.get('report_id')]
+    source=current[0]['report_id'] if current and current[0].get('report_id') else max(sources) if sources else (condition or {}).get('report_id')
     if source and condition and research_lookup:
         band=f"{condition['min_price']:02d}-{condition['max_price']+1:02d}"
         return research_lookup(source,band,minutes)

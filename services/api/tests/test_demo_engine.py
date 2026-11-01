@@ -462,3 +462,12 @@ class CurrentTimeProtection(unittest.TestCase):
         self.assertEqual(order_threshold(b,order,q,NOW+6*60,lookup),61)
         lookup.assert_called_once_with(123,'60-70',9)
         self.assertEqual(order_threshold(b,order,q,NOW,lookup),50)
+
+    def test_overlapping_crypto_categories_keep_the_positions_original_category(self):
+        from services.demo.engine import order_threshold
+        b=bot(loss_mode='manual',loss_cents=55)
+        btc=dict(b['config']['squares'][0],loss_prevention_cents=50)
+        crypto=dict(btc,asset='crypto',loss_prevention_cents=60)
+        b['config']['squares']=[btc,crypto]
+        self.assertEqual(order_threshold(b,dict(square=1,revision=1,condition=crypto),quote(),NOW),60)
+        self.assertEqual(order_threshold(b,dict(square=0,revision=1,condition=btc),quote(),NOW),50)
