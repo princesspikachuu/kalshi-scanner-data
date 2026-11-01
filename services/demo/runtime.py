@@ -731,7 +731,20 @@ class Worker:
         if not self.recovered or now-self.last_reconcile>35:return
         retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
         options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
+        market_cost={};bot_cost={}
+        if options:
+            for order in self.orders:
+                if order['kind']=='entry':
+                    cost=(order.get('remaining',0)+max(0,order.get('filled',0)-order.get('sold',0)))*order['price']
+                    market_cost[order['ticker']]=market_cost.get(order['ticker'],0)+cost
+                    bot_cost[order['bot']]=bot_cost.get(order['bot'],0)+cost
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
+        peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
+        for item in options:
+            config=bots[item['bot']]['config']
+            if config.get('strategy')=='buy_low_sell_high' and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):
+                if quantity(config,item['price'],equity,cash,market_cost.get(item['ticker'],0),bot_cost.get(item['bot'],0))>0:
+                    peers.setdefault(item['ticker'],[]).append(item)
         for item in options:
             self.context_market=item['ticker'];self.context_order=None;self.context_bot=item['bot']
             if len({o['ticker'] for o in self.orders})>=100 and item['ticker'] not in {o['ticker'] for o in self.orders}:continue
@@ -745,8 +758,7 @@ class Worker:
             else:
                 if any(o.get('entry_strategy')=='buy_low_sell_high' for o in active_entries):continue
                 if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue
-            market=sum((o.get('remaining',0)+max(0,o.get('filled',0)-o.get('sold',0)))*o['price'] for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'])
-            exposure=sum((o.get('remaining',0)+max(0,o.get('filled',0)-o.get('sold',0)))*o['price'] for o in self.orders if o['kind']=='entry' and o['bot']==item['bot'])
+            market=market_cost.get(item['ticker'],0);exposure=bot_cost.get(item['bot'],0)
             if config.get('daily_loss_percent') is not None:
                 with self.store.pool.connection() as c:
                     pnl=c.execute("""SELECT coalesce(sum((progress->>'realized_cents')::numeric),0) AS pnl FROM research_job
@@ -754,6 +766,9 @@ class Worker:
                         AND parameters->>'bot'=%s AND (progress->>'closed_at')::numeric >= %s""",(item['bot'],int(now//86400)*86400)).fetchone()['pnl']
                 if pnl<=-equity*config['daily_loss_percent']/100:continue
             amount=quantity(config,item['price'],equity,self.account['cash_cents'],market,exposure)
+            if is_cycle:
+                from .cycles import shared_quantity
+                amount=shared_quantity(item,peers.get(item['ticker'],[]),config,equity,cash,market,exposure)
             if amount<1:continue
             if self.funding is None:
                 from .funding import ShardFunding

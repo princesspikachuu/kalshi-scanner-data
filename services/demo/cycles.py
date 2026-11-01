@@ -32,6 +32,16 @@ def entry_block_reason(item,orders,netting=False):
     if item['price']>=sell_floor(item['side'],rows):return 'self_trade'
     return None
 
+def shared_quantity(item,peers,config,equity,cash,market_exposure,bot_exposure):
+    from .engine import quantity
+    amount=quantity(config,item['price'],equity,cash,market_exposure,bot_exposure)
+    if len(peers)>1:
+        # Percentages are ceilings. Leave room for the other eligible bot sides
+        # instead of letting the first bot consume the entire shared market cap.
+        allowance=max(0,min(cash,equity*config['market_percent']/100-market_exposure))
+        amount=min(amount,max(1,int(allowance/len(peers)/item['price'])))
+    return amount
+
 def retry_ready(retry,quote,now):
     return (not retry or (now>=retry['after'] and
         (quote.get('clock'),quote.get('seq'))!=(retry.get('clock'),retry.get('seq'))))

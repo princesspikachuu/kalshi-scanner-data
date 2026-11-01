@@ -3,7 +3,7 @@ from unittest.mock import Mock,patch
 from services.api.demo_models import BotConfig
 from services.api.tests.test_demo_engine import NOW,FakeStore,config,quote
 from services.demo.engine import candidates,wire_order
-from services.demo.cycles import offset_plan,entry_block_reason,park_reason
+from services.demo.cycles import offset_plan,entry_block_reason,park_reason,shared_quantity
 from services.demo.runtime import Worker
 from services.demo.exchange import ExchangeFailure
 
@@ -125,7 +125,7 @@ class SharedMarkets(unittest.TestCase):
     def test_five_bots_can_each_bid_both_outcomes_without_stealing_ownership(self):
         w=worker();w.bots=[]
         for low in (3,6,9,12,15):
-            b=bot(cycle_buy_cents=low,cycle_sell_cents=low+3,bid_percent=1,market_percent=100,bot_percent=100)
+            b=bot(cycle_buy_cents=low,cycle_sell_cents=low+3)
             b['id']=f'bot-{low}';w.bots.append(b)
         for _ in range(10):
             w.submit.reset_mock()
@@ -134,9 +134,19 @@ class SharedMarkets(unittest.TestCase):
             order=w.submit.call_args.args[0];order.update(status='resting',remaining=order['quantity']);w.orders.append(order)
         self.assertEqual({(o['bot'],o['side']) for o in w.orders},{(b['id'],s) for b in w.bots for s in ('yes','no')})
         self.assertEqual(len({o['client_id'] for o in w.orders}),10)
+        self.assertLessEqual(sum(o['quantity']*o['price'] for o in w.orders),300)
+        self.assertTrue(all(o['quantity']*o['price']<=100 for o in w.orders))
         w.submit.reset_mock()
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
         w.submit.assert_not_called()
+    def test_fair_sharing_never_increases_cash_bid_bot_or_market_limits(self):
+        cfg=bot()['config'];item=dict(bot='a',price=10);peers=[item,dict(bot='b',price=15)]
+        self.assertEqual(shared_quantity(item,peers,cfg,10000,10000,0,0),10)
+        self.assertEqual(shared_quantity(item,peers,cfg,10000,0,0,0),0)
+        self.assertEqual(shared_quantity(item,peers,cfg,10000,10000,300,0),0)
+        self.assertEqual(shared_quantity(item,peers,cfg,10000,10000,0,1000),0)
+        self.assertEqual(shared_quantity(item,peers,cfg,10000,5,0,0),0)
+        self.assertEqual(shared_quantity(item,[item,dict(item,side='no')],cfg,10000,10000,240,0),3)
     def test_sharing_keeps_duplicate_manual_strategy_and_verification_fences(self):
         item=dict(bot='bot-2',side='yes',price=6)
         self.assertIsNone(entry_block_reason(item,[entry()]))
