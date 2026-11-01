@@ -6,6 +6,9 @@ from pydantic import BaseModel,ConfigDict,Field
 from .demo_models import BotConfig,Controls,Policy
 from services.demo.store import DemoStore
 
+class BotChanges(BotConfig):
+    expected_settings_revision:int|None=Field(default=None,ge=1)
+
 def install_demo(app,auth,mutate,pool):
     store=DemoStore(pool)
     def require_query(request,allowed=()):
@@ -52,7 +55,7 @@ def install_demo(app,auth,mutate,pool):
         bots=[]
         for row in store.rows('bot/',101):
             data=row['parameters'];state=row['progress']
-            bots.append(dict(id=row['id'],key=row['idempotency_key'].split('/')[-1],config=data['config'],revision=data['revision'],fresh_test=bool(data.get('reset_source')),**state))
+            bots.append(dict(id=row['id'],key=row['idempotency_key'].split('/')[-1],config=data['config'],revision=data['revision'],settings_revision=data.get('settings_revision',data['revision']),fresh_test=bool(data.get('reset_source')),**state))
         health=store.get('health');account=store.get('account');policy=store.get('policy')
         alerts=[dict(key=r['idempotency_key'].split('/')[-1],**r['progress']) for r in store.rows('alert/',30) if r['progress'].get('active')]
         reset=store.get('reset')
@@ -89,15 +92,23 @@ def install_demo(app,auth,mutate,pool):
         store.event('bot_created',config['name']+' saved with '+str(len(config['squares']))+' conditions',bot=identifier)
         return dict(contract='demo-v1',id=identifier)
     @app.post('/demo/bots/{identifier}/configure')
-    def configure(identifier:UUID,body:BotConfig,request:Request):
-        mutate(request);require_query(request);config=verify_config(body)
+    def configure(identifier:UUID,body:BotChanges,request:Request):
+        mutate(request);require_query(request);config=verify_config(body);config.pop('expected_settings_revision',None)
         with pool.connection() as c:
             row=c.execute('SELECT parameters,progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/bot/'+str(identifier),)).fetchone()
             if not row:raise HTTPException(404,'Bot not found')
-            if row['progress'].get('desired')=='running':raise HTTPException(409,'Pause the bot before editing')
-            if any(o['bot']==str(identifier) for o in store.active_orders()):raise HTTPException(409,'Wait for existing orders and positions to close before changing rules')
+            parameters=row['parameters'];settings_revision=parameters.get('settings_revision',parameters['revision'])
+            if body.expected_settings_revision is not None and body.expected_settings_revision!=settings_revision:raise HTTPException(409,'Bot settings changed elsewhere. Your draft is saved; reopen Manage to review the latest settings.')
+            old=BotConfig.model_validate(parameters['config']).model_dump()
+            changed={k for k in config if config[k]!=old[k]}
+            if not changed:return dict(contract='demo-v1',updated=True)
+            allocation_only=changed<={'name','bid_percent','market_percent','bot_percent'}
+            if not allocation_only:
+                if row['progress'].get('desired')=='running':raise HTTPException(409,'Pause the bot before changing entry or exit rules. Name and spending percentages can be changed while running.')
+                if any(o['bot']==str(identifier) for o in store.active_orders()):raise HTTPException(409,'Wait for existing orders and positions to close before changing entry or exit rules. Spending percentages can be changed now.')
             from psycopg.types.json import Jsonb
-            c.execute('UPDATE research_job SET parameters=%s WHERE idempotency_key=%s',(Jsonb(dict(config=config,revision=row['parameters']['revision']+1)),'demo/bot/'+str(identifier)))
+            parameters=dict(parameters,config=config,revision=parameters['revision']+(0 if allocation_only else 1),settings_revision=settings_revision+1)
+            c.execute('UPDATE research_job SET parameters=%s WHERE idempotency_key=%s',(Jsonb(parameters),'demo/bot/'+str(identifier)))
         store.event('bot_updated',config['name']+' configuration updated',bot=str(identifier))
         return dict(contract='demo-v1',updated=True)
     @app.post('/demo/bots/{identifier}/control')

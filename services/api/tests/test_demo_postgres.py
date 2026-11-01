@@ -32,6 +32,7 @@ class DemoPostgres(unittest.TestCase):
         page=self.client.get('/demo/workspace');self.assertEqual(page.status_code,200,page.text)
         bot=page.json()['bots'][0];self.assertEqual(bot['key'],identifier);self.assertEqual(len(bot['config']['squares']),2);self.assertEqual(bot['desired'],'paused')
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1)).status_code,200)
+        body['adjustment_cents']=-2
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/configure',json=body).status_code,409)
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=1)).status_code,200)
         self.assertEqual(self.client.post('/demo/bots/'+identifier+'/configure',json=body).status_code,200)
@@ -165,3 +166,25 @@ class DemoPostgres(unittest.TestCase):
         body.pop('column_maximum_cents')
         response=self.client.post('/demo/bots/'+identifier+'/configure',json=body);self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(self.demo.get('bot/'+identifier)['parameters']['config']['column_maximum_cents'],{})
+
+    def test_running_allocation_edit_preserves_strategy_orders_triggers_and_checks_stale_settings(self):
+        body=config();identifier=self.client.post('/demo/bots',json=body).json()['id']
+        self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1))
+        self.demo.put('order/existing',dict(status='held',filled=2,remaining=0),parameters=dict(kind='entry',bot=identifier,ticker='T',revision=1,price=60))
+        self.demo.put('trigger/'+identifier,{'T/0/yes':dict(submitted=True)},parameters=dict(revision=1))
+        order=self.demo.get('order/existing');trigger=self.demo.get('trigger/'+identifier)
+        edited=dict(body,bot_percent=25,expected_settings_revision=1)
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=edited)
+        self.assertEqual(response.status_code,200,response.text)
+        bot=self.client.get('/demo/workspace').json()['bots'][0]
+        self.assertEqual((bot['revision'],bot['settings_revision'],bot['desired'],bot['config']['bot_percent']),(1,2,'running',25))
+        self.assertEqual(self.demo.get('order/existing'),order);self.assertEqual(self.demo.get('trigger/'+identifier),trigger)
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(edited,bot_percent=30))
+        self.assertEqual(response.status_code,409)
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(edited,expected_settings_revision=2,adjustment_cents=-2))
+        self.assertEqual(response.status_code,409)
+        self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='pause',revision=1))
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(edited,expected_settings_revision=2,bot_percent=5))
+        self.assertEqual(response.status_code,200,response.text)
+        bot=self.client.get('/demo/workspace').json()['bots'][0]
+        self.assertEqual((bot['revision'],bot['settings_revision'],bot['config']['bot_percent']),(1,3,5))

@@ -20,6 +20,24 @@ export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(!recent||health.bots?.[bot.key]?.exit_waiting||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
  return 'Running';
 }
+export function botExposure(orders=[]){
+ const positions=new Map();
+ for(const order of orders){
+  const held=Math.max(0,(order.filled||0)-(order.sold||0));
+  if(order.kind!=='entry'||!held)continue;
+  const key=JSON.stringify([order.ticker,order.side]),position=positions.get(key)||{ticker:order.ticker,side:order.side,quantity:0,cost:0};
+  position.quantity+=held;position.cost+=held*order.price;positions.set(key,position);
+ }
+ return {positions:[...positions.values()].map(p=>({...p,price:p.cost/p.quantity})),waiting:orders.filter(o=>(o.remaining||0)>0||['intent','uncertain'].includes(o.status))};
+}
+export function botExposureMarkup(orders=[],botId=''){
+ const {positions,waiting}=botExposure(orders),e=escapeHTML;
+ const market=ticker=>`<a href="/activity?${e(new URLSearchParams({bot:botId,ticker}))}">${e(ticker)}</a>`;
+ const qty=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);
+ const price=n=>Number.isFinite(n)?qty(n)+'¢':'—';
+ const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+ return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${o.kind==='entry'?'Entry bid':'Protective exit'}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
+}
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  const blockedExit=health.bots?.[bot.key];
  if(blockedExit?.exit_waiting)return {reason:blockedExit.message,action:'The downward-only limit is retained. The app retries when it can rest maker-only; review Activity for the position.',control:'activity',phase:'Protective exit',markets:[],lastVerified:health.reconciled_at,lastSeen:health.at};

@@ -91,3 +91,10 @@ test('per-column bid limits preserve blanks, draft reloads and independent dupli
  const copy=duplicateBotConfig(source);copy.column_maximum_cents['60-70']=62;
  assert.equal(source.config.column_maximum_cents['60-70'],65);
 });
+
+test('edit drafts preserve settings revision and cannot overwrite a newer allocation edit',()=>{
+ const input={...draft(),mode:'edit',botKey:'one',revision:3,settingsRevision:5},memory=storage(),store=createBotDraftStore(memory);
+ assert.equal(store.save(input),true);const restored=store.load();assert.equal(restored.settingsRevision,5);
+ assert.equal(resolveBotDraft(restored,[{key:'one',revision:3,settings_revision:5}]).recoveredAsNew,false);
+ assert.equal(resolveBotDraft(restored,[{key:'one',revision:3,settings_revision:6}]).recoveredAsNew,true);
+});

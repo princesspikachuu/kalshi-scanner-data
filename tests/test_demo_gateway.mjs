@@ -74,3 +74,15 @@ test('routine confirmed-order verification keeps bots running; stalled, uncertai
  assert.equal(botGroup(bot,{...health,state:'attention'},[],1003),'Needs attention');
  assert.equal(botGroup({...bot,desired:'paused'},health,[],1003),'Paused');
 });
+
+import {botExposure,botExposureMarkup} from '../apps/web/demo-client.mjs';
+test('bot dropdown separates held contracts, partial entry remainders, exits and uncertain writes',()=>{
+ const orders=[{kind:'entry',ticker:'BTC<test>',side:'yes',price:60,filled:5,sold:2,remaining:4,status:'resting'},
+ {kind:'entry',ticker:'BTC<test>',side:'yes',price:70,filled:2,sold:0,remaining:0,status:'held'},
+ {kind:'exit',ticker:'BTC<test>',side:'yes',price:56,filled:0,remaining:3,status:'resting'},
+ {kind:'entry',ticker:'OTHER',side:'no',price:80,filled:0,remaining:0,status:'uncertain'}];
+ const result=botExposure(orders);assert.equal(result.positions.length,1);assert.equal(result.positions[0].quantity,5);assert.equal(result.positions[0].price,64);
+ assert.equal(result.waiting.length,3);
+ const html=botExposureMarkup(orders,'bot-one');assert.match(html,/BTC&lt;test&gt;/);assert.doesNotMatch(html,/BTC<test>/);assert.match(html,/Protective exit/);assert.match(html,/Unconfirmed/);assert.match(html,/both sections/);
+ const empty=botExposureMarkup([]);assert.match(empty,/No open positions/);assert.match(empty,/No waiting orders/);
+});
