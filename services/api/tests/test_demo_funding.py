@@ -83,3 +83,35 @@ class CategoryShardFunding(unittest.TestCase):
                 body=exchange.writes[0]
                 self.assertEqual((body['source_exchange_shard'],body['destination_exchange_shard']),(2,destination))
                 self.assertEqual(body['amount'],100000)
+
+class FundingCorrections(unittest.TestCase):
+    def test_resting_limits_reserve_price_not_full_contract_and_keep_manual_orders(self):
+        from services.demo.funding import resting_reservation
+        base=dict(remaining_count_fp='10.25',yes_price_dollars='0.6000',no_price_dollars='0.4000')
+        self.assertEqual(resting_reservation(dict(base,book_side='bid')),615)
+        self.assertEqual(resting_reservation(dict(base,book_side='ask')),410)
+        self.assertEqual(resting_reservation(dict(base,action='buy',side='no')),410)
+        self.assertEqual(resting_reservation(dict(base,action='sell',side='no')),615)
+        self.assertEqual(resting_reservation(dict(base,book_side='bid',subaccount_number=1)),0)
+        self.assertEqual(resting_reservation(dict(remaining_count_fp='10.25')),1025)
+    def test_split_donors_can_fund_one_entry_with_one_durable_transfer_at_a_time(self):
+        store=Store()
+        class Ex:
+            def call(self,method,path,**kw):
+                if method=='GET':return dict(subaccount_balances=[dict(subaccount_number=0,exchange_index=i,balance=b) for i,b in [(0,'6.00'),(2,'5.00'),(3,'0.00')]])
+                self.body=kw['body'];return dict(transfer_id='one')
+        exchange=Ex();funding=ShardFunding(store,exchange)
+        self.assertFalse(funding.ensure(3,1000,1000,{}))
+        self.assertEqual(exchange.body['amount'],60000)
+        self.assertEqual(exchange.body['source_exchange_shard'],0)
+    def test_insufficient_cash_message_has_amounts_and_is_throttled(self):
+        store=Store();exchange=Exchange(store);funding=ShardFunding(store,exchange)
+        with patch('services.demo.funding.time.time',return_value=100):
+            funding.ensure(2,90,1000,{0:10000})
+            message=store.alerts['funding-cash-2']
+            self.assertIn('$0.90',message);self.assertIn('$100.00',message)
+            funding.ensure(2,95,1000,{0:10000})
+            self.assertEqual(store.alerts['funding-cash-2'],message)
+        with patch('services.demo.funding.time.time',return_value=131):
+            funding.ensure(2,90,1000,{})
+        self.assertIn('funding',store.data)

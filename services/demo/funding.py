@@ -4,10 +4,23 @@ from decimal import Decimal
 from uuid import uuid4
 from .exchange import ExchangeFailure
 
+def resting_reservation(order):
+    """Worst-case cash cost at the limit, without assuming position netting."""
+    if order.get('subaccount_number') not in (None,0):return 0
+    quantity=Decimal(str(order.get('remaining_count_fp',order.get('remaining_count',0))))
+    book=order.get('book_side')
+    if book not in ('bid','ask') and order.get('action') in ('buy','sell') and order.get('side') in ('yes','no'):
+        book='bid' if (order['action']=='buy')==(order['side']=='yes') else 'ask'
+    key='yes_price_dollars' if book=='bid' else 'no_price_dollars' if book=='ask' else None
+    price=Decimal(str(order[key]))*100 if key and order.get(key) is not None else Decimal(100)
+    if not price.is_finite() or not 0<=price<=100 or not quantity.is_finite() or quantity<0:
+        raise ExchangeFailure('shard_reservation_contract')
+    return math.ceil(quantity*price)
+
 class ShardFunding:
     def __init__(self,store,exchange):
         self.store,self.exchange=store,exchange
-        self.balances={};self.checked_at=0;self.poll_at=0
+        self.balances={};self.checked_at=0;self.poll_at=0;self.notice_at={}
     def balances_now(self):
         rows=self.exchange.call('GET','/portfolio/subaccounts/balances').get('subaccount_balances')
         if not isinstance(rows,list) or len(rows)>6464:raise ExchangeFailure('shard_balance_contract')
@@ -18,6 +31,9 @@ class ShardFunding:
             if not isinstance(index,int) or not 0<=index<=100 or index in balances:raise ExchangeFailure('shard_balance_contract')
             balances[index]=math.floor(Decimal(str(row['balance']))*100)
         self.balances=balances;self.checked_at=time.time()
+        old=self.store.get('alert/funding')
+        if old and old['progress'].get('message')=='Existing Demo funds are unavailable on this market’s shard; waiting for transferable primary-account cash.':
+            self.store.clear_alert('funding')
     def pending(self):
         row=self.store.get('funding')
         pending=row['progress'] if row else None
@@ -66,10 +82,15 @@ class ShardFunding:
         if time.time()-self.checked_at>=30:self.balances_now()
         available={i:max(0,v-reservations.get(i,0)) for i,v in self.balances.items()}
         current=available.get(index,0)
-        if current>=required:return True
+        if current>=required:
+            if index not in self.notice_at or self.notice_at[index]!=-1:
+                self.store.clear_alert('funding-cash-'+str(index));self.notice_at[index]=-1
+            return True
         donors=sorted(((v,i) for i,v in available.items() if i!=index),reverse=True)
-        if not donors or donors[0][0]<required-current:
-            self.store.alert('funding','Existing Demo funds are unavailable on this market’s shard; waiting for transferable primary-account cash.',False)
+        if not donors or sum(v for v,_ in donors)<required-current:
+            if time.time()-self.notice_at.get(index,-30)>=30:
+                self.store.alert('funding-cash-'+str(index),f'Demo shard {index}: this bid needs ${required/100:.2f}; ${current/100:.2f} available here and ${sum(v for v,_ in donors)/100:.2f} transferable from other shards. Resting orders reserve up to ${sum(reservations.values())/100:.2f}. This entry waits; other funded markets continue. Funds are checked automatically.',False)
+                self.notice_at[index]=time.time()
             return False
         free,source=donors[0]
         # Prefund at most the remaining bot budget to avoid a transfer per bid.

@@ -166,11 +166,11 @@ class Worker:
         # Resting orders include manual orders. Recent records resolve lost responses.
         remote=list(self.exchange.pages('/portfolio/orders','orders',status='resting'))
         self.shard_reservations={}
+        from .funding import resting_reservation
         for raw in remote:
             index=raw.get('exchange_index',0)
-            # Conservative full contract collateral for all resting orders,
-            # including manual orders; never sweep their reserved collateral.
-            self.shard_reservations[index]=self.shard_reservations.get(index,0)+math.ceil(count(raw,'remaining_count')*100)
+            # Reserve the limit's worst-case cash cost, including manual orders.
+            self.shard_reservations[index]=self.shard_reservations.get(index,0)+resting_reservation(raw)
         earliest=min((o['created_at'] for o in self.orders),default=now)
         recent=list(self.exchange.pages('/portfolio/orders','orders',min_ts=int(earliest)-60)) if self.orders else []
         by_client={o.get('client_order_id'):o for o in remote+recent}
@@ -510,7 +510,7 @@ class Worker:
             if self.funding is None:
                 from .funding import ShardFunding
                 self.funding=ShardFunding(self.store,self.exchange)
-            if not self.funding.ensure(self.quotes[item['ticker']].get('exchange_index',0),amount*item['price'],max(amount*item['price'],equity*config['bot_percent']/100-exposure),self.shard_reservations):return
+            if not self.funding.ensure(self.quotes[item['ticker']].get('exchange_index',0),amount*item['price'],max(amount*item['price'],equity*config['bot_percent']/100-exposure),self.shard_reservations):continue
             # Funding requests take time: recheck prices and entry qualification
             # on the next stream tick before preparing any order.
             if time.time()-self.quotes[item['ticker']]['at']>5 or not qualifies(config['squares'][item['square']],self.quotes[item['ticker']],item['side'],time.time(),config['qualification']):return

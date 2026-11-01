@@ -128,3 +128,13 @@ class MakerRejection(unittest.TestCase):
         self.assertFalse(worker.states['bot-1']['t/0/yes']['submitted'])
         self.assertEqual(worker.states['bot-1']['t/0/yes']['attempt'],1)
         self.assertTrue(worker.recovered)
+
+class FundingIsolation(unittest.TestCase):
+    def test_unfunded_first_market_cannot_starve_funded_second_market(self):
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[bot()]
+        worker.quotes={t:dict(quote(),exchange_index=i) for t,i in [('t',2),('u',3)]}
+        worker.recovered=True;worker.last_reconcile=NOW;worker.account=dict(cash_cents=10000,equity_cents=10000)
+        worker.funding=Mock();worker.funding.ensure.side_effect=[False,True];worker.submit=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        self.assertEqual(worker.submit.call_args.args[0]['ticker'],'u')
+        self.assertFalse(worker.states['bot-1']['t/0/yes']['submitted'])
