@@ -19,15 +19,23 @@ def protective_threshold(config,square):
     if config['loss_mode']=='research':return square.get('loss_cents')
     return None
 
-def order_threshold(bot,order):
-    """Existing positions retain the threshold from their strategy revision."""
-    revision=order.get('revision',bot['revision'])
-    if revision==bot['revision']:
-        return protective_threshold(bot['config'],bot['config']['squares'][order['square']])
-    thresholds=bot.get('prior_protection',{}).get(str(revision))
-    if not isinstance(thresholds,list) or not 0<=order['square']<len(thresholds):
-        raise ValueError('Protective settings for saved order revision are missing')
-    return thresholds[order['square']]
+def order_threshold(bot,order,quote,now,research_lookup=None):
+    """Use the current market-time row in the position's original price band."""
+    config=bot['config'];condition=order.get('condition')
+    if not condition and order.get('revision',bot['revision'])==bot['revision'] and 0<=order['square']<len(config['squares']):condition=config['squares'][order['square']]
+    minutes=max(1e-9,(quote.get('entry_close',quote['close'])-now)/60)
+    matches=[s for s in config['squares'] if condition and s['min_price']==condition['min_price'] and s['max_price']==condition['max_price'] and quote['series'] in SERIES[s['asset']]]
+    current=sorted([s for s in matches if s['min_minutes']<minutes<=s['max_minutes']],key=lambda s:(s['max_minutes']-s['min_minutes'],s['max_minutes'],s['asset']))
+    if current and current[0].get('loss_prevention_cents') is not None:return current[0]['loss_prevention_cents']
+    if config['loss_mode']=='manual':return config.get('loss_cents')
+    if config['loss_mode']=='off':return None
+    if current and current[0].get('loss_cents') is not None:return current[0]['loss_cents']
+    sources=[s['report_id'] for s in matches if s.get('report_id')]
+    source=max(sources) if sources else (condition or {}).get('report_id')
+    if source and condition and research_lookup:
+        band=f"{condition['min_price']:02d}-{condition['max_price']+1:02d}"
+        return research_lookup(source,band,minutes)
+    return None
 
 def entry_protection_matches(config,square,quote,side):
     threshold=protective_threshold(config,square)

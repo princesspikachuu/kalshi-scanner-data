@@ -103,3 +103,14 @@ test('bot save errors identify the field without exposing submitted values or ra
  assert.equal(demoError('Bot settings changed elsewhere',409),'Bot settings changed elsewhere');
  assert.equal(demoError([{msg:'PRIVATE'}],500),'Unable to complete the request.');
 });
+
+import {historicalExposureMarkup} from '../apps/web/demo-client.mjs';
+test('ended-market reconciliation is informational without suppressing live or uncertain problems',()=>{
+ const bot={key:'one',desired:'running'},orders=[{bot:'one',ticker:'old'}],health={state:'ready',at:1000,blocked_markets:['old'],historical_markets:['old'],ownership_details:{old:{reason:'awaiting_settlement',expected_contracts:2,exchange_contracts:0,market_state:'closed'}}};
+ assert.equal(botGroup(bot,health,orders,1001),'Running');
+ const html=historicalExposureMarkup(bot,health,orders);assert.match(html,/awaiting exchange confirmation/);assert.match(html,/Saved net contracts: 2/);
+ assert.equal(botGroup(bot,{...health,historical_markets:[]},orders,1001),'Needs attention');
+ const failure={...health,state:'attention',issue:{summary:'Connection failed',action:'Retrying',phase:'stream'}};
+ assert.equal(botGroup(bot,failure,orders,1001),'Needs attention');assert.equal(attentionInfo(bot,failure,orders,1001).reason,'Connection failed');
+ assert.equal(historicalExposureMarkup({key:'unrelated'},health,orders),'');
+});

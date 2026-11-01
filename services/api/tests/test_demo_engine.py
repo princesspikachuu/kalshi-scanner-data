@@ -429,12 +429,36 @@ class EditableBotRules(unittest.TestCase):
         worker.cancel=Mock()
         with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
         worker.cancel.assert_called_once()
-    def test_old_position_uses_its_saved_threshold_after_conditions_are_removed(self):
+    def test_old_position_uses_current_bot_fallback_when_conditions_are_removed(self):
         from services.demo.engine import order_threshold
         b=bot(loss_mode='manual',loss_cents=70);b['revision']=2;b['prior_protection']={'1':[55,60]}
         order=dict(client_id='entry',kind='entry',bot=b['id'],revision=1,square=1,ticker='t',side='yes',price=82,filled=2,remaining=0,status='held')
-        self.assertEqual(order_threshold(b,order),60)
+        self.assertEqual(order_threshold(b,order,quote(),NOW),70)
         worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b];worker.orders=[order];worker.quotes={'t':dict(quote(),ask=59,bid=55)}
         with patch('services.demo.runtime.time.time',return_value=NOW):self.assertTrue(worker.observe_exit_triggers('t',NOW))
         self.assertTrue(order['exit_triggered'])
         self.assertEqual(worker.store.events[-1],'exit_trigger')
+
+class CurrentTimeProtection(unittest.TestCase):
+    def test_current_time_row_overrides_purchase_row_and_blank_uses_bot_wide(self):
+        from services.demo.engine import order_threshold
+        b=bot(loss_mode='manual',loss_cents=55)
+        first=dict(b['config']['squares'][0],min_minutes=10,max_minutes=15,loss_prevention_cents=50)
+        nextrow=dict(first,min_minutes=5,max_minutes=10,loss_prevention_cents=60)
+        b['config']['squares']=[first,nextrow]
+        order=dict(square=0,revision=1,condition=first)
+        q=dict(quote(),close=NOW+15*60)
+        self.assertEqual(order_threshold(b,order,q,NOW),50)
+        self.assertEqual(order_threshold(b,order,q,NOW+5*60),60)
+        self.assertEqual(order_threshold(b,order,q,NOW+10*60),55)
+        nextrow['loss_prevention_cents']=None
+        self.assertEqual(order_threshold(b,order,q,NOW+6*60),55)
+    def test_research_reads_current_time_in_original_price_band_even_without_selected_entry_row(self):
+        from services.demo.engine import order_threshold
+        from unittest.mock import Mock
+        b=bot(loss_mode='research');s=b['config']['squares'][0];s.update(min_minutes=10,max_minutes=15,report_id=123,loss_cents=50)
+        order=dict(square=0,revision=1,condition=s);q=dict(quote(),close=NOW+15*60)
+        lookup=Mock(return_value=61)
+        self.assertEqual(order_threshold(b,order,q,NOW+6*60,lookup),61)
+        lookup.assert_called_once_with(123,'60-70',9)
+        self.assertEqual(order_threshold(b,order,q,NOW,lookup),50)

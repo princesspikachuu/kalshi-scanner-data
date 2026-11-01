@@ -301,3 +301,33 @@ class DemoPostgres(unittest.TestCase):
         with patch('services.demo.runtime.time.time',return_value=NOW+1):worker.reconcile()
         saved=self.demo.get('order/low');self.assertEqual((saved['progress']['status'],saved['progress']['filled']),('held',2))
         self.assertFalse(worker.blocked)
+
+    def test_closed_order_recovery_uses_exchange_evidence_and_preserves_unrelated_history(self):
+        import threading
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import NOW
+        from services.demo.exchange import ExchangeFailure
+        parameters=dict(client_id='late',kind='entry',ticker='t',quantity=10,bot='saved-bot',revision=1,square=0,price=10,created_at=NOW-900)
+        self.demo.put('order/late',dict(status='closed',filled=0,remaining=0,exchange_id='ex-late'),parameters=parameters)
+        worker=Worker(self.demo,object(),threading.Event(),lambda:None)
+        remote=dict(ticker='t',order_id='ex-late',status='canceled',fill_count_fp='2.00',remaining_count_fp='0.00')
+        self.assertTrue(worker.recover_closed_orders({'late':remote},set(),{'t'},NOW))
+        saved=self.demo.get('order/late');self.assertEqual(saved['parameters'],parameters)
+        self.assertEqual((saved['progress']['status'],saved['progress']['filled']),('held',2))
+        self.assertNotIn('realized_cents',saved['progress'])
+        self.assertFalse(worker.recover_closed_orders({'late':remote},set(),{'t'},NOW+1))
+    def test_research_stop_projects_current_time_cells_and_reuses_immutable_cache(self):
+        import threading
+        from uuid import uuid4
+        from psycopg.types.json import Jsonb
+        from services.demo.runtime import Worker
+        cells=[dict(hold=dict(price_band_cents='60-70',minutes_before_close=m),loss_prevention=dict(sell_threshold_cents=v)) for m,v in [(15,50),(10,60),(5,70)]]
+        with self.store.pool.connection() as c:
+            identifier=c.execute("INSERT INTO research_result(stream_key,model_version,fingerprint,asset,report) VALUES(%s,'research-return-window-v2',%s,'btc',%s) RETURNING id",('risk-test-'+uuid4().hex,'d'*64,Jsonb(dict(historical=dict(cells=cells))))).fetchone()['id']
+        worker=Worker(self.demo,object(),threading.Event(),lambda:None)
+        self.assertEqual(worker.research_stop(identifier,'60-70',12),50)
+        from types import SimpleNamespace
+        worker.store=SimpleNamespace() # Any subsequent database read would fail.
+        self.assertEqual(worker.research_stop(identifier,'60-70',8),60)
+        self.assertEqual(worker.research_stop(identifier,'60-70',4),70)
+        self.assertEqual(worker.research_stop(identifier,'60-70',5),70)

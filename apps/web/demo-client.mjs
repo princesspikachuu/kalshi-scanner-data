@@ -25,7 +25,7 @@ export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(bot.desired!=='running')return 'Paused';
  const recent=health.at>0&&now-health.at<=90;
  const routine=health.state==='syncing'&&health.sync_pending&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
- if(!recent||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
+ if(!recent||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>!health.historical_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
  return 'Running';
 }
 export function botExposure(orders=[]){
@@ -46,8 +46,15 @@ export function botExposureMarkup(orders=[],botId=''){
  const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
  return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${o.kind==='entry'?'Entry bid':o.exit_role==='profit'?'Profit sell':'Protective exit'}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain','cancel_pending'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
 }
+export function historicalExposureMarkup(bot,health,orders=[]){
+ if(!bot)return '';
+ const tickers=(health.historical_markets||[]).filter(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t));
+ if(!tickers.length)return '';
+ const e=escapeHTML,qty=n=>Number.isFinite(n)?String(n):'Unknown';
+ return `<section class="panel"><h3>Ended markets awaiting exchange confirmation</h3><p class="small">These markets have ended and have no live or uncertain orders. Their records remain saved while Demo settlement or historical positions are verified. They do not require action and do not block other markets.</p>${tickers.map(t=>{const d=health.ownership_details?.[t]||{};return `<p class="small"><strong>${e(t)}</strong><br>${d.reason==='market_unavailable'?'Demo no longer returns this ticker.':'Waiting for settlement or historical position confirmation.'} Saved net contracts: ${e(qty(d.expected_contracts))} · Exchange net contracts: ${e(qty(d.exchange_contracts))} · Market status: ${e(d.market_state||'Unavailable')}</p>`}).join('')}</section>`;
+}
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
- const markets=(health.blocked_markets||[]).filter(t=>orders.some(o=>o.bot===bot.key&&o.ticker===t));
+ const markets=(health.blocked_markets||[]).filter(t=>!health.historical_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t));
  const base={markets,lastVerified:health.reconciled_at,lastSeen:health.at,control:'retry'};
  if(markets.length)return {...base,reason:'These markets have manual or unreconciled exposure.',action:'Review their orders and positions in Activity. New entries wait in affected markets while unrelated trading continues.',control:'activity',phase:'Ownership reconciliation'};
  if(health.state==='connection_required')return {...base,reason:'A verified Kalshi Demo connection is required.',action:'Connect your Demo API key and private key. The worker will verify the account before trading.',control:'connection',phase:'Account connection'};
@@ -66,6 +73,7 @@ export function exitEvidence(item){
  const d=item.details||{},q=d.quote||{},lines=[];
  if(item.kind!=='exit_trigger')return lines;
  if(Number.isFinite(d.threshold))lines.push(`Exit trigger: ${d.reference==='ask'?'ASK':'BID (previous rule)'} at or below ${d.threshold}¢`);
+ if(Number.isFinite(d.minutes_remaining))lines.push(`Protection time: ${Math.round(d.minutes_remaining*100)/100} minutes remaining · current market time`);
  if(Number.isFinite(q.bid)&&Number.isFinite(q.ask)&&['yes','no'].includes(d.side)){
   const bid=d.side==='yes'?q.bid:100-q.ask,ask=d.side==='yes'?q.ask:100-q.bid;
   lines.push(`Observed ${d.side.toUpperCase()} bid ${bid}¢ / ask ${ask}¢`);

@@ -1,5 +1,6 @@
 """Single fenced Demo worker. Bounded stream, durable intents, verified recovery."""
 import json,os,time,signal,threading,hashlib,traceback,math
+from collections import OrderedDict
 from datetime import datetime,timezone
 from decimal import Decimal
 from uuid import uuid5,NAMESPACE_URL
@@ -30,7 +31,7 @@ def quote(raw,now):
             expected=timestamp(raw['expected_expiration_time'])
             if math.isfinite(expected) and 0<expected<=close:entry_close=expected;entry_clock='expected_expiration'
         return ticker,dict(bid=bid,ask=ask,at=now,close=close,entry_close=entry_close,entry_clock=entry_clock,
-            open=timestamp(raw['open_time']) if raw.get('open_time') else 0,exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
+            metadata_at=now,open=timestamp(raw['open_time']) if raw.get('open_time') else 0,exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
     except (KeyError,ValueError,TypeError):return None
 
 class Worker:
@@ -41,6 +42,9 @@ class Worker:
         self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.stream_command=3;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
+        self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
+        self.historical_lookup_at={};self.next_historical_lookup=0;self.historical_missing={}
+        self.risk_sources=OrderedDict()
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
     def entry_diagnostics(self,now):
@@ -109,9 +113,9 @@ class Worker:
         now=time.time()
         if state=='ready':self.issue=None
         if now-self.last_health>=10 or state!=self.last_health_state:
-            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1'],
+            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
+                reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),historical_markets=sorted(self.historical_markets),ownership_details=self.ownership_details,bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
         if now-self.last_diagnostic>=60:
             print(json.dumps(dict(event='demo_diagnostic',state=state,stage=self.stage,
@@ -171,6 +175,24 @@ class Worker:
         if self.order_cache.get(order['client_id'])!=packed:
             self.store.put('order/'+order['client_id'],state,parameters=data)
             self.order_cache[order['client_id']]=packed
+    def research_stop(self,identifier,band,minutes):
+        if identifier not in self.risk_sources:
+            with self.store.pool.connection() as c:
+                row=c.execute("""SELECT asset,(SELECT jsonb_agg(jsonb_build_array(
+                    cell#>'{hold,price_band_cents}',cell#>'{hold,minutes_before_close}',
+                    coalesce(cell#>>'{loss_prevention,sell_threshold_cents}',cell#>>'{loss_prevention,threshold_cents}',cell#>>'{conditional_loss,sell_threshold_cents}',cell#>>'{conditional_loss,threshold_cents}')::numeric))
+                    FROM jsonb_array_elements(report#>'{historical,cells}') cell) AS stops
+                    FROM research_result WHERE id=%s""",(identifier,)).fetchone()
+            from services.research.reports import MINUTES
+            bands={}
+            if row:
+                for key,upper,stop in row['stops'] or []:
+                    lower=max((m for m in MINUTES[row['asset']] if m<upper),default=0)
+                    bands.setdefault(key,[]).append((lower,upper,stop))
+            self.risk_sources[identifier]=bands
+            if len(self.risk_sources)>500:self.risk_sources.popitem(last=False)
+        self.risk_sources.move_to_end(identifier)
+        return next((stop for low,high,stop in self.risk_sources[identifier].get(band,[]) if low<minutes<=high),None)
     def record(self,kind,order,message,**detail):
         self.store.event(kind,message,bot=order.get('bot'),ticker=order.get('ticker'),details=dict(order_kind=order.get('kind'),client_id=order.get('client_id'),exchange_id=order.get('exchange_id'),side=order.get('side'),price=order.get('price'),quantity=order.get('quantity'),condition=order.get('condition'),quote=self.quotes.get(order.get('ticker')),**detail))
     def apply_cycle_offsets(self,offsets):
@@ -212,6 +234,50 @@ class Worker:
             ticker=order['ticker'],side=order['side'],price=order['profit_target_cents'],quantity=amount,close=quote['close'],exchange_index=order.get('exchange_index',-1),
             created_at=now,status='intent',remaining=0,filled=0))
         return True
+    def recover_closed_orders(self,by_client,known,blocked,now):
+        if now<self.next_closed_repair:return False
+        self.next_closed_repair=now+60
+        candidates={key:raw for key,raw in by_client.items() if key and key not in known and raw.get('ticker') in blocked}
+        if not candidates:return False
+        from .ownership import needs_recovery
+        keys=['demo/order/'+key for key in list(candidates)[:4000]]
+        with self.store.pool.connection() as c:
+            rows=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) AND progress->>'status' IN ('closed','rejected')",(keys,)).fetchall()
+        recovered=False
+        for row in rows:
+            data,state=row['parameters'],row['progress'];raw=candidates.get(data.get('client_id'))
+            if not raw or not needs_recovery(data,state,raw):continue
+            state=dict(state,exchange_id=raw['order_id'],filled=count(raw,'fill_count'),remaining=count(raw,'remaining_count'),fees=cents(raw.get('maker_fees_dollars',0))+cents(raw.get('taker_fees_dollars',0)))
+            state['status']='resting' if raw['status']=='resting' else 'held' if data['kind']=='entry' and state['filled'] else 'closed'
+            if state['status']!='closed':state.pop('closed_at',None)
+            self.store.put('order/'+data['client_id'],state)
+            self.record('fill_recovered',dict(data,**state),'Recovered exchange-confirmed order changes after local closure',previous_filled=row['progress'].get('filled',0),filled=state['filled'])
+            print(json.dumps(dict(event='demo_closed_order_recovered',ticker=data['ticker'],kind=data['kind'],previous_filled=row['progress'].get('filled',0),filled=state['filled'])),flush=True)
+            recovered=True
+        return recovered
+    def refresh_historical_market(self,tickers,now):
+        if now<self.next_historical_lookup:return
+        from urllib.parse import quote as path_quote
+        for ticker in sorted(tickers):
+            q=self.quotes.get(ticker)
+            prior=next((o for o in self.orders if o['ticker']==ticker and o.get('entry_strategy')!='buy_low_sell_high' and o.get('close',now+1)<=now),None)
+            if not (q and q['close']<=now or prior) or now<self.historical_lookup_at.get(ticker,0):continue
+            self.next_historical_lookup=now+10;self.historical_lookup_at[ticker]=now+300
+            try:
+                response=self.exchange.call('GET','/markets/'+path_quote(ticker,safe=''));parsed=quote(response.get('market',{}),now)
+                if not parsed or parsed[0]!=ticker:return
+                _,metadata=parsed
+                if q:
+                    for field in ('close','entry_close','entry_clock','status','result','exchange_index','series','open','metadata_at'):q[field]=metadata[field]
+                else:metadata['at']=0;self.quotes[ticker]=metadata
+                self.historical_missing.pop(ticker,None)
+            except ExchangeFailure as error:
+                if error.status==404:
+                    end=q['close'] if q else prior['close']
+                    self.historical_missing[ticker]=dict(market_end=end,checked_at=now)
+                elif error.code=='authentication':raise
+                else:self.historical_lookup_at[ticker]=now+60
+            return
     def reconcile(self):
         """Complete paginated exchange state; gaps never manufacture fills."""
         now=time.time();self.load_bots()
@@ -225,8 +291,8 @@ class Worker:
             index=raw.get('exchange_index',0)
             # Reserve the limit's worst-case cash cost, including manual orders.
             self.shard_reservations[index]=self.shard_reservations.get(index,0)+resting_reservation(raw)
-        earliest=min((o['created_at'] for o in self.orders),default=now)
-        recent=list(self.exchange.pages('/portfolio/orders','orders',min_ts=int(earliest)-60)) if self.orders else []
+        earliest=min((o['created_at'] for o in self.orders),default=now-3600)
+        recent=list(self.exchange.pages('/portfolio/orders','orders',min_ts=int(earliest)-60)) if self.orders or positions else []
         by_client={o.get('client_order_id'):o for o in remote+recent}
         known_ids={o['client_id'] for o in self.orders};blocked={o['ticker'] for o in remote if o.get('client_order_id') not in known_ids}
         for order in self.orders:
@@ -279,6 +345,8 @@ class Worker:
                 self.save_order(order)
             if order['kind']=='entry' and order['status']!='closed':expected[order['ticker']]=expected.get(order['ticker'],0)+(order.get('filled',0)-order.get('sold',0))*(1 if order['side']=='yes' else -1)
         actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
+        mismatches={t for t in set(expected)|set(actual) if abs(expected.get(t,0)-actual.get(t,0))>.001}|blocked
+        self.refresh_historical_market(mismatches,now)
         for ticker in set(expected)|set(actual):
             q=self.quotes.get(ticker)
             if q and q.get('status') in ('settled','finalized') and q.get('result') in ('yes','no'):
@@ -292,7 +360,18 @@ class Worker:
                 continue
             if abs(expected.get(ticker,0)-actual.get(ticker,0))>.001:blocked.add(ticker)
         self.blocked=blocked
-        if blocked:self.store.alert('ownership','New entries paused in '+str(len(blocked))+' market(s): manual or unreconciled exposure. Unrelated markets continue.',True)
+        self.historical_lookup_at={t:v for t,v in self.historical_lookup_at.items() if t in blocked}
+        self.historical_missing={t:v for t,v in self.historical_missing.items() if t in blocked}
+        if blocked and self.recover_closed_orders(by_client,known_ids,blocked,now):
+            self.last_discovery=0;self.last_reconcile=0;self.recovered=False;return
+        from .ownership import describe
+        self.ownership_details=describe(blocked,expected,actual,self.quotes,self.orders,remote,now,self.historical_missing)
+        self.historical_markets={t for t,d in self.ownership_details.items() if d['informational']}
+        actionable=blocked-self.historical_markets
+        digest=json.dumps(self.ownership_details,sort_keys=True)
+        if digest!=self.ownership_digest:
+            print(json.dumps(dict(event='demo_ownership_check',actionable=len(actionable),historical=len(self.historical_markets),markets=self.ownership_details)),flush=True);self.ownership_digest=digest
+        if actionable:self.store.alert('ownership','New entries paused in '+str(len(actionable))+' market(s): manual or unreconciled exposure. Unrelated markets continue.',True)
         else:self.store.clear_alert('ownership')
         self.account=dict(cash_cents=int(balance['balance']),position_value_cents=int(balance['portfolio_value']),
             equity_cents=int(balance['balance'])+int(balance['portfolio_value']),at=now,
@@ -329,7 +408,7 @@ class Worker:
                     # Price and observation time are one piece of evidence. REST
                     # metadata must not replace a verified stream price while
                     # inheriting its timestamp (including stale stream quotes).
-                    q=dict(old,close=q['close'],entry_close=q['entry_close'],entry_clock=q['entry_clock'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'],open=q.get('open',0))
+                    q=dict(old,close=q['close'],entry_close=q['entry_close'],entry_clock=q['entry_clock'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'],open=q.get('open',0),metadata_at=now)
                 else:q['at']=0
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
         from .watchlist import select_markets
@@ -349,20 +428,20 @@ class Worker:
             if order['ticker']!=ticker or order['kind']!='entry' or order.get('exit_triggered') or order.get('status')=='uncertain' or order.get('filled',0)<=order.get('sold',0):continue
             bot=bots.get(order['bot'])
             if not bot:continue
-            threshold=order_threshold(bot,order)
+            threshold=order_threshold(bot,order,q,now,self.research_stop)
             bid,ask=side_quote(q,order['side'])
             if threshold is None or not 0<=bid<ask<100 or ask>threshold:continue
             if q.get('source')=='orderbook' and not q.get('book_ready'):continue
             order['exit_triggered']=True;order['exit_reference']='ask';self.save_order(order)
             prior_ask=side_quote(previous,order['side'])[1] if previous and not (previous.get('source')=='orderbook' and not previous.get('book_ready')) else None
             gap=round(q.get('event_at',q['at'])-previous.get('event_at',previous['at']),3) if previous and previous.get('at') else None
-            self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',previous_ask=prior_ask,observation_gap_seconds=gap)
-            print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap,source=q.get('source'),clock=q.get('clock'),seq=q.get('seq'))),flush=True)
+            self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',minutes_remaining=max(0,(q.get('entry_close',q['close'])-now)/60),protection_clock='market_time_remaining',previous_ask=prior_ask,observation_gap_seconds=gap)
+            print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,minutes_remaining=max(0,(q.get('entry_close',q['close'])-now)/60),bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap,source=q.get('source'),clock=q.get('clock'),seq=q.get('seq'))),flush=True)
             triggered=True
         return triggered
 
     def stream(self):
-        desired=set(self.quotes)
+        desired={t for t,q in self.quotes.items() if q.get('status','active')=='active' and q['close']>time.time()}
         if not desired:return
         if self.socket is None:
             self.close_stream()
@@ -577,7 +656,7 @@ class Worker:
                     if parent:parent['exit_ceiling_cents']=price;self.save_order(parent)
                     self.cancel(order,'Lowering protective maker exit as current ASK falls');return
             if order['kind']!='entry' or order.get('filled',0)<=order.get('sold',0):continue
-            threshold=order_threshold(bot,order)
+            threshold=order_threshold(bot,order,q,now,self.research_stop)
             from .engine import side_quote
             bid,ask=side_quote(q,order['side'])
             if not 0<=bid<ask<=100:continue
@@ -748,7 +827,7 @@ def run(stop):
                     if signer:break
                     if not connection_notice:
                         print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
-                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1']))
+                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1']))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:
                         maintenance(store,os.environ,stop);next_maintenance=time.time()+300
