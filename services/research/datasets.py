@@ -33,7 +33,7 @@ MAX_ARCHIVE_INFLIGHT_BYTES=8*1024*1024
 FORMAT = 'raw-evidence-dataset-v1'
 STORAGE = 'raw-evidence-gzip-v1'
 MAX_DATASET_BYTES = 64*1024*1024
-COMPACT_THRESHOLD = 256*1024
+COMPACT_THRESHOLD = 32*1024
 TRADE_PARTITION_THRESHOLD = 10000
 TRADE_PARTITION_BYTES = 1024*1024
 
@@ -47,8 +47,10 @@ def storage_payload(encoded, fingerprint):
         if hashlib.sha256(raw).hexdigest()!=fingerprint:raise EvidenceConflict('Invalid dataset fingerprint')
     if len(raw)>MAX_DATASET_BYTES:raise ValueError('Dataset too large')
     if len(raw)<COMPACT_THRESHOLD:return json.loads(encoded)
-    return dict(storage=STORAGE,uncompressed_bytes=len(raw),sha256=fingerprint,
-                data=base64.b64encode(gzip.compress(raw,compresslevel=1,mtime=0)).decode())
+    stored=dict(storage=STORAGE,uncompressed_bytes=len(raw),sha256=fingerprint,
+                data=base64.b64encode(gzip.compress(raw,compresslevel=6,mtime=0)).decode())
+    # Keep incompressible small datasets in their original representation.
+    return stored if len(json.dumps(stored,separators=(',',':')).encode())<len(raw) else json.loads(encoded)
 
 
 def decoded_dataset(dataset):

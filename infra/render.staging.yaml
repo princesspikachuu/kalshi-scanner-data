@@ -75,6 +75,6 @@ projects:
             plan: 0.5c-1g
             region: oregon
             postgresMajorVersion: '17'
-            diskSizeGB: 5
+            diskSizeGB: 10
             storageAutoscalingEnabled: true
             ipAllowList: []

@@ -129,6 +129,8 @@ def run(settings,stop):
             if not c.execute("SELECT to_regclass('research_campaign_result') IS NOT NULL AS ready").fetchone()['ready']:
                 raise ConfigurationError('Apply the committed migrations before starting collection')
         if settings.role in ('collector','combined'):
+            from .scope_storage import enable_compact_writes
+            enable_compact_writes()
             from .storage_audit import log_storage
             log_storage(pool)
         objects=R2Objects.connect(account_id=settings.account_id,bucket=settings.bucket,

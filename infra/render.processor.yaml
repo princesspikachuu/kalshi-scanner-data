@@ -27,6 +27,8 @@ services:
     value: research
   - key: WORKER_ROLE
     value: demo
+  - key: DATABASE_CAPACITY_GB
+    value: '10'
   - key: DEMO_VAULT_KEY
     sync: false
   - key: COLLECTION_ENABLED

@@ -31,9 +31,17 @@ class DatasetStorageTests(unittest.TestCase):
         self.assertEqual(prepare_report('btc',[original],latest_ids=[1]),prepare_report('btc',[compact],latest_ids=[1]))
 
     def test_corruption_metadata_trailing_members_and_decompression_bomb_fail(self):
-        payload=dataset();raw=self.encoded(payload['payload'])
+        payload=dataset();payload['payload']['padding']='preserved evidence '*3000
+        payload['fingerprint']=digest(payload['payload']);raw=self.encoded(payload['payload'])
         with patch('services.research.datasets.COMPACT_THRESHOLD',0):stored=storage_payload(raw,payload['fingerprint'])
         variants=[dict(uncompressed_bytes=True),dict(uncompressed_bytes=MAX_DATASET_BYTES+1),dict(sha256='0'*64),dict(data='bad!'),dict(uncompressed_bytes=1),dict(data=base64.b64encode(gzip.compress(raw.encode())+gzip.compress(b'{}')).decode()),dict(data=base64.b64encode(gzip.compress(b'x'*1000000)).decode())]
         for changes in variants:
             with self.subTest(changes=list(changes)):
                 with self.assertRaises(EvidenceConflict):decoded_dataset({**payload,'payload':{**stored,**changes}})
+
+    def test_medium_datasets_are_compressed_losslessly_and_better_than_fast_gzip(self):
+        payload={'format':'raw-evidence-dataset-v1','records':[dict(ticker='BTC-'+str(i//20),price=(i*73)%99,timestamp=1800000000+i,quantity=(i*31)%200) for i in range(1000)]}
+        raw=self.encoded(payload);self.assertTrue(32*1024<len(raw)<256*1024)
+        stored=storage_payload(raw,digest(payload));self.assertEqual(stored['storage'],STORAGE)
+        self.assertLess(len(base64.b64decode(stored['data'])),len(gzip.compress(raw.encode(),compresslevel=1)))
+        self.assertEqual(decoded_dataset(dict(payload=stored,fingerprint=digest(payload)))['payload'],payload)

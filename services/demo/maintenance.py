@@ -9,6 +9,23 @@ from services.api.demo_models import Policy
 
 MAX_OBJECT=4*1024*1024
 
+def storage_measurement(size,policy,env,now,previous=None):
+    # Render capacity is supplied as non-secret deployment configuration after
+    # checking the provisioned database. The UI's editable value is a fallback.
+    configured=policy['storage_limit_gb'];capacity=configured;source='configured'
+    value=env.get('DATABASE_CAPACITY_GB')
+    if value is not None:
+        try:
+            supplied=int(value)
+            if str(supplied)!=str(value) or not 1<=supplied<=16000:raise ValueError()
+            capacity=supplied;source='deployment'
+        except (TypeError,ValueError):source='configured_invalid_deployment'
+    result=dict(at=now,database_bytes=size,provisioned_gb=capacity,configured_limit_gb=configured,
+        capacity_source=source,measurement='logical_database',percent=100*size/(capacity*1024**3))
+    if previous and 60<=now-previous.get('at',now)<=7200:
+        result.update(change_bytes=size-previous['database_bytes'],change_seconds=now-previous['at'])
+    return result
+
 def object_store(env):
     from services.research.r2 import R2Objects
     return R2Objects.connect(account_id=env['R2_ACCOUNT_ID'],bucket=env['R2_BUCKET'],access_key_id=env['R2_ACCESS_KEY_ID'],secret_access_key=env['R2_SECRET_ACCESS_KEY'])
@@ -101,9 +118,11 @@ def maintenance(store,env,stop):
     row=store.get('policy');policy=Policy(**row['progress']).model_dump() if row else Policy().model_dump()
     with store.pool.connection() as c:
         size=c.execute('SELECT pg_database_size(current_database()) AS size').fetchone()['size']
-    used=100*size/(policy['storage_limit_gb']*1024**3)
-    store.put('storage-health',dict(at=time.time(),database_bytes=size,provisioned_gb=policy['storage_limit_gb'],percent=used))
-    if used>=policy['storage_warning_percent']:store.alert('storage',f'Database uses {used:.1f}% of configured capacity. Review storage and archiving thresholds.',used>=policy['storage_critical_percent'])
+    previous=store.get('storage-health')
+    measurement=storage_measurement(size,policy,env,time.time(),previous['progress'] if previous else None)
+    used=measurement['percent'];store.put('storage-health',measurement)
+    print(json.dumps(dict(event='database_storage_health',**measurement)),flush=True)
+    if used>=policy['storage_warning_percent']:store.alert('storage',f'Database data uses {used:.1f}% of {measurement["provisioned_gb"]} GB capacity. Review storage and archiving thresholds.',used>=policy['storage_critical_percent'])
     else:store.clear_alert('storage')
     objects=None
     try:
