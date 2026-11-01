@@ -331,3 +331,25 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(worker.research_stop(identifier,'60-70',8),60)
         self.assertEqual(worker.research_stop(identifier,'60-70',4),70)
         self.assertEqual(worker.research_stop(identifier,'60-70',5),70)
+
+    def test_fractional_profit_fills_complete_cycle_without_float_dust(self):
+        import threading
+        from services.demo.runtime import Worker
+        from services.api.tests.test_demo_cycles import entry,book,NOW
+        body=config(strategy='buy_low_sell_high',cycle_cutoff_minutes=1)
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        identifier=self.client.post('/demo/bots',json=body).json()['id']
+        parent=entry(bot=identifier,quantity=.8,filled=.8,remaining=0)
+        data={k:v for k,v in parent.items() if k not in ('status','filled','remaining')}
+        self.demo.put('order/low',dict(status='held',filled=.8,remaining=0),parameters=data)
+        for i,filled in enumerate([.1,.7]):self.demo.put('order/high-'+str(i),dict(status='closed',filled=filled,remaining=0),parameters=dict(kind='exit',parent='low',exit_role='profit',price=20))
+        self.demo.put('trigger/'+identifier,{'t/0/yes':dict(cycle=1,submitted=True,first_at=NOW)},parameters=dict(revision=1))
+        class Ex:
+            def call(self,*args,**kwargs):return dict(balance=10008,portfolio_value=0)
+            def pages(self,path,key,**params):
+                if key=='market_positions' or params.get('status')=='resting':return []
+                return [dict(ticker='t',order_id='ex-low',client_order_id='low',status='executed',fill_count_fp='0.80',remaining_count_fp='0.00')]
+        worker=Worker(self.demo,Ex(),threading.Event(),lambda:None);worker.quotes={'t':book()}
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.reconcile()
+        self.assertEqual(self.demo.get('order/low')['progress']['status'],'closed')
+        self.assertEqual(self.demo.get('trigger/'+identifier)['progress']['t/0/yes']['cycle'],2)

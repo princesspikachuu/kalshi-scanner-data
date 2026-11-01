@@ -226,7 +226,7 @@ class Worker:
         if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']!=order['side'] and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
         children=[o for o in self.orders if o.get('parent')==order['client_id'] and o['status'] not in ('closed','rejected')]
         if any(o['status'] in ('intent','uncertain') for o in children):return False
-        amount=order['filled']-order.get('sold',0)-sum(o.get('remaining',0) for o in children)
+        amount=round(order['filled']-order.get('sold',0)-sum(o.get('remaining',0) for o in children),2)
         if amount<=.001:return False
         attempt=order.get('profit_attempt',0)+1;order['profit_attempt']=attempt;self.save_order(order)
         identifier=str(uuid5(NAMESPACE_URL,f"demo-profit/{order['client_id']}/{attempt}"))
@@ -320,7 +320,7 @@ class Worker:
         sold={};exit_fees={}
         for row in exits:
             parent=row['parameters'].get('parent')
-            sold[parent]=sold.get(parent,0)+row['progress'].get('filled',0)
+            sold[parent]=round(sold.get(parent,0)+row['progress'].get('filled',0),2)
             exit_fees[parent]=exit_fees.get(parent,0)+row['progress'].get('fees',0)
         self.orders=self.store.active_orders()
         from .cycles import offset_plan
@@ -329,7 +329,7 @@ class Worker:
         self.apply_cycle_offsets(offsets)
         for order in self.orders:
             if order['kind']=='entry':
-                order['sold']=sold.get(order['client_id'],0)+order.get('offset_quantity',0)
+                order['sold']=round(sold.get(order['client_id'],0)+order.get('offset_quantity',0),2)
                 if order.get('filled',0)>0 and order['sold']>=order['filled'] and order.get('remaining',0)==0:
                     sale_total=sum(r['progress'].get('filled',0)*r['parameters']['price'] for r in exits if r['parameters'].get('parent')==order['client_id'])
                     order['realized_cents']=round(sale_total+order.get('offset_credit_cents',0)-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
@@ -339,7 +339,7 @@ class Worker:
         expected={}
         for order in self.orders:
             if order['kind']=='entry':
-                order['sold']=sold.get(order['client_id'],0)+order.get('offset_quantity',0)
+                order['sold']=round(sold.get(order['client_id'],0)+order.get('offset_quantity',0),2)
                 posted=[r['parameters']['price'] for r in exits if r['parameters'].get('exit_role')!='profit' and r['parameters'].get('parent')==order['client_id'] and r['progress'].get('status')!='rejected' and r['parameters'].get('created_at',0)>=order.get('exit_rule_started_at',0)]
                 if posted:order['exit_ceiling_cents']=min(order.get('exit_ceiling_cents',99),*posted)
                 self.save_order(order)
