@@ -791,7 +791,7 @@ class Worker:
             # on the next stream tick before preparing any order.
             from .cycles import eligible
             still_matches=eligible(config,config['squares'][item['square']],self.quotes[item['ticker']],time.time()) if is_cycle else qualifies(config['squares'][item['square']],self.quotes[item['ticker']],item['side'],time.time(),config['qualification'])
-            if time.time()-self.quotes[item['ticker']]['at']>5 or not still_matches:return
+            if time.time()-self.quotes[item['ticker']]['at']>5 or not still_matches:continue
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))

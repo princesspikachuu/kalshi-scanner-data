@@ -171,14 +171,15 @@ def install_demo(app,auth,mutate,pool):
             if bot:UUID(bot)
         except ValueError:raise HTTPException(422,'Invalid identifier') from None
         if ticker and len(ticker)>256 or kind and len(kind)>40:raise HTTPException(422,'Invalid filter')
+        kinds=['order_intent','order','order_rejected','order_uncertain','fill','fill_recovered','cancel','settlement','realized','position_offset'] if kind=='transactions' else [kind] if kind else None
         with pool.connection() as c:
             rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
                 WHERE status='succeeded' AND idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
                 AND (%s::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM research_job WHERE id=%s::uuid))
                 AND (%s::text IS NULL OR parameters->>'bot'=%s)
                 AND (%s::text IS NULL OR parameters->>'ticker'=%s)
-                AND (%s::text IS NULL OR parameters->>'kind'=%s)
-                ORDER BY created_at DESC,id DESC LIMIT 51""",(before,before,bot,bot,ticker,ticker,kind,kind)).fetchall()
+                AND (%s::text[] IS NULL OR parameters->>'kind'=ANY(%s::text[]))
+                ORDER BY created_at DESC,id DESC LIMIT 51""",(before,before,bot,bot,ticker,ticker,kinds,kinds)).fetchall()
         return dict(contract='demo-v1',items=[{'id':r['id'],**r['parameters'],**r['progress']} for r in rows[:50]],next_before=rows[49]['id'] if len(rows)>50 else None)
     @app.get('/demo/orders')
     def orders(request:Request):
@@ -198,15 +199,15 @@ def install_demo(app,auth,mutate,pool):
         return dict(contract='demo-v1',points=points[::step],period=period)
     @app.get('/demo/performance')
     def square_performance(request:Request):
-        auth(request);require_query(request,('bot','group','period','timezone'))
+        auth(request);require_query(request,('bot','group','period','timezone','start','end'))
         try:identifier=str(UUID(request.query_params.get('bot','')))
         except ValueError:raise HTTPException(422,'Choose a bot') from None
         bot=bot_get(identifier)
         group=request.query_params.get('group','square');period=request.query_params.get('period','all');zone=request.query_params.get('timezone','America/Los_Angeles')
         from .demo_performance import query_performance
-        try:items,limited=query_performance(pool,bot['parameters'],identifier,group,period,zone)
-        except (ValueError,KeyError):raise HTTPException(422,'Invalid performance filters') from None
-        return dict(contract='demo-v1',bot=identifier,period='Lifetime' if period=='all' else period,group=group,timezone=zone,items=items,limited=limited,at=time.time())
+        try:items,limited=query_performance(pool,bot['parameters'],identifier,group,period,zone,request.query_params.get('start') or None,request.query_params.get('end') or None)
+        except (ValueError,KeyError,OverflowError):raise HTTPException(422,'Invalid performance filters') from None
+        return dict(contract='demo-v1',bot=identifier,period='Lifetime' if period=='all' else period,group=group,timezone=zone,start=request.query_params.get('start'),end=request.query_params.get('end'),items=items,limited=limited,at=time.time())
     @app.get('/demo/research')
     def research(request:Request):
         auth(request);require_query(request,('asset','bot','start','end'))

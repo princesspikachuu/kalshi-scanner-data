@@ -186,6 +186,42 @@ class DemoPostgres(unittest.TestCase):
         for suffix in ['&group=bad','&timezone=invalid','&group=time&group=hour']:
             self.assertEqual(self.client.get(path+suffix).status_code,422)
 
+    def test_time_performance_uses_entry_cohorts_local_dates_and_original_market_clock(self):
+        from datetime import datetime,timezone
+        identifier=self.client.post('/demo/bots',json=config()).json()['id']
+        # Two occurrences of 01:30 on the Pacific fall-back day, plus the next day.
+        instants=['2026-11-01T08:30:00+00:00','2026-11-01T09:30:00+00:00','2026-11-02T08:00:00+00:00']
+        for i,instant in enumerate(instants):
+            at=datetime.fromisoformat(instant).timestamp()
+            self.demo.put('order/time-'+str(i),dict(status='closed',filled=2,remaining=0,realized_cents=10),
+                parameters=dict(bot=identifier,kind='entry',revision=1,square=0,created_at=at,market_close_at=at+300,close=at+240,entry_strategy='buy_low_sell_high'))
+        at=datetime.fromisoformat(instants[0]).timestamp()
+        self.demo.put('order/legacy-cycle',dict(status='rejected',filled=0,remaining=0),parameters=dict(bot=identifier,kind='entry',revision=0,square=0,created_at=at,close=at+60,entry_strategy='buy_low_sell_high'))
+        query='?bot='+identifier+'&start=2026-11-01&end=2026-11-01&timezone=America/Los_Angeles'
+        response=self.client.get('/demo/performance'+query+'&group=hour')
+        self.assertEqual(response.status_code,200,response.text)
+        rows=response.json()['items'];self.assertEqual(len(rows),1)
+        self.assertEqual((rows[0]['bucket'],rows[0]['orders'],rows[0]['scored'],rows[-1]['recorded_pnl_cents']),(1,3,2,20))
+        rows=self.client.get('/demo/performance'+query+'&group=time').json()['items']
+        self.assertEqual([(r['bucket'],r['orders']) for r in rows],[(5,2),(None,1)])
+        self.assertIsNone(rows[-1]['recorded_pnl_cents'])
+        # Closing today does not move an entry from its original date cohort.
+        self.assertEqual(sum(r['orders'] for r in self.client.get('/demo/performance'+query+'&group=square').json()['items']),3)
+        for suffix in ['&group=bad','&timezone=bad','&start=2026-11-03&end=2026-11-01','&start=bad']:
+            self.assertEqual(self.client.get('/demo/performance?bot='+identifier+suffix).status_code,422)
+
+    def test_latest_transactions_filter_is_bot_scoped_and_ignores_control_events(self):
+        from uuid import uuid4
+        identifier=self.client.post('/demo/bots',json=config()).json()['id']
+        self.demo.event('order','Accepted',bot=identifier,details=dict(order_kind='entry',price=3,quantity=10))
+        self.demo.event('fill','Filled',bot=identifier,details=dict(filled=2))
+        self.demo.event('bot_configured','Changed',bot=identifier)
+        self.demo.event('order','Other bot order',bot=str(uuid4()))
+        response=self.client.get('/demo/activity?bot='+identifier+'&kind=transactions')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual([r['kind'] for r in response.json()['items']],['fill','order'])
+        self.assertEqual(len(self.client.get('/demo/activity?bot='+identifier+'&kind=order').json()['items']),1)
+
     def test_retired_column_values_are_ignored_and_removed_from_new_configs(self):
         body=config(column_maximum_cents={'60-70':65,'90-100':94})
         response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text)

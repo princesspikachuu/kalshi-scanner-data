@@ -1,14 +1,16 @@
 import {createAuthClient} from './auth-client.mjs';
-import {demoCall,escapeHTML as e,money,botGroup,botExposure,botExposureMarkup,historicalExposureMarkup,attentionInfo,attentionMarkup,resetMarkup,squarePerformanceMarkup} from './demo-client.mjs';
+import {demoCall,escapeHTML as e,money,botGroup,botExposure,botExposureMarkup,historicalExposureMarkup,attentionInfo,attentionMarkup,resetMarkup,squarePerformanceMarkup,latestTransactionsMarkup} from './demo-client.mjs';
 import {openBotBuilder,duplicateBotConfig,restoreBotDraft,clearBotDraft} from './bot-builder.mjs';
 const $=id=>document.getElementById(id);let workspace,orders=[],period=localStorage.getItem('money-period')||'24H',busy=false,delay=15000,timer,draftChecked=false;
 if(!['24H','7D','30D'].includes(period))period='24H';
 const performance=new Map(),exposureOpen=new Set();
+const transactions=new Map();
 const setMessage=text=>$('message').textContent=text;
 function group(bot){return botGroup(bot,workspace.health,orders)}
 function draw(){
  for(const id of exposureOpen)if(!workspace.bots.some(b=>b.key===id))exposureOpen.delete(id);
  for(const id of performance.keys())if(!workspace.bots.some(b=>b.key===id))performance.delete(id);
+ for(const id of transactions.keys())if(!workspace.bots.some(b=>b.key===id))transactions.delete(id);
  $('resetStatus').innerHTML=resetMarkup(workspace.reset);
  const resetting=$('confirmReset').disabled||workspace.reset_mode!=='archive_copy';
  $('resetDemo').disabled=Boolean(resetting);$('resumeAll').disabled=false;
@@ -27,8 +29,17 @@ function draw(){
  for(const detail of document.querySelectorAll('[data-exposure]'))detail.ontoggle=()=>{const id=detail.dataset.exposure;if(detail.open){exposureOpen.add(id);detail.querySelector('[data-exposure-content]').innerHTML=botExposureMarkup(orders.filter(o=>o.bot===id),id)+historicalExposureMarkup(workspace.bots.find(b=>b.key===id),workspace.health,orders)}else{exposureOpen.delete(id);detail.querySelector('[data-exposure-content]').replaceChildren()}};
  for(const detail of document.querySelectorAll('[data-performance]')){
   detail.ontoggle=()=>{const state=performance.get(detail.dataset.performance)||{},wasOpen=state.open;state.open=detail.open;performance.set(detail.dataset.performance,state);if(detail.open&&!wasOpen)loadPerformance(detail.dataset.performance)};
-  detail.querySelector('button').onclick=()=>loadPerformance(detail.dataset.performance,true);
-  for(const select of detail.querySelectorAll('select'))select.onchange=()=>{const state=performance.get(detail.dataset.performance)||{};state.group=detail.querySelector('[data-performance-group]').value;state.range=detail.querySelector('[data-performance-range]').value;state.data=null;state.loaded=0;performance.set(detail.dataset.performance,state);loadPerformance(detail.dataset.performance,true)};
+  const id=detail.dataset.performance;
+  detail.querySelector('form').onsubmit=event=>{event.preventDefault();loadPerformance(id,true)};
+  for(const input of detail.querySelectorAll('[data-performance-filter]'))input.onchange=()=>{
+   const state=performance.get(id)||{};state.filters={...state.filters,[input.dataset.performanceFilter]:input.value};performance.set(id,state);
+  };
+ }
+ for(const detail of document.querySelectorAll('[data-transactions]')){
+  const id=detail.dataset.transactions;
+  detail.ontoggle=()=>{const state=transactions.get(id)||{},wasOpen=state.open;state.open=detail.open;transactions.set(id,state);if(detail.open&&!wasOpen)loadTransactions(id)};
+  detail.querySelector('button').onclick=()=>loadTransactions(id,true);
+  if(detail.open)loadTransactions(id);
  }
  for(const button of document.querySelectorAll('[data-action]'))button.onclick=()=>control(button.dataset.bot,button.dataset.action,button);
  for(const button of document.querySelectorAll('[data-manage]'))button.onclick=()=>openBotBuilder({bot:workspace.bots.find(b=>b.key===button.dataset.manage),onSave:load});
@@ -42,19 +53,34 @@ function draw(){
  for(const button of document.querySelectorAll('[data-period]'))button.setAttribute('aria-pressed',String(button.dataset.period===period));
 }
 function attentionPanel(bot){return attentionMarkup(attentionInfo(bot,workspace.health,orders),{botId:bot.key})}
-function card(bot){const own=orders.filter(o=>o.bot===bot.key),name=group(bot),exposure=own.filter(o=>o.kind==='entry').reduce((sum,o)=>sum+(o.remaining+Math.max(0,o.filled-(o.sold||0)))*o.price,0);return `<article class="bot-card"><div class="bot-top"><div><div class="bot-name">${e(bot.config.name)}</div><span class="small">${bot.config.strategy==='buy_low_sell_high'?'Buy '+bot.config.cycle_buy_cents+'¢ / sell '+bot.config.cycle_sell_cents+'¢':bot.config.squares.length+' conditions'} · ${[...new Set(bot.config.squares.map(s=>s.asset))].map(e).join(', ')} · v${bot.revision}</span></div><span class="badge ${name==='Paused'?'paused':name==='Needs attention'?'attention':''}">${e(bot.archived?'Archived':name)}</span></div><div class="bot-stats"><div><span>Allocated exposure</span><strong>${money(exposure)}</strong></div><div><span>Resting bids</span><strong>${own.filter(o=>o.kind==='entry'&&o.remaining>0).length}</strong></div><div><span>Net realized · ${period}</span><strong>${money(workspace.metrics[bot.key]?.realized_cents??null)}</strong></div><div><span>Account limit</span><strong>${bot.config.bot_percent}%</strong></div></div>${bot.config.squares.some(s=>s.asset==='sports')?'<p class="small">Sports entry windows use Kalshi’s estimated finish. Existing positions stay protected until the market actually closes.</p>':''}${name==='Needs attention'?attentionPanel(bot):''}<div class="bot-footer"><span class="small">${e(bot.desired==='running'?(name==='Running'?(workspace.health.bots?.[bot.key]?.message||workspace.health.message||'Watching for qualifying conditions'):workspace.health.message):'New entries paused · protective exits continue')}</span><div class="row"><button data-bot="${bot.key}" data-action="${bot.desired==='running'?'pause':'resume'}">${bot.desired==='running'?'Pause':'Resume'}</button><button class="secondary" data-manage="${bot.key}">Manage</button><button class="secondary" data-duplicate="${bot.key}">Duplicate</button></div></div>${exposurePanel(bot,own)}${performancePanel(bot)}</article>`}
+function card(bot){const own=orders.filter(o=>o.bot===bot.key),name=group(bot),exposure=own.filter(o=>o.kind==='entry').reduce((sum,o)=>sum+(o.remaining+Math.max(0,o.filled-(o.sold||0)))*o.price,0);return `<article class="bot-card"><div class="bot-top"><div><div class="bot-name">${e(bot.config.name)}</div><span class="small">${bot.config.strategy==='buy_low_sell_high'?'Buy '+bot.config.cycle_buy_cents+'¢ / sell '+bot.config.cycle_sell_cents+'¢':bot.config.squares.length+' conditions'} · ${[...new Set(bot.config.squares.map(s=>s.asset))].map(e).join(', ')} · v${bot.revision}</span></div><span class="badge ${name==='Paused'?'paused':name==='Needs attention'?'attention':''}">${e(bot.archived?'Archived':name)}</span></div><div class="bot-stats"><div><span>Allocated exposure</span><strong>${money(exposure)}</strong></div><div><span>Resting bids</span><strong>${own.filter(o=>o.kind==='entry'&&o.remaining>0).length}</strong></div><div><span>Net realized · ${period}</span><strong>${money(workspace.metrics[bot.key]?.realized_cents??null)}</strong></div><div><span>Account limit</span><strong>${bot.config.bot_percent}%</strong></div></div>${bot.config.squares.some(s=>s.asset==='sports')?'<p class="small">Sports entry windows use Kalshi’s estimated finish. Existing positions stay protected until the market actually closes.</p>':''}${name==='Needs attention'?attentionPanel(bot):''}<div class="bot-footer"><span class="small">${e(bot.desired==='running'?(name==='Running'?(workspace.health.bots?.[bot.key]?.message||workspace.health.message||'Watching for qualifying conditions'):workspace.health.message):'New entries paused · protective exits continue')}</span><div class="row"><button data-bot="${bot.key}" data-action="${bot.desired==='running'?'pause':'resume'}">${bot.desired==='running'?'Pause':'Resume'}</button><button class="secondary" data-manage="${bot.key}">Manage</button><button class="secondary" data-duplicate="${bot.key}">Duplicate</button></div></div>${exposurePanel(bot,own)}${performancePanel(bot)}${transactionsPanel(bot)}</article>`}
 function exposurePanel(bot,own){const {positions,waiting}=botExposure(own),open=exposureOpen.has(bot.key);return `<details class="advanced" data-exposure="${e(bot.key)}" ${open?'open':''}><summary>Positions &amp; waiting orders · ${positions.length} positions · ${waiting.length} orders</summary><div data-exposure-content>${open?botExposureMarkup(own,bot.key)+historicalExposureMarkup(bot,workspace.health,own):''}</div></details>`}
-function performancePanel(bot){const state=performance.get(bot.key)||{},group=state.group||'square',range=state.range||'all';return `<details class="advanced" data-performance="${e(bot.key)}" ${state.open?'open':''}><summary>Performance statistics · square / time</summary><div class="field-grid"><label>Breakdown<select data-performance-group ${state.pending?'disabled':''}>${[['square','By square'],['time','Time remaining at entry'],['hour','Hour of day']].map(([v,n])=>`<option value="${v}" ${v===group?'selected':''}>${n}</option>`).join('')}</select></label><label>Entries from<select data-performance-range ${state.pending?'disabled':''}>${[['all','Lifetime'],['24H','Last 24 hours'],['7D','Last 7 days'],['30D','Last 30 days']].map(([v,n])=>`<option value="${v}" ${v===range?'selected':''}>${n}</option>`).join('')}</select></label></div><div data-performance-content>${state.data?squarePerformanceMarkup(state.data):'<p class="small">Expand to load saved statistics.</p>'}</div><button class="secondary" type="button" ${state.pending?'disabled':''}>Refresh statistics</button></details>`}
+function performancePanel(bot){
+ const state=performance.get(bot.key),f=state?.filters||{};
+ const options=[['square','Square'],['time','Time remaining at entry'],['hour','Local hour of entry']].map(([value,label])=>`<option value="${value}" ${(f.group||'square')===value?'selected':''}>${label}</option>`).join('');
+ return `<details class="advanced" data-performance="${e(bot.key)}" ${state?.open?'open':''}><summary>Performance by square or time</summary><form class="row" data-performance-filters><label>Group by<select data-performance-filter="group">${options}</select></label><label>From<input type="date" data-performance-filter="start" value="${e(f.start||'')}"></label><label>Through<input type="date" data-performance-filter="end" value="${e(f.end||'')}"></label><label>Timezone<select data-performance-filter="timezone"><option value="America/Los_Angeles" ${(f.timezone||'America/Los_Angeles')==='America/Los_Angeles'?'selected':''}>Pacific time</option><option value="UTC" ${f.timezone==='UTC'?'selected':''}>UTC</option></select></label><button class="secondary" type="submit" ${state?.pending?'disabled':''}>Apply / refresh statistics</button></form><div data-performance-content>${state?.data?squarePerformanceMarkup(state.data):'<p class="small">Expand to load saved statistics. Dates filter when entries were submitted.</p>'}</div></details>`
+}
 async function loadPerformance(id,force=false){
  const state=performance.get(id)||{};performance.set(id,state);
  if(state.pending||(!force&&state.data&&Date.now()-state.loaded<60000))return;
  state.pending=true;
  const content=()=>[...document.querySelectorAll('[data-performance]')].find(d=>d.dataset.performance===id);
- const pending=value=>content()?.querySelectorAll('button,select').forEach(el=>el.disabled=value);
- pending(true);
- try{const zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',query=new URLSearchParams({bot:id,group:state.group||'square',period:state.range||'all',timezone:zone});state.data=await demoCall('performance?'+query);state.loaded=Date.now();if(content())content().querySelector('[data-performance-content]').innerHTML=squarePerformanceMarkup(state.data)}
+ if(content())content().querySelector('button').disabled=true;
+ const query=new URLSearchParams({bot:id,...state.filters});
+ try{state.data=await demoCall('performance?'+query);state.loaded=Date.now();if(content())content().querySelector('[data-performance-content]').innerHTML=squarePerformanceMarkup(state.data)}
  catch(error){if(content())content().querySelector('[data-performance-content]').textContent=error.message}
- finally{state.pending=false;pending(false)}
+ finally{state.pending=false;if(content())content().querySelector('button').disabled=false}
+}
+function transactionsPanel(bot){const state=transactions.get(bot.key);return `<details class="advanced" data-transactions="${e(bot.key)}" ${state?.open?'open':''}><summary>Latest transactions</summary><div data-transactions-content>${state?.data?latestTransactionsMarkup(state.data,bot.key):'<p class="small">Expand to load this bot’s latest transactions.</p>'}</div><button class="secondary" type="button" ${state?.pending?'disabled':''}>Refresh transactions</button></details>`}
+async function loadTransactions(id,force=false){
+ const state=transactions.get(id)||{};transactions.set(id,state);
+ if(state.pending||(!force&&state.data&&Date.now()-state.loaded<60000))return;
+ state.pending=true;
+ const content=()=>[...document.querySelectorAll('[data-transactions]')].find(d=>d.dataset.transactions===id);
+ if(content())content().querySelector('button').disabled=true;
+ try{state.data=await demoCall('activity?'+new URLSearchParams({bot:id,kind:'transactions'}));state.loaded=Date.now();state.data.loadedAt=state.loaded;if(content())content().querySelector('[data-transactions-content]').innerHTML=latestTransactionsMarkup(state.data,id)}
+ catch(error){if(content())content().querySelector('[data-transactions-content]').textContent=error.message}
+ finally{state.pending=false;if(content())content().querySelector('button').disabled=false}
 }
 async function control(id,action,button){const bot=workspace.bots.find(b=>b.key===id);button.disabled=true;try{await demoCall(`bots/${id}/control`,{action,revision:bot.revision});setMessage(action==='pause'?'Pause requested. Open bids will be canceled; filled entries remain protected.':'Resume requested. Entries wait for verified exchange state.');await load()}catch(error){setMessage(error.message)}finally{button.disabled=false}}
 async function load(){if(busy)return;busy=true;try{[workspace,{items:orders}]=await Promise.all([demoCall('workspace?period='+period),demoCall('orders')]);draw();if(!draftChecked){draftChecked=true;restoreBotDraft({bots:workspace.bots,onSave:load})}delay=15000;if($('equityDetails').open)await chart()}catch(error){setMessage(error.message);delay=Math.min(120000,delay*2)}finally{busy=false;clearTimeout(timer);if(!document.hidden)timer=setTimeout(load,delay)}}

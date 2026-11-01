@@ -53,6 +53,21 @@ test('Demo reset is an owner POST route without any funding prerequisite',async(
 });
 
 import {squarePerformanceMarkup} from '../apps/web/demo-client.mjs';
+import {latestTransactionsMarkup} from '../apps/web/demo-client.mjs';
+test('Latest transaction dropdown distinguishes order events and fills and escapes evidence',()=>{
+ const html=latestTransactionsMarkup({loadedAt:1,items:[{kind:'order_rejected',time:'2026-11-01T08:00:00Z',ticker:'<bad>',message:'Rejected <unsafe>',details:{order_kind:'entry',side:'yes',price:3,quantity:10}},{kind:'fill',time:'2026-11-01T08:01:00Z',details:{order_kind:'exit',side:'no',filled:2,exchange_id:'<order>'}}]},'bot-one');
+ for(const value of ['Order rejected','Fill confirmed','Buy','Sell','3¢ limit','Filled so far: 2','/activity?bot=bot-one','&lt;bad&gt;','&lt;order&gt;'])assert.ok(html.includes(value),value);
+ assert.doesNotMatch(html,/<bad>|<unsafe>|<order>/);
+ assert.match(latestTransactionsMarkup({items:[],loadedAt:1},'b'),/No saved transactions/);
+});
+test('Time performance shows entry cohorts, local date filters, and unknown historical clocks',()=>{
+ const row={label:'Time remaining unavailable',orders:2,filled_orders:1,contracts:1,resting_contracts:0,held_contracts:0,scored:1,wins:1,unscored_resets:0,recorded_pnl_cents:3};
+ const html=squarePerformanceMarkup({group:'remaining',items:[row],start:'2026-11-01',end:'2026-11-01',timezone:'America/Los_Angeles',at:0});
+ assert.match(html,/Time remaining at entry/);assert.match(html,/2026-11-01 through 2026-11-01/);
+ assert.match(html,/America\/Los_Angeles/);assert.match(html,/Time remaining unavailable/);assert.match(html,/across revisions/);
+ assert.doesNotMatch(html,/square \?/);
+});
+
 test('Time statistics show the selected clock and retain unknown historical times',()=>{
  const item={bucket:null,label:'Time unavailable',orders:2,filled_orders:1,contracts:1,resting_contracts:0,held_contracts:0,scored:1,wins:1,unscored_resets:0,recorded_pnl_cents:5};
  const html=squarePerformanceMarkup({group:'time',period:'7D',items:[item],at:0});

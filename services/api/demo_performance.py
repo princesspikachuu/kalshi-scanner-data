@@ -14,17 +14,22 @@ AGGREGATES="""count(*) AS orders,
  sum((progress->>'realized_cents')::numeric) FILTER (WHERE progress->>'status'='closed') AS recorded_pnl_cents,
  count(*) FILTER (WHERE coalesce((progress->>'reset_closed')::boolean,false) AND NOT (progress ? 'realized_cents')) AS unscored_resets"""
 
-def query_performance(pool,bot,identifier,group='square',period='all',timezone='America/Los_Angeles'):
+def query_performance(pool,bot,identifier,group='square',period='all',timezone='America/Los_Angeles',start=None,end=None):
     from zoneinfo import ZoneInfo
     if group not in ('square','time','hour') or period not in ('all','24H','7D','30D'):raise ValueError('Invalid performance filters')
-    ZoneInfo(timezone)
+    tz=ZoneInfo(timezone)
+    from datetime import date,datetime,time as midnight,timedelta
+    first=date.fromisoformat(start) if start else None;last=date.fromisoformat(end) if end else None
+    if first and last and last<first:raise ValueError('Invalid dates')
+    lower=datetime.combine(first,midnight.min,tz).timestamp() if first else None
+    upper=datetime.combine(last+timedelta(days=1),midnight.min,tz).timestamp() if last else None
     since=None if period=='all' else time.time()-{'24H':24,'7D':168,'30D':720}[period]*3600
     sql="""WITH base AS (SELECT parameters,progress,
         coalesce((parameters->>'created_at')::numeric,extract(epoch FROM created_at)) AS entered_at
         FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
         AND parameters->>'kind'='entry' AND parameters->>'bot'=%s),
-        selected AS (SELECT * FROM base WHERE %s::numeric IS NULL OR entered_at>=%s)"""
-    args=[identifier,since,since]
+        selected AS (SELECT * FROM base WHERE (%s::numeric IS NULL OR entered_at>=%s) AND (%s::numeric IS NULL OR entered_at>=%s) AND (%s::numeric IS NULL OR entered_at<%s))"""
+    args=[identifier,since,since,lower,lower,upper,upper]
     if group=='square':
         sql+=" SELECT parameters->'revision' AS revision,parameters->'square' AS square,parameters->'condition' AS condition,"+AGGREGATES+" FROM selected GROUP BY 1,2,3 ORDER BY 1 DESC,2,3 LIMIT 251"
     else:

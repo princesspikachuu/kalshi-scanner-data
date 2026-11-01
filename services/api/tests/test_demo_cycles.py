@@ -240,6 +240,16 @@ class SharedMarkets(unittest.TestCase):
         self.assertEqual(w.submit.call_args.args[0]['bot'],'bot-2')
 
 class ProfitSells(unittest.TestCase):
+    def test_stale_quote_after_funding_does_not_starve_other_markets(self):
+        w=worker();w.quotes['u']=book()
+        def funded(*args):
+            w.quotes['t']['at']=NOW-10
+            return True
+        w.funding.ensure.side_effect=funded
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['ticker'],'u')
+
+
     def test_partial_fills_get_only_uncovered_inventory_at_fixed_target(self):
         w=worker();w.states={'bot-1':{'t/0/no':dict(cycle=1,submitted=True,first_at=NOW)}};parent=entry(filled=3,remaining=7);w.orders=[parent]
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
