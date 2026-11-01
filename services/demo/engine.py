@@ -8,7 +8,7 @@ def side_quote(quote,side):
 
 def qualifies(square,quote,side,now,reference):
     bid,ask=side_quote(quote,side)
-    minutes=(quote['close']-now)/60
+    minutes=(quote.get('entry_close',quote['close'])-now)/60
     value=bid if reference=='bid' else ask
     return (quote.get('series') in SERIES[square['asset']] and
         square['min_minutes']<minutes<=square['max_minutes'] and square['min_price']<=value<=square['max_price'])
@@ -43,7 +43,7 @@ def candidates(bots,quotes,states,now,blocked=()):
     for bot in bots:
         config=bot['config'];memory=states.setdefault(bot['id'],{})
         for ticker,quote in quotes.items():
-            if now-quote['at']>5 or quote['close']<=now or not (0<quote['bid']<quote['ask']<100):continue
+            if now-quote['at']>5 or quote.get('entry_close',quote['close'])<=now or not (0<quote['bid']<quote['ask']<100):continue
             for index,square in enumerate(config['squares']):
                 for side in ('yes','no'):
                     key=f'{ticker}/{index}/{side}';match=qualifies(square,quote,side,now,config['qualification'])

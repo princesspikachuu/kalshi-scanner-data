@@ -236,7 +236,7 @@ class CategoryRouting(unittest.TestCase):
                 self.assertEqual(wire_order(intent)['exchange_index'],index)
                 self.assertTrue(wire_order(intent)['post_only'])
     def test_rest_discovery_cannot_replace_stream_prices_or_borrow_their_freshness(self):
-        raw=dict(ticker='t',yes_bid_dollars='0.0100',yes_ask_dollars='0.0200',close_time=NOW+300,exchange_index=2)
+        raw=dict(ticker='t',series_ticker='KXBTC15M',status='active',yes_bid_dollars='0.0100',yes_ask_dollars='0.0200',close_time=NOW+300,exchange_index=2)
         class Ex:
             def call(self,*args,**kw):return {'markets':[raw]}
         for age in (1,30):

@@ -8,6 +8,7 @@ from psycopg_pool import ConnectionPool
 from .store import DemoStore
 from .orderbook import OrderBooks
 from .exchange import Exchange,ExchangeFailure,credentials,WS
+from .stream_buffer import BufferedSocket,close_details
 from .engine import candidates,quantity,qualifies,exit_price,wire_order,protective_threshold,entry_protection_matches
 
 LOCK=723741931
@@ -22,8 +23,14 @@ def timestamp(value):
 def quote(raw,now):
     try:
         ticker=raw['ticker'];bid=cents(raw['yes_bid_dollars']);ask=cents(raw['yes_ask_dollars'])
-        return ticker,dict(bid=bid,ask=ask,at=now,close=timestamp(raw['close_time']),
-            exchange_index=raw.get('exchange_index',0),series=raw.get('series_ticker') or ticker.split('-')[0],result=raw.get('result'),status=raw.get('status'))
+        series=raw.get('series_ticker') or ticker.split('-')[0]
+        close=timestamp(raw['close_time']);entry_close=close;entry_clock='market_close'
+        from services.research.reports import SERIES
+        if series in SERIES['sports'] and raw.get('can_close_early') is True and raw.get('expected_expiration_time'):
+            expected=timestamp(raw['expected_expiration_time'])
+            if math.isfinite(expected) and 0<expected<=close:entry_close=expected;entry_clock='expected_expiration'
+        return ticker,dict(bid=bid,ask=ask,at=now,close=close,entry_close=entry_close,entry_clock=entry_clock,
+            exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
     except (KeyError,ValueError,TypeError):return None
 
 class Worker:
@@ -34,12 +41,12 @@ class Worker:
         self.socket=None;self.subscription=set();self.book_sid=None;self.stream_command=2;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
-        self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={}
+        self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
         summary={}
         for bot in self.bots:
-            config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=0
+            config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=incomplete=0
             market_exposure={};bot_exposure=0;exit_waiting=None
             for entry in self.orders:
                 if entry['kind']!='entry' or entry['bot']!=bot['id'] or not entry.get('exit_triggered') or entry.get('filled',0)<=entry.get('sold',0):continue
@@ -59,6 +66,7 @@ class Worker:
                 available+=1
                 if now-q['at']>5:continue
                 fresh+=1
+                if not q.get('book_ready',True) or not 0<q['bid']<q['ask']<100:incomplete+=1;continue
                 for index,square in enumerate(config['squares']):
                     for side in ('yes','no'):
                         if not qualifies(square,q,side,now,config['qualification']):continue
@@ -76,6 +84,7 @@ class Worker:
             elif bot['desired']!='running':message='New entries paused'
             elif not available:message='No open Demo markets found for these categories yet'
             elif not fresh:message=f'{available} Demo markets found; waiting for fresh streaming prices'
+            elif incomplete==fresh:message=f'{fresh} fresh Demo markets found, but their order books are incomplete'
             elif not matched:message=f'{fresh} fresh Demo markets checked; none match the selected price/time windows'
             elif blocked==matched:message='Matching markets need ownership reconciliation'
             elif submitted==matched:message='Matching conditions already attempted; waiting for a new qualifying cycle'
@@ -84,7 +93,7 @@ class Worker:
             elif maker==matched:message='Matching conditions found; entry price would cross the ask'
             elif budget==matched:message='Matching conditions found; spending limits cannot fund one contract'
             else:message=f'{matched} matching conditions across {fresh} fresh Demo markets'
-            summary[bot['id']]=dict(message=message,markets=available,fresh=fresh,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,minimum_blocked=minimum,exit_waiting=bool(exit_waiting))
+            summary[bot['id']]=dict(categories=sorted({s['asset'] for s in config['squares']}),estimated_finish=any(q.get('entry_clock')=='expected_expiration' and any(q['series'] in SERIES[s['asset']] for s in config['squares']) for q in self.quotes.values()),message=message,markets=available,fresh=fresh,incomplete_books=incomplete,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,minimum_blocked=minimum,exit_waiting=bool(exit_waiting))
         return summary
     def health(self,state,message):
         now=time.time()
@@ -100,7 +109,7 @@ class Worker:
                 conditions=sum(len(b['config']['squares']) for b in self.bots if b['desired']=='running'),
                 categories=sorted({s['asset'] for b in self.bots if b['desired']=='running' for s in b['config']['squares']}),
                 watched=len(self.quotes),fresh=sum(now-q['at']<=5 for q in self.quotes.values()),
-                orders=len(self.orders),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
+                orders=len(self.orders),stream_buffer=self.socket.stats() if hasattr(self.socket,'stats') else None,read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled=self.recovered,entry_diagnostics=self.entry_diagnostics(now))),flush=True)
             self.last_diagnostic=now
     def load_bots(self):
@@ -241,7 +250,8 @@ class Worker:
         pinned={o['ticker'] for o in self.orders}
         if pinned and (self.discovery_turn%5==0 or not series):params=dict(tickers=','.join(sorted(pinned)[:100]),limit=200)
         elif series:
-            current=series[self.series_index%len(series)];params=dict(series_ticker=current,status='open',limit=200,min_close_ts=int(now),max_close_ts=int(now+86400))
+            current=series[self.series_index%len(series)];params=dict(series_ticker=current,status='open',limit=200,min_close_ts=int(now))
+            if current not in SERIES['sports']:params['max_close_ts']=int(now+86400)
             if self.cursor.get(current):params['cursor']=self.cursor[current]
         else:self.last_discovery=now;return
         page=self.exchange.call('GET','/markets',params=params)
@@ -252,17 +262,20 @@ class Worker:
             if parsed:
                 ticker,q=parsed
                 # REST discovery does not qualify a new trade; wait for stream verification.
+                if ticker not in pinned and not now<q['entry_close']<=now+86400:continue
                 old=self.quotes.get(ticker)
                 if old:
                     # Price and observation time are one piece of evidence. REST
                     # metadata must not replace a verified stream price while
                     # inheriting its timestamp (including stale stream quotes).
-                    q=dict(old,close=q['close'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'])
+                    q=dict(old,close=q['close'],entry_close=q['entry_close'],entry_clock=q['entry_clock'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'])
                 else:q['at']=0
                 self.quotes[ticker]=q;self.last_discovered[ticker]=now
-        rank=lambda item:(item[0] not in pinned,item[1]['close'],item[0])
-        kept=[(t,q) for t,q in self.quotes.items() if t in pinned or q['close']>now]
-        self.quotes=dict(sorted(kept,key=rank)[:100]);self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.discovery_turn+=1
+        from .watchlist import select_markets
+        eligible={t:q for t,q in self.quotes.items() if t in pinned or q['series'] in series}
+        self.quotes=select_markets(eligible,pinned,now)
+        self.maker_retries={t:r for t,r in self.maker_retries.items() if t in self.quotes}
+        self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.discovery_turn+=1
         if 'series_ticker' in params:self.series_index+=1
     def observe_exit_triggers(self,ticker,now,previous=None):
         """Latch the first crossing before another ticker message can replace it."""
@@ -279,7 +292,7 @@ class Worker:
             if threshold is None or not 0<=bid<ask<100 or ask>threshold:continue
             if q.get('source')=='orderbook' and not q.get('book_ready'):continue
             order['exit_triggered']=True;order['exit_reference']='ask';self.save_order(order)
-            prior_ask=side_quote(previous,order['side'])[1] if previous else None
+            prior_ask=side_quote(previous,order['side'])[1] if previous and not (previous.get('source')=='orderbook' and not previous.get('book_ready')) else None
             gap=round(q.get('event_at',q['at'])-previous.get('event_at',previous['at']),3) if previous and previous.get('at') else None
             self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',previous_ask=prior_ask,observation_gap_seconds=gap)
             print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap,source=q.get('source'),clock=q.get('clock'),seq=q.get('seq'))),flush=True)
@@ -292,8 +305,9 @@ class Worker:
         if self.socket is None:
             self.close_stream()
             from websockets.sync.client import connect
-            self.socket=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
+            connection=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
                 max_size=262144,max_queue=8,open_timeout=8,close_timeout=2,ping_interval=10,ping_timeout=10,compression=None)
+            self.socket=BufferedSocket(connection)
             self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0))))
             self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['fill','user_orders']))))
             self.subscription=desired;self.sequence={};self.recovered=False
@@ -338,7 +352,7 @@ class Worker:
                 if ticker not in self.quotes:continue
                 self.book_sid=message['sid']
                 now=time.time();old=self.quotes[ticker]
-                ticker,observed=self.books.apply(message,now)
+                ticker,observed=self.books.apply(message,getattr(self.socket,'received_at',None) or now)
                 self.quotes[ticker]=dict(old,**observed)
                 # Yield on the first crossing instead of collapsing a burst of
                 # exchange changes into its last (potentially much lower) price.
@@ -361,6 +375,7 @@ class Worker:
         self.context_market=intent['ticker'];self.context_order=intent['client_id'];self.context_bot=intent['bot']
         # Durable intent precedes network write. Ambiguous writes are never replayed.
         self.save_order(intent);self.record('order_intent',intent,'Verified '+intent['kind']+' order prepared')
+        reconcile_needed=True
         try:
             result=self.exchange.submit(intent)
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
@@ -370,8 +385,14 @@ class Worker:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
             if error.ambiguous:self.blocked.add(intent['ticker'])
+            if not error.ambiguous and error.reason=='post_only':
+                q=self.quotes.get(intent['ticker'],{})
+                self.maker_retries[intent['ticker']]=dict(clock=q.get('clock'),after=time.time()+.5)
+                reconcile_needed=False
+                return
             raise
-        finally:self.recovered=False;self.last_reconcile=0
+        finally:
+            if reconcile_needed:self.recovered=False;self.last_reconcile=0
     def upgrade_legacy_exits(self):
         legacy=[o for o in self.orders if o['kind']=='entry' and o.get('exit_triggered') and o.get('exit_reference')!='ask']
         if not legacy:return False
@@ -423,11 +444,17 @@ class Worker:
             if order['kind']=='entry' and order.get('remaining',0)>0:
                 explicitly_invalid=(not bot or bot['desired']!='running' or order['revision']!=bot['revision'] or now>=order['close'])
                 fresh=q is not None and now-q['at']<=5
+                if bot and q:
+                    square=bot['config']['squares'][order['square']]
+                    remaining_minutes=(q.get('entry_close',q['close'])-now)/60
+                    explicitly_invalid=explicitly_invalid or not square['min_minutes']<remaining_minutes<=square['max_minutes']
                 condition_invalid=fresh and bot and (not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification']) or not entry_protection_matches(bot['config'],bot['config']['squares'][order['square']],q,order['side']))
                 # A reconnect is not evidence that a resting bid is invalid.
                 # Preserve it until fresh data verifies the condition or expiry.
                 if explicitly_invalid or condition_invalid:self.cancel(order,'Entry no longer matches verified conditions');return
             if not bot or not q or now-q['at']>5 or now>=q['close'] or order['ticker'] in self.blocked:continue
+            retry=self.maker_retries.get(order['ticker'])
+            if retry and (now<retry['after'] or q.get('clock')==retry['clock']):continue
             config=bot['config']
             if order['kind']=='exit' and order.get('remaining',0)>0:
                 parent=next((o for o in self.orders if o.get('client_id')==order.get('parent')),None)
@@ -455,7 +482,8 @@ class Worker:
                     identifier=str(uuid5(NAMESPACE_URL,f"demo-exit/{order['client_id']}/{attempt}"))
                     self.submit(dict(client_id=identifier,kind='exit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],ticker=order['ticker'],side=order['side'],price=price,quantity=order['filled']-order.get('sold',0),close=q['close'],created_at=now,exit_reference='ask',status='intent',remaining=0,filled=0));return
         if not self.recovered or now-self.last_reconcile>35:return
-        options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting)
+        retrying={t for t,r in self.maker_retries.items() if now<r['after'] or self.quotes.get(t,{}).get('clock')==r['clock']}
+        options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         for item in options:
             self.context_market=item['ticker'];self.context_order=None;self.context_bot=item['bot']
@@ -483,7 +511,7 @@ class Worker:
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
-            self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']]['close'],created_at=now,status='intent',remaining=0,filled=0));return
+            self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close']),created_at=now,status='intent',remaining=0,filled=0));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
             packed=json.dumps(self.states[bot['id']],sort_keys=True)
@@ -542,7 +570,7 @@ class Worker:
                     if error.code.startswith('stream') or error.code=='connection':self.close_stream()
                     self.stop.wait(backoff);backoff=min(60,backoff*2)
                 except Exception as error:
-                    print(json.dumps(dict(event='demo_runtime_failure',stage=self.stage,error_type=type(error).__name__,frames=[dict(function=f.name,line=f.lineno) for f in traceback.extract_tb(error.__traceback__)[-4:]])),flush=True)
+                    print(json.dumps(dict(event='demo_runtime_failure',stage=self.stage,error_type=type(error).__name__,**close_details(error),frames=[dict(function=f.name,line=f.lineno) for f in traceback.extract_tb(error.__traceback__)[-4:]])),flush=True)
                     self.recovered=False;self.close_stream()
                     from .diagnostics import runtime_issue
                     self.issue=runtime_issue(self.stage,market=self.context_market,order_id=self.context_order,bot=self.context_bot)
