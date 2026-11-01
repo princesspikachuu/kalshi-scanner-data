@@ -122,6 +122,19 @@ class CycleEntries(unittest.TestCase):
             with self.assertRaises(ValueError):bot(**changes)
 
 class SharedMarkets(unittest.TestCase):
+    def test_daily_cutoff_and_shard_funding_are_real_entry_blockers(self):
+        w=worker();w.bots[0]['config']['daily_loss_percent']=5
+        w.daily_pnl_day=int(NOW//86400);w.daily_pnl={'bot-1':-600}
+        info=w.entry_diagnostics(NOW)['bot-1']
+        self.assertEqual(info['entry_blockers'].get('daily_loss'),2)
+        self.assertIn('daily loss cutoff reached',info['message'])
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.submit.assert_not_called()
+        w.bots[0]['config']['daily_loss_percent']=None
+        w.funding.waits={0:dict(reason='funding',at=NOW,required_cents=10,available_cents=0)}
+        self.assertEqual(w.entry_diagnostics(NOW)['bot-1']['entry_blockers'].get('funding'),2)
+        w.quotes['t']['at']=NOW-20
+        self.assertIn('fresh verified prices',w.entry_diagnostics(NOW)['bot-1']['message'])
     def test_five_bots_can_each_bid_both_outcomes_without_stealing_ownership(self):
         w=worker();w.bots=[]
         for low in (3,6,9,12,15):

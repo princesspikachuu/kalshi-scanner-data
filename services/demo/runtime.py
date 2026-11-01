@@ -41,6 +41,7 @@ class Worker:
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.stream_command=3;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
+        self.daily_pnl={};self.daily_pnl_day=-1
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
         self.historical_lookup_at={};self.next_historical_lookup=0;self.historical_missing={}
@@ -55,7 +56,9 @@ class Worker:
             config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=incomplete=0
             if config.get('strategy')=='buy_low_sell_high':
                 from .cycles import diagnostics
-                summary[bot['id']]=diagnostics(bot,self.quotes,self.states,self.orders,now,self.blocked,self.netting_pending,self.account,self.recovered)
+                summary[bot['id']]=diagnostics(bot,self.quotes,self.states,self.orders,now,self.blocked,self.netting_pending,self.account,self.recovered,
+                    daily_reason=self.daily_guard(bot,now),funding_waits=getattr(self.funding,'waits',{}))
+                if config.get('daily_loss_percent') is not None:summary[bot['id']]['daily_risk']=dict(limit_percent=config['daily_loss_percent'],pnl_cents=self.daily_pnl.get(bot['id']))
                 continue
             market_exposure={};bot_exposure=0;exit_waiting=None
             for entry in self.orders:
@@ -120,7 +123,8 @@ class Worker:
                 categories=sorted({s['asset'] for b in self.bots if b['desired']=='running' for s in b['config']['squares']}),
                 watched=len(self.quotes),fresh=sum(now-q['at']<=5 for q in self.quotes.values()),
                 orders=len(self.orders),stream_buffer=self.socket.stats() if hasattr(self.socket,'stats') else None,read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled=self.recovered,last_verified=self.last_verified,sync_action=self.sync_pending['action'] if self.sync_pending else None,entry_diagnostics=self.entry_diagnostics(now))),flush=True)
+                reconciled=self.recovered,last_verified=self.last_verified,sync_action=self.sync_pending['action'] if self.sync_pending else None,
+                funding_waits=getattr(self.funding,'waits',{}),entry_diagnostics=self.entry_diagnostics(now))),flush=True)
             self.last_diagnostic=now
     def trading_health(self):
         if self.recovered:self.health('ready','Demo account verified')
@@ -145,6 +149,12 @@ class Worker:
         self.orders=self.store.active_orders()
         active={o['client_id'] for o in self.orders}
         self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
+        if any(b['config'].get('daily_loss_percent') is not None and b['id'] not in self.daily_pnl for b in self.bots):self.last_reconcile=0
+    def daily_guard(self,bot,now):
+        limit=bot['config'].get('daily_loss_percent')
+        if limit is None:return None
+        if self.daily_pnl_day!=int(now//86400) or bot['id'] not in self.daily_pnl:return 'daily_check'
+        return 'daily_loss' if self.daily_pnl[bot['id']]<=-self.account.get('equity_cents',0)*limit/100 else None
     def repair_rejected_entries(self):
         if self.rejections_repaired:return
         with self.store.pool.connection() as c:
@@ -358,6 +368,14 @@ class Worker:
         parents=[o['client_id'] for o in self.orders if o['kind']=='entry']
         with self.store.pool.connection() as c:
             exits=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND parameters->>'kind'='exit' AND parameters->>'parent'=ANY(%s) AND progress->>'filled' IS NOT NULL LIMIT 5001",(parents,)).fetchall()
+            risk_bots=[b['id'] for b in self.bots if b['config'].get('daily_loss_percent') is not None]
+            self.daily_pnl={b:0 for b in risk_bots};self.daily_pnl_day=int(now//86400)
+            if risk_bots:
+                scores=c.execute("""SELECT parameters->>'bot' AS bot,sum((progress->>'realized_cents')::numeric) AS pnl FROM research_job
+                    WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
+                    AND parameters->>'bot'=ANY(%s) AND parameters->>'kind'='entry' AND progress ? 'realized_cents'
+                    AND (progress->>'closed_at')::numeric>=%s GROUP BY 1""",(risk_bots,self.daily_pnl_day*86400)).fetchall()
+                self.daily_pnl.update({r['bot']:float(r['pnl']) for r in scores})
         if len(exits)>5000:raise ExchangeFailure('entry_exit_reconciliation_capacity')
         sold={};exit_fees={}
         for row in exits:
@@ -742,7 +760,7 @@ class Worker:
         peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
         for item in options:
             config=bots[item['bot']]['config']
-            if config.get('strategy')=='buy_low_sell_high' and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):
+            if config.get('strategy')=='buy_low_sell_high' and not self.daily_guard(bots[item['bot']],now) and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):
                 if quantity(config,item['price'],equity,cash,market_cost.get(item['ticker'],0),bot_cost.get(item['bot'],0))>0:
                     peers.setdefault(item['ticker'],[]).append(item)
         for item in options:
@@ -759,12 +777,7 @@ class Worker:
                 if any(o.get('entry_strategy')=='buy_low_sell_high' for o in active_entries):continue
                 if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue
             market=market_cost.get(item['ticker'],0);exposure=bot_cost.get(item['bot'],0)
-            if config.get('daily_loss_percent') is not None:
-                with self.store.pool.connection() as c:
-                    pnl=c.execute("""SELECT coalesce(sum((progress->>'realized_cents')::numeric),0) AS pnl FROM research_job
-                        WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
-                        AND parameters->>'bot'=%s AND (progress->>'closed_at')::numeric >= %s""",(item['bot'],int(now//86400)*86400)).fetchone()['pnl']
-                if pnl<=-equity*config['daily_loss_percent']/100:continue
+            if self.daily_guard(bot,now):continue
             amount=quantity(config,item['price'],equity,self.account['cash_cents'],market,exposure)
             if is_cycle:
                 from .cycles import shared_quantity
@@ -783,6 +796,7 @@ class Worker:
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
             extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
+            extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(config['cycle_cutoff_minutes']*60 if is_cycle else 0)
             self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
         for bot in self.bots:

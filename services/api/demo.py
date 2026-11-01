@@ -198,29 +198,15 @@ def install_demo(app,auth,mutate,pool):
         return dict(contract='demo-v1',points=points[::step],period=period)
     @app.get('/demo/performance')
     def square_performance(request:Request):
-        auth(request);require_query(request,('bot',))
+        auth(request);require_query(request,('bot','group','period','timezone'))
         try:identifier=str(UUID(request.query_params.get('bot','')))
         except ValueError:raise HTTPException(422,'Choose a bot') from None
         bot=bot_get(identifier)
-        with pool.connection() as c:
-            rows=c.execute("""SELECT parameters->'revision' AS revision,parameters->'square' AS square,
-                parameters->'condition' AS condition,count(*) AS orders,
-                count(*) FILTER (WHERE coalesce((progress->>'filled')::numeric,0)>0) AS filled_orders,
-                coalesce(sum((progress->>'filled')::numeric),0) AS contracts,
-                coalesce(sum(CASE WHEN progress->>'status'='resting' THEN (progress->>'remaining')::numeric ELSE 0 END),0) AS resting_contracts,
-                coalesce(sum(CASE WHEN progress->>'status' NOT IN ('closed','rejected') AND NOT coalesce((progress->>'reset_closed')::boolean,false)
-                    THEN greatest(0,coalesce((progress->>'filled')::numeric,0)-coalesce((parameters->>'sold')::numeric,0)) ELSE 0 END),0) AS held_contracts,
-                count(*) FILTER (WHERE progress ? 'realized_cents' AND progress->>'status'='closed') AS scored,
-                count(*) FILTER (WHERE progress->>'status'='closed' AND (progress->>'realized_cents')::numeric>0) AS wins,
-                sum((progress->>'realized_cents')::numeric) FILTER (WHERE progress->>'status'='closed') AS recorded_pnl_cents,
-                count(*) FILTER (WHERE coalesce((progress->>'reset_closed')::boolean,false) AND NOT (progress ? 'realized_cents')) AS unscored_resets
-                FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
-                AND parameters->>'kind'='entry' AND parameters->>'bot'=%s
-                GROUP BY parameters->'revision',parameters->'square',parameters->'condition'
-                ORDER BY parameters->'revision' DESC,parameters->'square',parameters->'condition' LIMIT 251""",(identifier,)).fetchall()
-        from .demo_performance import performance_rows
-        items=performance_rows(bot['parameters'],rows[:250])
-        return dict(contract='demo-v1',bot=identifier,period='Lifetime',items=items,limited=len(rows)>250,at=time.time())
+        group=request.query_params.get('group','square');period=request.query_params.get('period','all');zone=request.query_params.get('timezone','America/Los_Angeles')
+        from .demo_performance import query_performance
+        try:items,limited=query_performance(pool,bot['parameters'],identifier,group,period,zone)
+        except (ValueError,KeyError):raise HTTPException(422,'Invalid performance filters') from None
+        return dict(contract='demo-v1',bot=identifier,period='Lifetime' if period=='all' else period,group=group,timezone=zone,items=items,limited=limited,at=time.time())
     @app.get('/demo/research')
     def research(request:Request):
         auth(request);require_query(request,('asset','bot','start','end'))

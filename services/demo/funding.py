@@ -21,6 +21,7 @@ class ShardFunding:
     def __init__(self,store,exchange):
         self.store,self.exchange=store,exchange
         self.balances={};self.checked_at=0;self.poll_at=0;self.notice_at={}
+        self.waits={}
     def balances_now(self):
         rows=self.exchange.call('GET','/portfolio/subaccounts/balances').get('subaccount_balances')
         if not isinstance(rows,list) or len(rows)>6464:raise ExchangeFailure('shard_balance_contract')
@@ -78,16 +79,18 @@ class ShardFunding:
         return False
     def ensure(self,index,required,target,reservations):
         if not isinstance(index,int) or not 0<=index<=100:raise ExchangeFailure('market_shard_contract')
-        if self.pending():return False
+        if self.pending():self.waits[index]=dict(reason='transfer',at=time.time());return False
         if time.time()-self.checked_at>=30:self.balances_now()
         available={i:max(0,v-reservations.get(i,0)) for i,v in self.balances.items()}
         current=available.get(index,0)
         if current>=required:
+            self.waits.pop(index,None)
             if index not in self.notice_at or self.notice_at[index]!=-1:
                 self.store.clear_alert('funding-cash-'+str(index));self.notice_at[index]=-1
             return True
         donors=sorted(((v,i) for i,v in available.items() if i!=index),reverse=True)
         if not donors or sum(v for v,_ in donors)<required-current:
+            self.waits[index]=dict(reason='funding',at=time.time(),required_cents=required,available_cents=current,transferable_cents=sum(v for v,_ in donors),reserved_cents=sum(reservations.values()))
             if time.time()-self.notice_at.get(index,-30)>=30:
                 self.store.alert('funding-cash-'+str(index),f'Demo shard {index}: this bid needs ${required/100:.2f}; ${current/100:.2f} available here and ${sum(v for v,_ in donors)/100:.2f} transferable from other shards. Resting orders reserve up to ${sum(reservations.values())/100:.2f}. This entry waits; other funded markets continue. Funds are checked automatically.',False)
                 self.notice_at[index]=time.time()
@@ -111,4 +114,5 @@ class ShardFunding:
             raise
         self.store.put('funding',pending);self.poll_at=time.time()+2
         self.store.alert('funding','Moving existing Demo funds to the trading shard; matching entries will resume after confirmation.',False)
+        self.waits[index]=dict(reason='transfer',at=time.time())
         return False

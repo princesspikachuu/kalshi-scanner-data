@@ -58,7 +58,7 @@ def eligible(config,square,quote,now):
     return (quote.get('status')=='active' and quote['series'] in SERIES[square['asset']]
         and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-config['cycle_cutoff_minutes']*60)
 
-def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled):
+def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None):
     from collections import Counter
     from .engine import side_quote,entry_protection_matches,quantity
     config=bot['config'];by_market={};market_cost={};bot_cost=0
@@ -83,12 +83,16 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled)
             reason=entry_block_reason(item,rows,ticker in netting)
             if not reason and state.get('submitted'):reason='complete'
             if not reason and not retry_ready(state.get('price_retry'),q,now):reason='price_retry'
-            if not reason and (ticker in blocked or not reconciled):reason='verification'
+            if not reason and ticker in blocked:reason='verification'
             if not reason and any(o.get('exit_triggered') or o['kind']=='exit' and o.get('exit_role')!='profit' for o in rows):reason='protection'
             if not reason and not price<side_quote(q,side)[1]:reason='maker'
             if not reason and not entry_protection_matches(config,square,q,side):reason='stop'
             if not reason and (len(live)>=490 or len(by_market)>=100 and ticker not in by_market):reason='capacity'
             if not reason and quantity(config,price,account.get('equity_cents',0),account.get('cash_cents',0),market_cost.get(ticker,0),bot_cost)<1:reason='budget'
+            if not reason and daily_reason:reason=daily_reason
+            wait=(funding_waits or {}).get(q.get('exchange_index',0),{})
+            if not reason and now-wait.get('at',0)<35:reason=wait.get('reason')
+            if not reason and not reconciled:reason='verification'
             if reason:reasons[reason]+=1
             else:ready+=1
     own=[o for o in live if o['bot']==bot['id']]
@@ -97,9 +101,10 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled)
     labels=dict(verification='verifying current orders',other_strategy='another strategy owns this market',
         opposite_inventory='waiting for opposite-side positions to close',self_trade='would cross your own sell',netting='reconciling offsetting fills',
         budget='insufficient available funds or allocation',price_retry='waiting for a fresh quote to retry',protection='protective exit is active',
-        maker='buy price would cross the current ask',stop='loss prevention blocks entry',capacity='order tracking limit reached')
+        maker='buy price would cross the current ask',stop='loss prevention blocks entry',capacity='order tracking limit reached',
+        funding='waiting for available cash on this market shard',transfer='waiting for a confirmed funding transfer',daily_loss='daily loss cutoff reached',daily_check='checking saved daily P&L')
     waiting=[f'{count} {labels[key]}' for key,count in sorted(reasons.items(),key=lambda pair:(-pair[1],pair[0])) if key in labels][:2]
-    status='New entries paused' if bot['desired']!='running' else f'{ready} sides ready to bid' if ready else 'Entry bids waiting' if waiting else 'Waiting for existing bids or positions' if reasons.get('duplicate') else 'Cycle completed or stopped' if reasons.get('complete') else 'Waiting for the next market before cutoff'
+    status='New entries paused' if bot['desired']!='running' else f'{ready} sides ready to bid' if ready else 'Entry bids waiting' if waiting else 'Waiting for existing bids or positions' if reasons.get('duplicate') else 'Cycle completed or stopped' if reasons.get('complete') else 'Waiting for fresh verified prices' if markets and not fresh else 'Waiting for the next market before cutoff'
     message=f'Buy {config["cycle_buy_cents"]}¢ / sell {config["cycle_sell_cents"]}¢ · {lows} waiting buys · {highs} profit sells · {status}'
     if waiting:message+=' · '+'; '.join(waiting)
     return dict(message=message,markets=len(markets),fresh=len(fresh),eligible_markets=eligible_markets,matches=ready,

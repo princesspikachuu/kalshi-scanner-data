@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {pro
 const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
 test('Demo routes preserve owner gateway and correct method',async()=>{
- for(const path of ['performance?bot=00000000-0000-0000-0000-000000000001','workspace','orders','activity?kind=fill','chart?period=7D','research?asset=btc&start=2026-10-01&end=2026-10-30']){
+ for(const path of ['performance?bot=00000000-0000-0000-0000-000000000001','performance?bot=00000000-0000-0000-0000-000000000001&group=hour&period=7D&timezone=America%2FLos_Angeles','workspace','orders','activity?kind=fill','chart?period=7D','research?asset=btc&start=2026-10-01&end=2026-10-30']){
   const r=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,options());assert.equal(r.status,200,path);
  }
  let called=false;const r=await proxyAuth(new Request('https://app.test/api/demo/bots',{method:'POST',headers:{origin:'https://other.test','content-type':'application/json'},body:'{}'}),env,{fetcher:async()=>{called=true}});assert.equal(r.status,403);assert.equal(called,false);
@@ -53,6 +53,12 @@ test('Demo reset is an owner POST route without any funding prerequisite',async(
 });
 
 import {squarePerformanceMarkup} from '../apps/web/demo-client.mjs';
+test('Time statistics show the selected clock and retain unknown historical times',()=>{
+ const item={bucket:null,label:'Time unavailable',orders:2,filled_orders:1,contracts:1,resting_contracts:0,held_contracts:0,scored:1,wins:1,unscored_resets:0,recorded_pnl_cents:5};
+ const html=squarePerformanceMarkup({group:'time',period:'7D',items:[item],at:0});
+ assert.match(html,/Time remaining at entry/);assert.match(html,/Time unavailable/);assert.match(html,/7D/);assert.doesNotMatch(html,/square \?/);
+ assert.match(squarePerformanceMarkup({group:'hour',period:'Lifetime',timezone:'America/Los_Angeles',items:[{...item,label:'01:00–02:00'}],at:0}),/America\/Los_Angeles/);
+});
 test('Square performance labels estimates, empty denominators and original revisions safely',()=>{
  const empty={revision:2,square:0,condition:{asset:'<img>',min_price:60,max_price:69,min_minutes:0,max_minutes:5},orders:0,filled_orders:0,contracts:0,resting_contracts:0,held_contracts:0,scored:0,wins:0,recorded_pnl_cents:null,unscored_resets:1};
  const html=squarePerformanceMarkup({items:[empty],at:0,limited:true});

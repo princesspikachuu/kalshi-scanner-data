@@ -153,9 +153,38 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(current['held_contracts'],2);self.assertEqual(current['scored'],1)
         self.assertEqual(current['unscored_resets'],1);self.assertEqual(current['recorded_pnl_cents'],35)
         self.assertEqual(next(r for r in rows if r['revision']==0)['recorded_pnl_cents'],-20)
-        for query in ['','?bot=bad','?bot='+identifier+'&period=7D','?bot='+identifier+'&bot='+identifier]:
+        for query in ['','?bot=bad','?bot='+identifier+'&period=bad','?bot='+identifier+'&bot='+identifier]:
             self.assertEqual(self.client.get('/demo/performance'+query).status_code,422)
         self.client.cookies.clear();self.assertEqual(self.client.get('/demo/performance?bot='+identifier).status_code,401)
+    def test_time_statistics_use_market_clock_legacy_evidence_and_local_dst_hours(self):
+        from datetime import datetime,timezone
+        self.demo.put('health',dict(state='ready',features=['buy_low_sell_high_v1']))
+        identifier=self.client.post('/demo/bots',json=config(strategy='buy_low_sell_high',cycle_cutoff_minutes=5)).json()['id']
+        start=datetime(2026,11,1,8,30,tzinfo=timezone.utc).timestamp()
+        from types import SimpleNamespace
+        clock=patch('services.api.demo_performance.time',SimpleNamespace(time=lambda:start+8*3600));clock.start();self.addCleanup(clock.stop)
+        cases=[('a',start,1,15,20),('b',start+3600,1,None,-5),('c',start+7200,0,None,9),('d',start+7800,0,None,None),('old',start-10*86400,1,15,100)]
+        for key,at,revision,minutes,pnl in cases:
+            data=dict(bot=identifier,kind='entry',entry_strategy='buy_low_sell_high',client_id=key,revision=revision,square=0,created_at=at,close=at+300,price=10)
+            if minutes is not None:data['market_close_at']=at+minutes*60
+            state=dict(status='closed' if pnl is not None else 'rejected',filled=1 if pnl is not None else 0,remaining=0)
+            if pnl is not None:state['realized_cents']=pnl
+            self.demo.put('order/'+key,state,parameters=data)
+        self.demo.event('order_intent','Saved legacy market clock',bot=identifier,details=dict(client_id='c',quote=dict(entry_close=start+7200+180)))
+        path='/demo/performance?bot='+identifier
+        times=self.client.get(path+'&group=time&period=24H');self.assertEqual(times.status_code,200,times.text)
+        rows=times.json()['items'];self.assertEqual({r['bucket'] for r in rows},{3,10,15,None})
+        self.assertEqual(sum(r['orders'] for r in rows),4)
+        self.assertEqual(sum(r['recorded_pnl_cents'] or 0 for r in rows),24)
+        self.assertIn('Time unavailable',[r['label'] for r in rows])
+        self.assertEqual(next(r for r in rows if r['bucket']==15)['recorded_pnl_cents'],20)
+        hours=self.client.get(path+'&group=hour&period=24H&timezone=America/Los_Angeles').json()['items']
+        first=next(r for r in hours if r['bucket']==1)
+        self.assertEqual((first['orders'],first['recorded_pnl_cents']),(2,15))
+        self.assertEqual(first['label'],'01:00–02:00')
+        self.assertEqual(sum(r['orders'] for r in self.client.get(path+'&group=time').json()['items']),5)
+        for suffix in ['&group=bad','&timezone=invalid','&group=time&group=hour']:
+            self.assertEqual(self.client.get(path+suffix).status_code,422)
 
     def test_retired_column_values_are_ignored_and_removed_from_new_configs(self):
         body=config(column_maximum_cents={'60-70':65,'90-100':94})
