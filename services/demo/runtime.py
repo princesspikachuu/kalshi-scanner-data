@@ -154,7 +154,8 @@ class Worker:
         with self.store.pool.connection() as c:
             rows=c.execute("""SELECT parameters,progress FROM research_job
                 WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
-                AND (parameters->>'kind'='entry' OR parameters->>'exit_role'='profit') AND progress->>'status'='rejected'
+                AND (parameters->>'kind'='entry' OR (parameters->>'exit_role'='profit'
+                    AND parameters->>'rejection_reason' IN ('post_only','price_tick'))) AND progress->>'status'='rejected'
                 AND NOT(parameters ? 'funding_retry_v1') ORDER BY created_at DESC LIMIT 501""").fetchall()
         if len(rows)>500:raise ExchangeFailure('rejected_order_repair_capacity')
         bots={b['id']:b for b in self.bots}
