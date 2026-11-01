@@ -13,6 +13,8 @@ class Square(BaseModel):
     report_id:int|None=Field(default=None,ge=1)
     expected_roi:float|None=None
     loss_cents:int|None=Field(default=None,ge=1,le=99)
+    maximum_cents:int|None=Field(default=None,ge=1,le=99)
+    loss_prevention_cents:int|None=Field(default=None,ge=1,le=99)
     @model_validator(mode='after')
     def ranges(self):
         if self.asset not in SERIES or self.min_price>self.max_price or self.min_minutes>=self.max_minutes:raise ValueError('Invalid square')

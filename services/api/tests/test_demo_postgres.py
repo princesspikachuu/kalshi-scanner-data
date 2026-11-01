@@ -155,17 +155,11 @@ class DemoPostgres(unittest.TestCase):
             self.assertEqual(self.client.get('/demo/performance'+query).status_code,422)
         self.client.cookies.clear();self.assertEqual(self.client.get('/demo/performance?bot='+identifier).status_code,401)
 
-    def test_column_limits_roundtrip_and_clear_with_verified_worker_capability(self):
-        import time
+    def test_retired_column_values_are_ignored_and_removed_from_new_configs(self):
         body=config(column_maximum_cents={'60-70':65,'90-100':94})
-        self.assertEqual(self.client.post('/demo/bots',json=body).status_code,409)
-        self.demo.put('health',dict(state='ready',at=time.time(),features=['column_bid_caps_v1']))
         response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text)
-        identifier=response.json()['id'];page=self.client.get('/demo/workspace').json()
-        self.assertTrue(page['column_bid_caps']);self.assertEqual(page['bots'][0]['config']['column_maximum_cents'],body['column_maximum_cents'])
-        body.pop('column_maximum_cents')
-        response=self.client.post('/demo/bots/'+identifier+'/configure',json=body);self.assertEqual(response.status_code,200,response.text)
-        self.assertEqual(self.demo.get('bot/'+identifier)['parameters']['config']['column_maximum_cents'],{})
+        page=self.client.get('/demo/workspace').json();self.assertNotIn('column_bid_caps',page)
+        self.assertEqual(page['bots'][0]['config']['column_maximum_cents'],{})
 
     def test_running_allocation_edit_preserves_strategy_orders_triggers_and_checks_stale_settings(self):
         body=config();identifier=self.client.post('/demo/bots',json=body).json()['id']
@@ -188,3 +182,32 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         bot=self.client.get('/demo/workspace').json()['bots'][0]
         self.assertEqual((bot['revision'],bot['settings_revision'],bot['config']['bot_percent']),(1,3,5))
+
+    def test_individual_square_limits_gate_old_worker_and_can_change_live_without_revising_strategy(self):
+        import time
+        body=config();body['squares'][0]['maximum_cents']=62
+        response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,409)
+        self.demo.put('health',dict(state='ready',at=time.time(),features=['square_bid_caps_v1']))
+        identifier=self.client.post('/demo/bots',json=body).json()['id']
+        self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1))
+        self.demo.put('order/held',dict(status='held',filled=2,remaining=0),parameters=dict(kind='entry',bot=identifier,ticker='T',revision=1,price=60))
+        prior=self.demo.get('order/held');body['squares'][0]['maximum_cents']=58
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(body,expected_settings_revision=1));self.assertEqual(response.status_code,200,response.text)
+        bot=self.client.get('/demo/workspace').json()['bots'][0]
+        self.assertEqual((bot['revision'],bot['settings_revision'],bot['desired']),(1,2,'running'))
+        self.assertEqual(bot['config']['squares'][0]['maximum_cents'],58);self.assertEqual(self.demo.get('order/held'),prior)
+
+    def test_square_loss_override_can_change_live_and_blank_restores_bot_setting(self):
+        import time
+        body=config(loss_mode='manual',loss_cents=55);body['squares'][0]['loss_prevention_cents']=60
+        self.assertEqual(self.client.post('/demo/bots',json=body).status_code,409)
+        self.demo.put('health',dict(state='ready',at=time.time(),features=['square_loss_prevention_v1']))
+        response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text);identifier=response.json()['id']
+        self.client.post('/demo/bots/'+identifier+'/control',json=dict(action='resume',revision=1))
+        body['squares'][0].pop('loss_prevention_cents')
+        response=self.client.post('/demo/bots/'+identifier+'/configure',json=dict(body,expected_settings_revision=1));self.assertEqual(response.status_code,200,response.text)
+        bot=self.client.get('/demo/workspace').json()['bots'][0]
+        self.assertEqual((bot['revision'],bot['desired'],bot['config']['loss_cents']),(1,'running',55))
+        self.assertIsNone(bot['config']['squares'][0]['loss_prevention_cents'])
+        body=config(loss_mode='research');body['squares'][0]['loss_prevention_cents']=58
+        response=self.client.post('/demo/bots',json=body);self.assertEqual(response.status_code,200,response.text)

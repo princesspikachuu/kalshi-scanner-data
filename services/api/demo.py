@@ -19,14 +19,19 @@ def install_demo(app,auth,mutate,pool):
         return row
     def verify_config(config):
         config=config.model_dump();verified=[]
-        if config['column_maximum_cents']:
+        config['column_maximum_cents']={} # Legacy configs remain readable; column limits are retired.
+        square_caps=any(s.get('maximum_cents') is not None for s in config['squares'])
+        square_exits=any(s.get('loss_prevention_cents') is not None for s in config['squares'])
+        if square_caps or square_exits:
             health=store.get('health')
-            if not health or 'column_bid_caps_v1' not in health['progress'].get('features',[]):raise HTTPException(409,'Column bid limits are temporarily unavailable; your draft has been kept')
+            features=health['progress'].get('features',[]) if health else []
+            if square_caps and 'square_bid_caps_v1' not in features:raise HTTPException(409,'Square bid limits are temporarily unavailable; your draft has been kept')
+            if square_exits and 'square_loss_prevention_v1' not in features:raise HTTPException(409,'Square loss prevention is temporarily unavailable; your draft has been kept')
         with pool.connection() as c:
             for square in config['squares']:
                 square['expected_roi']=None;square['loss_cents']=None
                 if not square['report_id']:
-                    if config['loss_mode']=='research':raise HTTPException(422,'Select saved research for recommended exits')
+                    if config['loss_mode']=='research' and square.get('loss_prevention_cents') is None:raise HTTPException(422,'Select saved research or enter this square’s loss prevention')
                     continue
                 row=c.execute('SELECT asset,report FROM research_result WHERE id=%s',(square['report_id'],)).fetchone()
                 if not row or row['asset']!=square['asset']:raise HTTPException(422,'Research source not found')
@@ -38,7 +43,7 @@ def install_demo(app,auth,mutate,pool):
                 square['expected_roi']=cell['hold']['hypothetical_roi_percent']
                 loss=cell.get('loss_prevention') or cell.get('conditional_loss') or {}
                 square['loss_cents']=loss.get('sell_threshold_cents') or loss.get('threshold_cents')
-                if config['loss_mode']=='research' and not square['loss_cents']:raise HTTPException(422,'This square has no verified exit recommendation; choose manual or off')
+                if config['loss_mode']=='research' and not square['loss_cents'] and square.get('loss_prevention_cents') is None:raise HTTPException(422,'This square has no verified exit recommendation; enter its loss prevention or choose manual or off')
         return config
     from services.demo.reset import ResetRequest,request_reset,ResetConflict
     @app.post('/demo/reset')
@@ -73,7 +78,7 @@ def install_demo(app,auth,mutate,pool):
             if b.get('fresh_test'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
         account_change=values['equity_cents']-first['progress']['value'] if values and first else None
         monitoring={r['idempotency_key'].split('/')[-1].split('-')[0]:r['progress'] for r in health_rows}
-        return dict(contract='demo-v1',environment='demo',column_bid_caps=bool(health and 'column_bid_caps_v1' in health['progress'].get('features',[])),reset_mode='archive_copy',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
+        return dict(contract='demo-v1',environment='demo',reset_mode='archive_copy',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
             health=status,account=values,alerts=alerts,policy=policy['progress'] if policy else Policy().model_dump(),
             connection_configured=bool(store.get('credentials') or os.environ.get('KALSHI_DEMO_API_KEY_ID')),
             vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,account_change_cents=account_change,period=period)
@@ -102,12 +107,13 @@ def install_demo(app,auth,mutate,pool):
             old=BotConfig.model_validate(parameters['config']).model_dump()
             changed={k for k in config if config[k]!=old[k]}
             if not changed:return dict(contract='demo-v1',updated=True)
-            allocation_only=changed<={'name','bid_percent','market_percent','bot_percent'}
-            if not allocation_only:
-                if row['progress'].get('desired')=='running':raise HTTPException(409,'Pause the bot before changing entry or exit rules. Name and spending percentages can be changed while running.')
-                if any(o['bot']==str(identifier) for o in store.active_orders()):raise HTTPException(409,'Wait for existing orders and positions to close before changing entry or exit rules. Spending percentages can be changed now.')
+            same_rules=[{k:v for k,v in s.items() if k not in ('maximum_cents','loss_prevention_cents')} for s in config['squares']]==[{k:v for k,v in s.items() if k not in ('maximum_cents','loss_prevention_cents')} for s in old['squares']]
+            live_settings=changed<={'name','bid_percent','market_percent','bot_percent','squares','column_maximum_cents'} and same_rules
+            if not live_settings:
+                if row['progress'].get('desired')=='running':raise HTTPException(409,'Pause the bot before changing entry or exit rules. Name, spending percentages and square risk values can be changed while running.')
+                if any(o['bot']==str(identifier) for o in store.active_orders()):raise HTTPException(409,'Wait for existing orders and positions to close before changing entry or exit rules. Spending percentages and square risk values can be changed now.')
             from psycopg.types.json import Jsonb
-            parameters=dict(parameters,config=config,revision=parameters['revision']+(0 if allocation_only else 1),settings_revision=settings_revision+1)
+            parameters=dict(parameters,config=config,revision=parameters['revision']+(0 if live_settings else 1),settings_revision=settings_revision+1)
             c.execute('UPDATE research_job SET parameters=%s WHERE idempotency_key=%s',(Jsonb(parameters),'demo/bot/'+str(identifier)))
         store.event('bot_updated',config['name']+' configuration updated',bot=str(identifier))
         return dict(contract='demo-v1',updated=True)

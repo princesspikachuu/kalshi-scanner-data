@@ -14,6 +14,7 @@ def qualifies(square,quote,side,now,reference):
         square['min_minutes']<minutes<=square['max_minutes'] and square['min_price']<=value<=square['max_price'])
 
 def protective_threshold(config,square):
+    if square.get('loss_prevention_cents') is not None:return square['loss_prevention_cents']
     if config['loss_mode']=='manual':return config.get('loss_cents')
     if config['loss_mode']=='research':return square.get('loss_cents')
     return None
@@ -22,17 +23,12 @@ def entry_protection_matches(config,square,quote,side):
     threshold=protective_threshold(config,square)
     return threshold is None or side_quote(quote,side)[1]>threshold
 
-def entry_price(config,quote,side):
+def entry_price(config,quote,side,square=None):
     bid,ask=side_quote(quote,side)
     price=(bid if config['price_reference']=='bid' else ask)+config['adjustment_cents']
     # The maximum is a ceiling, never an instruction to raise a lower bid.
-    if config.get('maximum_cents') is not None:price=min(price,config['maximum_cents'])
-    column_caps=config.get('column_maximum_cents')
-    if column_caps:
-        reference=bid if config.get('qualification','ask')=='bid' else ask
-        low=math.floor(reference/10)*10
-        column_cap=column_caps.get(f'{low}-{low+10}')
-        if column_cap is not None:price=min(price,column_cap)
+    maximum=square.get('maximum_cents') if square and square.get('maximum_cents') is not None else config.get('maximum_cents')
+    if maximum is not None:price=min(price,maximum)
     price=math.floor(price)
     # A minimum filters cheap bids; it never raises a bid or overrides its reference.
     if config.get('minimum_cents') is not None and price<config['minimum_cents']:return None
@@ -61,7 +57,7 @@ def candidates(bots,quotes,states,now,blocked=()):
                     memory[key]=old
                     if not match or old['submitted'] or bot['desired']!='running' or ticker in blocked:continue
                     if not entry_protection_matches(config,square,quote,side):continue
-                    price=entry_price(config,quote,side)
+                    price=entry_price(config,quote,side,square)
                     if price is not None:output.append(dict(bot=bot['id'],ticker=ticker,side=side,square=index,
                         cycle=old['cycle'],price=price,first_at=old['first_at'],expected_roi=square.get('expected_roi') or 0,key=key))
         # Keep only current watchlist conditions, at most 100 markets x 45 squares x two sides.

@@ -375,23 +375,44 @@ class DownwardExitRatchet(unittest.TestCase):
         submit.assert_not_called();self.assertEqual(parent['exit_ceiling_cents'],55)
         self.assertTrue(w.entry_diagnostics(NOW)[parent['bot']]['exit_waiting'])
 
-class ColumnMaximums(unittest.TestCase):
-    def test_column_cap_is_a_ceiling_combined_with_overall_cap_and_minimum_filter(self):
-        q=quote()
-        self.assertEqual(entry_price(config(column_maximum_cents={'60-70':62}),q,'yes'),62)
-        self.assertEqual(entry_price(config(maximum_cents=61,column_maximum_cents={'60-70':62}),q,'yes'),61)
-        self.assertEqual(entry_price(config(adjustment_cents=-10,column_maximum_cents={'60-70':62}),q,'yes'),55)
-        self.assertIsNone(entry_price(config(minimum_cents=63,column_maximum_cents={'60-70':62}),q,'yes'))
-        self.assertEqual(entry_price(config(column_maximum_cents={'70-80':50}),q,'yes'),64)
-    def test_cap_column_uses_the_qualification_quote_not_adjusted_bid_or_other_reference(self):
-        q=quote();q.update(bid=65,ask=75)
-        caps={'50-60':51,'60-70':63,'70-80':72}
-        self.assertEqual(entry_price(config(qualification='ask',adjustment_cents=-20,column_maximum_cents=caps),q,'yes'),55)
-        self.assertEqual(entry_price(config(qualification='bid',column_maximum_cents=caps),q,'yes'),63)
-        q.update(bid=25,ask=30)
-        self.assertEqual(entry_price(config(column_maximum_cents=caps),q,'no'),72)
-    def test_schema_rejects_unknown_columns_invalid_cents_and_keeps_legacy_default(self):
-        self.assertEqual(config()['column_maximum_cents'],{})
-        for value in [{'bogus':65},{'60-70':0},{'60-70':100},{'60-70':True},{'60-70':'65'}]:
-            with self.subTest(value=value),self.assertRaises(ValueError):config(column_maximum_cents=value)
-        self.assertEqual(config(minimum_cents=65,column_maximum_cents={'60-70':60})['column_maximum_cents'],{'60-70':60})
+class RetiredColumnLimits(unittest.TestCase):
+    def test_historical_column_values_are_readable_but_no_longer_limit_bids(self):
+        self.assertEqual(entry_price(config(column_maximum_cents={'60-70':50}),quote(),'yes'),64)
+
+class IndividualSquareMaximum(unittest.TestCase):
+    def test_each_square_caps_calculated_price_without_raising_or_overriding_shared_limits(self):
+        c=config();s=dict(c['squares'][0],maximum_cents=62)
+        self.assertEqual(entry_price(c,quote(),'yes',s),62)
+        self.assertEqual(entry_price(dict(c,maximum_cents=61),quote(),'yes',s),62)
+        self.assertEqual(entry_price(dict(c,column_maximum_cents={'60-70':60}),quote(),'yes',s),62)
+        self.assertEqual(entry_price(dict(c,adjustment_cents=-10),quote(),'yes',s),55)
+        self.assertIsNone(entry_price(dict(c,minimum_cents=63),quote(),'yes',s))
+        b=bot();b['config']['squares'][0]['maximum_cents']=62
+        self.assertEqual(candidates([b],{'t':quote()},{},NOW)[0]['price'],62)
+        q=quote();q.update(bid=31,ask=35)
+        self.assertEqual(entry_price(c,q,'no',dict(s,maximum_cents=63)),63)
+        with self.assertRaises(ValueError):BotConfig(**dict(c,squares=[dict(s,maximum_cents=True)]))
+    def test_lowered_square_cap_cancels_unfilled_entry_and_rearms_without_touching_a_filled_position(self):
+        from unittest.mock import Mock
+        b=bot();b['config']['squares'][0]['maximum_cents']=60
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None);worker.bots=[b];worker.quotes={'t':quote()};worker.recovered=True
+        entry=dict(kind='entry',bot=b['id'],revision=1,square=0,ticker='t',close=NOW+200,status='resting',remaining=3,filled=0,exchange_id='one',side='yes',price=64)
+        worker.orders=[entry];worker.states={b['id']:{'t/0/yes':dict(submitted=True)}};worker.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        worker.cancel.assert_called_once();self.assertFalse(worker.states[b['id']]['t/0/yes']['submitted'])
+        entry.update(remaining=0,filled=2);worker.cancel.reset_mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
+        worker.cancel.assert_not_called();self.assertEqual(entry['filled'],2)
+
+class SquareLossPrevention(unittest.TestCase):
+    def test_square_override_wins_for_manual_research_and_off_and_blank_inherits(self):
+        from services.demo.engine import protective_threshold,entry_protection_matches
+        s=dict(config()['squares'][0],loss_prevention_cents=60)
+        for c in [config(),config(loss_mode='manual',loss_cents=55),config(loss_mode='research')]:
+            self.assertEqual(protective_threshold(c,s),60)
+            self.assertFalse(entry_protection_matches(c,s,dict(quote(),ask=59),'yes'))
+        blank=dict(s,loss_prevention_cents=None,loss_cents=57)
+        self.assertEqual(protective_threshold(config(loss_mode='manual',loss_cents=55),blank),55)
+        self.assertEqual(protective_threshold(config(loss_mode='research'),blank),57)
+        self.assertIsNone(protective_threshold(config(),blank))
+        with self.assertRaises(ValueError):BotConfig(**dict(config(),squares=[dict(s,loss_prevention_cents=0)]))

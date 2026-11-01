@@ -49,7 +49,7 @@ export function createOfferingLoader({research=createResearchClient(),collection
  };
 }
 
-export function renderOfferings(container,asset,report,squares,onToggle,{loading=false}={}){
+export function renderOfferings(container,asset,report,squares,onToggle,{loading=false,onMaximum=null,onLoss=null}={}){
  const doc=container.ownerDocument,element=(tag,text)=>{const node=doc.createElement(tag);if(text!==undefined)node.textContent=text;return node};
  const rows=offeringRows(asset,report),selected=new Set(squares.map(conditionKey));
  const table=element('table');table.className='bot-offerings';table.setAttribute('aria-label','Select bot conditions by price and time before close');
@@ -67,7 +67,16 @@ export function renderOfferings(container,asset,report,squares,onToggle,{loading
     const roi=hold.hypothetical_roi_percent;
     button.append(element('strong',`${roi.toFixed(2)}% ROI`),element('small',`${hold.win_rate_percent.toFixed(1)}% wins · n=${hold.sampled_markets}`),element('small',loss?.sell_label||'Sell: —'));
    }else button.append(element('strong','— ROI'),element('small','No saved observations'),element('small','Select as manual condition'));
-   button.addEventListener('click',()=>onToggle(square));td.append(button);tr.append(td);
+   button.addEventListener('click',()=>onToggle(square));td.append(button);
+   for(const [field,title,placeholder,onChange] of [['maximum_cents','Maximum bid · ¢','Use bot maximum',onMaximum],['loss_prevention_cents','Loss prevention · ¢','Use bot setting',onLoss]])if(chosen&&onChange){
+    const label=element('label',title),input=element('input');
+    input.type='number';input.min='1';input.max='99';input.step='1';input.placeholder=placeholder;
+    input.value=squares.find(s=>conditionKey(s)===conditionKey(square))?.[field]??'';
+    input.setAttribute('aria-label',`${title} for ${asset}, ${square.min_price}–${square.max_price} cents, ${square.max_minutes}–${square.min_minutes} minutes`);
+    input.setAttribute('data-square-key',conditionKey(square));input.setAttribute('data-square-field',field);input.addEventListener('input',()=>onChange(square,input.value));
+    label.append(input);td.append(label);
+   }
+   tr.append(td);
   }
   body.append(tr);
  }

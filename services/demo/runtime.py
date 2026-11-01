@@ -75,9 +75,9 @@ class Worker:
                         if ticker in self.blocked:blocked+=1;continue
                         if self.states.get(bot['id'],{}).get(f'{ticker}/{index}/{side}',{}).get('submitted'):submitted+=1;continue
                         if not entry_protection_matches(config,square,q,side):stop_blocked+=1;continue
-                        price=entry_price(config,q,side)
+                        price=entry_price(config,q,side,square)
                         if price is None:
-                            if config.get('minimum_cents') is not None and entry_price(dict(config,minimum_cents=None),q,side) is not None:minimum+=1
+                            if config.get('minimum_cents') is not None and entry_price(dict(config,minimum_cents=None),q,side,square) is not None:minimum+=1
                             else:maker+=1
                             continue
                         if quantity(config,price,self.account.get('equity_cents',0),self.account.get('cash_cents',0),market_exposure.get(ticker,0),bot_exposure)<1:budget+=1
@@ -100,7 +100,7 @@ class Worker:
         now=time.time()
         if state=='ready':self.issue=None
         if now-self.last_health>=10 or state!=self.last_health_state:
-            self.store.put('health',dict(state=state,message=message,at=now,features=['column_bid_caps_v1'],
+            self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
@@ -462,6 +462,17 @@ class Worker:
                     square=bot['config']['squares'][order['square']]
                     remaining_minutes=(q.get('entry_close',q['close'])-now)/60
                     explicitly_invalid=explicitly_invalid or not square['min_minutes']<remaining_minutes<=square['max_minutes']
+                if bot and self.recovered:
+                    square=bot['config']['squares'][order['square']]
+                    if square.get('maximum_cents') is not None and order['price']>square['maximum_cents']:
+                        self.cancel(order,'Square maximum lowered below this resting entry bid')
+                        if not order.get('filled',0):
+                            key=f"{order['ticker']}/{order['square']}/{order['side']}"
+                            memory=self.states.get(order['bot'],{}).get(key)
+                            if memory:
+                                memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                                self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
+                        return
                 condition_invalid=fresh and bot and (not qualifies(bot['config']['squares'][order['square']],q,order['side'],now,bot['config']['qualification']) or not entry_protection_matches(bot['config'],bot['config']['squares'][order['square']],q,order['side']))
                 # A reconnect is not evidence that a resting bid is invalid.
                 # Preserve it until fresh data verifies the condition or expiry.
@@ -637,7 +648,7 @@ def run(stop):
                     if signer:break
                     if not connection_notice:
                         print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
-                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['column_bid_caps_v1']))
+                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1']))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:
                         maintenance(store,os.environ,stop);next_maintenance=time.time()+300

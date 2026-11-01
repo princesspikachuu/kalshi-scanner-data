@@ -12,5 +12,3 @@
 #botEditor>.dialog-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 
 .bot-attention{margin-top:18px;padding:16px;border:1px solid #6d5937;border-radius:9px;background:#28251f;font-size:13px}.bot-attention>p{margin:8px 0 12px}.bot-attention details{margin-bottom:12px}.bot-attention .row{margin-top:12px}.bot-attention .button,.bot-attention button{font-size:12px;padding:7px 11px;min-height:36px}
-
-.column-bid-caps{display:grid;grid-template-columns:repeat(5,minmax(82px,1fr));gap:10px;min-width:480px;margin:12px 0}.column-bid-caps input{padding:8px;width:100%}

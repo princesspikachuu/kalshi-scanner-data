@@ -80,21 +80,24 @@ test('edit recovery binds only the same saved revision; changed or missing bots 
  assert.equal(resolveBotDraft(draft(),[current]).recoveredAsNew,false);
 });
 
-import {columnCaps} from '../apps/web/bot-builder.mjs';
-test('per-column bid limits preserve blanks, draft reloads and independent duplicate copies',()=>{
- assert.deepEqual(columnCaps({'50-60':'','60-70':'65','90-100':'94',private_key:'ignored'}),{'60-70':65,'90-100':94});
- const original=draft();const memory=storage(),store=createBotDraftStore(memory);
- original.fields.columnCap60='65';original.fields.columnCap90='';
- assert.equal(store.save(original),true);
- assert.deepEqual(createBotDraftStore(memory).load().fields,original.fields);
- const source={config:{name:'Column caps',squares:[],column_maximum_cents:{'60-70':65}}};
- const copy=duplicateBotConfig(source);copy.column_maximum_cents['60-70']=62;
- assert.equal(source.config.column_maximum_cents['60-70'],65);
-});
-
 test('edit drafts preserve settings revision and cannot overwrite a newer allocation edit',()=>{
  const input={...draft(),mode:'edit',botKey:'one',revision:3,settingsRevision:5},memory=storage(),store=createBotDraftStore(memory);
  assert.equal(store.save(input),true);const restored=store.load();assert.equal(restored.settingsRevision,5);
  assert.equal(resolveBotDraft(restored,[{key:'one',revision:3,settings_revision:5}]).recoveredAsNew,false);
  assert.equal(resolveBotDraft(restored,[{key:'one',revision:3,settings_revision:6}]).recoveredAsNew,true);
+});
+
+test('selected table squares have independent editable maximums and preserve them through drafts and duplication',()=>{
+ const doc={createElement:tag=>new Element(tag,doc)},container=doc.createElement('div');
+ const first=offeringRows('btc')[0].cells[1].square,second=offeringRows('btc')[1].cells[1].square;
+ const selected=[{...first,maximum_cents:63,loss_prevention_cents:55},{...second,maximum_cents:61}];let changed;
+ renderOfferings(container,'btc',null,selected,()=>assert.fail('Editing a maximum must not toggle its square'),{onMaximum:(s,value)=>changed={s,value},onLoss:(s,value)=>changed={s,value}});
+ const rows=container.children[0].children[1].children;
+ const input=rows[0].children[2].children[1].children[0];assert.equal(input.value,63);input.value='59';input.listeners.input();
+ assert.equal(changed.value,'59');assert.equal(changed.s.max_minutes,15);
+ assert.equal(rows[1].children[2].children[1].children[0].value,61);
+ const loss=rows[0].children[2].children[2].children[0];assert.equal(loss.value,55);loss.value='';loss.listeners.input();assert.equal(changed.value,'');
+ const memory=storage(),store=createBotDraftStore(memory),value=draft();value.squares=selected;assert.equal(store.save(value),true);
+ assert.equal(store.load().squares[1].maximum_cents,61);assert.equal(store.load().squares[0].loss_prevention_cents,55);
+ const copy=duplicateBotConfig({config:{name:'Per square',squares:selected}});copy.squares[0].maximum_cents=55;assert.equal(selected[0].maximum_cents,63);
 });
