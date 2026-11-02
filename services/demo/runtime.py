@@ -329,6 +329,25 @@ class Worker:
                 elif error.code=='authentication':raise
                 else:self.historical_lookup_at[ticker]=now+60
             return
+    def order_history(self,positions,remote,now):
+        """Complete history for relevant markets, not the account's lifetime churn.
+
+        Keep pagination fail-closed. An old held entry must not make every
+        reconciliation enumerate thousands of unrelated canceled bids.
+        """
+        starts={}
+        for order in self.orders:
+            ticker=order['ticker']
+            starts[ticker]=min(starts.get(ticker,now),order['created_at'])
+        # Include unowned positions/resting orders so closed local records can
+        # still be recovered from exchange evidence. Do not time-limit these.
+        unbounded={p['ticker'] for p in positions}|{o['ticker'] for o in remote}
+        history=[]
+        for ticker in sorted(set(starts)|unbounded):
+            params=dict(ticker=ticker)
+            if ticker not in unbounded:params['min_ts']=int(starts[ticker])-60
+            history.extend(self.exchange.pages('/portfolio/orders','orders',**params))
+        return history
     def reconcile(self):
         """Complete paginated exchange state; gaps never manufacture fills."""
         now=time.time();self.load_bots()
@@ -342,8 +361,7 @@ class Worker:
             index=raw.get('exchange_index',0)
             # Reserve the limit's worst-case cash cost, including manual orders.
             self.shard_reservations[index]=self.shard_reservations.get(index,0)+resting_reservation(raw)
-        earliest=min((o['created_at'] for o in self.orders),default=now-3600)
-        recent=list(self.exchange.pages('/portfolio/orders','orders',min_ts=int(earliest)-60)) if self.orders or positions else []
+        recent=self.order_history(positions,remote,now)
         by_client={o.get('client_order_id'):o for o in remote+recent}
         known_ids={o['client_id'] for o in self.orders};blocked={o['ticker'] for o in remote if o.get('client_order_id') not in known_ids}
         for order in self.orders:

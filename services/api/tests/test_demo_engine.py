@@ -122,6 +122,39 @@ class FakeStore:
     def put(self,key,data,parameters=None):self.saved.append((key,data,parameters))
     def event(self,kind,message,**kw):self.events.append(kind)
 class WorkerRecovery(unittest.TestCase):
+    def test_history_reconciliation_ignores_unrelated_account_churn(self):
+        class Ex(Exchange):
+            def __init__(self):self.seen=[]
+            def call(self,method,path,*,params):
+                self.seen.append(params)
+                if not params.get('ticker'):
+                    return dict(orders=[dict(client_order_id='unrelated')]*200,cursor=str(len(self.seen)))
+                if params.get('cursor'):
+                    return dict(orders=[dict(client_order_id='late-fill',ticker=params['ticker'])])
+                return dict(orders=[dict(client_order_id='old',ticker=params['ticker'])]*200,cursor='next')
+        ex=Ex()
+        with self.assertRaises(ExchangeFailure) as error:list(ex.pages('/portfolio/orders','orders',min_ts=NOW-86400))
+        self.assertEqual(error.exception.code,'reconciliation_capacity')
+        ex.seen=[]
+        worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        worker.orders=[dict(ticker='held-market',created_at=NOW-86400),dict(ticker='held-market',created_at=NOW-60),dict(ticker='unknown-intent',created_at=NOW-10)]
+        result=worker.order_history([dict(ticker='manual-position')],[dict(ticker='manual-resting')],NOW)
+        self.assertEqual({p['ticker'] for p in ex.seen},{'held-market','unknown-intent','manual-position','manual-resting'})
+        self.assertEqual(len(result),804)
+        self.assertEqual(sum(r['client_order_id']=='late-fill' for r in result),4)
+        for params in ex.seen:
+            if params['ticker'].startswith('manual-'):self.assertNotIn('min_ts',params)
+            else:self.assertEqual(params['min_ts'],NOW-(86400 if params['ticker']=='held-market' else 10)-60)
+    def test_scoped_history_still_fails_closed_on_incomplete_market_history(self):
+        class Ex(Exchange):
+            def __init__(self):self.cursor=0
+            def call(self,*args,**kwargs):
+                self.cursor+=1
+                return dict(orders=[dict(ticker='t')]*200,cursor=str(self.cursor))
+        worker=Worker(FakeStore(),Ex(),threading.Event(),lambda:None)
+        worker.orders=[dict(ticker='t',created_at=NOW-10)]
+        with self.assertRaises(ExchangeFailure) as error:worker.order_history([],[],NOW)
+        self.assertEqual(error.exception.code,'reconciliation_capacity')
     def test_durable_intent_precedes_network_and_timeout_never_resubmits(self):
         store=FakeStore()
         class Ex:
