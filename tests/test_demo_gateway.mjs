@@ -1,4 +1,22 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {proxyAuth} from '../apps/gateway/index.mjs';import {selectedSquares} from '../apps/web/bot-builder.mjs';
+import gateway from '../apps/gateway/index.mjs';
+import {readFile} from 'node:fs/promises';
+test('Every page entrypoint and imported module is served through the real gateway allowlist',async()=>{
+ const base=new URL('../apps/web/',import.meta.url),queue=['index.html','bots.html','activity.html','collection.html','paper.html'],seen=new Set();
+ const environment={APP_ORIGIN:'https://app.test',ASSETS:{fetch:async request=>new Response(await readFile(new URL(new URL(request.url).pathname.slice(1),base),'utf8'),{headers:{'content-type':request.url.endsWith('.mjs')?'text/javascript':'text/html'}})}};
+ while(queue.length){
+  const path=queue.shift();if(seen.has(path))continue;seen.add(path);
+  const response=await gateway.fetch(new Request('https://app.test/'+path),environment);
+  assert.equal(response.status,200,`${path} must be reachable before its page can start`);
+  const source=await response.text();
+  if(path.endsWith('.html'))for(const match of source.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/g)){
+   if(!match[1].startsWith('http'))queue.push(new URL(match[1],'https://app.test/'+path).pathname.slice(1));
+  }
+  else for(const match of source.matchAll(/\bimport\s+(?:[^'";]*?\s+from\s+)?['"](\.[^'"]+\.mjs)['"]/g))queue.push(new URL(match[1],'https://app.test/'+path).pathname.slice(1));
+ }
+ assert.ok(seen.has('order-detail.mjs'));assert.ok(seen.has('activity-filters.mjs'));
+ assert.equal((await gateway.fetch(new Request('https://app.test/not-an-app-module.mjs'),environment)).status,404);
+});
 const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
 test('Demo routes preserve owner gateway and correct method',async()=>{
