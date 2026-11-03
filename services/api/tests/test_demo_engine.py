@@ -538,3 +538,41 @@ class FifteenMinuteAssetRouting(unittest.TestCase):
             wrong='finance_15m' if asset=='commodities_15m' else 'commodities_15m'
             wrong_square=Square(asset=wrong,min_price=60,max_price=70,min_minutes=3,max_minutes=10)
             self.assertFalse(qualifies(wrong_square.model_dump(),quote,'yes',now,'bid'))
+
+
+class IndividualFifteenMinuteCategories(unittest.TestCase):
+    def test_every_configured_15m_series_has_one_exact_individual_category(self):
+        from services.research.reports import SERIES,MINUTES,INDIVIDUAL_15M_SERIES
+        crypto={'btc':'KXBTC15M','eth':'KXETH15M',
+            **{k:v for k,v in INDIVIDUAL_15M_SERIES.items() if k in {'sol','xrp','doge','bnb','hype','zec','near'}}}
+        commodities={k:v for k,v in INDIVIDUAL_15M_SERIES.items() if v in SERIES['commodities_15m']}
+        finance={k:v for k,v in INDIVIDUAL_15M_SERIES.items() if v in SERIES['finance_15m']}
+        self.assertEqual(set(crypto.values()),SERIES['crypto'])
+        self.assertEqual(set(commodities.values()),SERIES['commodities_15m'])
+        self.assertEqual(set(finance.values()),SERIES['finance_15m'])
+        self.assertEqual((len(crypto),len(commodities),len(finance)),(9,8,11))
+        self.assertEqual(len(set(INDIVIDUAL_15M_SERIES.values())),len(INDIVIDUAL_15M_SERIES))
+        for key,series in {**crypto,**commodities,**finance}.items():
+            with self.subTest(key=key):
+                self.assertEqual(SERIES[key],{series})
+                self.assertEqual(MINUTES[key],(15,10,5,3,1))
+
+    def test_instrument_selection_never_trades_a_different_15minute_series(self):
+        from services.research.reports import SERIES
+        from services.demo.engine import qualifies
+        from services.api.demo_models import Square
+        from services.demo.runtime import Worker
+        target=['sol','xrp','doge','gold_15m','silver_15m','eurusd_15m','rate10y_15m','sp500_15m']
+        for asset in target:
+            series=next(iter(SERIES[asset]))
+            with self.subTest(asset=asset):
+                square=Square(asset=asset,min_price=60,max_price=69,min_minutes=0,max_minutes=10).model_dump()
+                q=dict(quote(),series=series,close=NOW+300)
+                self.assertTrue(qualifies(square,q,'yes',NOW,'ask'))
+                other=next(s for s in SERIES['crypto']|SERIES['finance_15m']|SERIES['commodities_15m'] if s!=series)
+                self.assertFalse(qualifies(square,dict(q,series=other),'yes',NOW,'ask'))
+                value=BotConfig(name='Individual',squares=[square]).model_dump()
+                self.assertEqual(value['squares'][0]['asset'],asset)
+                b=dict(id='individual',revision=1,desired='running',config=value)
+                entries=candidates([b],{series+'-test':q,'other-market':dict(q,series=other)},{},NOW)
+                self.assertEqual({e['ticker'] for e in entries},{series+'-test'})
