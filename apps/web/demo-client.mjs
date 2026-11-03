@@ -25,7 +25,7 @@ export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(bot.desired!=='running')return 'Paused';
  const recent=health.at>0&&now-health.at<=90;
  const routine=health.state==='syncing'&&health.sync_pending&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
- if(!recent||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>!health.historical_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
+ if(!recent||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>!health.historical_markets?.includes(t)&&!health.syncing_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
  return 'Running';
 }
 export function botExposure(orders=[]){
@@ -77,9 +77,15 @@ export function historicalExposureMarkup(bot,health,orders=[]){
  return `<section class="panel"><h3>Ended markets awaiting exchange confirmation</h3><p class="small">These markets have ended and have no live or uncertain orders. Their records remain saved while Demo settlement or historical positions are verified. They do not require action and do not block other markets.</p>${tickers.map(t=>{const d=health.ownership_details?.[t]||{};return `<p class="small"><strong>${e(t)}</strong><br>${d.reason==='market_unavailable'?'Demo no longer returns this ticker.':'Waiting for settlement or historical position confirmation.'} Saved net contracts: ${e(qty(d.expected_contracts))} · Exchange net contracts: ${e(qty(d.exchange_contracts))} · Market status: ${e(d.market_state||'Unavailable')}</p>`}).join('')}</section>`;
 }
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
- const markets=(health.blocked_markets||[]).filter(t=>!health.historical_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t));
+ const markets=(health.blocked_markets||[]).filter(t=>!health.historical_markets?.includes(t)&&!health.syncing_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t));
  const base={markets,lastVerified:health.reconciled_at,lastSeen:health.at,control:'retry'};
- if(markets.length)return {...base,reason:'These markets have manual or unreconciled exposure.',action:'Review their orders and positions in Activity. New entries wait in affected markets while unrelated trading continues.',control:'activity',phase:'Ownership reconciliation'};
+ if(markets.length){
+  const details=Object.fromEntries(markets.map(t=>[t,health.ownership_details?.[t]||{}]));
+  const manual=markets.some(t=>details[t].unowned_order_count>0),uncertain=markets.some(t=>details[t].unconfirmed_order_count>0);
+  return {...base,details,
+   reason:manual?'Unowned exchange orders need verification.':uncertain?'Some orders have not been confirmed by Kalshi.':'Saved bot positions differ from the exchange position.',
+   action:'This market is temporarily blocked until its combined YES/NO position is verified. Other markets continue trading. Expand the market details to see every involved bot and order.',control:'activity',phase:'Market ownership reconciliation'};
+ }
  if(health.state==='connection_required')return {...base,reason:'A verified Kalshi Demo connection is required.',action:'Connect your Demo API key and private key. The worker will verify the account before trading.',control:'connection',phase:'Account connection'};
  if(!health.at||now-health.at>90)return {...base,reason:'The trading worker has stopped checking in.',action:'New entries wait for worker recovery and order verification. Request verification or inspect Activity for the last successful check.',phase:'Worker recovery'};
  const issue=health.issue;
@@ -87,10 +93,27 @@ export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  return {...base,reason:health.message||'The exchange account is being verified.',action:'The worker checks orders and positions before allowing new entries. Request verification or review Activity for the latest evidence.',phase:'Account verification'};
 }
 export function attentionMarkup(info,{botId=''}={}){
- const e=escapeHTML,params=new URLSearchParams({bot:botId});if(info.markets?.length===1)params.set('ticker',info.markets[0]);
+ const e=escapeHTML,params=new URLSearchParams({bot:botId});
+ const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${e(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;if(info.markets?.length===1)params.set('ticker',info.markets[0]);
  const controls={retry:'Retry verification',connection:'Manage connection',funds:'Review demo funds'};
  const verified=Number.isFinite(info.lastVerified)&&info.lastVerified>0?new Date(info.lastVerified*1000).toLocaleString():'No successful verification yet';
- return `<section class="bot-attention" aria-label="Why this bot needs attention"><strong>${e(info.reason)}</strong><p>${e(info.action)}</p><p class="small">${e(info.phase)}${info.markets?.length?' · '+info.markets.map(e).join(', '):' · Account-wide verification'}<br>Last successful check: ${e(verified)}${info.orderId?'<br>Order: '+e(info.orderId):''}</p>${info.code?`<details><summary class="small">Diagnostic code</summary><span class="small">${e(info.code)}${info.httpStatus?' · HTTP '+e(info.httpStatus):''}</span></details>`:''}<div class="row">${controls[info.control]?`<button type="button" class="secondary" data-attention-action="${info.control}">${controls[info.control]}</button>`:''}<a class="button secondary" href="/activity?${e(params)}">View relevant activity</a></div></section>`;
+ const diagnostics=(info.markets||[]).slice(0,8).map(t=>{
+  const d=info.details?.[t];if(!d)return '';
+  const bots=d.bots||[],rows=d.orders||[],missing=d.unowned_orders||[];
+  const quantity=x=>Number.isFinite(Number(x))?String(x):'Unknown';
+  const status=d.syncing?'Synchronizing recent order update':d.reason==='unowned_resting_order'?'Unowned resting order':d.reason==='order_verification'?'Order confirmation pending':'Position mismatch';
+  const botRows=bots.map(b=>`<tr><td>${e(b.name||b.id)}</td><td>${e(quantity(b.held_yes))}</td><td>${e(quantity(b.held_no))}</td><td>${e(quantity(b.net_contracts))}</td></tr>`);
+  const orderRows=rows.map(o=>`<tr><td>${e(o.bot_name||o.bot_id||'Unknown')}</td><td>${e(o.kind==='exit'?(o.exit_role==='profit'?'Profit sell':'Protective sell'):'Buy')} ${e((o.side||'').toUpperCase())}</td><td>${e(o.status||'Unknown')}</td><td>${e(quantity(o.filled))} filled / ${e(quantity(o.remaining))} waiting</td><td><code>${e(o.client_id||o.exchange_id||'Unknown')}</code>${o.parent?`<small>Linked buy: <code>${e(o.parent)}</code></small>`:''}</td></tr>`);
+  const manualRows=missing.map(o=>`<li>Unowned exchange order <code>${e(o.exchange_id||o.client_id||'Unknown')}</code> · ${e(o.status||'resting')}</li>`).join('');
+  return `<section class="panel"><strong>${e(t)}</strong> · ${e(status)}<p class="small">Saved bot net: ${e(quantity(d.expected_contracts))} YES contracts · Kalshi account net: ${e(quantity(d.exchange_contracts))} YES contracts · Duration: ${e(quantity(d.blocked_seconds))} seconds. Multiple bots may contribute to the same account position; this list does not establish which order caused the mismatch.</p>
+  ${botRows.length?`<h4>Participating bots</h4>${table(['Bot','Held YES','Held NO','Net YES'],botRows)}`:''}
+  ${orderRows.length?`<h4>Involved orders (${e(d.order_count||rows.length)})</h4>${table(['Bot','Action','Status','Contracts','Order ID'],orderRows)}`:''}
+  ${d.truncated_orders?`<p class="small">And ${e(d.truncated_orders)} more orders. See Activity for the complete history.</p>`:''}
+  ${manualRows?`<h4>Unowned exchange orders</h4><ul>${manualRows}</ul>`:''}
+  </section>`;
+ }).join('');
+ const marketDetails=diagnostics?`<details><summary>View participating bots, contracts and order IDs</summary>${diagnostics}${(info.markets||[]).length>8?`<p class="small">Plus ${e(info.markets.length-8)} other affected markets; open Activity for the rest.</p>`:''}</details>`:'';
+ return `<section class="bot-attention" aria-label="Why this bot needs attention"><strong>${e(info.reason)}</strong><p>${e(info.action)}</p><p class="small">${e(info.phase)}${info.markets?.length?' · '+info.markets.map(e).join(', '):' · Account-wide verification'}<br>Last exchange check: ${e(verified)}${info.orderId?'<br>Order: '+e(info.orderId):''}</p>${marketDetails}${info.code?`<details><summary class="small">Diagnostic code</summary><span class="small">${e(info.code)}${info.httpStatus?' · HTTP '+e(info.httpStatus):''}</span></details>`:''}<div class="row">${controls[info.control]?`<button type="button" class="secondary" data-attention-action="${info.control}">${controls[info.control]}</button>`:''}<a class="button secondary" href="/activity?${e(params)}">View relevant activity</a></div></section>`;
 }
 export function exitEvidence(item){
  const d=item.details||{},q=d.quote||{},lines=[];

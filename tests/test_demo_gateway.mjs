@@ -38,7 +38,7 @@ import {attentionInfo,attentionMarkup,exitEvidence} from '../apps/web/demo-clien
 test('attention names the failure, recovery action, affected market and order without a generic badge-only state',()=>{
  const h={state:'attention',at:1000,reconciled_at:990,issue:{summary:'Saved order not returned',action:'Review Activity or retry verification',control:'retry',phase:'reconciliation',market:'KXBTC15M-TEST',order_id:'order-one',code:'not_found',http_status:404}};
  const info=attentionInfo({key:'bot'},h,[],1001),html=attentionMarkup(info,{botId:'bot'});
- for(const text of ['Saved order not returned','Review Activity','Retry verification','Order reconciliation','KXBTC15M-TEST','order-one','not_found','HTTP 404','Last successful check'])assert.ok(html.includes(text),text);
+ for(const text of ['Saved order not returned','Review Activity','Retry verification','Order reconciliation','KXBTC15M-TEST','order-one','not_found','HTTP 404','Last exchange check'])assert.ok(html.includes(text),text);
  assert.ok(html.includes('ticker=KXBTC15M-TEST'));assert.ok(html.includes('bot=bot'));
 });
 test('attention explains stale worker and missing connection separately',()=>{
@@ -198,4 +198,19 @@ test('ended-market reconciliation is informational without suppressing live or u
  const failure={...health,state:'attention',issue:{summary:'Connection failed',action:'Retrying',phase:'stream'}};
  assert.equal(botGroup(bot,failure,orders,1001),'Needs attention');assert.equal(attentionInfo(bot,failure,orders,1001).reason,'Connection failed');
  assert.equal(historicalExposureMarkup({key:'unrelated'},health,orders),'');
+});
+
+test('brief identified position synchronization does not mislabel every overlapping bot',()=>{
+ const orders=[{bot:'a',ticker:'T'},{bot:'b',ticker:'T'}],bot={key:'a',desired:'running'};
+ const health={state:'ready',at:1000,reconciled_at:995,blocked_markets:['T'],syncing_markets:['T'],historical_markets:[],
+  ownership_details:{T:{reason:'position_difference',expected_contracts:2,exchange_contracts:0,blocked_seconds:3,
+   bots:[{id:'a',name:'Alpha',held_yes:3,held_no:0,net_contracts:3},{id:'b',name:'<bad>',held_yes:0,held_no:1,net_contracts:-1}],
+   orders:[{bot_id:'a',bot_name:'Alpha',kind:'entry',side:'yes',client_id:'entry-one',status:'held',filled:3,remaining:0}],order_count:1}}};
+ assert.equal(botGroup(bot,health,orders,1001),'Running');
+ assert.equal(attentionInfo(bot,health,orders,1001).markets.length,0);
+ const unresolved={...health,syncing_markets:[]};
+ assert.equal(botGroup(bot,unresolved,orders,1001),'Needs attention');
+ const info=attentionInfo(bot,unresolved,orders,1001),html=attentionMarkup(info,{botId:'a'});
+ for(const expected of ['Alpha','entry-one','Held YES','Kalshi account net','3','T'])assert.ok(html.includes(expected),expected);
+ assert.ok(html.includes('&lt;bad&gt;'));assert.ok(!html.includes('<bad>'));
 });

@@ -2,7 +2,7 @@
 from services.research.reports import SERIES
 
 def family(series):
-    for asset in ('sports','weather','weather_daily'):
+    for asset in ('sports','weather','weather_daily','commodities_15m','finance_15m'):
         if series in SERIES[asset]:return asset
     return 'crypto'
 

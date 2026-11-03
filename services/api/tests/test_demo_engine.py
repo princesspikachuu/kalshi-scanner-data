@@ -293,7 +293,7 @@ class CategoryRouting(unittest.TestCase):
         worker.bots=[bot()];worker.orders=[{'ticker':'held'}]
         # Ten series exposed a permanent skipped-slot bug when both tasks shared
         # one counter; include all actual categories in a second pass as well.
-        for configured in [set('S'+str(i) for i in range(10)),set().union(SERIES['weather'],SERIES['weather_daily'],SERIES['sports'])]:
+        for configured in [set('S'+str(i) for i in range(10)),set().union(SERIES['weather'],SERIES['weather_daily'],SERIES['sports'],SERIES['commodities_15m'],SERIES['finance_15m'])]:
             ex.calls=[];worker.series_index=0;worker.discovery_turn=0
             with patch.dict(SERIES,btc=configured),patch('services.demo.runtime.time.time',return_value=NOW):
                 for _ in range(len(configured)+1+(len(configured)//4)):worker.discover()
@@ -513,7 +513,8 @@ class FifteenMinuteAssetRouting(unittest.TestCase):
         commodities={'KXGOLD15M','KXSILVER15M','KXPLATINUM15M','KXPALLADIUM15M',
                      'KXCOPPER15M','KXWTI15M','KXNATGAS15M','KXBRENT15M'}
         finance={'KXUSDCAD15M','KXAUDUSD15M','KXUSDJPY15M','KXGBPUSD15M','KXEURUSD15M',
-                 'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M'}
+                 'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M',
+                 'KXINX15M','KXNDQ15M'}
         self.assertEqual(SERIES['commodities_15m'],commodities)
         self.assertEqual(SERIES['finance_15m'],finance)
         self.assertFalse(commodities & finance)
