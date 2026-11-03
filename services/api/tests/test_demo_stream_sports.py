@@ -256,3 +256,153 @@ class IndependentFeedRecovery(unittest.TestCase):
         self.assertIsNotNone(worker.stream_outage_since)
         self.assertEqual(store.saved[-1][1]['state'],'reconnecting')
         self.assertEqual(store.cleared,[])
+
+
+class RestReadStreamDrain(unittest.TestCase):
+    def test_rest_reconciliation_drains_sequenced_feed_without_waiting_for_whole_history(self):
+        import httpx
+        from services.demo.exchange import Exchange
+        now=int(time.time())
+        transport=httpx.MockTransport(lambda request:httpx.Response(200,json={'balance':1000}))
+        ex=Exchange(Mock(headers=lambda *args:{}),client=httpx.Client(transport=transport))
+        worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        self.assertIsNotNone(ex.before_read)
+        worker.stage='reconciliation'
+        worker.quotes={'t':dict(quote(),at=0,close=now+180)}
+        worker.subscription={'t'};worker.book_sid=2
+        messages=[dict(type='orderbook_snapshot',sid=2,seq=1,sending_ts_ms=now*1000,
+            msg=dict(market_ticker='t',clock=1,yes_dollars_fp=[['0.50','1']],no_dollars_fp=[['0.40','1']]))]
+        messages.extend(dict(type='orderbook_delta',sid=2,seq=i,sending_ts_ms=now*1000,
+            msg=dict(market_ticker='t',clock=i,ts_ms=now*1000,side='no',price_dollars='0.45',delta_fp='0'))
+            for i in range(2,402))
+        class Socket:
+            received_at=now
+            def __init__(self):self.consumed=0
+            def recv(self,timeout=0):
+                if not messages:raise TimeoutError()
+                self.consumed+=1
+                return json.dumps(messages.pop(0))
+            def stats(self):return dict(consumed=self.consumed,messages=len(messages),bytes=0)
+        worker.socket=Socket()
+        response=ex.call('GET','/portfolio/balance')
+        self.assertEqual(response['balance'],1000)
+        self.assertEqual(worker.quotes['t']['seq'],401)
+        self.assertEqual(len(messages),0)
+        self.assertGreaterEqual(worker.rest_feed_messages,401)
+        self.assertGreater(worker.rest_feed_drains,0)
+        ex.close()
+
+    def test_rest_read_pump_latches_protective_exit_during_verification_without_selling(self):
+        import httpx
+        from services.demo.exchange import Exchange
+        now=int(time.time())
+        ex=Exchange(Mock(headers=lambda *args:{}),client=httpx.Client(transport=httpx.MockTransport(
+            lambda request:httpx.Response(200,json={'balance':1000}))))
+        store=FakeStore();worker=Worker(store,ex,threading.Event(),lambda:None)
+        worker.stage='reconciliation';worker.recovered=False
+        b=bot(loss_mode='manual',loss_cents=55)
+        worker.bots=[b]
+        worker.quotes={'t':dict(quote(),at=0,close=now+180)}
+        order=dict(client_id='entry-1',kind='entry',bot=b['id'],ticker='t',
+            revision=1,square=0,side='yes',price=65,quantity=1,status='held',filled=1,sold=0,remaining=0)
+        worker.orders=[order];worker.subscription={'t'};worker.book_sid=2
+        messages=[
+          dict(type='orderbook_snapshot',sid=2,seq=1,sending_ts_ms=now*1000,
+            msg=dict(market_ticker='t',clock=1,yes_dollars_fp=[['0.50','1']],no_dollars_fp=[['0.40','1']])),
+          dict(type='orderbook_delta',sid=2,seq=2,sending_ts_ms=now*1000,
+            msg=dict(market_ticker='t',clock=2,ts_ms=now*1000,side='no',price_dollars='0.45',delta_fp='1'))
+        ]
+        class Socket:
+            received_at=now
+            def __init__(self):self.consumed=0
+            def recv(self,timeout=0):
+                if not messages:raise TimeoutError()
+                self.consumed+=1
+                return json.dumps(messages.pop(0))
+            def stats(self):return dict(consumed=self.consumed,messages=len(messages),bytes=0)
+        worker.socket=Socket()
+        ex.call('GET','/portfolio/balance')
+        self.assertTrue(order['exit_triggered'])
+        self.assertIn('exit_trigger',store.events)
+        self.assertEqual(ex.writes,0)
+        self.assertFalse(worker.recovered)
+        ex.close()
+
+    def test_provider_read_cooldown_drains_without_replaying_order_writes(self):
+        import httpx
+        from services.demo.exchange import Exchange
+        observed=[];ex=Exchange(Mock(headers=lambda *args:{}),
+            client=httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={}))))
+        ex.before_read=lambda:observed.append(time.monotonic())
+        ex.next_read=time.monotonic()+.45
+        ex.call('GET','/portfolio/balance')
+        self.assertGreaterEqual(len(observed),2,'reconnection polling must continue through REST pacing')
+        observed.clear()
+        ex.call('POST','/portfolio/events/orders',body={})
+        self.assertEqual(observed,[],'never re-enter the stream while preparing a write')
+        ex.close()
+
+
+class Order404Recovery(unittest.TestCase):
+    def entry(self):
+        return dict(client_id='entry-1',exchange_id='remote-1',kind='entry',
+            bot='bot-1',ticker='KXBTC15M-TEST',side='yes',price=70,
+            quantity=3,filled=0,remaining=3,sold=0,status='resting',
+            revision=1,square=0,close=NOW+300)
+
+    def test_missing_cancel_does_not_assume_zero_exposure_or_raise_global_order_alarm(self):
+        ex=Mock();ex.cancel.side_effect=ExchangeFailure('exchange_rejected',
+            status=404,provider_code='not_found')
+        store=FakeStore();worker=Worker(store,ex,threading.Event(),lambda:None)
+        o=self.entry();worker.orders=[o];worker.recovered=True;worker.last_reconcile=NOW
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.cancel(o,'Closing unfilled bid')
+            worker.cancel(o,'Second attempted cancel must be suppressed')
+        ex.cancel.assert_called_once()
+        self.assertEqual((o['status'],o['remaining']),('cancel_pending',3))
+        self.assertIn(o['ticker'],worker.blocked)
+        self.assertFalse(worker.recovered)
+        self.assertEqual(worker.last_reconcile,0)
+        self.assertIn('cancel_verification_pending',store.events)
+        self.assertEqual(store.saved[-1][1]['status'],'cancel_pending')
+
+    def test_pending_404_cancel_never_rearms_a_buy_low_cycle(self):
+        ex=Mock();ex.cancel.side_effect=ExchangeFailure('exchange_rejected',status=404,provider_code='not_found')
+        store=FakeStore();worker=Worker(store,ex,threading.Event(),lambda:None)
+        b=bot();b['config']['strategy']='buy_low_sell_high'
+        worker.bots=[b];o=self.entry()
+        o.update(entry_strategy='buy_low_sell_high',bot=b['id'],cycle=1)
+        worker.orders=[o]
+        worker.states={b['id']:{f"{o['ticker']}/0/yes":dict(submitted=True,cycle=1,attempt=0)}}
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.park_cycle_entry(o,'Parking bid')
+        state=worker.states[b['id']][f"{o['ticker']}/0/yes"]
+        self.assertTrue(state['submitted'])
+        self.assertEqual(state['attempt'],0)
+        self.assertEqual(o['status'],'cancel_pending')
+
+    def test_missing_order_lookup_remains_unverified_but_other_errors_still_raise(self):
+        ex=Mock();ex.call.side_effect=ExchangeFailure('exchange_rejected',
+            status=404,provider_code='not_found')
+        worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        self.assertIsNone(worker.lookup_exchange_order(self.entry()))
+        ex.call.side_effect=ExchangeFailure('exchange_rejected',status=503,provider_code='service_unavailable')
+        with self.assertRaises(ExchangeFailure):
+            worker.lookup_exchange_order(self.entry())
+
+    def test_definitively_rejected_create_is_not_replayed_or_mistaken_for_accepted_order(self):
+        ex=Mock();ex.submit.side_effect=ExchangeFailure('exchange_rejected',
+            status=404,provider_code='not_found')
+        store=FakeStore();worker=Worker(store,ex,threading.Event(),lambda:None)
+        worker.recovered=True;worker.last_reconcile=NOW
+        worker.quotes={'KXBTC15M-TEST':dict(quote(),at=NOW)}
+        o=self.entry();o.update(status='intent',exchange_id=None,remaining=0)
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.submit(o)
+        ex.submit.assert_called_once()
+        self.assertEqual(o['status'],'rejected')
+        self.assertTrue(worker.recovered)
+        self.assertEqual(worker.last_reconcile,NOW)
+        self.assertEqual(worker.quotes[o['ticker']]['at'],0)
+        self.assertNotIn(o['ticker'],worker.blocked)
+        self.assertIn('order_rejected',store.events)
