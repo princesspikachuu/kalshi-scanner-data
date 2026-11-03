@@ -341,8 +341,8 @@ class Worker:
             local=[order for order in self.orders if order['ticker']==ticker]
             # A nonfinal market, filled intent, open order or actual exposure
             # always stays blocked until ordinary reconciliation verifies it.
-            if not q or q.get('status') not in ('settled','finalized') or (
-                any(o['status'] not in ('intent','uncertain') or o.get('filled',0) or o.get('remaining',0) for o in local)
+            if not q or q.get('status') not in ('closed','settled','finalized','determined') or (
+                any(o['status'] not in ('intent','uncertain','cancel_pending','resting') or o.get('filled',0) for o in local)
             ):continue
             if abs(expected.get(ticker,0))>.001 or abs(actual.get(ticker,0))>.001:continue
             self.empty_repair_at[ticker]=now+300
