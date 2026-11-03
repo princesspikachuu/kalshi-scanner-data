@@ -23,7 +23,45 @@ def describe(blocked,expected,actual,quotes,orders,remote,now,missing=None):
         live=live or any(o['ticker']==ticker for o in remote)
         end=q.get('close',missing.get(ticker,{}).get('market_end'))
         ended=q.get('status') in ('closed','settled','finalized','determined') or (end is not None and end<=now and (q.get('metadata_at',0)>=end or ticker in missing))
-        info=bool(ended and not live)
+        # A verified ended market cannot accept more trades. Keep the ticker
+        # blocked in the reconciliation ledger, but do not leave a running bot
+        # in Needs Attention for an old, locally uncertain order unless Kalshi
+        # still shows an actual resting order. Never hide live-market exposure.
+        remote_resting=any(o['ticker']==ticker for o in remote)
+        info=bool(ended and not remote_resting)
         reason='market_unavailable' if info and ticker in missing else 'awaiting_settlement' if info else 'order_verification' if live else 'ownership_mismatch'
         details[ticker]=dict(expected_contracts=expected.get(ticker,0),exchange_contracts=actual.get(ticker,0),market_state=q.get('status','unavailable'),market_end=end,reason=reason,informational=info)
     return details
+
+
+def verified_empty_finalized_intents(ticker, orders, quote, expected, actual, resting, history, fills, now):
+    """Identify *unfilled* intents that are safe to retire using complete exchange reads.
+
+    Absence of a client ID alone is never enough: require an authoritative finalized
+    market, no actual or modeled inventory, no resting orders, and no unexplained
+    exchange fill. The caller must provide fully paginated order and fill results;
+    pagination/transport failures must leave the market blocked.
+    """
+    if not quote or quote.get('status') not in ('closed','settled','finalized','determined'):
+        return []
+    if float(quote.get('close',now+1)) > now-60:
+        return []
+    if abs(Decimal(str(expected)))>.001 or abs(Decimal(str(actual)))>.001:
+        return []
+    local=[order for order in orders if order.get('ticker')==ticker]
+    if not local or any(order.get('status') not in ('intent','uncertain','cancel_pending','resting')
+                        or Decimal(str(order.get('filled',0)))!=0 for order in local):
+        return []
+    if any(order.get('ticker')==ticker for order in resting):
+        return []
+    clients={order['client_id'] for order in local}
+    market_history=[order for order in history if order.get('ticker')==ticker]
+    if any(order.get('client_order_id') in clients for order in market_history):
+        return []
+    exchange_ids={order['order_id'] for order in market_history if order.get('order_id')}
+    if any(order.get('exchange_id') in exchange_ids for order in local if order.get('exchange_id')):
+        return []
+    # Even an already-settled fill is evidence that an unlinked order might
+    # have traded. Full market-level fill history must be empty to retire it.
+    if fills:return []
+    return [order['client_id'] for order in local]
