@@ -25,7 +25,8 @@ export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(bot.desired!=='running')return 'Paused';
  const recent=health.at>0&&now-health.at<=90;
  const routine=health.state==='syncing'&&health.sync_pending&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
- if(!recent||(!routine&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>!health.historical_markets?.includes(t)&&!health.syncing_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
+ const shortFeedReconnect=health.state==='reconnecting'&&health.stream?.outage_seconds<=10&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
+ if(!recent||(!routine&&!shortFeedReconnect&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>!health.historical_markets?.includes(t)&&!health.syncing_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
  return 'Running';
 }
 export function botExposure(orders=[]){
