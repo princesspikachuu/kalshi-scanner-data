@@ -495,7 +495,16 @@ class Worker:
             self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
             raw=by_client.get(order['client_id'])
             if raw is None and order.get('exchange_id'):
-                result=self.exchange.call('GET','/portfolio/orders/'+order['exchange_id']);raw=result.get('order',result)
+                try:
+                    result=self.exchange.call('GET','/portfolio/orders/'+order['exchange_id'])
+                    raw=result.get('order',result)
+                except ExchangeFailure as error:
+                    if error.status!=404 or error.ambiguous:raise
+                    # A missing individual GET does not prove an outstanding
+                    # limit was canceled or an open position was settled.
+                    print(json.dumps(dict(event='demo_order_lookup_missing',
+                        ticker=order['ticker'],kind=order['kind'],
+                        status=order.get('status'),http_status=404)),flush=True)
             if raw is None:
                 # A durable intent may have crossed the network before a crash.
                 # Absence in paginated history is not permission to submit again.
@@ -824,6 +833,17 @@ class Worker:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
             if error.ambiguous:self.blocked.add(intent['ticker'])
+            if not error.ambiguous and error.status==404:
+                # Definitive rejection of this *new* order, not an uncertain
+                # accepted order and not proof that some earlier order vanished.
+                # Keep this attempt recorded; do not silently retry its ID or
+                # let a stale quote initiate another order on the same market.
+                q=self.quotes.get(intent['ticker'])
+                if q:q['at']=0
+                self.last_discovery=0;reconcile_needed=False
+                print(json.dumps(dict(event='demo_submit_not_found',ticker=intent['ticker'],
+                    kind=intent['kind'],http_status=404,definitively_rejected=True)),flush=True)
+                return
             if not error.ambiguous and self.retry_cycle_rejection(intent):
                 reconcile_needed=False
                 return
