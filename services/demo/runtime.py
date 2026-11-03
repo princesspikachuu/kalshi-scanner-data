@@ -475,6 +475,19 @@ class Worker:
             if ticker not in unbounded:params['min_ts']=int(starts[ticker])-60
             history.extend(self.exchange.pages('/portfolio/orders','orders',**params))
         return history
+    def lookup_exchange_order(self,order):
+        try:
+            result=self.exchange.call('GET','/portfolio/orders/'+order['exchange_id'])
+            return result.get('order',result)
+        except ExchangeFailure as error:
+            if error.status!=404 or error.ambiguous:raise
+            # A missing individual GET does not prove an outstanding
+            # limit was canceled or an open position was settled.
+            print(json.dumps(dict(event='demo_order_lookup_missing',
+                ticker=order['ticker'],kind=order['kind'],
+                status=order.get('status'),http_status=404)),flush=True)
+            return None
+
     def reconcile(self):
         """Complete paginated exchange state; gaps never manufacture fills."""
         now=time.time();start_feed_revision=self.stream_event_revision;self.load_bots()
@@ -495,16 +508,7 @@ class Worker:
             self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
             raw=by_client.get(order['client_id'])
             if raw is None and order.get('exchange_id'):
-                try:
-                    result=self.exchange.call('GET','/portfolio/orders/'+order['exchange_id'])
-                    raw=result.get('order',result)
-                except ExchangeFailure as error:
-                    if error.status!=404 or error.ambiguous:raise
-                    # A missing individual GET does not prove an outstanding
-                    # limit was canceled or an open position was settled.
-                    print(json.dumps(dict(event='demo_order_lookup_missing',
-                        ticker=order['ticker'],kind=order['kind'],
-                        status=order.get('status'),http_status=404)),flush=True)
+                raw=self.lookup_exchange_order(order)
             if raw is None:
                 # A durable intent may have crossed the network before a crash.
                 # Absence in paginated history is not permission to submit again.
