@@ -107,7 +107,7 @@ class DemoPostgres(unittest.TestCase):
         self.demo.put('order/unsettled',dict(status='held',filled=1,remaining=0),parameters=dict(kind='entry',bot=created,ticker='T'))
         prior=self.demo.get('order/unsettled')
         # Old cached clients may still send these fields: neither is a gate.
-        body=dict(request_id=str(uuid4()),fresh_bots=False,target_balance_cents=100000)
+        body=dict(request_id=str(uuid4()),fresh_bots=False,target_balance_cents=100000,confirmation='RESET BOTS')
         response=self.client.post('/demo/reset',json=body);self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['state'],'complete')
         self.assertEqual(self.client.get('/demo/workspace').json()['reset_mode'],'archive_copy')
@@ -128,7 +128,7 @@ class DemoPostgres(unittest.TestCase):
         from services.demo.reset import ResetController
         from unittest.mock import MagicMock
         identifier=self.client.post('/demo/bots',json=config()).json()['id']
-        self.client.post('/demo/reset',json=dict(request_id=str(uuid4())))
+        self.client.post('/demo/reset',json=dict(request_id=str(uuid4()),confirmation='RESET BOTS'))
         reset=self.demo.get('reset');params=dict(reset['parameters'],target_balance_cents=100000)
         pending=dict(client_id='legacy-unknown-sale')
         self.demo.put('reset',dict(reset['progress'],state='awaiting_funds',pending=pending,cash_cents=100001),parameters=params)
