@@ -51,7 +51,7 @@ class Worker:
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
         self.stream_outage_since=None;self.stream_disconnect_count=0;self.stream_recovery_count=0
-        self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0
+        self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
         from services.research.reports import SERIES
@@ -123,15 +123,39 @@ class Worker:
             buffer=stats)
 
     def stream_recovered(self):
-        if self.stream_outage_since is None or not self.recovered or self.socket is None or self.book_sid is None:return False
+        if self.stream_outage_since is None or not self.recovered:return False
         now=time.time()
-        if not any(q.get('source')=='orderbook' and q.get('book_ready') and 0<=now-q.get('at',0)<=5 for q in self.quotes.values()):return False
+        active=any(q.get('status','active')=='active' and q.get('close',0)>now for q in self.quotes.values())
+        if active and (self.socket is None or self.book_sid is None or not any(
+            q.get('source')=='orderbook' and q.get('book_ready') and 0<=now-q.get('at',0)<=5 for q in self.quotes.values())):return False
         duration=round(max(0,now-self.stream_outage_since),3)
-        self.stream_outage_since=None;self.stream_recovery_count+=1;self.stream_last_recovered_at=now
+        self.stream_outage_since=None;self.stream_recovery_count+=1;self.stream_last_recovered_at=now;self.stream_outage_alerted=False
         print(json.dumps(dict(event='demo_stream_recovered',downtime_seconds=duration,
             reconnects=self.stream_disconnect_count,fresh_books=self.stream_telemetry(now)['fresh_books'])),flush=True)
         self.store.clear_alert('stream')
         return True
+
+    def mark_stream_failure(self,reason):
+        # Missing/gapped/invalid orderbook data is still an actionable error.
+        # Invalidate every previously observed quote before reconnecting.
+        now=time.time()
+        if self.stream_outage_since is None:self.stream_outage_since=now
+        self.stream_disconnect_count+=1;self.stream_last_disconnected_at=now
+        print(json.dumps(dict(event='demo_stream_integrity_failure',code=reason,
+            outage_seconds=round(now-self.stream_outage_since,2),
+            disconnects=self.stream_disconnect_count)),flush=True)
+
+    def recover_feed(self,error):
+        now=time.time()
+        buffer=self.socket.stats() if hasattr(self.socket,'stats') else {}
+        self.recovered=False;self.close_stream()
+        self.mark_stream_failure(error.code)
+        print(json.dumps(dict(event='demo_stream_disconnected',code=error.code,
+            outage_seconds=round(max(0,now-self.stream_outage_since),2),
+            reconnects=self.stream_disconnect_count,
+            buffer_messages=buffer.get('messages'),buffer_peak=buffer.get('peak_messages'),
+            close_code=buffer.get('close_code'))),flush=True)
+        self.health('reconnecting','Market-price stream reconnecting; entries wait for fresh quotes and verified orders')
 
     def health(self,state,message):
         now=time.time()
@@ -154,6 +178,10 @@ class Worker:
     def trading_health(self):
         self.stream_recovered()
         if self.stream_outage_since is not None:
+            duration=max(0,time.time()-self.stream_outage_since)
+            if duration>=25 and not self.stream_outage_alerted:
+                self.store.alert('stream','Kalshi Demo prices have been unavailable for more than 25 seconds. New entries wait for a verified fresh feed.',True)
+                self.stream_outage_alerted=True
             self.health('reconnecting','Waiting for fresh sequenced price snapshots and verified account state');return
         if self.recovered:self.health('ready','Demo account verified')
         elif self.sync_pending and self.last_verified>0 and time.time()-self.last_verified<=45 and self.issue is None:
@@ -634,10 +662,11 @@ class Worker:
         if self.socket is None:
             self.close_stream()
             from websockets.sync.client import connect
+            from websockets.exceptions import WebSocketException
             try:
                 connection=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
                     max_size=262144,max_queue=16,open_timeout=8,close_timeout=2,ping_interval=15,ping_timeout=20,compression=None)
-            except (OSError,TimeoutError):raise ExchangeFailure('stream_connection_lost') from None
+            except (OSError,TimeoutError,WebSocketException):raise ExchangeFailure('stream_connection_lost') from None
             self.socket=BufferedSocket(connection);self.stream_opened_at=time.time()
             self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0,use_yes_price=False))))
             self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['fill','user_orders']))))
@@ -708,6 +737,10 @@ class Worker:
                 # Yield on the first crossing instead of collapsing a burst of
                 # exchange changes into its last (potentially much lower) price.
                 if observed['book_ready'] and self.observe_exit_triggers(ticker,now,old):return
+        # A connected TCP socket without a usable exchange subscription is
+        # not a working feed. Avoid leaving bots indefinitely waiting on it.
+        if self.socket is not None and self.book_sid is None and self.stream_opened_at and time.time()-self.stream_opened_at>25:
+            raise ExchangeFailure('stream_subscription')
     def close_stream(self):
         if self.socket:
             try:self.socket.close()
@@ -995,20 +1028,11 @@ class Worker:
                     backoff=1
                 except ExchangeFailure as error:
                     if self.stage=='stream' and error.code in ('stream_closed','stream_connection_lost'):
-                        now=time.time();buffer=self.socket.stats() if hasattr(self.socket,'stats') else {}
-                        self.recovered=False;self.close_stream()
-                        if self.stream_outage_since is None:self.stream_outage_since=now
-                        self.stream_last_disconnected_at=now;self.stream_disconnect_count+=1
-                        duration=max(0,now-self.stream_outage_since)
-                        print(json.dumps(dict(event='demo_stream_disconnected',code=error.code,
-                            outage_seconds=round(duration,2),reconnects=self.stream_disconnect_count,
-                            buffer_messages=buffer.get('messages'),buffer_peak=buffer.get('peak_messages'),
-                            close_code=buffer.get('close_code'))),flush=True)
-                        if duration>=25:
-                            self.store.alert('stream','Kalshi Demo price stream has not recovered for '+str(int(duration))+' seconds. Entries wait for fresh verified prices.',True)
-                        self.health('reconnecting','Market-price stream reconnecting; entries wait for fresh quotes and verified orders')
+                        self.recover_feed(error)
                         self.stop.wait(min(3,backoff));backoff=min(4,backoff*2)
                         continue
+                    if self.stage=='stream' and error.code.startswith('stream'):
+                        self.mark_stream_failure(error.code)
                     print(json.dumps(dict(event='demo_exchange_failure',stage=self.stage,code=error.code,ambiguous=error.ambiguous,status=error.status,provider_code=error.provider_code,reason=error.reason)),flush=True)
                     self.recovered=False
                     from .diagnostics import exchange_issue
