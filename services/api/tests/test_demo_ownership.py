@@ -68,7 +68,7 @@ class EmptyFinalizedIntentProof(unittest.TestCase):
             if scenario=='empty':
                 self.assertEqual(order['status'],'closed')
                 self.assertEqual([c.args[0] for c in exchange.pages.call_args_list],
-                    ['/historical/orders','/portfolio/orders','/historical/fills','/portfolio/fills','/portfolio/positions'])
+                    ['/portfolio/orders','/historical/orders','/portfolio/fills','/historical/fills','/portfolio/positions'])
             else:
                 self.assertEqual(order['status'],'uncertain',scenario)
                 self.assertEqual(store.saved,[],scenario)

@@ -437,10 +437,12 @@ class Worker:
                 # prevent cleanup even when the exchange position is flat.
                 # Read both tiers: an empty live endpoint alone does not prove
                 # an old intent never filled. Any archive failure keeps it held.
-                history=list(self.exchange.pages('/historical/orders','orders',ticker=ticker))
-                history+=list(self.exchange.pages('/portfolio/orders','orders',ticker=ticker))
-                fills=list(self.exchange.pages('/historical/fills','fills',ticker=ticker))
-                fills+=list(self.exchange.pages('/portfolio/fills','fills',ticker=ticker))
+                # Live first, archive second also covers records moving to the
+                # archive between these reads instead of observing neither tier.
+                history=list(self.exchange.pages('/portfolio/orders','orders',ticker=ticker))
+                history+=list(self.exchange.pages('/historical/orders','orders',ticker=ticker))
+                fills=list(self.exchange.pages('/portfolio/fills','fills',ticker=ticker))
+                fills+=list(self.exchange.pages('/historical/fills','fills',ticker=ticker))
                 positions=list(self.exchange.pages('/portfolio/positions','market_positions',count_filter='position'))
                 current_actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
             except ExchangeFailure as error:
