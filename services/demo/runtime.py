@@ -518,7 +518,10 @@ class Worker:
         for ticker,details in self.ownership_details.items():
             details['blocked_seconds']=round(max(0,snapshot_at-self.blocked_since[ticker]),2)
             details['syncing']=ticker in self.syncing_markets
-        digest=json.dumps(self.ownership_details,sort_keys=True)
+        # Elapsed seconds are display-only. Do not turn every half-second tick
+        # into a health write and an ownership log entry.
+        stable={t:{k:v for k,v in detail.items() if k!='blocked_seconds'} for t,detail in self.ownership_details.items()}
+        digest=json.dumps(stable,sort_keys=True)
         if digest!=self.ownership_digest:
             summarized={t:dict(reason=d['reason'],expected=d['expected_contracts'],actual=d['exchange_contracts'],
                 bots=[b['id'] for b in d.get('bots',[])],orders=d.get('order_count',0),
