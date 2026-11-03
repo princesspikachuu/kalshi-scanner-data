@@ -23,7 +23,12 @@ def describe(blocked,expected,actual,quotes,orders,remote,now,missing=None):
         live=live or any(o['ticker']==ticker for o in remote)
         end=q.get('close',missing.get(ticker,{}).get('market_end'))
         ended=q.get('status') in ('closed','settled','finalized','determined') or (end is not None and end<=now and (q.get('metadata_at',0)>=end or ticker in missing))
-        info=bool(ended and not live)
+        # A verified ended market cannot accept more trades. Keep the ticker
+        # blocked in the reconciliation ledger, but do not leave a running bot
+        # in Needs Attention for an old, locally uncertain order unless Kalshi
+        # still shows an actual resting order. Never hide live-market exposure.
+        remote_resting=any(o['ticker']==ticker for o in remote)
+        info=bool(ended and not remote_resting)
         reason='market_unavailable' if info and ticker in missing else 'awaiting_settlement' if info else 'order_verification' if live else 'ownership_mismatch'
         details[ticker]=dict(expected_contracts=expected.get(ticker,0),exchange_contracts=actual.get(ticker,0),market_state=q.get('status','unavailable'),market_end=end,reason=reason,informational=info)
     return details
