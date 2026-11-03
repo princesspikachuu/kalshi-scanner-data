@@ -293,7 +293,7 @@ class CategoryRouting(unittest.TestCase):
         worker.bots=[bot()];worker.orders=[{'ticker':'held'}]
         # Ten series exposed a permanent skipped-slot bug when both tasks shared
         # one counter; include all actual categories in a second pass as well.
-        for configured in [set('S'+str(i) for i in range(10)),set().union(SERIES['weather'],SERIES['weather_daily'],SERIES['sports'])]:
+        for configured in [set('S'+str(i) for i in range(10)),set().union(SERIES['weather'],SERIES['weather_daily'],SERIES['sports'],SERIES['commodities_15m'],SERIES['finance_15m'])]:
             ex.calls=[];worker.series_index=0;worker.discovery_turn=0
             with patch.dict(SERIES,btc=configured),patch('services.demo.runtime.time.time',return_value=NOW):
                 for _ in range(len(configured)+1+(len(configured)//4)):worker.discover()
