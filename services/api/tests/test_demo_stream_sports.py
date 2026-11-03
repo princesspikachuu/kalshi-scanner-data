@@ -138,3 +138,85 @@ class FundingIsolation(unittest.TestCase):
         with patch('services.demo.runtime.time.time',return_value=NOW):worker.trade()
         self.assertEqual(worker.submit.call_args.args[0]['ticker'],'u')
         self.assertFalse(worker.states['bot-1']['t/0/yes']['submitted'])
+
+
+class StreamResilience(unittest.TestCase):
+    def test_ordered_prices_survive_clean_exchange_close_and_trigger_controlled_reconnect(self):
+        from websockets.frames import Close
+        from websockets.exceptions import ConnectionClosedOK
+        class CleanClose:
+            def __init__(self):self.messages=['first','second','third'];self.closed=threading.Event()
+            def recv(self,timeout=1):
+                if self.messages:return self.messages.pop(0)
+                self.closed.set()
+                raise ConnectionClosedOK(Close(1000,''),Close(1000,''))
+            def close(self):pass
+        connection=CleanClose();stream=BufferedSocket(connection)
+        try:
+            self.assertTrue(connection.closed.wait(2))
+            self.assertEqual([stream.recv(timeout=1) for _ in range(3)],['first','second','third'])
+            self.assertEqual(stream.stats()['received'],3)
+            self.assertEqual(stream.stats()['consumed'],3)
+            self.assertEqual(stream.stats()['close_code'],1000)
+            with self.assertRaises(ExchangeFailure) as caught:stream.recv(timeout=1)
+            self.assertEqual(caught.exception.code,'stream_closed')
+        finally:stream.close()
+
+    def test_large_price_burst_drains_all_sequenced_messages_without_dropping_protective_events(self):
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        worker.quotes={'t':quote()};worker.subscription={'t'}
+        snapshot=dict(type='orderbook_snapshot',sid=2,seq=1,sending_ts_ms=NOW*1000,
+            msg=dict(market_ticker='t',clock=1,yes_dollars_fp=[['0.50','1']],no_dollars_fp=[['0.40','1']]))
+        updates=[dict(type='orderbook_delta',sid=2,seq=i,sending_ts_ms=NOW*1000,
+            msg=dict(market_ticker='t',clock=i,ts_ms=NOW*1000,side='no',
+                price_dollars='0.45',delta_fp='0')) for i in range(2,352)]
+        messages=[snapshot,*updates]
+        class Socket:
+            def recv(self,**kwargs):
+                if not messages:raise TimeoutError()
+                return json.dumps(messages.pop(0))
+        worker.socket=Socket()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.stream()
+        self.assertEqual(len(messages),0)
+        self.assertEqual(worker.quotes['t']['seq'],351)
+
+    def test_normal_disconnect_fences_entries_and_reports_duration_until_verified_recovery(self):
+        class StreamStore(FakeStore):
+            def __init__(self):super().__init__();self.alerts=[];self.cleared=[]
+            def alert(self,*a,**kw):self.alerts.append(a)
+            def clear_alert(self,key):self.cleared.append(key)
+        store=StreamStore()
+        exchange=Mock(reads=0,writes=0)
+        worker=Worker(store,exchange,threading.Event(),lambda:None)
+        worker.quotes={'t':quote()};worker.recovered=True;worker.last_verified=NOW-1
+        class Socket:
+            def __init__(self):self.closed=False
+            def stats(self):return dict(messages=0,peak_messages=50,bytes=0)
+            def close(self):self.closed=True
+        sock=Socket();worker.socket=sock
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.recover_feed(ExchangeFailure('stream_closed'))
+        self.assertTrue(sock.closed);self.assertFalse(worker.recovered)
+        self.assertEqual(worker.quotes['t']['at'],0)
+        self.assertEqual(worker.stream_disconnect_count,1)
+        self.assertEqual(store.saved[-1][1]['state'],'reconnecting')
+        self.assertEqual(store.alerts,[])
+        worker.recovered=True;worker.socket=Socket();worker.book_sid=2
+        worker.quotes={'t':dict(quote(),source='orderbook',book_ready=True,at=NOW+2)}
+        with patch('services.demo.runtime.time.time',return_value=NOW+2):
+            self.assertTrue(worker.stream_recovered())
+        self.assertEqual(worker.stream_recovery_count,1)
+        self.assertEqual(worker.stream_outage_since,None)
+        self.assertIn('stream',store.cleared)
+
+    def test_extended_unverified_feed_outage_alerts_instead_of_staying_infinite_routine_sync(self):
+        class StreamStore(FakeStore):
+            def __init__(self):super().__init__();self.alerts=[]
+            def alert(self,*a,**kw):self.alerts.append(a)
+        store=StreamStore();worker=Worker(store,Mock(reads=0,writes=0),threading.Event(),lambda:None)
+        worker.last_verified=NOW-5;worker.stream_outage_since=NOW-30
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.trading_health();worker.trading_health()
+        self.assertEqual(len(store.alerts),1)
+        self.assertEqual(store.saved[-1][1]['state'],'reconnecting')
+        self.assertEqual(store.saved[-1][1]['stream']['outage_seconds'],30)
