@@ -2,6 +2,23 @@
 from services.research.reports import SERIES
 
 STRATEGY='buy_low_sell_high'
+BUY_CANCEL_MINUTES=3
+
+def buy_cancel_deadline(order,quote=None):
+    """Hard deadline for an unfilled low bid, independent of entry cutoff.
+
+    Prefer the durable market expiry saved with the submitted order. For older
+    orders, use known exchange metadata; fall back to their original expiry.
+    Never use the processing time or arrival time of the latest quote.
+    """
+    if order.get('kind')!='entry' or order.get('entry_strategy')!=STRATEGY:return None
+    end=order.get('market_close_at')
+    if end is None and quote is not None:end=quote.get('entry_close',quote.get('close'))
+    return float(end)-BUY_CANCEL_MINUTES*60 if end is not None else order.get('close')
+
+def buy_entry_cutoff(config):
+    # Older persisted configs might allow bids inside the last three minutes.
+    return max(BUY_CANCEL_MINUTES,config.get('cycle_cutoff_minutes',BUY_CANCEL_MINUTES))
 
 def active(order):return order.get('status') not in ('closed','rejected')
 
@@ -40,6 +57,14 @@ def shared_quantity(item,peers,config,equity,cash,market_exposure,bot_exposure):
         # instead of letting the first bot consume the entire shared market cap.
         allowance=max(0,min(cash,equity*config['market_percent']/100-market_exposure))
         amount=min(amount,max(1,int(allowance/len(peers)/item['price'])))
+    # When this bot has both YES and NO low bids ready, reserve an equal
+    # part of its remaining allocation for each outcome. Otherwise the first
+    # write can spend the whole share before the other side is attempted.
+    same_bot_sides={p.get('side') for p in peers if p['bot']==item['bot']}
+    if len(same_bot_sides)>1:
+        remaining=max(0,min(cash,equity*config['bot_percent']/100-bot_exposure))
+        if remaining>=item['price']*len(same_bot_sides):
+            amount=min(amount,int(remaining/len(same_bot_sides)/item['price']))
     return amount
 
 def retry_ready(retry,quote,now):
@@ -56,12 +81,13 @@ def rejection_prices(order):
 
 def eligible(config,square,quote,now):
     return (quote.get('status')=='active' and quote['series'] in SERIES[square['asset']]
-        and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-config['cycle_cutoff_minutes']*60)
+        and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-buy_entry_cutoff(config)*60)
 
-def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None):
+def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None,fair_running_count=1):
     from collections import Counter
     from .engine import side_quote,entry_protection_matches,quantity
-    config=bot['config'];by_market={};market_cost={};bot_cost=0
+    from .engine import fair_budget_config
+    config=fair_budget_config(bot['config'],fair_running_count);by_market={};market_cost={};bot_cost=0
     live=[o for o in orders if active(o)]
     for order in live:
         by_market.setdefault(order['ticker'],[]).append(order)
@@ -108,7 +134,9 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,
     message=f'Buy {config["cycle_buy_cents"]}¢ / sell {config["cycle_sell_cents"]}¢ · {lows} waiting buys · {highs} profit sells · {status}'
     if waiting:message+=' · '+'; '.join(waiting)
     return dict(message=message,markets=len(markets),fresh=len(fresh),eligible_markets=eligible_markets,matches=ready,
-        entry_blockers=dict(reasons),exit_waiting=False,categories=sorted({s['asset'] for s in config['squares']}))
+        entry_blockers=dict(reasons),exit_waiting=False,categories=sorted({s['asset'] for s in config['squares']}),
+        allocation_cap_cents=max(0,int(account.get('equity_cents',0)*config['bot_percent']/100)),
+        committed_cents=round(bot_cost),running_allocation_peers=fair_running_count)
 
 def candidates(bot,quotes,states,now,blocked):
     from .engine import side_quote,entry_protection_matches

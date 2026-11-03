@@ -48,13 +48,20 @@ def install_demo(app,auth,mutate,pool):
                 square['loss_cents']=loss.get('sell_threshold_cents') or loss.get('threshold_cents')
                 if config['loss_mode']=='research' and not square['loss_cents'] and square.get('loss_prevention_cents') is None:raise HTTPException(422,'This square has no verified exit recommendation; enter its loss prevention or choose manual or off')
         return config
-    from services.demo.reset import ResetRequest,request_reset,ResetConflict
+    from services.demo.reset import ResetRequest,request_reset,ResetConflict,UndoResetRequest,undo_reset
     @app.post('/demo/reset')
     def reset_demo(body:ResetRequest,request:Request):
         mutate(request);require_query(request)
         try:result=request_reset(store,body)
         except ResetConflict as error:raise HTTPException(409,str(error)) from None
         return dict(contract='demo-v1',request_id=result['request_id'],state=result['state'])
+    @app.post('/demo/reset/undo')
+    def undo_demo(body:UndoResetRequest,request:Request):
+        mutate(request);require_query(request)
+        try:result=undo_reset(store,body.request_id)
+        except ResetConflict as error:raise HTTPException(409,str(error)) from None
+        return dict(contract='demo-v1',request_id=result['request_id'],state=result['state'],
+            restored=result['restored'],resumed=result['resumed'])
     @app.get('/demo/workspace')
     def workspace(request:Request):
         auth(request);require_query(request,('period',))

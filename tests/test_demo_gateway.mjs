@@ -65,6 +65,9 @@ import {resetMarkup} from '../apps/web/demo-client.mjs';
 test('Demo reset is an owner POST route without any funding prerequisite',async()=>{
  const response=await proxyAuth(new Request('https://app.test/api/demo/reset',{method:'POST',headers:{origin:'https://app.test','content-type':'application/json'},body:JSON.stringify({request_id:'test'})}),env,options());assert.equal(response.status,200);
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/reset'),env,options())).status,405);
+ const undo=await proxyAuth(new Request('https://app.test/api/demo/reset/undo',{method:'POST',headers:{origin:'https://app.test','content-type':'application/json'},body:JSON.stringify({request_id:'test'})}),env,options());
+ assert.equal(undo.status,200);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/reset/undo'),env,options())).status,405);
  const html=resetMarkup({state:'awaiting_funds',message:'<unsafe>',market:'<market>',cash_cents:10000,target_balance_cents:100000,deposit_needed_cents:90000,open_orders:0,held_markets:0});
  assert.ok(!html.includes('$900.00'));assert.ok(!html.includes('$1,000.00'));assert.ok(!html.includes('<unsafe>'));assert.ok(!html.includes('<market>'));assert.match(html,/No target balance/);
  assert.ok(html.includes('Funding is optional'));assert.equal(resetMarkup(null),'');

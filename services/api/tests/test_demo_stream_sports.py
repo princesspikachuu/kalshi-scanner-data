@@ -440,3 +440,36 @@ class Order404Recovery(unittest.TestCase):
         self.assertEqual(worker.submit.call_count,1)
         self.assertEqual(worker.submit.call_args.args[0]['ticker'],'u')
         ex.cancel.assert_not_called()
+
+
+class MarketOpenCoverage(unittest.TestCase):
+    def test_discovery_sweeps_three_distinct_live_cycle_series_per_call(self):
+        from services.research.reports import SERIES
+        seen=[]
+        class Ex:
+            def call(self,method,path,*,params):
+                seen.append(params)
+                return dict(markets=[],cursor='')
+        worker=Worker(FakeStore(),Ex(),threading.Event(),lambda:None)
+        worker.bots=[]
+        for asset in ('btc','eth','sol'):
+            b=bot();b['id']=asset;b['config']['strategy']='buy_low_sell_high'
+            b['config']['squares'][0]['asset']=asset
+            worker.bots.append(b)
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.discover()
+        self.assertEqual(len(seen),3)
+        self.assertEqual({p['series_ticker'] for p in seen},set().union(*(SERIES[a] for a in ('btc','eth','sol'))))
+        self.assertEqual(worker.series_index,3)
+
+    def test_watchlist_includes_every_individual_series_before_overallocating_brent(self):
+        from services.research.reports import INDIVIDUAL_15M_SERIES
+        from services.demo.watchlist import select_markets
+        series={'btc':'KXBTC15M','eth':'KXETH15M',**INDIVIDUAL_15M_SERIES}
+        quotes={}
+        for asset,code in series.items():
+            for n in range(85 if asset in ('brent_15m','copper_15m') else 1):
+                quotes[f'{code}-{n}']=dict(status='active',series=code,open=NOW-n,close=NOW+600,entry_close=NOW+600)
+        selected=select_markets(quotes,set(),NOW,limit=100,cycle_series=set(series.values()))
+        self.assertEqual(len(selected),100)
+        self.assertEqual({q['series'] for q in selected.values()},set(series.values()))
+        self.assertLess(sum(q['series']=='KXBRENT15M' for q in selected.values()),65)

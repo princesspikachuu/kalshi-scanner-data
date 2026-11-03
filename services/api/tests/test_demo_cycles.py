@@ -96,7 +96,7 @@ class CycleEntries(unittest.TestCase):
         self.assertEqual(candidates([b],{'t':dict(q,source='rest')},{},NOW),[])
         self.assertEqual(candidates([b],{'t':dict(q,open=NOW+1)},{},NOW),[])
     def test_cutoff_is_exclusive_and_partial_fills_can_still_sell_after_it(self):
-        b=bot();q=book();end=NOW+840
+        b=bot();q=book();end=NOW+720
         self.assertEqual(candidates([b],{'t':dict(q,at=end)},{},end),[])
         self.assertEqual(len(candidates([b],{'t':dict(q,at=end-.01)},{},end-.01)),2)
         w=worker();w.orders=[entry(filled=3,remaining=0)];w.quotes['t']['at']=end+1;w.last_reconcile=end+1
@@ -105,7 +105,7 @@ class CycleEntries(unittest.TestCase):
     def test_entry_expiry_and_both_outcomes_are_independent_not_duplicate_bids(self):
         w=worker()
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
-        first=w.submit.call_args.args[0];self.assertEqual(first['close'],NOW+840)
+        first=w.submit.call_args.args[0];self.assertEqual(first['close'],NOW+720)
         self.assertEqual(first['entry_strategy'],'buy_low_sell_high');self.assertEqual(first['profit_target_cents'],20)
         first.update(status='resting',remaining=first['quantity']);w.orders=[first];w.submit.reset_mock()
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
@@ -334,3 +334,116 @@ class CancelFencing(unittest.TestCase):
         self.assertIn('t/0/yes',states['bot-1'])
         result=candidates([b],{'t':dict(book(),at=NOW+2)},states,NOW+2)
         self.assertEqual([r['side'] for r in result],['no'])
+
+
+class ThreeMinuteLowBidExpiry(unittest.TestCase):
+    def test_three_minute_deadline_overrides_older_one_minute_buy_cutoff(self):
+        from services.demo.cycles import buy_cancel_deadline,eligible
+        b=bot(cycle_cutoff_minutes=1);q=book()
+        self.assertTrue(eligible(b['config'],b['config']['squares'][0],q,NOW+719))
+        self.assertFalse(eligible(b['config'],b['config']['squares'][0],q,NOW+720))
+        older=entry(close=NOW+840,market_close_at=NOW+900)
+        self.assertEqual(buy_cancel_deadline(older,q),NOW+720)
+        w=worker();w.orders=[older];w.cancel=Mock();w.recovered=False
+        w.quotes['t']['at']=NOW-100
+        with patch('services.demo.runtime.time.time',return_value=NOW+719):w.trade()
+        w.cancel.assert_not_called()
+        with patch('services.demo.runtime.time.time',return_value=NOW+720):w.trade()
+        self.assertEqual(w.cancel.call_count,1)
+        self.assertEqual(w.cancel.call_args.args[0]['client_id'],'low')
+
+    def test_cancel_priority_keeps_partially_filled_lot_and_profit_sell(self):
+        w=worker();o=entry(filled=4,remaining=6,market_close_at=NOW+900)
+        w.orders=[o];w.cancel=Mock();w.submit=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW+720):w.trade()
+        w.cancel.assert_called_once()
+        self.assertEqual(o['filled'],4)
+        w.submit.assert_not_called()
+        o.update(remaining=0,status='held')
+        w.quotes['t']['at']=NOW+721;w.last_reconcile=NOW+721
+        with patch('services.demo.runtime.time.time',return_value=NOW+721):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['kind'],'exit')
+        self.assertEqual(w.submit.call_args.args[0]['exit_role'],'profit')
+        self.assertEqual(w.submit.call_args.args[0]['quantity'],4)
+
+    def test_cancel_is_fenced_if_exchange_status_is_uncertain(self):
+        w=worker();o=entry(market_close_at=NOW+900,status='cancel_pending')
+        w.orders=[o];w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW+721):w.trade()
+        w.cancel.assert_not_called()
+
+    def test_native_exchange_expiration_is_three_minutes_even_when_new_buys_stop_earlier(self):
+        w=worker();w.bots=[bot(cycle_cutoff_minutes=5)]
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        intent=w.submit.call_args.args[0]
+        self.assertEqual(intent['close'],NOW+720)
+        self.assertEqual(intent['market_close_at'],NOW+900)
+        self.assertEqual(wire_order(intent)['expiration_time'],NOW+720)
+
+
+class CrossBotCapitalFairness(unittest.TestCase):
+    def test_equal_account_share_caps_28_bots_but_never_raises_user_limits(self):
+        from services.demo.engine import fair_budget_config,quantity
+        cfg=bot(bot_percent=100,bid_percent=100,market_percent=100)['config']
+        fair=fair_budget_config(cfg,28)
+        self.assertAlmostEqual(fair['bot_percent'],100/28)
+        self.assertEqual(quantity(fair,3,10000,10000,0,0),119)
+        self.assertEqual(quantity(fair,3,10000,10000,0,357),0)
+        self.assertEqual(cfg['bot_percent'],100,'do not mutate saved preferences')
+        strict=bot(bot_percent=2,bid_percent=100,market_percent=100)['config']
+        self.assertEqual(fair_budget_config(strict,28)['bot_percent'],2)
+        self.assertIs(fair_budget_config(cfg,1),cfg)
+
+    def test_round_robin_prioritizes_different_bots_before_the_next_bid_of_one(self):
+        from services.demo.engine import fair_order_candidates
+        incoming=[
+            dict(bot='A',ticker='A-1',first_at=1),
+            dict(bot='A',ticker='A-2',first_at=2),
+            dict(bot='B',ticker='B-1',first_at=1),
+            dict(bot='C',ticker='C-1',first_at=1),
+            dict(bot='A',ticker='A-3',first_at=3),
+        ]
+        self.assertEqual([x['ticker'] for x in fair_order_candidates(incoming)],
+            ['A-1','B-1','C-1','A-2','A-3'])
+        self.assertEqual([x['ticker'] for x in fair_order_candidates(incoming,'A')],
+            ['B-1','C-1','A-1','A-2','A-3'])
+
+    def test_live_scheduler_allocates_equally_and_posts_both_yes_no_sides(self):
+        w=worker();w.bots=[]
+        for i in range(4):
+            b=bot(bot_percent=100,bid_percent=100,market_percent=100)
+            b['id']=f'bot-{i}'
+            w.bots.append(b)
+        for _ in range(8):
+            w.submit.reset_mock()
+            with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+            self.assertTrue(w.submit.called)
+            order=w.submit.call_args.args[0]
+            self.assertEqual(order['kind'],'entry')
+            order.update(status='resting',remaining=order['quantity'])
+            w.orders.append(order)
+        self.assertEqual([o['bot'] for o in w.orders],
+            ['bot-0','bot-1','bot-2','bot-3']*2)
+        for b in w.bots:
+            own=[o for o in w.orders if o['bot']==b['id']]
+            self.assertEqual({o['side'] for o in own},{'yes','no'})
+            self.assertLessEqual(sum(o['quantity']*o['price'] for o in own),2500)
+        self.assertLessEqual(sum(o['quantity']*o['price'] for o in w.orders),10000)
+
+    def test_paused_bots_do_not_reserve_a_running_bots_share(self):
+        from services.demo.engine import fair_budget_config
+        w=worker();w.bots=[bot(),bot()]
+        w.bots[0]['id']='running';w.bots[1]['id']='paused';w.bots[1]['desired']='paused'
+        w.funding.waits={}
+        info=w.entry_diagnostics(NOW)
+        self.assertEqual(info['running']['running_allocation_peers'],1)
+        self.assertEqual(info['running']['allocation_cap_cents'],1000)
+
+    def test_ranked_normal_strategy_keeps_higher_expected_return_priority(self):
+        w=worker()
+        normal=dict(id='z-normal',revision=1,desired='running',config=config())
+        normal['config']['squares'][0].update(min_minutes=0,max_minutes=15,expected_roi=10)
+        low=bot();low['id']='a-low'
+        w.bots=[low,normal]
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['bot'],'z-normal')

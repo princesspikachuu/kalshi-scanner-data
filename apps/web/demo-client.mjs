@@ -132,7 +132,10 @@ export function exitEvidence(item){
 
 export function resetMarkup(reset){
  if(!reset)return '';
- return `<section class="panel" role="status"><h2>Bot reset</h2><p>${reset.state==='complete'?'Existing bots are archived and fresh paused copies are ready to resume.':'The previous reset is being updated. No target balance is required to resume bots.'}</p><p class="small">Historical trades stay with their original bots. Existing positions remain tracked and protected. Funding is optional.</p></section>`;
+ if(reset.state==='undone')return `<section class="panel" role="status"><h2>Bot reset undone</h2><p>Original bots restored; unused fresh copies removed. Existing exchange orders and positions were not modified.</p></section>`;
+ const complete=reset.state==='complete';
+ const canUndo=complete&&Number.isFinite(reset.completed_at)&&Date.now()/1000-reset.completed_at<5400;
+ return `<section class="panel" role="status"><h2>Bot reset</h2><p>${complete?'Original bots archived and fresh paused copies created.':'Previous reset is being updated. No target balance is required to resume bots.'}</p><p class="small">Historical trades and existing exchange positions remain tracked. Funding is optional.</p>${canUndo?'<button type="button" class="secondary" id="undoLatestReset">Undo this reset</button><p class="small">Only unused reset copies can be removed. Undo never reverses exchange fills.</p>':''}</section>`;
 }
 
 export function squarePerformanceMarkup(data){
