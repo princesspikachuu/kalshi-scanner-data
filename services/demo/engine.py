@@ -1,6 +1,40 @@
 """Pure entry and maker-exit rules, expressed in cents; no network side effects."""
 import math
+from collections import defaultdict,deque
 from services.research.reports import SERIES
+
+def fair_budget_config(config,running_bots):
+    """Enforce an equal per-running-bot account share as an additional ceiling.
+
+    Existing bot, per-bid, and per-market limits remain unchanged. Nothing is
+    transferred, sold or resized; only *new* entries use this reduced ceiling.
+    A bot with a stricter saved limit keeps its stricter limit.
+    """
+    if running_bots<=1:return config
+    cap=min(config['bot_percent'],100/running_bots)
+    return dict(config,bot_percent=cap) if cap<config['bot_percent'] else config
+
+def fair_order_candidates(items,last_bot=None):
+    """Rotate candidate opportunities across bots; retain per-bot priority.
+
+    A busy high-cardinality series must not repeatedly take the first write
+    slot while the other bots wait for their first entry. Applied to new buys
+    only; existing sell and cancellation priority remains above this scheduler.
+    """
+    queues=defaultdict(deque)
+    for item in items:queues[item['bot']].append(item)
+    bots=sorted(queues)
+    if last_bot in bots:
+        pivot=(bots.index(last_bot)+1)%len(bots)
+        bots=bots[pivot:]+bots[:pivot]
+    result=[]
+    while queues:
+        for bot in bots:
+            queue=queues.get(bot)
+            if not queue:continue
+            result.append(queue.popleft())
+            if not queue:queues.pop(bot,None)
+    return result
 
 def side_quote(quote,side):
     if side=='yes':return quote['bid'],quote['ask']
