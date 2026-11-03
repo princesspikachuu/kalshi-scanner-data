@@ -8,10 +8,10 @@ class OwnershipDetails(unittest.TestCase):
         result=describe({'t'},{'t':2},{},q,[],[],NOW)
         self.assertTrue(result['t']['informational']);self.assertEqual(result['t']['reason'],'awaiting_settlement')
         self.assertEqual((result['t']['expected_contracts'],result['t']['exchange_contracts']),(2,0))
-    def test_open_or_uncertain_orders_remain_actionable_even_when_market_ended(self):
+    def test_ended_markets_are_informational_unless_exchange_still_has_resting_orders(self):
         q={'t':dict(status='closed',close=NOW-900)}
         for order in [dict(ticker='t',remaining=1,status='resting'),dict(ticker='t',remaining=0,status='uncertain'),dict(ticker='t',remaining=0,status='cancel_pending')]:
-            self.assertFalse(describe({'t'},{'t':2},{},q,[order],[],NOW)['t']['informational'])
+            self.assertTrue(describe({'t'},{'t':2},{},q,[order],[],NOW)['t']['informational'])
         self.assertFalse(describe({'t'},{'t':2},{},q,[],[dict(ticker='t')],NOW)['t']['informational'])
         self.assertFalse(describe({'t'},{'t':2},{},{'t':dict(status='active',close=NOW+60)},[],[],NOW)['t']['informational'])
     def test_missing_expired_market_is_retained_without_inventing_a_settlement(self):
