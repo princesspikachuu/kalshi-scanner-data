@@ -653,38 +653,55 @@ class Worker:
         from services.research.reports import SERIES
         series=sorted({s for b in self.bots if b['desired']=='running' for q in b['config']['squares'] for s in SERIES[q['asset']]})
         pinned={o['ticker'] for o in self.orders}
+        cycle_series={s for b in self.bots if b['desired']=='running'
+            and b['config'].get('strategy')=='buy_low_sell_high'
+            for square in b['config']['squares'] for s in SERIES[square['asset']]}
+        requests=[];pending=set()
         if self.pending_markets:
-            params=dict(tickers=','.join(sorted(self.pending_markets)),limit=200);self.pending_markets.clear()
-        elif pinned and (self.discovery_turn%5==0 or not series):params=dict(tickers=','.join(sorted(pinned)[:100]),limit=200)
+            pending=set(self.pending_markets)
+            requests=[dict(tickers=','.join(sorted(pending)),limit=200)]
+        elif pinned and (self.discovery_turn%5==0 or not series):
+            requests=[dict(tickers=','.join(sorted(pinned)[:100]),limit=200)]
         elif series:
-            current=series[self.series_index%len(series)];params=dict(series_ticker=current,status='open',limit=200,min_close_ts=int(now))
-            if current not in SERIES['sports']:params['max_close_ts']=int(now+86400)
-            if self.cursor.get(current):params['cursor']=self.cursor[current]
+            # Sweep multiple different 15-minute series at a time. Previously
+            # a single series was queried only every 5 seconds, so 28 bots
+            # could miss most of a 15-minute market before the next sweep.
+            order=sorted(series,key=lambda s:(s not in cycle_series,s))
+            count=min(3,len(order)) if cycle_series else 1
+            for i in range(count):
+                current=order[(self.series_index+i)%len(order)]
+                params=dict(series_ticker=current,status='open',limit=200,min_close_ts=int(now))
+                if current not in SERIES['sports']:params['max_close_ts']=int(now+86400)
+                if self.cursor.get(current):params['cursor']=self.cursor[current]
+                requests.append(params)
         else:self.last_discovery=now;return
-        page=self.exchange.call('GET','/markets',params=params)
-        if not isinstance(page.get('markets'),list) or len(page['markets'])>200:raise ExchangeFailure('discovery_capacity')
-        if 'series_ticker' in params:self.cursor[params['series_ticker']]=page.get('cursor') or ''
-        for raw in page['markets']:
-            parsed=quote(raw,now)
-            if parsed:
-                ticker,q=parsed
-                # REST discovery does not qualify a new trade; wait for stream verification.
-                if ticker not in pinned and not now<q['entry_close']<=now+86400:continue
-                old=self.quotes.get(ticker)
-                if old:
-                    # Price and observation time are one piece of evidence. REST
-                    # metadata must not replace a verified stream price while
-                    # inheriting its timestamp (including stale stream quotes).
-                    q=dict(old,close=q['close'],entry_close=q['entry_close'],entry_clock=q['entry_clock'],status=q['status'],result=q['result'],exchange_index=q['exchange_index'],series=q['series'],open=q.get('open',0),metadata_at=now)
-                else:q['at']=0
-                self.quotes[ticker]=q;self.last_discovered[ticker]=now
+        for params in requests:
+            page=self.exchange.call('GET','/markets',params=params)
+            if not isinstance(page.get('markets'),list) or len(page['markets'])>200:raise ExchangeFailure('discovery_capacity')
+            if 'series_ticker' in params:self.cursor[params['series_ticker']]=page.get('cursor') or ''
+            for raw in page['markets']:
+                parsed=quote(raw,now)
+                if parsed:
+                    ticker,q=parsed
+                    # REST discovery does not qualify new trades; wait for the
+                    # stream to verify the sequenced market book before buying.
+                    if ticker not in pinned and not now<q['entry_close']<=now+86400:continue
+                    old=self.quotes.get(ticker)
+                    if old:
+                        q=dict(old,close=q['close'],entry_close=q['entry_close'],
+                            entry_clock=q['entry_clock'],status=q['status'],
+                            result=q['result'],exchange_index=q['exchange_index'],
+                            series=q['series'],open=q.get('open',0),metadata_at=now)
+                    else:q['at']=0
+                    self.quotes[ticker]=q;self.last_discovered[ticker]=now
+            if 'series_ticker' in params:self.series_index+=1
+            if pending:self.pending_markets.difference_update(pending)
         from .watchlist import select_markets
         eligible={t:q for t,q in self.quotes.items() if t in pinned or q['series'] in series}
-        cycle_series={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
         self.quotes=select_markets(eligible,pinned,now,cycle_series=cycle_series)
         self.maker_retries={t:r for t,r in self.maker_retries.items() if t in self.quotes}
-        self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes};self.last_discovery=now;self.discovery_turn+=1
-        if 'series_ticker' in params:self.series_index+=1
+        self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes}
+        self.last_discovery=now;self.discovery_turn+=1
     def observe_exit_triggers(self,ticker,now,previous=None):
         """Latch the first crossing before another ticker message can replace it."""
         from .engine import side_quote
@@ -1111,7 +1128,7 @@ class Worker:
                             maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                         self.stop.wait(.5);continue
                     self.stage="discovery"
-                    if now-self.last_discovery>=5:self.discover()
+                    if self.pending_markets or now-self.last_discovery>=(2 if any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots) else 5):self.discover()
                     self.stage="stream";self.stream()
                     self.stage="reconciliation"
                     if not self.recovered or now-self.last_reconcile>=30:self.reconcile()
