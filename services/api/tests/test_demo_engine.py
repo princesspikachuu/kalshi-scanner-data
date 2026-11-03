@@ -520,11 +520,9 @@ class FifteenMinuteAssetRouting(unittest.TestCase):
         self.assertEqual(MINUTES['commodities_15m'],(15,10,5,3,1))
         self.assertEqual(MINUTES['finance_15m'],(15,10,5,3,1))
 
-    def test_sports_only_has_two_team_game_winner_series(self):
+    def test_sports_only_has_head_to_head_game_or_match_winner_series(self):
         from services.research.reports import SERIES
-        self.assertEqual(SERIES['sports'],{'KXNBAGAME','KXNFLGAME','KXNHLGAME','KXMLBGAME','KXNCAAFGAME'})
-        self.assertNotIn('KXATPMATCH',SERIES['sports'])
-        self.assertNotIn('KXWTAMATCH',SERIES['sports'])
+        self.assertEqual(SERIES['sports'],{'KXNBAGAME','KXNFLGAME','KXNHLGAME','KXMLBGAME','KXNCAAFGAME','KXATPMATCH','KXWTAMATCH'})
 
     def test_commodity_and_finance_condition_qualification(self):
         from services.api.demo_models import Square
