@@ -155,6 +155,9 @@ class Worker:
             reconnects=self.stream_disconnect_count,
             buffer_messages=buffer.get('messages'),buffer_peak=buffer.get('peak_messages'),
             close_code=buffer.get('close_code'))),flush=True)
+        if now-self.stream_outage_since>=25 and not self.stream_outage_alerted:
+            self.store.alert('stream','Kalshi Demo prices have been unavailable for more than 25 seconds. New entries wait for a verified fresh feed.',True)
+            self.stream_outage_alerted=True
         self.health('reconnecting','Market-price stream reconnecting; entries wait for fresh quotes and verified orders')
 
     def health(self,state,message):
