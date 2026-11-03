@@ -53,17 +53,19 @@ class Worker:
         self.stream_outage_since=None;self.stream_disconnect_count=0;self.stream_recovery_count=0
         self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
         self.stream_event_revision=0;self.rest_feed_drains=0;self.rest_feed_messages=0
+        self.last_entry_bot=None
         if isinstance(self.exchange,Exchange):self.exchange.before_read=self.drain_stream_during_read
     def entry_diagnostics(self,now):
-        from .engine import entry_price,side_quote
+        from .engine import entry_price,side_quote,fair_budget_config
+        running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
         from services.research.reports import SERIES
         summary={}
         for bot in self.bots:
-            config=bot['config'];matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=incomplete=0
+            config=fair_budget_config(bot['config'],running_count);matched=fresh=available=submitted=blocked=maker=budget=stop_blocked=minimum=incomplete=0
             if config.get('strategy')=='buy_low_sell_high':
                 from .cycles import diagnostics
                 summary[bot['id']]=diagnostics(bot,self.quotes,self.states,self.orders,now,self.blocked,self.netting_pending,self.account,self.recovered,
-                    daily_reason=self.daily_guard(bot,now),funding_waits=getattr(self.funding,'waits',{}))
+                    daily_reason=self.daily_guard(bot,now),funding_waits=getattr(self.funding,'waits',{}),fair_running_count=running_count)
                 if config.get('daily_loss_percent') is not None:summary[bot['id']]['daily_risk']=dict(limit_percent=config['daily_loss_percent'],pnl_cents=self.daily_pnl.get(bot['id']))
                 continue
             market_exposure={};bot_exposure=0;exit_waiting=None
@@ -1039,7 +1041,10 @@ class Worker:
             elif self.profit_sell(order,q,now):return
         if not self.recovered or now-self.last_reconcile>35:return
         retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
-        options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
+        from .engine import fair_budget_config,fair_order_candidates
+        running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
+        fair_configs={id:fair_budget_config(b['config'],running_count) for id,b in bots.items()}
+        options=fair_order_candidates(candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying),self.last_entry_bot)
         market_cost={};bot_cost={}
         if options:
             for order in self.orders:
@@ -1050,7 +1055,7 @@ class Worker:
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
         for item in options:
-            config=bots[item['bot']]['config']
+            config=fair_configs[item['bot']]
             if config.get('strategy')=='buy_low_sell_high' and not self.daily_guard(bots[item['bot']],now) and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):
                 if quantity(config,item['price'],equity,cash,market_cost.get(item['ticker'],0),bot_cost.get(item['bot'],0))>0:
                     peers.setdefault(item['ticker'],[]).append(item)
@@ -1058,7 +1063,7 @@ class Worker:
             self.context_market=item['ticker'];self.context_order=None;self.context_bot=item['bot']
             if len({o['ticker'] for o in self.orders})>=100 and item['ticker'] not in {o['ticker'] for o in self.orders}:continue
             if len(self.orders)>=490:continue
-            bot=bots[item['bot']];config=bot['config'];equity=self.account['equity_cents']
+            bot=bots[item['bot']];config=fair_configs[item['bot']];equity=self.account['equity_cents']
             is_cycle=config.get('strategy')=='buy_low_sell_high'
             active_entries=[o for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'] and o['status'] not in ('closed','rejected')]
             if item['ticker'] in self.netting_pending:continue
@@ -1089,6 +1094,7 @@ class Worker:
             extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(180 if is_cycle else 0)
+            self.last_entry_bot=item['bot']
             self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
