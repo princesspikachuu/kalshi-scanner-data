@@ -628,6 +628,12 @@ class Worker:
         if digest!=self.ownership_digest:
             summarized={t:dict(reason=d['reason'],expected=d['expected_contracts'],actual=d['exchange_contracts'],
                 bots=[b['id'] for b in d.get('bots',[])],orders=d.get('order_count',0),
+                verification_orders=[dict(kind=o.get('kind'),status=o.get('status'),side=o.get('side'),
+                    price=o.get('price'),filled=o.get('filled',0),remaining=o.get('remaining',0),
+                    has_exchange_id=bool(o.get('exchange_id')),
+                    created_at=o.get('created_at'),close=o.get('close'),
+                    cancel_404_at=o.get('cancel_404_at'))
+                    for o in self.orders if o['ticker']==t][:3],
                 unowned=d.get('unowned_order_count',0),syncing=d.get('syncing',False),
                 blocked_seconds=d.get('blocked_seconds',0)) for t,d in self.ownership_details.items()}
             print(json.dumps(dict(event='demo_ownership_check',actionable=len(actionable),
