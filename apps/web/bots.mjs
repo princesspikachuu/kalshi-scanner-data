@@ -93,12 +93,34 @@ async function control(id,action,button){const bot=workspace.bots.find(b=>b.key=
 async function load(){if(busy)return;busy=true;try{[workspace,{items:orders}]=await Promise.all([demoCall('workspace?period='+period),demoCall('orders')]);draw();if(!draftChecked){draftChecked=true;restoreBotDraft({bots:workspace.bots,onSave:load})}delay=15000;if($('equityDetails').open)await chart()}catch(error){setMessage(error.message);delay=Math.min(120000,delay*2)}finally{busy=false;clearTimeout(timer);if(!document.hidden)timer=setTimeout(load,delay)}}
 async function chart(){try{const data=await demoCall('chart?period='+period);const points=data.points;if(points.length<2){$('equityChart').innerHTML='<p class="small">Account history appears after two verified snapshots, taken 15 minutes apart.</p>';$('accountChange').textContent='—';return}const values=points.map(p=>p.value),low=Math.min(...values),range=Math.max(100,Math.max(...values)-low),path=points.map((p,i)=>`${i?'L':'M'} ${10+i*780/(points.length-1)} ${175-(p.value-low)*150/range}`).join(' ');$('equityChart').innerHTML=`<svg class="chart" viewBox="0 0 800 190" role="img" aria-label="Verified Demo account value over ${period}"><line x1="0" y1="175" x2="800" y2="175"/><path d="${path}"/></svg>`;$('accountChange').textContent=money(values.at(-1)-values[0])}catch(error){setMessage(error.message)}}
 let resetRequestId;
-$('resetDemo').onclick=()=>{resetRequestId=crypto.randomUUID();$('resetMessage').textContent='';$('resetDialog').showModal()};
-$('resetForm').onsubmit=async event=>{
- event.preventDefault();$('confirmReset').disabled=true;
- try{await demoCall('reset',{request_id:resetRequestId});$('resetDialog').close();setMessage('Bots archived and fresh paused copies created. You can resume them now.');await load()}
- catch(error){$('resetMessage').textContent=error.message}finally{$('confirmReset').disabled=false;$('resetDemo').disabled=workspace.reset_mode!=='archive_copy'}
+const resetConfirmed=()=>$('resetPhrase').value==='RESET BOTS'&&$('resetAcknowledge').checked;
+const refreshResetConfirmation=()=>$('confirmReset').disabled=!resetConfirmed();
+$('resetPhrase').oninput=refreshResetConfirmation;
+$('resetAcknowledge').onchange=refreshResetConfirmation;
+$('resetDialog').addEventListener('close',()=>{$('resetPhrase').value='';$('resetAcknowledge').checked=false;$('confirmReset').disabled=true});
+$('resetDemo').onclick=()=>{
+ resetRequestId=crypto.randomUUID();$('resetMessage').textContent='';
+ $('resetPhrase').value='';$('resetAcknowledge').checked=false;$('confirmReset').disabled=true;
+ $('resetTargetCount').textContent=workspace.bots.filter(b=>!b.archived).length+' current';
+ $('resetDialog').showModal();
 };
+$('resetForm').onsubmit=async event=>{
+ event.preventDefault();if(!resetConfirmed())return;
+ $('confirmReset').disabled=true;
+ try{await demoCall('reset',{request_id:resetRequestId,confirmation:'RESET BOTS'});$('resetDialog').close();setMessage('Bots archived and fresh paused copies created. Use Undo reset if unintended.');await load()}
+ catch(error){$('resetMessage').textContent=error.message}finally{$('confirmReset').disabled=!resetConfirmed();$('resetDemo').disabled=workspace.reset_mode!=='archive_copy'}
+};
+$('resetStatus').addEventListener('click',async event=>{
+ if(event.target.id!=='undoLatestReset')return;
+ const id=workspace.reset?.request_id;
+ if(!id)return;
+ event.target.disabled=true;
+ try{
+  const result=await demoCall('reset/undo',{request_id:id});
+  setMessage('Original bots restored ('+result.restored+'). Exchange orders and positions were not changed.');
+  await load();
+ }catch(error){setMessage(error.message);event.target.disabled=false}
+});
 $('newBot').onclick=()=>openBotBuilder({onSave:load});$('find').oninput=draw;$('filter').onchange=draw;
 $('copyDemoCard').onclick=async()=>{try{await navigator.clipboard.writeText('4000056655665556');$('copyCardStatus').textContent='Test card number copied.'}catch{$('copyCardStatus').textContent='Copy this number: 4000 0566 5566 5556'}};
 $('funds').onclick=()=>$('fundsDialog').showModal();$('connect').onclick=()=>$('connectionDialog').showModal();
