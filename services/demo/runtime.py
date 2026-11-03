@@ -44,6 +44,7 @@ class Worker:
         self.daily_pnl={};self.daily_pnl_day=-1
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
+        self.market_ledger={};self.blocked_since={};self.recent_market_changes={};self.syncing_markets=set()
         self.historical_lookup_at={};self.next_historical_lookup=0;self.historical_missing={}
         self.next_empty_repair=0;self.empty_repair_at={}
         self.risk_sources=OrderedDict()
@@ -115,7 +116,7 @@ class Worker:
         if now-self.last_health>=10 or state!=self.last_health_state:
             self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),historical_markets=sorted(self.historical_markets),ownership_details=self.ownership_details,bots=self.entry_diagnostics(now),issue=self.issue))
+                reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),historical_markets=sorted(self.historical_markets),syncing_markets=sorted(self.syncing_markets),ownership_details=self.ownership_details,bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
         if now-self.last_diagnostic>=60:
             print(json.dumps(dict(event='demo_diagnostic',state=state,stage=self.stage,
@@ -465,6 +466,15 @@ class Worker:
                 self.save_order(order)
             if order['kind']=='entry' and order['status']!='closed':expected[order['ticker']]=expected.get(order['ticker'],0)+(order.get('filled',0)-order.get('sold',0))*(1 if order['side']=='yes' else -1)
         actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
+        differences={t for t in set(expected)|set(actual) if abs(expected.get(t,0)-actual.get(t,0))>.001}
+        if differences:
+            # Initial positions were fetched BEFORE paginated order history.
+            # Fill/cancel updates across shared bots can make that first snapshot
+            # stale. A fresh, complete position read is authoritative; an API
+            # failure still fails closed and cannot clear a discrepancy.
+            latest=list(self.exchange.pages('/portfolio/positions','market_positions',count_filter='position'))
+            positions=latest
+            actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in latest}
         mismatches={t for t in set(expected)|set(actual) if abs(expected.get(t,0)-actual.get(t,0))>.001}|blocked
         self.refresh_historical_market(mismatches,now)
         for ticker in set(expected)|set(actual):
@@ -488,14 +498,37 @@ class Worker:
             # Publish a fresh verification snapshot, not a speculative reduction
             # in the blocked set while the saved ledger is changing.
             return
-        from .ownership import describe
-        self.ownership_details=describe(blocked,expected,actual,self.quotes,self.orders,remote,now,self.historical_missing)
+        from .ownership import describe,market_ledger,transient_sync
+        snapshot_at=time.time()
+        self.market_ledger=market_ledger(self.orders,expected,actual,remote,blocked,
+            {bot['id']:bot['config'].get('name',bot['id']) for bot in self.bots})
+        ended=self.blocked_since.keys()-blocked
+        for ticker in ended:
+            previous=self.market_ledger.get(ticker,{})
+            print(json.dumps(dict(event='demo_market_reconciliation_resolved',ticker=ticker,
+                blocked_seconds=round(snapshot_at-self.blocked_since[ticker],3),
+                participating_bots=[b['id'] for b in previous.get('bots',[])])),flush=True)
+        self.blocked_since={t:self.blocked_since.get(t,snapshot_at) for t in blocked}
+        self.recent_market_changes={t:v for t,v in self.recent_market_changes.items() if snapshot_at-v<=120}
+        self.ownership_details=describe(blocked,expected,actual,self.quotes,self.orders,remote,now,self.historical_missing,ledger=self.market_ledger)
         self.historical_markets={t for t,d in self.ownership_details.items() if d['informational']}
         actionable=blocked-self.historical_markets
+        self.syncing_markets={t for t in actionable if transient_sync(self.market_ledger[t],snapshot_at,
+            self.recent_market_changes.get(t,0),self.blocked_since[t],self.last_verified)}
+        for ticker,details in self.ownership_details.items():
+            details['blocked_seconds']=round(max(0,snapshot_at-self.blocked_since[ticker]),2)
+            details['syncing']=ticker in self.syncing_markets
         digest=json.dumps(self.ownership_details,sort_keys=True)
         if digest!=self.ownership_digest:
-            print(json.dumps(dict(event='demo_ownership_check',actionable=len(actionable),historical=len(self.historical_markets),markets=self.ownership_details)),flush=True);self.ownership_digest=digest
-        if actionable:self.store.alert('ownership','New entries paused in '+str(len(actionable))+' market(s): manual or unreconciled exposure. Unrelated markets continue.',True)
+            summarized={t:dict(reason=d['reason'],expected=d['expected_contracts'],actual=d['exchange_contracts'],
+                bots=[b['id'] for b in d.get('bots',[])],orders=d.get('order_count',0),
+                unowned=d.get('unowned_order_count',0),syncing=d.get('syncing',False),
+                blocked_seconds=d.get('blocked_seconds',0)) for t,d in self.ownership_details.items()}
+            print(json.dumps(dict(event='demo_ownership_check',actionable=len(actionable),
+                syncing=len(self.syncing_markets),historical=len(self.historical_markets),markets=summarized)),flush=True)
+            self.ownership_digest=digest;self.last_health=0
+        urgent=actionable-self.syncing_markets
+        if urgent:self.store.alert('ownership','New entries paused in '+str(len(urgent))+' market(s): manual or unreconciled exposure. Unrelated markets continue.',True)
         else:self.store.clear_alert('ownership')
         self.account=dict(cash_cents=int(balance['balance']),position_value_cents=int(balance['portfolio_value']),
             equity_cents=int(balance['balance'])+int(balance['portfolio_value']),at=now,
@@ -546,7 +579,9 @@ class Worker:
         """Latch the first crossing before another ticker message can replace it."""
         from .engine import side_quote
         q=self.quotes.get(ticker)
-        if not q or now-q['at']>5 or now>=q['close'] or ticker in self.blocked:return False
+        # Latch a verified price crossing even while order ownership is syncing.
+        # Submitting a sell is still prohibited by the blocked-market trade gate.
+        if not q or now-q['at']>5 or now>=q['close']:return False
         bots={b['id']:b for b in self.bots};triggered=False
         for order in self.orders:
             if order['ticker']!=ticker or order['kind']!='entry' or order.get('exit_triggered') or order.get('status')=='uncertain' or order.get('filled',0)<=order.get('sold',0):continue
@@ -559,7 +594,7 @@ class Worker:
             order['exit_triggered']=True;order['exit_reference']='ask';self.save_order(order)
             prior_ask=side_quote(previous,order['side'])[1] if previous and not (previous.get('source')=='orderbook' and not previous.get('book_ready')) else None
             gap=round(q.get('event_at',q['at'])-previous.get('event_at',previous['at']),3) if previous and previous.get('at') else None
-            self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',minutes_remaining=max(0,(q.get('entry_close',q['close'])-now)/60),protection_clock='market_time_remaining',previous_ask=prior_ask,observation_gap_seconds=gap)
+            self.record('exit_trigger',order,'Current ASK reached the protective exit trigger',threshold=threshold,reference='ask',minutes_remaining=max(0,(q.get('entry_close',q['close'])-now)/60),protection_clock='market_time_remaining',previous_ask=prior_ask,observation_gap_seconds=gap,verification_pending=ticker in self.blocked)
             print(json.dumps(dict(event='demo_exit_trigger',threshold=threshold,minutes_remaining=max(0,(q.get('entry_close',q['close'])-now)/60),bid=bid,ask=ask,side=order['side'],quote_age=now-q['at'],entry_price=order['price'],previous_ask=prior_ask,observation_gap_seconds=gap,source=q.get('source'),clock=q.get('clock'),seq=q.get('seq'))),flush=True)
             triggered=True
         return triggered
@@ -620,7 +655,10 @@ class Worker:
                 wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
                 if any(ticker.startswith(series+'-') for series in wanted) and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
-            if message.get('type') in ('fill','user_orders'):self.last_reconcile=0
+            if message.get('type') in ('fill','user_orders'):
+                self.last_reconcile=0
+                ticker=raw.get('market_ticker') or raw.get('ticker')
+                if ticker:self.recent_market_changes[ticker]=time.time()
             # Verify newly filled exposure before consuming later price changes;
             # otherwise its first stop crossing could arrive while filled=0.
             if message.get('type')=='fill':return
@@ -647,6 +685,7 @@ class Worker:
         order['status']='cancel_pending'
         self.save_order(order);self.record('cancel',order,reason)
         self.sync_pending=dict(action='canceled',bot=order['bot'],market=order['ticker'],at=time.time())
+        self.recent_market_changes[order['ticker']]=self.sync_pending['at']
         # Reconcile races/fills before considering any replacement or released cash.
         self.recovered=False;self.last_reconcile=0
     def submit(self,intent):
@@ -659,6 +698,7 @@ class Worker:
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted '+('profit sell' if intent.get('exit_role')=='profit' else 'maker-only '+intent['kind']))
             self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
+            self.recent_market_changes[intent['ticker']]=self.sync_pending['at']
             print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
             if not error.ambiguous:intent['rejection_reason']=error.reason if error.code=='exchange_rejected' else None
