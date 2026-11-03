@@ -38,7 +38,8 @@ SERIES = {
     'commodities_15m':{'KXGOLD15M','KXSILVER15M','KXPLATINUM15M','KXPALLADIUM15M',
                        'KXCOPPER15M','KXWTI15M','KXNATGAS15M','KXBRENT15M'},
     'finance_15m':{'KXUSDCAD15M','KXAUDUSD15M','KXUSDJPY15M','KXGBPUSD15M','KXEURUSD15M',
-                   'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M'}}
+                   'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M',
+                   'KXINX15M','KXNDQ15M'}}
 
 # Immutable per-dataset contributions. The global loss model still receives the
 # union of every entry and path and chooses its representatives across all days.
