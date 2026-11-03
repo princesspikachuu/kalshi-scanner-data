@@ -110,3 +110,21 @@ class SharedMarketLedger(unittest.TestCase):
         self.assertTrue(worker.observe_exit_triggers('T',NOW))
         self.assertTrue(order['exit_triggered'])
         self.assertIn('exit_trigger',worker.store.events)
+
+
+class FifteenMinuteCategoryWatchlist(unittest.TestCase):
+    def test_finance_and_commodities_do_not_compete_for_crypto_watch_capacity(self):
+        from services.demo.watchlist import family,select_markets
+        self.assertEqual(family('KXGOLD15M'),'commodities_15m')
+        self.assertEqual(family('KXEURUSD15M'),'finance_15m')
+        self.assertEqual(family('KXINX15M'),'finance_15m')
+        self.assertEqual(family('KXBTC15M'),'crypto')
+        quotes={}
+        for series in ('KXGOLD15M','KXEURUSD15M','KXBTC15M'):
+            for i in range(5):
+                ticker=f'{series}-{i}'
+                quotes[ticker]=dict(series=series,status='active',close=NOW+600,entry_close=NOW+600,open=NOW-10)
+        chosen=select_markets(quotes,set(),NOW,limit=3)
+        self.assertEqual(len(chosen),3)
+        self.assertEqual({family(q['series']) for q in chosen.values()},
+            {'commodities_15m','finance_15m','crypto'})
