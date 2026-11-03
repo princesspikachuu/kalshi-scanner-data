@@ -2,6 +2,23 @@
 from services.research.reports import SERIES
 
 STRATEGY='buy_low_sell_high'
+BUY_CANCEL_MINUTES=3
+
+def buy_cancel_deadline(order,quote=None):
+    """Hard deadline for an unfilled low bid, independent of entry cutoff.
+
+    Prefer the durable market expiry saved with the submitted order. For older
+    orders, use known exchange metadata; fall back to their original expiry.
+    Never use the processing time or arrival time of the latest quote.
+    """
+    if order.get('kind')!='entry' or order.get('entry_strategy')!=STRATEGY:return None
+    end=order.get('market_close_at')
+    if end is None and quote is not None:end=quote.get('entry_close',quote.get('close'))
+    return float(end)-BUY_CANCEL_MINUTES*60 if end is not None else order.get('close')
+
+def buy_entry_cutoff(config):
+    # Older persisted configs might allow bids inside the last three minutes.
+    return max(BUY_CANCEL_MINUTES,config.get('cycle_cutoff_minutes',BUY_CANCEL_MINUTES))
 
 def active(order):return order.get('status') not in ('closed','rejected')
 
@@ -56,7 +73,7 @@ def rejection_prices(order):
 
 def eligible(config,square,quote,now):
     return (quote.get('status')=='active' and quote['series'] in SERIES[square['asset']]
-        and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-config['cycle_cutoff_minutes']*60)
+        and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-buy_entry_cutoff(config)*60)
 
 def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None):
     from collections import Counter
