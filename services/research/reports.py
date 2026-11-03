@@ -27,13 +27,18 @@ PUBLICATION_BATCH_ROWS=1000
 MINUTES = {
     'btc':(15,10,5,3,1),'eth':(15,10,5,3,1),'crypto':(15,10,5,3,1),
     'weather':(60,45,30,20,15,10,5,3,1),
-    'sports':(360,180,120,60,30,15,5),'weather_daily':(360,180,120,60,30,15,5)}
+    'sports':(360,180,120,60,30,15,5),'weather_daily':(360,180,120,60,30,15,5),
+    'commodities_15m':(15,10,5,3,1),'finance_15m':(15,10,5,3,1)}
 SERIES = {
     'btc':{'KXBTC15M'},'eth':{'KXETH15M'},
     'crypto':{'KXBTC15M','KXETH15M','KXSOL15M','KXXRP15M','KXDOGE15M','KXBNB15M','KXHYPE15M','KXZEC15M','KXNEAR15M'},
     'weather':{'KXTEMPNYCHS','KXTEMPCHIHS','KXTEMPMIAH','KXTEMPLAXHS','KXTEMPNYCH','KXTEMPCHIH','KXTEMPLAH','KXTEMPDCH'},
     'sports':{'KXNBAGAME','KXNFLGAME','KXNHLGAME','KXMLBGAME','KXNCAAFGAME','KXATPMATCH','KXWTAMATCH'},
-    'weather_daily':{'KXHIGHNY','KXHIGHCHI','KXHIGHLAX','KXHIGHMIA','KXHIGHAUS','KXHIGHDEN','KXHIGHTEWR'}}
+    'weather_daily':{'KXHIGHNY','KXHIGHCHI','KXHIGHLAX','KXHIGHMIA','KXHIGHAUS','KXHIGHDEN','KXHIGHTEWR'},
+    'commodities_15m':{'KXGOLD15M','KXSILVER15M','KXPLATINUM15M','KXPALLADIUM15M',
+                       'KXCOPPER15M','KXWTI15M','KXNATGAS15M','KXBRENT15M'},
+    'finance_15m':{'KXUSDCAD15M','KXAUDUSD15M','KXUSDJPY15M','KXGBPUSD15M','KXEURUSD15M',
+                   'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M'}}
 
 # Immutable per-dataset contributions. The global loss model still receives the
 # union of every entry and path and chooses its representatives across all days.
