@@ -1,7 +1,7 @@
 import {demoCall,escapeHTML as e} from './demo-client.mjs';
 import {createOfferingLoader,renderOfferings,toggleOffering,conditionKey} from './bot-table.mjs';
 let activeDialog,activeCleanup;
-const categories={btc:'Bitcoin · 15 minute',eth:'Ethereum · 15 minute',crypto:'All crypto · 15 minute',commodities_15m:'Commodities · 15 minute',finance_15m:'Finance · 15 minute',weather:'Hourly weather',weather_daily:'Daily weather',sports:'Sports'};
+const categories={btc:'Bitcoin · 15 minute',eth:'Ethereum · 15 minute',crypto:'All crypto · 15 minute',commodities_15m:'Commodities · 15 minute',finance_15m:'Finance (FX, yields, indices) · 15 minute',weather:'Hourly weather',weather_daily:'Daily weather',sports:'Sports'};
 export function selectedSquares(selections){return selections.map(({report,cell,minutes,band})=>{const [low,high]=band.split('-').map(Number);return {asset:report.asset,min_price:low,max_price:high-1,min_minutes:Math.max(0,...report.entry_minutes.filter(m=>m<minutes)),max_minutes:minutes,report_id:Number(report.id),expected_roi:null,loss_cents:null}})}
 export const BOT_DRAFT_KEY='money-bot-draft-v1';
 const draftFields=['botName','qualification','priceReference','adjustment','minimum','maximum','bidPercent','marketPercent','botPercent','lossMode','lossCents','dailyLoss','tableAsset','squareAsset','squareLow','squareHigh','squareAfter','squareThrough'];
