@@ -766,7 +766,11 @@ class Worker:
                 if any(ticker.startswith(series+'-') for series in wanted) and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type') in ('fill','user_orders'):
-                self.stream_event_revision+=1;self.last_reconcile=0
+                # Order-update notifications can accompany every accepted bid.
+                # Only a fill changes exposure and invalidates a REST history
+                # snapshot that is still being paginated.
+                if message.get('type')=='fill':self.stream_event_revision+=1
+                self.last_reconcile=0
                 ticker=raw.get('market_ticker') or raw.get('ticker')
                 if ticker:self.recent_market_changes[ticker]=time.time()
             # Verify newly filled exposure before consuming later price changes;
