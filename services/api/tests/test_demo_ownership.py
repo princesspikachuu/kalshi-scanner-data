@@ -3,6 +3,14 @@ from services.demo.ownership import describe,needs_recovery
 from services.api.tests.test_demo_engine import NOW
 
 class OwnershipDetails(unittest.TestCase):
+    def test_unconfirmed_orders_are_not_labeled_as_manual_exposure(self):
+        from services.demo.ownership import ownership_alert
+        details={t:dict(reason='order_verification') for t in ('KXCOPPER15M-test','KXWTI15M-test')}
+        text=ownership_alert(details,set(details))
+        self.assertIn('COPPER15M',text);self.assertIn('WTI15M',text)
+        self.assertIn('confirm orders',text);self.assertNotIn('manual',text)
+        details['KXWTI15M-test']['reason']='position_difference'
+        self.assertIn('unreconciled exposure',ownership_alert(details,set(details)))
     def test_ended_market_without_live_orders_is_informational_but_keeps_discrepancy(self):
         q={'t':dict(status='closed',close=NOW-900,result='')}
         result=describe({'t'},{'t':2},{},q,[],[],NOW)

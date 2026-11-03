@@ -22,6 +22,27 @@ class ShardFunding:
         self.store,self.exchange=store,exchange
         self.balances={};self.checked_at=0;self.poll_at=0;self.notice_at={}
         self.waits={};self.pending_transfer=None
+        self.history_cursor=None;self.history_client=None;self.last_notice=None;self.notice_time=0
+    def poll(self):
+        """Verify transfers independently; a lookup failure cannot stop funded shards."""
+        try:return self.pending()
+        except ExchangeFailure as error:
+            if error.code=='authentication':raise
+            self.poll_at=max(self.poll_at,time.time()+5)
+            self.store.alert('funding','Demo collateral transfer verification is retrying. Only entries needing unconfirmed funds wait; funded markets continue. No transfer is repeated.',True)
+            self.notice('lookup_retry',error.code)
+            return True
+    def notice(self,status,code=None):
+        pending=self.pending_transfer or {};body=pending.get('body',{})
+        key=(pending.get('created_at'),status,code)
+        now=time.time()
+        if key==self.last_notice and now-self.notice_time<60:return
+        self.last_notice=key;self.notice_time=now
+        print(__import__('json').dumps(dict(event='demo_funding_verification',status=status,code=code,
+            age_seconds=max(0,round(now-pending.get('created_at',now),1)),
+            has_transfer_id=bool(pending.get('transfer_id')),
+            source=body.get('source_exchange_shard'),destination=body.get('destination_exchange_shard'),
+            history_continues=bool(self.history_cursor))),flush=True)
     def balances_now(self):
         rows=self.exchange.call('GET','/portfolio/subaccounts/balances').get('subaccount_balances')
         if not isinstance(rows,list) or len(rows)>6464:raise ExchangeFailure('shard_balance_contract')
@@ -39,37 +60,52 @@ class ShardFunding:
         row=self.store.get('funding')
         pending=row['progress'] if row else None
         self.pending_transfer=pending
-        if not pending or pending['status'] in ('complete','rejected'):return False
+        if not pending:return False
+        if pending['status'] in ('complete','rejected'):
+            # Heal a crash between persisting completion and clearing its alert.
+            if pending['status']=='complete':self.store.clear_alert('funding')
+            else:
+                alert=self.store.get('alert/funding')
+                if alert and 'confirmation is incomplete' in alert['progress'].get('message',''):self.store.clear_alert('funding')
+            self.notice(pending['status']);return False
         now=time.time()
         if now<self.poll_at:return True
         self.poll_at=now+5
+        transfer=None
         if pending.get('transfer_id'):
-            transfer=self.exchange.call('GET','/portfolio/intra_exchange_instance_transfers/'+pending['transfer_id']).get('transfer')
-        else:
+            try:transfer=self.exchange.call('GET','/portfolio/intra_exchange_instance_transfers/'+pending['transfer_id']).get('transfer')
+            except ExchangeFailure as error:
+                if error.status!=404 or error.ambiguous:raise
+        if transfer is None:
             # A lost POST response is resolved by its unique client ID, never by
             # repeating the write or assuming that a missing record means failure.
-            transfer=None;cursor=None
+            transfer=None
+            client=pending['body']['client_transfer_id']
+            if self.history_client!=client:self.history_client=client;self.history_cursor=None
+            cursor=self.history_cursor
             for _ in range(5):
                 page=self.exchange.call('GET','/portfolio/intra_exchange_instance_transfers',params=dict(limit=200,**({'cursor':cursor} if cursor else {})))
                 rows=page.get('transfers')
                 if not isinstance(rows,list) or len(rows)>200:raise ExchangeFailure('transfer_history_contract')
                 transfer=next((r for r in rows if r.get('client_transfer_id')==pending['body']['client_transfer_id']),None)
                 following=page.get('cursor')
-                if transfer or not following:break
+                if transfer or not following:self.history_cursor=None;break
                 if following==cursor:raise ExchangeFailure('invalid_cursor')
-                cursor=following
+                cursor=following;self.history_cursor=following
         if not transfer:
-            self.store.alert('funding','Demo collateral transfer confirmation is incomplete. New entries wait; no transfer is repeated.',True)
+            self.notice('not_found')
+            self.store.alert('funding','Demo collateral transfer confirmation is incomplete. Only entries needing unconfirmed funds wait; funded markets continue. No transfer is repeated.',True)
             return True
         body=pending['body']
         if (transfer.get('source')!='event_contract' or transfer.get('destination')!='event_contract'
+            or transfer.get('client_transfer_id',body['client_transfer_id'])!=body['client_transfer_id']
             or transfer.get('source_exchange_shard')!=body['source_exchange_shard']
             or transfer.get('destination_exchange_shard')!=body['destination_exchange_shard']
             or Decimal(str(transfer.get('amount','-1')))*10000!=body['amount']):
             raise ExchangeFailure('transfer_confirmation_contract')
         pending['transfer_id']=transfer['transfer_id']
         if transfer.get('status')!='complete':
-            self.store.put('funding',pending);return True
+            self.store.put('funding',pending);self.notice(transfer.get('status','unconfirmed'));return True
         self.balances_now() # Verify exchange balances after confirmed completion.
         # A confirmed transfer can be followed by fills, fees or another client.
         # Current cash need not retain the historical before + transfer balance.
@@ -81,7 +117,7 @@ class ShardFunding:
         return False
     def ensure(self,index,required,target,reservations):
         if not isinstance(index,int) or not 0<=index<=100:raise ExchangeFailure('market_shard_contract')
-        pending=self.pending()
+        pending=self.poll()
         if time.time()-self.checked_at>=30:self.balances_now()
         available={i:max(0,v-reservations.get(i,0)) for i,v in self.balances.items()}
         if pending:

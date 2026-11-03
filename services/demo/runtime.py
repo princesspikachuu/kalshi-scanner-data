@@ -243,6 +243,13 @@ class Worker:
         if limit is None:return None
         if self.daily_pnl_day!=int(now//86400) or bot['id'] not in self.daily_pnl:return 'daily_check'
         return 'daily_loss' if self.daily_pnl[bot['id']]<=-self.account.get('equity_cents',0)*limit/100 else None
+    def poll_funding(self):
+        # Confirmation must keep progressing even when no new bid qualifies.
+        if self.funding is None:
+            if not self.store.get('funding'):return
+            from .funding import ShardFunding
+            self.funding=ShardFunding(self.store,self.exchange)
+        self.funding.poll()
     def repair_rejected_entries(self):
         if self.rejections_repaired:return
         with self.store.pool.connection() as c:
@@ -648,7 +655,9 @@ class Worker:
                 syncing=len(self.syncing_markets),historical=len(self.historical_markets),markets=summarized)),flush=True)
             self.ownership_digest=digest;self.last_health=0
         urgent=actionable-self.syncing_markets
-        if urgent:self.store.alert('ownership','New entries paused in '+str(len(urgent))+' market(s): manual or unreconciled exposure. Unrelated markets continue.',True)
+        if urgent:
+            from .ownership import ownership_alert
+            self.store.alert('ownership',ownership_alert(self.ownership_details,urgent),True)
         else:self.store.clear_alert('ownership')
         self.account=dict(cash_cents=int(balance['balance']),position_value_cents=int(balance['portfolio_value']),
             equity_cents=int(balance['balance'])+int(balance['portfolio_value']),at=now,
@@ -1140,7 +1149,8 @@ class Worker:
                             if signer:self.exchange.signer=signer;self.close_stream();self.recovered=False
                         credential_version=changed
                     self.stage='controls'
-                    if now>=next_controls:self.load_bots();self.repair_rejected_entries();next_controls=now+5
+                    controls_due=now>=next_controls
+                    if controls_due:self.load_bots();self.repair_rejected_entries();next_controls=now+5
                     request=self.store.get('refresh') if now>=next_controls-1 else None
                     if request and request['progress']['requested_at']>self.last_reconcile:self.last_reconcile=0
                     if self.reset_row and self.reset_row['progress'].get('state') in ACTIVE:
@@ -1153,6 +1163,7 @@ class Worker:
                             from .maintenance import maintenance
                             maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                         self.stop.wait(.5);continue
+                    if controls_due:self.stage='reconciliation';self.poll_funding()
                     self.stage="discovery"
                     if self.pending_markets or now-self.last_discovery>=(2 if any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots) else 5):self.discover()
                     self.stage="stream";self.stream()

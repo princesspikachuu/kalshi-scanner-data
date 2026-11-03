@@ -1,6 +1,12 @@
 """Describe account differences without inventing fills or settlement proceeds."""
 from decimal import Decimal
 
+def ownership_alert(details,markets):
+    labels=', '.join(sorted({ticker.split('-')[0].removeprefix('KX') for ticker in markets})[:6])
+    if all(details.get(t,{}).get('reason')=='order_verification' for t in markets):
+        return f'Waiting for Kalshi to confirm orders in {len(markets)} market(s) ({labels}). Only those markets pause new entries; other markets continue.'
+    return f'New entries paused in {len(markets)} market(s) ({labels}): manual or unreconciled exposure. Unrelated markets continue.'
+
 def needs_recovery(parameters,progress,remote):
     if parameters.get('kind') not in ('entry','exit') or 'realized_cents' in progress or progress.get('reset_closed'):return False
     if progress.get('status') not in ('closed','rejected'):return False

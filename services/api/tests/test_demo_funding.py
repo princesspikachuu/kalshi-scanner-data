@@ -109,6 +109,71 @@ class CategoryShardFunding(unittest.TestCase):
                 self.assertEqual(body['amount'],100000)
 
 class FundingCorrections(unittest.TestCase):
+    def test_confirmation_progresses_without_any_order_candidates(self):
+        from services.demo.runtime import Worker
+        store=Store();exchange=Exchange(store);funding=ShardFunding(store,exchange)
+        funding.ensure(2,90,1000,{})
+        worker=Worker(store,exchange,threading.Event(),lambda:None)
+        self.assertIsNone(worker.funding)
+        worker.poll_funding()
+        self.assertEqual(store.data['funding']['status'],'complete')
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+
+    def test_completed_record_clears_alert_left_by_a_crash(self):
+        store=Store();store.data['funding']=dict(status='complete',body={})
+        store.alert('funding','Demo collateral transfer confirmation is incomplete.')
+        funding=ShardFunding(store,Exchange(store))
+        self.assertFalse(funding.poll())
+        self.assertNotIn('funding',store.alerts)
+
+    def test_history_search_advances_past_the_first_thousand_without_reposting(self):
+        store=Store();exchange=Exchange(store);exchange.lose_response=True
+        funding=ShardFunding(store,exchange)
+        with self.assertRaises(ExchangeFailure):funding.ensure(2,90,1000,{})
+        body=store.data['funding']['body'];original=exchange.call;seen=[]
+        def paged(method,path,**kw):
+            if path=='/portfolio/intra_exchange_instance_transfers':
+                page=int(kw.get('params',{}).get('cursor',0));seen.append(page)
+                if page==6:
+                    exchange.funded=True
+                    return dict(transfers=[dict(body,transfer_id='transfer-one',amount='10.0000',status='complete')])
+                return dict(transfers=[],cursor=str(page+1))
+            return original(method,path,**kw)
+        exchange.call=paged
+        funding.poll_at=0;self.assertTrue(funding.poll())
+        funding.poll_at=0;self.assertFalse(funding.poll())
+        self.assertEqual(seen,list(range(7)))
+        self.assertEqual(store.data['funding']['status'],'complete')
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+
+    def test_lookup_failure_keeps_reservations_and_allows_already_funded_shards(self):
+        store=Store();exchange=Exchange(store);funding=ShardFunding(store,exchange)
+        funding.ensure(2,90,1000,{})
+        original=exchange.call
+        def unavailable(method,path,**kw):
+            if path.endswith('/transfer-one'):raise ExchangeFailure('connection')
+            return original(method,path,**kw)
+        exchange.call=unavailable;funding.poll_at=0
+        self.assertTrue(funding.ensure(0,90,1000,{}))
+        self.assertFalse(funding.ensure(0,9500,10000,{}))
+        self.assertFalse(funding.ensure(2,90,1000,{}))
+        self.assertEqual(store.data['funding']['status'],'pending')
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+
+    def test_individual_404_falls_back_to_matching_client_history(self):
+        store=Store();exchange=Exchange(store);funding=ShardFunding(store,exchange)
+        funding.ensure(2,90,1000,{})
+        body=store.data['funding']['body'];exchange.funded=True
+        exchange.history=[dict(body,transfer_id='transfer-one',amount='10.0000',status='complete')]
+        original=exchange.call
+        def missing(method,path,**kw):
+            if path.endswith('/transfer-one'):raise ExchangeFailure('exchange_rejected',status=404)
+            return original(method,path,**kw)
+        exchange.call=missing;funding.poll_at=0
+        self.assertFalse(funding.poll())
+        self.assertEqual(store.data['funding']['status'],'complete')
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+
     def test_resting_limits_reserve_price_not_full_contract_and_keep_manual_orders(self):
         from services.demo.funding import resting_reservation
         base=dict(remaining_count_fp='10.25',yes_price_dollars='0.6000',no_price_dollars='0.4000')
