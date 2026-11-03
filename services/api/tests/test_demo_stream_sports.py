@@ -149,7 +149,7 @@ class StreamResilience(unittest.TestCase):
             def recv(self,timeout=1):
                 if self.messages:return self.messages.pop(0)
                 self.closed.set()
-                raise ConnectionClosedOK(Close(1000,''),Close(1000,''))
+                raise ConnectionClosedOK(Close(1000,''),Close(1000,''),True)
             def close(self):pass
         connection=CleanClose();stream=BufferedSocket(connection)
         try:
