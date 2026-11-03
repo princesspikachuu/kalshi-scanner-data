@@ -34,6 +34,7 @@ class EmptyFinalizedIntentProof(unittest.TestCase):
                dict(ticker='T',client_id='local-2',status='intent',filled=0,remaining=0)]
         q=dict(status='finalized',close=NOW-3600)
         self.assertEqual(proof('T',local,q,0,0,[],[],[],NOW),['local-1','local-2'])
+        self.assertEqual(proof('T',[dict(local[0],status='cancel_pending',remaining=2)],dict(q,status='closed'),0,0,[],[],[],NOW),['local-1'])
         self.assertEqual(proof('T',local,q,0,0,[],[],[dict(ticker='T',order_id='unexplained')],NOW),[])
         history=[dict(ticker='T',order_id='manual-1')]
         self.assertEqual(proof('T',local,q,0,0,[],history,[dict(ticker='T',order_id='manual-1')],NOW),[])
@@ -48,6 +49,5 @@ class EmptyFinalizedIntentProof(unittest.TestCase):
             self.assertEqual(proof('T',local,invalid,0,0,[],[],[],NOW),[])
         self.assertEqual(proof('T',local,q,1,0,[],[],[],NOW),[])
         self.assertEqual(proof('T',local,q,0,1,[],[],[],NOW),[])
-        for bad in [dict(local[0],filled=1),dict(local[0],remaining=1),
-                    dict(local[0],status='resting'),dict(local[0],status='cancel_pending')]:
+        for bad in [dict(local[0],filled=1),dict(local[0],status='held')]:
             self.assertEqual(proof('T',[bad],q,0,0,[],[],[],NOW),[])
