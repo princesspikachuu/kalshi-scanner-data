@@ -220,3 +220,39 @@ class StreamResilience(unittest.TestCase):
         self.assertEqual(len(store.alerts),1)
         self.assertEqual(store.saved[-1][1]['state'],'reconnecting')
         self.assertEqual(store.saved[-1][1]['stream']['outage_seconds'],30)
+
+
+class IndependentFeedRecovery(unittest.TestCase):
+    def test_fresh_verified_prices_clear_outage_even_while_new_order_ownership_is_reconciling(self):
+        class Alerts(FakeStore):
+            def __init__(self):super().__init__();self.cleared=[]
+            def clear_alert(self,key):self.cleared.append(key)
+        store=Alerts();worker=Worker(store,Mock(reads=0,writes=0),threading.Event(),lambda:None)
+        worker.stream_outage_since=NOW-30
+        worker.recovered=False # A recent accepted order is awaiting REST confirmation.
+        worker.last_verified=NOW-2
+        worker.socket=object();worker.book_sid=2
+        worker.quotes={'t':dict(quote(),source='orderbook',book_ready=True,at=NOW)}
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.trading_health()
+        self.assertIsNone(worker.stream_outage_since)
+        self.assertEqual(worker.stream_recovery_count,1)
+        self.assertEqual(store.cleared,['stream'])
+        # Do not confuse a healthy feed with verified account ownership.
+        self.assertFalse(worker.recovered)
+        self.assertEqual(store.saved[-1][1]['state'],'reconciling')
+
+    def test_pending_account_verification_never_makes_an_unverified_book_look_recovered(self):
+        class Alerts(FakeStore):
+            def __init__(self):super().__init__();self.cleared=[]
+            def clear_alert(self,key):self.cleared.append(key)
+            def alert(self,*args,**kwargs):pass
+        store=Alerts();worker=Worker(store,Mock(reads=0,writes=0),threading.Event(),lambda:None)
+        worker.stream_outage_since=NOW-3;worker.recovered=False
+        worker.socket=object();worker.book_sid=2
+        worker.quotes={'t':dict(quote(),source='orderbook',book_ready=False,at=NOW)}
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.trading_health()
+        self.assertIsNotNone(worker.stream_outage_since)
+        self.assertEqual(store.saved[-1][1]['state'],'reconnecting')
+        self.assertEqual(store.cleared,[])
