@@ -45,6 +45,7 @@ class Worker:
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
         self.historical_lookup_at={};self.next_historical_lookup=0;self.historical_missing={}
+        self.next_empty_repair=0;self.empty_repair_at={}
         self.risk_sources=OrderedDict()
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
@@ -329,6 +330,47 @@ class Worker:
                 elif error.code=='authentication':raise
                 else:self.historical_lookup_at[ticker]=now+60
             return
+    def repair_empty_finalized_intents(self,blocked,expected,actual,remote,recent,now):
+        """Clear only proven-empty stale intents; never manufacture a fill or settlement."""
+        if now<self.next_empty_repair:return False
+        self.next_empty_repair=now+15
+        from .ownership import verified_empty_finalized_intents
+        for ticker in sorted(blocked):
+            if now<self.empty_repair_at.get(ticker,0):continue
+            q=self.quotes.get(ticker)
+            local=[order for order in self.orders if order['ticker']==ticker]
+            # A nonfinal market, filled intent, open order or actual exposure
+            # always stays blocked until ordinary reconciliation verifies it.
+            if not q or q.get('status') not in ('settled','finalized') or (
+                any(o['status'] not in ('intent','uncertain') or o.get('filled',0) or o.get('remaining',0) for o in local)
+            ):continue
+            if abs(expected.get(ticker,0))>.001 or abs(actual.get(ticker,0))>.001:continue
+            self.empty_repair_at[ticker]=now+300
+            try:
+                # Filtered, fully paginated exchange evidence. Unknown fills
+                # prevent cleanup even when the exchange position is flat.
+                fills=list(self.exchange.pages('/portfolio/fills','fills',ticker=ticker))
+            except ExchangeFailure as error:
+                if error.code=='authentication':raise
+                self.empty_repair_at[ticker]=now+60
+                return False
+            clients=verified_empty_finalized_intents(
+                ticker,local,q,expected.get(ticker,0),actual.get(ticker,0),
+                remote,recent,fills,now)
+            if not clients:continue
+            for order in local:
+                if order['client_id'] not in clients:continue
+                order.update(status='closed',remaining=0,closed_at=now)
+                self.save_order(order)
+                self.record('stale_intent_cleared',order,
+                    'Expired unfilled intent cleared after finalized-market order, fill and position verification',
+                    evidence='complete_order_and_fill_history;finalized_market;zero_position')
+            self.orders=self.store.active_orders()
+            self.last_reconcile=0;self.recovered=False
+            print(json.dumps(dict(event='demo_stale_intents_cleared',ticker=ticker,count=len(clients))),flush=True)
+            return True
+        return False
+
     def order_history(self,positions,remote,now):
         """Complete history for relevant markets, not the account's lifetime churn.
 
@@ -442,6 +484,10 @@ class Worker:
         self.historical_missing={t:v for t,v in self.historical_missing.items() if t in blocked}
         if blocked and self.recover_closed_orders(by_client,known_ids,blocked,now):
             self.last_discovery=0;self.last_reconcile=0;self.recovered=False;return
+        if blocked and self.repair_empty_finalized_intents(blocked,expected,actual,remote,recent,now):
+            # Publish a fresh verification snapshot, not a speculative reduction
+            # in the blocked set while the saved ledger is changing.
+            return
         from .ownership import describe
         self.ownership_details=describe(blocked,expected,actual,self.quotes,self.orders,remote,now,self.historical_missing)
         self.historical_markets={t for t,d in self.ownership_details.items() if d['informational']}
