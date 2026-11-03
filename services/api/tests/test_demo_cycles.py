@@ -379,3 +379,61 @@ class ThreeMinuteLowBidExpiry(unittest.TestCase):
         self.assertEqual(intent['close'],NOW+720)
         self.assertEqual(intent['market_close_at'],NOW+900)
         self.assertEqual(wire_order(intent)['expiration_time'],NOW+720)
+
+
+class CrossBotCapitalFairness(unittest.TestCase):
+    def test_equal_account_share_caps_28_bots_but_never_raises_user_limits(self):
+        from services.demo.engine import fair_budget_config,quantity
+        cfg=bot(bot_percent=100,bid_percent=100,market_percent=100)['config']
+        fair=fair_budget_config(cfg,28)
+        self.assertAlmostEqual(fair['bot_percent'],100/28)
+        self.assertEqual(quantity(fair,3,10000,10000,0,0),119)
+        self.assertEqual(quantity(fair,3,10000,10000,0,357),0)
+        self.assertEqual(cfg['bot_percent'],100,'do not mutate saved preferences')
+        strict=bot(bot_percent=2,bid_percent=100,market_percent=100)['config']
+        self.assertEqual(fair_budget_config(strict,28)['bot_percent'],2)
+        self.assertIs(fair_budget_config(cfg,1),cfg)
+
+    def test_round_robin_prioritizes_different_bots_before_the_next_bid_of_one(self):
+        from services.demo.engine import fair_order_candidates
+        incoming=[
+            dict(bot='A',ticker='A-1',first_at=1),
+            dict(bot='A',ticker='A-2',first_at=2),
+            dict(bot='B',ticker='B-1',first_at=1),
+            dict(bot='C',ticker='C-1',first_at=1),
+            dict(bot='A',ticker='A-3',first_at=3),
+        ]
+        self.assertEqual([x['ticker'] for x in fair_order_candidates(incoming)],
+            ['A-1','B-1','C-1','A-2','A-3'])
+        self.assertEqual([x['ticker'] for x in fair_order_candidates(incoming,'A')],
+            ['B-1','C-1','A-1','A-2','A-3'])
+
+    def test_live_scheduler_allocates_equally_and_posts_both_yes_no_sides(self):
+        w=worker();w.bots=[]
+        for i in range(4):
+            b=bot(bot_percent=100,bid_percent=100,market_percent=100)
+            b['id']=f'bot-{i}'
+            w.bots.append(b)
+        for _ in range(8):
+            w.submit.reset_mock()
+            with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+            self.assertTrue(w.submit.called)
+            order=w.submit.call_args.args[0]
+            self.assertEqual(order['kind'],'entry')
+            order.update(status='resting',remaining=order['quantity'])
+            w.orders.append(order)
+        self.assertEqual([o['bot'] for o in w.orders],
+            ['bot-0','bot-1','bot-2','bot-3']*2)
+        for b in w.bots:
+            own=[o for o in w.orders if o['bot']==b['id']]
+            self.assertEqual({o['side'] for o in own},{'yes','no'})
+            self.assertLessEqual(sum(o['quantity']*o['price'] for o in own),2500)
+        self.assertLessEqual(sum(o['quantity']*o['price'] for o in w.orders),10000)
+
+    def test_paused_bots_do_not_reserve_a_running_bots_share(self):
+        from services.demo.engine import fair_budget_config
+        w=worker();w.bots=[bot(),bot()]
+        w.bots[0]['id']='running';w.bots[1]['id']='paused';w.bots[1]['desired']='paused'
+        info=w.entry_diagnostics(NOW)
+        self.assertEqual(info['running']['running_allocation_peers'],1)
+        self.assertEqual(info['running']['allocation_cap_cents'],1000)
