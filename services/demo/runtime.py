@@ -421,14 +421,13 @@ class Worker:
         """Clear only proven-empty stale intents; never manufacture a fill or settlement."""
         if now<self.next_empty_repair:return False
         self.next_empty_repair=now+15
-        from .ownership import verified_empty_finalized_intents
+        from .ownership import verified_empty_finalized_intents,native_expiry_passed
         for ticker in sorted(blocked):
             if now<self.empty_repair_at.get(ticker,0):continue
             q=self.quotes.get(ticker)
             local=[order for order in self.orders if order['ticker']==ticker]
-            # A nonfinal market, filled intent, open order or actual exposure
-            # always stays blocked until ordinary reconciliation verifies it.
-            if not q or q.get('status') not in ('closed','settled','finalized','determined') or (
+            finalized=bool(q and q.get('status') in ('closed','settled','finalized','determined'))
+            if not (finalized or native_expiry_passed(local,now)) or (
                 any(o['status'] not in ('intent','uncertain','cancel_pending','resting') or o.get('filled',0) for o in local)
             ):continue
             if abs(expected.get(ticker,0))>.001 or abs(actual.get(ticker,0))>.001:continue
@@ -436,22 +435,29 @@ class Worker:
             try:
                 # Filtered, fully paginated exchange evidence. Unknown fills
                 # prevent cleanup even when the exchange position is flat.
-                fills=list(self.exchange.pages('/portfolio/fills','fills',ticker=ticker))
+                # Read both tiers: an empty live endpoint alone does not prove
+                # an old intent never filled. Any archive failure keeps it held.
+                history=list(self.exchange.pages('/historical/orders','orders',ticker=ticker))
+                history+=list(self.exchange.pages('/portfolio/orders','orders',ticker=ticker))
+                fills=list(self.exchange.pages('/historical/fills','fills',ticker=ticker))
+                fills+=list(self.exchange.pages('/portfolio/fills','fills',ticker=ticker))
+                positions=list(self.exchange.pages('/portfolio/positions','market_positions',count_filter='position'))
+                current_actual={p['ticker']:number(p.get('position_fp',p.get('position',0))) for p in positions}
             except ExchangeFailure as error:
                 if error.code=='authentication':raise
                 self.empty_repair_at[ticker]=now+60
                 return False
             clients=verified_empty_finalized_intents(
-                ticker,local,q,expected.get(ticker,0),actual.get(ticker,0),
-                remote,recent,fills,now)
+                ticker,local,q,expected.get(ticker,0),current_actual.get(ticker,0),
+                remote,history,fills,time.time())
             if not clients:continue
             for order in local:
                 if order['client_id'] not in clients:continue
                 order.update(status='closed',remaining=0,closed_at=now)
                 self.save_order(order)
                 self.record('stale_intent_cleared',order,
-                    'Expired unfilled intent cleared after finalized-market order, fill and position verification',
-                    evidence='complete_order_and_fill_history;finalized_market;zero_position')
+                    'Expired unfilled intent cleared after live and archived order, fill and position verification',
+                    evidence='live_and_archived_history;expired_or_finalized;zero_position')
             self.orders=self.store.active_orders()
             self.last_reconcile=0;self.recovered=False
             print(json.dumps(dict(event='demo_stale_intents_cleared',ticker=ticker,count=len(clients))),flush=True)

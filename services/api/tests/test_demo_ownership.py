@@ -28,6 +28,52 @@ class OwnershipDetails(unittest.TestCase):
 
 
 class EmptyFinalizedIntentProof(unittest.TestCase):
+    def test_native_expiration_can_clear_an_empty_uncertain_entry_before_market_close(self):
+        from services.demo.ownership import verified_empty_finalized_intents as proof
+        order=dict(ticker='T',client_id='lost',kind='entry',entry_pricing='cap_v2',
+                   created_at=NOW-600,close=NOW-61,status='uncertain',filled=0,remaining=0)
+        active=dict(status='active',close=NOW+600)
+        self.assertEqual(proof('T',[order],active,0,0,[],[],[],NOW),['lost'])
+        for change in [dict(close=NOW-59),dict(close=NOW+60),dict(close=float('nan')),
+                       dict(kind='exit'),dict(entry_pricing='legacy'),dict(filled=1),dict(created_at=NOW)]:
+            self.assertEqual(proof('T',[dict(order,**change)],active,0,0,[],[],[],NOW),[])
+        self.assertEqual(proof('T',[order],active,0,1,[],[],[],NOW),[])
+        self.assertEqual(proof('T',[order],active,0,0,[],[],[dict(ticker='T')],NOW),[])
+        self.assertEqual(proof('T',[order],active,0,0,[],[dict(ticker='T',client_order_id='lost')],[],NOW),[])
+
+    def test_expiry_repair_requires_both_history_tiers_and_fresh_zero_position(self):
+        import threading
+        from unittest.mock import Mock,patch
+        from services.demo.runtime import Worker
+        from services.demo.exchange import ExchangeFailure
+        from services.api.tests.test_demo_engine import FakeStore
+        for scenario in ('empty','archive_failure','archived_fill','new_position','known_order'):
+            store=FakeStore();store.active_orders=Mock(return_value=[])
+            exchange=Mock()
+            def pages(path,key,**params):
+                if scenario=='archive_failure' and path=='/historical/fills':
+                    raise ExchangeFailure('connection')
+                if scenario=='archived_fill' and path=='/historical/fills':return [dict(ticker='T')]
+                if scenario=='new_position' and path=='/portfolio/positions':return [dict(ticker='T',position_fp='1.00')]
+                if scenario=='known_order' and path=='/historical/orders':return [dict(ticker='T',client_order_id='lost')]
+                return []
+            exchange.pages.side_effect=pages
+            worker=Worker(store,exchange,threading.Event(),lambda:None)
+            order=dict(ticker='T',client_id='lost',kind='entry',entry_pricing='cap_v2',
+                       created_at=NOW-600,close=NOW-61,status='uncertain',filled=0,remaining=0)
+            worker.orders=[order];worker.quotes={'T':dict(status='active',close=NOW+600)}
+            with patch('services.demo.runtime.time.time',return_value=NOW):
+                result=worker.repair_empty_finalized_intents({'T'},{},{},[],[],NOW)
+            self.assertEqual(result,scenario=='empty',scenario)
+            if scenario=='empty':
+                self.assertEqual(order['status'],'closed')
+                self.assertEqual([c.args[0] for c in exchange.pages.call_args_list],
+                    ['/historical/orders','/portfolio/orders','/historical/fills','/portfolio/fills','/portfolio/positions'])
+            else:
+                self.assertEqual(order['status'],'uncertain',scenario)
+                self.assertEqual(store.saved,[],scenario)
+            exchange.submit.assert_not_called()
+
     def test_finalized_zero_exposure_unfilled_intents(self):
         from services.demo.ownership import verified_empty_finalized_intents as proof
         local=[dict(ticker='T',client_id='local-1',status='uncertain',filled=0,remaining=0),

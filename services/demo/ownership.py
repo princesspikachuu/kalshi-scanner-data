@@ -112,6 +112,20 @@ def describe(blocked,expected,actual,quotes,orders,remote,now,missing=None,ledge
     return details
 
 
+def native_expiry_passed(orders, now):
+    """Only the expiration actually sent on V2 entries can bound a lost POST."""
+    import math
+    if not orders:return False
+    for order in orders:
+        try:
+            created=float(order['created_at']);expires=float(order['close'])
+        except (KeyError,TypeError,ValueError):return False
+        if (order.get('kind')!='entry' or order.get('entry_pricing')!='cap_v2'
+            or not math.isfinite(created) or not math.isfinite(expires)
+            or not 0<created<expires<=now-60):return False
+    return True
+
+
 def verified_empty_finalized_intents(ticker, orders, quote, expected, actual, resting, history, fills, now):
     """Identify *unfilled* intents that are safe to retire using complete exchange reads.
 
@@ -120,13 +134,16 @@ def verified_empty_finalized_intents(ticker, orders, quote, expected, actual, re
     exchange fill. The caller must provide fully paginated order and fill results;
     pagination/transport failures must leave the market blocked.
     """
-    if not quote or quote.get('status') not in ('closed','settled','finalized','determined'):
-        return []
-    if float(quote.get('close',now+1)) > now-60:
+    local=[order for order in orders if order.get('ticker')==ticker]
+    finalized=bool(quote and quote.get('status') in ('closed','settled','finalized','determined')
+                   and float(quote.get('close',now+1))<=now-60)
+    # A 503 without an order ID can outlive its requested order expiration.
+    # Once that deadline passes, complete empty exchange evidence can retire
+    # the intent even while the market itself remains open.
+    if not finalized and not native_expiry_passed(local,now):
         return []
     if abs(Decimal(str(expected)))>.001 or abs(Decimal(str(actual)))>.001:
         return []
-    local=[order for order in orders if order.get('ticker')==ticker]
     if not local or any(order.get('status') not in ('intent','uncertain','cancel_pending','resting')
                         or Decimal(str(order.get('filled',0)))!=0 for order in local):
         return []
