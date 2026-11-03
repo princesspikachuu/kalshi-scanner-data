@@ -61,7 +61,7 @@ class UndoRecentReset(unittest.TestCase):
         self.assertEqual((result['restored'],result['resumed']),(28,28))
         original=[(p[0],p[1]) for sql,p in queries if sql.startswith('UPDATE research_job SET progress=') and p[1].startswith('demo/bot/')]
         self.assertEqual(len(original),28)
-        self.assertTrue(all(progress['desired']=='running' and not progress['archived'] for progress,key in original))
+        self.assertTrue(all(progress.obj['desired']=='running' and not progress.obj['archived'] for progress,key in original))
         deletion=[p for sql,p in queries if sql.startswith('DELETE FROM research_job')]
         self.assertEqual(len(deletion),1)
         self.assertEqual(len(deletion[0][0]),28)
