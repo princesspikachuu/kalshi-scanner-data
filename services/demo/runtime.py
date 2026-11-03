@@ -52,6 +52,8 @@ class Worker:
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
         self.stream_outage_since=None;self.stream_disconnect_count=0;self.stream_recovery_count=0
         self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
+        self.stream_event_revision=0;self.rest_feed_drains=0;self.rest_feed_messages=0
+        if isinstance(self.exchange,Exchange):self.exchange.before_read=self.drain_stream_during_read
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
         from services.research.reports import SERIES
@@ -112,6 +114,28 @@ class Worker:
             else:message=f'{matched} matching conditions across {fresh} fresh Demo markets'
             summary[bot['id']]=dict(categories=sorted({s['asset'] for s in config['squares']}),estimated_finish=any(q.get('entry_clock')=='expected_expiration' and any(q['series'] in SERIES[s['asset']] for s in config['squares']) for q in self.quotes.values()),message=message,markets=available,fresh=fresh,incomplete_books=incomplete,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,minimum_blocked=minimum,exit_waiting=bool(exit_waiting))
         return summary
+    def drain_stream_during_read(self):
+        """Service live prices during slow, sequential REST reconciliation.
+
+        Executes only on the owning worker thread, between GET calls. Do not
+        process socket events concurrently with reconciliation or trading,
+        and never run this callback while an exchange WRITE is in progress.
+        """
+        if self.stage not in ('reconciliation','trade') or self.socket is None or self.stop.is_set():return
+        before=self.socket.stats()['consumed'] if hasattr(self.socket,'stats') else 0
+        try:self.stream(wait=False)
+        except ExchangeFailure as error:
+            if error.code.startswith('stream') or error.code=='connection':
+                self.mark_stream_failure(error.code)
+                self.close_stream()
+                self.stream_event_revision+=1
+                self.recovered=False;self.last_reconcile=0
+            else:raise
+        finally:
+            if self.socket and hasattr(self.socket,'stats'):
+                consumed=self.socket.stats()['consumed']-before
+                self.rest_feed_drains+=1;self.rest_feed_messages+=max(0,consumed)
+
     def stream_telemetry(self,now):
         stats=self.socket.stats() if hasattr(self.socket,'stats') else {}
         return dict(connected=self.socket is not None,
@@ -120,7 +144,7 @@ class Worker:
             disconnects=self.stream_disconnect_count,recoveries=self.stream_recovery_count,
             outage_seconds=round(max(0,now-self.stream_outage_since),2) if self.stream_outage_since is not None else 0,
             last_recovered_at=self.stream_last_recovered_at,last_disconnected_at=self.stream_last_disconnected_at,
-            buffer=stats)
+            serviced_during_rest=self.rest_feed_messages,rest_feed_drains=self.rest_feed_drains,buffer=stats)
 
     def stream_recovered(self):
         # Price-feed recovery and account ownership verification are independent.
@@ -451,9 +475,22 @@ class Worker:
             if ticker not in unbounded:params['min_ts']=int(starts[ticker])-60
             history.extend(self.exchange.pages('/portfolio/orders','orders',**params))
         return history
+    def lookup_exchange_order(self,order):
+        try:
+            result=self.exchange.call('GET','/portfolio/orders/'+order['exchange_id'])
+            return result.get('order',result)
+        except ExchangeFailure as error:
+            if error.status!=404 or error.ambiguous:raise
+            # A missing individual GET does not prove an outstanding
+            # limit was canceled or an open position was settled.
+            print(json.dumps(dict(event='demo_order_lookup_missing',
+                ticker=order['ticker'],kind=order['kind'],
+                status=order.get('status'),http_status=404)),flush=True)
+            return None
+
     def reconcile(self):
         """Complete paginated exchange state; gaps never manufacture fills."""
-        now=time.time();self.load_bots()
+        now=time.time();start_feed_revision=self.stream_event_revision;self.load_bots()
         balance=self.exchange.call('GET','/portfolio/balance')
         positions=list(self.exchange.pages('/portfolio/positions','market_positions',count_filter='position'))
         # Resting orders include manual orders. Recent records resolve lost responses.
@@ -471,7 +508,7 @@ class Worker:
             self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
             raw=by_client.get(order['client_id'])
             if raw is None and order.get('exchange_id'):
-                result=self.exchange.call('GET','/portfolio/orders/'+order['exchange_id']);raw=result.get('order',result)
+                raw=self.lookup_exchange_order(order)
             if raw is None:
                 # A durable intent may have crossed the network before a crash.
                 # Absence in paginated history is not permission to submit again.
@@ -481,6 +518,10 @@ class Worker:
                 fees=cents(raw.get('maker_fees_dollars',0))+cents(raw.get('taker_fees_dollars',0)))
             order['status']='resting' if raw['status']=='resting' else 'held' if order['kind']=='entry' and order['filled'] else 'closed'
             if order['kind']=='exit' and raw['status'] in TERMINAL:order['status']='closed'
+            if order['status']=='resting' and order.get('cancel_404_at') and now-order['cancel_404_at']<30:
+                # A still-resting order after a rejected cancel requires a
+                # bounded per-market retry cooldown, never a tight 404 loop.
+                blocked.add(order['ticker'])
             self.save_order(order)
             self.restore_filled_cycle_claim(order)
             if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
@@ -599,7 +640,13 @@ class Worker:
         self.store.put('account',self.account)
         if int(now//900)!=int(self.last_snapshot//900):
             self.store.put('equity/'+str(int(now//900)),dict(at=now,value=self.account['equity_cents']));self.last_snapshot=now
-        self.last_reconcile=now;self.last_verified=time.time();self.recovered=True;self.sync_pending=None;self.issue=None
+        # Fills/order updates received while the REST history was being
+        # paginated may postdate individual page snapshots. Do not let a
+        # successful but raced reconciliation erase their verification flag.
+        changed_during_read=self.stream_event_revision!=start_feed_revision
+        self.last_reconcile=0 if changed_during_read else now
+        self.last_verified=time.time();self.recovered=not changed_during_read
+        if not changed_during_read:self.sync_pending=None;self.issue=None
         self.store.clear_alert('recovery');self.store.clear_alert('exchange')
     def discover(self):
         now=time.time()
@@ -662,7 +709,7 @@ class Worker:
             triggered=True
         return triggered
 
-    def stream(self):
+    def stream(self,wait=True):
         desired={t for t,q in self.quotes.items() if q.get('status','active')=='active' and q['close']>time.time()}
         if not desired:return
         if self.socket is None:
@@ -697,7 +744,7 @@ class Worker:
         started=time.monotonic()
         for index in range(768):
             if index>=32 and time.monotonic()-started>=.35:break
-            try:message=json.loads(self.socket.recv(timeout=.5 if index==0 else 0))
+            try:message=json.loads(self.socket.recv(timeout=.5 if wait and index==0 else 0))
             except TimeoutError:
                 # A quiet but sequenced book remains current after a confirmed
                 # transport round trip and an empty receive queue. No REST polls.
@@ -727,6 +774,10 @@ class Worker:
                 if any(ticker.startswith(series+'-') for series in wanted) and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type') in ('fill','user_orders'):
+                # Order-update notifications can accompany every accepted bid.
+                # Only a fill changes exposure and invalidates a REST history
+                # snapshot that is still being paginated.
+                if message.get('type')=='fill':self.stream_event_revision+=1
                 self.last_reconcile=0
                 ticker=raw.get('market_ticker') or raw.get('ticker')
                 if ticker:self.recent_market_changes[ticker]=time.time()
@@ -755,8 +806,25 @@ class Worker:
         for q in self.quotes.values():q['at']=0
     def cancel(self,order,reason):
         self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
-        if not order.get('remaining',0) or not order.get('exchange_id'):return
-        self.exchange.cancel(order['exchange_id'],order['ticker']);order['remaining']=0
+        if order.get('status') in ('cancel_pending','uncertain') or not order.get('remaining',0) or not order.get('exchange_id'):return
+        if order.get('cancel_404_at') and time.time()-order['cancel_404_at']<30:return
+        try:self.exchange.cancel(order['exchange_id'],order['ticker'])
+        except ExchangeFailure as error:
+            if error.status!=404 or error.ambiguous:raise
+            # Kalshi no longer finds this order on the DELETE route; it might
+            # have filled, canceled, or moved before the request arrived.
+            # A 404 does NOT prove zero resting exposure or authorize a retry.
+            order.update(status='cancel_pending',cancel_404_at=time.time(),
+                cancel_404_count=order.get('cancel_404_count',0)+1)
+            self.save_order(order)
+            self.record('cancel_verification_pending',order,
+                'Kalshi did not find the order when cancellation was requested; verifying order and position history before any replacement',
+                http_status=404,provider_code=error.provider_code)
+            self.blocked.add(order['ticker']);self.recovered=False;self.last_reconcile=0
+            print(json.dumps(dict(event='demo_cancel_not_found',ticker=order['ticker'],
+                kind=order['kind'],http_status=404,account_verification_required=True)),flush=True)
+            return
+        order['remaining']=0
         order['status']='cancel_pending'
         self.save_order(order);self.record('cancel',order,reason)
         self.sync_pending=dict(action='canceled',bot=order['bot'],market=order['ticker'],at=time.time())
@@ -780,6 +848,17 @@ class Worker:
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
             self.record('order_uncertain' if error.ambiguous else 'order_rejected',intent,'Exchange confirmation incomplete' if error.ambiguous else 'Exchange rejected order',rejection_code=error.provider_code,rejection_reason=error.reason,http_status=error.status)
             if error.ambiguous:self.blocked.add(intent['ticker'])
+            if not error.ambiguous and error.status==404:
+                # Definitive rejection of this *new* order, not an uncertain
+                # accepted order and not proof that some earlier order vanished.
+                # Keep this attempt recorded; do not silently retry its ID or
+                # let a stale quote initiate another order on the same market.
+                q=self.quotes.get(intent['ticker'])
+                if q:q['at']=0
+                self.last_discovery=0;reconcile_needed=False
+                print(json.dumps(dict(event='demo_submit_not_found',ticker=intent['ticker'],
+                    kind=intent['kind'],http_status=404,definitively_rejected=True)),flush=True)
+                return
             if not error.ambiguous and self.retry_cycle_rejection(intent):
                 reconcile_needed=False
                 return
@@ -829,7 +908,9 @@ class Worker:
             order['exit_reference']='ask';self.save_order(order)
         return False
     def park_cycle_entry(self,order,message):
+        if order.get('cancel_404_at') and time.time()-order['cancel_404_at']<30:return
         self.cancel(order,message)
+        if order.get('status')=='cancel_pending':return
         if order.get('entry_strategy')!='buy_low_sell_high' or order.get('filled',0):return
         bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
         key=f"{order['ticker']}/{order['square']}/{order['side']}"
@@ -841,12 +922,14 @@ class Worker:
         now=time.time();bots={b['id']:b for b in self.bots}
         if self.recovered and self.upgrade_legacy_exits():return
         for order in self.orders:
+            if order.get('status')=='cancel_pending' or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
             if order['ticker'] in self.netting_pending and order['kind']=='exit' and order.get('remaining',0)>0:
                 self.cancel(order,'Canceling sells before reconciling offsetting YES and NO fills');return
         from .cycles import park_reason,entry_block_reason
         market_orders={}
         for order in self.orders:market_orders.setdefault(order['ticker'],[]).append(order)
         for order in self.orders:
+            if order.get('status')=='cancel_pending' or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
             reason=park_reason(order,market_orders[order['ticker']])
             if reason:
                 self.park_cycle_entry(order,'Parking opposite low bid while filled inventory has a profit sell' if reason=='opposite_inventory' else 'Parking a low bid that would cross a bot profit sell')
@@ -855,9 +938,10 @@ class Worker:
             (o.get('kind')=='exit' and o.get('exit_role')!='profit' or o.get('kind')=='entry' and o.get('exit_triggered') and o.get('filled',0)>o.get('sold',0))}
         for order in self.orders:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
-            if order.get('status')=='uncertain':continue
+            if order.get('status') in ('uncertain','cancel_pending') or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
             if self.recovered and order.get('revision',(bot or {}).get('revision'))==(bot or {}).get('revision') and order['kind']=='entry' and order.get('remaining',0)>0 and bot and bot['config'].get('maximum_cents') is not None and order.get('entry_pricing')!='cap_v2':
                 self.cancel(order,'Replacing the old fixed maximum with a capped calculated bid')
+                if order.get('status')=='cancel_pending':return
                 order['entry_pricing']='cap_v2';self.save_order(order)
                 if not order.get('filled',0):
                     key=f"{order['ticker']}/{order['square']}/{order['side']}"
@@ -878,6 +962,7 @@ class Worker:
                     square=bot['config']['squares'][order['square']]
                     if square.get('maximum_cents') is not None and order['price']>square['maximum_cents']:
                         self.cancel(order,'Square maximum lowered below this resting entry bid')
+                        if order.get('status')=='cancel_pending':return
                         if not order.get('filled',0):
                             key=f"{order['ticker']}/{order['square']}/{order['side']}"
                             memory=self.states.get(order['bot'],{}).get(key)

@@ -70,11 +70,29 @@ class Exchange:
         self.client=client or httpx.Client(timeout=httpx.Timeout(8,connect=5),follow_redirects=False,
             limits=httpx.Limits(max_connections=2,max_keepalive_connections=2))
         self.next_read=0;self.next_write=0;self.reads=0;self.writes=0
+        # Optional Demo-worker callback: process the already-received WS buffer
+        # between REST reads. Never called for writes or from a background thread.
+        self.before_read=None
     def close(self):self.client.close()
     def call(self,method,path,*,params=None,body=None):
         if not path.startswith('/') or '..' in path or '://' in path:raise ValueError('Invalid path')
         write=method!='GET';now=time.monotonic();next_at=self.next_write if write else self.next_read
-        if next_at>now:time.sleep(min(5,next_at-now))
+        if not write:
+            poll=self.before_read
+            if poll is not None:poll()
+            # Don't let a 250 ms read pace or a provider-imposed 5-second
+            # cooldown strand market events. The REST request itself stays
+            # synchronous and no order write may be replayed by this hook.
+            last_poll=time.monotonic()
+            while True:
+                remaining=next_at-time.monotonic()
+                if remaining<=0:break
+                if poll is not None and time.monotonic()-last_poll>=.2:
+                    poll();last_poll=time.monotonic()
+                remaining=next_at-time.monotonic()
+                if remaining<=0:break
+                time.sleep(min(.1,remaining))
+        elif next_at>now:time.sleep(min(5,next_at-now))
         if write:self.guard();self.next_write=time.monotonic()+1;self.writes+=1
         else:self.next_read=time.monotonic()+.25;self.reads+=1
         try:
