@@ -406,3 +406,37 @@ class Order404Recovery(unittest.TestCase):
         self.assertEqual(worker.quotes[o['ticker']]['at'],0)
         self.assertNotIn(o['ticker'],worker.blocked)
         self.assertIn('order_rejected',store.events)
+
+
+    def test_verified_still_resting_order_after_404_is_not_canceled_in_a_tight_loop(self):
+        ex=Mock();ex.cancel.side_effect=ExchangeFailure('exchange_rejected',status=404,provider_code='not_found')
+        worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        o=self.entry();worker.orders=[o]
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.cancel(o,'First attempt')
+            # REST has confirmed it is still resting; do not hammer the same
+            # DELETE route every trading loop before the retry cooldown.
+            o['status']='resting'
+            worker.cancel(o,'Second attempt')
+            worker.trade()
+        ex.cancel.assert_called_once()
+        with patch('services.demo.runtime.time.time',return_value=NOW+31):
+            worker.cancel(o,'Retry after verified cooldown')
+        self.assertEqual(ex.cancel.call_count,2)
+        self.assertEqual(o['cancel_404_count'],2)
+
+    def test_failed_cancel_cooldown_does_not_starve_other_markets(self):
+        ex=Mock();worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        b=bot();worker.bots=[b]
+        o=self.entry();o['bot']=b['id'];o['cancel_404_at']=NOW
+        worker.orders=[o];worker.blocked={o['ticker']}
+        worker.quotes={o['ticker']:quote(), 'u':quote()}
+        worker.recovered=True;worker.last_reconcile=NOW
+        worker.account=dict(equity_cents=10000,cash_cents=10000)
+        worker.funding=Mock();worker.funding.ensure.return_value=True
+        worker.submit=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            worker.trade()
+        self.assertEqual(worker.submit.call_count,1)
+        self.assertEqual(worker.submit.call_args.args[0]['ticker'],'u')
+        ex.cancel.assert_not_called()
