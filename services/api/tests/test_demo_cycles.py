@@ -438,3 +438,12 @@ class CrossBotCapitalFairness(unittest.TestCase):
         info=w.entry_diagnostics(NOW)
         self.assertEqual(info['running']['running_allocation_peers'],1)
         self.assertEqual(info['running']['allocation_cap_cents'],1000)
+
+    def test_ranked_normal_strategy_keeps_higher_expected_return_priority(self):
+        w=worker()
+        normal=dict(id='z-normal',revision=1,desired='running',config=config())
+        normal['config']['squares'][0].update(min_minutes=0,max_minutes=15,expected_roi=10)
+        low=bot();low['id']='a-low'
+        w.bots=[low,normal]
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['bot'],'z-normal')
