@@ -96,7 +96,7 @@ class CycleEntries(unittest.TestCase):
         self.assertEqual(candidates([b],{'t':dict(q,source='rest')},{},NOW),[])
         self.assertEqual(candidates([b],{'t':dict(q,open=NOW+1)},{},NOW),[])
     def test_cutoff_is_exclusive_and_partial_fills_can_still_sell_after_it(self):
-        b=bot();q=book();end=NOW+840
+        b=bot();q=book();end=NOW+720
         self.assertEqual(candidates([b],{'t':dict(q,at=end)},{},end),[])
         self.assertEqual(len(candidates([b],{'t':dict(q,at=end-.01)},{},end-.01)),2)
         w=worker();w.orders=[entry(filled=3,remaining=0)];w.quotes['t']['at']=end+1;w.last_reconcile=end+1
@@ -105,7 +105,7 @@ class CycleEntries(unittest.TestCase):
     def test_entry_expiry_and_both_outcomes_are_independent_not_duplicate_bids(self):
         w=worker()
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
-        first=w.submit.call_args.args[0];self.assertEqual(first['close'],NOW+840)
+        first=w.submit.call_args.args[0];self.assertEqual(first['close'],NOW+720)
         self.assertEqual(first['entry_strategy'],'buy_low_sell_high');self.assertEqual(first['profit_target_cents'],20)
         first.update(status='resting',remaining=first['quantity']);w.orders=[first];w.submit.reset_mock()
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
@@ -334,3 +334,47 @@ class CancelFencing(unittest.TestCase):
         self.assertIn('t/0/yes',states['bot-1'])
         result=candidates([b],{'t':dict(book(),at=NOW+2)},states,NOW+2)
         self.assertEqual([r['side'] for r in result],['no'])
+
+
+class ThreeMinuteLowBidExpiry(unittest.TestCase):
+    def test_three_minute_deadline_overrides_older_one_minute_buy_cutoff(self):
+        from services.demo.cycles import buy_cancel_deadline,eligible
+        b=bot(cycle_cutoff_minutes=1);q=book()
+        self.assertTrue(eligible(b['config'],b['config']['squares'][0],q,NOW+719))
+        self.assertFalse(eligible(b['config'],b['config']['squares'][0],q,NOW+720))
+        older=entry(close=NOW+840,market_close_at=NOW+900)
+        self.assertEqual(buy_cancel_deadline(older,q),NOW+720)
+        w=worker();w.orders=[older];w.cancel=Mock();w.recovered=False
+        w.quotes['t']['at']=NOW-100
+        with patch('services.demo.runtime.time.time',return_value=NOW+719):w.trade()
+        w.cancel.assert_not_called()
+        with patch('services.demo.runtime.time.time',return_value=NOW+720):w.trade()
+        self.assertEqual(w.cancel.call_count,1)
+        self.assertEqual(w.cancel.call_args.args[0]['client_id'],'low')
+
+    def test_cancel_priority_keeps_partially_filled_lot_and_profit_sell(self):
+        w=worker();o=entry(filled=4,remaining=6,market_close_at=NOW+900)
+        w.orders=[o];w.cancel=Mock();w.submit=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW+720):w.trade()
+        w.cancel.assert_called_once()
+        self.assertEqual(o['filled'],4)
+        w.submit.assert_not_called()
+        o.update(remaining=0,status='held')
+        with patch('services.demo.runtime.time.time',return_value=NOW+721):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['kind'],'exit')
+        self.assertEqual(w.submit.call_args.args[0]['exit_role'],'profit')
+        self.assertEqual(w.submit.call_args.args[0]['quantity'],4)
+
+    def test_cancel_is_fenced_if_exchange_status_is_uncertain(self):
+        w=worker();o=entry(market_close_at=NOW+900,status='cancel_pending')
+        w.orders=[o];w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW+721):w.trade()
+        w.cancel.assert_not_called()
+
+    def test_native_exchange_expiration_is_three_minutes_even_when_new_buys_stop_earlier(self):
+        w=worker();w.bots=[bot(cycle_cutoff_minutes=5)]
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        intent=w.submit.call_args.args[0]
+        self.assertEqual(intent['close'],NOW+720)
+        self.assertEqual(intent['market_close_at'],NOW+900)
+        self.assertEqual(wire_order(intent)['expiration_time'],NOW+720)
