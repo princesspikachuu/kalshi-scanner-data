@@ -360,6 +360,7 @@ class ThreeMinuteLowBidExpiry(unittest.TestCase):
         self.assertEqual(o['filled'],4)
         w.submit.assert_not_called()
         o.update(remaining=0,status='held')
+        w.quotes['t']['at']=NOW+721;w.last_reconcile=NOW+721
         with patch('services.demo.runtime.time.time',return_value=NOW+721):w.trade()
         self.assertEqual(w.submit.call_args.args[0]['kind'],'exit')
         self.assertEqual(w.submit.call_args.args[0]['exit_role'],'profit')
