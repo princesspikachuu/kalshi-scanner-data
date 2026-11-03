@@ -1044,7 +1044,13 @@ class Worker:
         from .engine import fair_budget_config,fair_order_candidates
         running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
         fair_configs={id:fair_budget_config(b['config'],running_count) for id,b in bots.items()}
-        options=fair_order_candidates(candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying),self.last_entry_bot)
+        options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
+        # Preserve the established price/time/expected-ROI priority slots for
+        # condition bots (notably sports). Rotate only low/high opportunities
+        # within their own slots; fairness must not override ranked strategies.
+        cycle_bots={id for id,b in bots.items() if b['config'].get('strategy')=='buy_low_sell_high'}
+        cycle_queue=iter(fair_order_candidates([i for i in options if i['bot'] in cycle_bots],self.last_entry_bot))
+        options=[next(cycle_queue) if i['bot'] in cycle_bots else i for i in options]
         market_cost={};bot_cost={}
         if options:
             for order in self.orders:
@@ -1094,7 +1100,7 @@ class Worker:
             extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(180 if is_cycle else 0)
-            self.last_entry_bot=item['bot']
+            if is_cycle:self.last_entry_bot=item['bot']
             self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
