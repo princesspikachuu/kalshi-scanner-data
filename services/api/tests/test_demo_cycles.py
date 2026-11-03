@@ -434,6 +434,7 @@ class CrossBotCapitalFairness(unittest.TestCase):
         from services.demo.engine import fair_budget_config
         w=worker();w.bots=[bot(),bot()]
         w.bots[0]['id']='running';w.bots[1]['id']='paused';w.bots[1]['desired']='paused'
+        w.funding.waits={}
         info=w.entry_diagnostics(NOW)
         self.assertEqual(info['running']['running_allocation_peers'],1)
         self.assertEqual(info['running']['allocation_cap_cents'],1000)
