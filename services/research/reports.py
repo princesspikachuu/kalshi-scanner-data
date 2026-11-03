@@ -41,6 +41,28 @@ SERIES = {
                    'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M',
                    'KXINX15M','KXNDQ15M'}}
 
+# Individual 15-minute market categories. Aggregate keys above remain valid
+# for historical reports and existing bots; new keys affect only their exact
+# exchange series and never silently widen a bot's market scope.
+INDIVIDUAL_15M_SERIES = {
+    # BTC and ETH already have dedicated legacy keys.
+    'sol':'KXSOL15M','xrp':'KXXRP15M','doge':'KXDOGE15M',
+    'bnb':'KXBNB15M','hype':'KXHYPE15M','zec':'KXZEC15M','near':'KXNEAR15M',
+    'gold_15m':'KXGOLD15M','silver_15m':'KXSILVER15M',
+    'platinum_15m':'KXPLATINUM15M','palladium_15m':'KXPALLADIUM15M',
+    'copper_15m':'KXCOPPER15M','wti_15m':'KXWTI15M',
+    'natgas_15m':'KXNATGAS15M','brent_15m':'KXBRENT15M',
+    'usdcad_15m':'KXUSDCAD15M','audusd_15m':'KXAUDUSD15M',
+    'usdjpy_15m':'KXUSDJPY15M','gbpusd_15m':'KXGBPUSD15M',
+    'eurusd_15m':'KXEURUSD15M','rate2y_15m':'KX2YRRATE15M',
+    'rate5y_15m':'KX5YRRATE15M','rate10y_15m':'KX10YRRATE15M',
+    'rate30y_15m':'KX30YRRATE15M','sp500_15m':'KXINX15M',
+    'nasdaq100_15m':'KXNDQ15M'
+}
+for asset,series in INDIVIDUAL_15M_SERIES.items():
+    SERIES[asset]={series}
+    MINUTES[asset]=(15,10,5,3,1)
+
 # Immutable per-dataset contributions. The global loss model still receives the
 # union of every entry and path and chooses its representatives across all days.
 _daily_inputs=ByteCache(16*1024*1024)
