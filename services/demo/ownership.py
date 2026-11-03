@@ -27,3 +27,41 @@ def describe(blocked,expected,actual,quotes,orders,remote,now,missing=None):
         reason='market_unavailable' if info and ticker in missing else 'awaiting_settlement' if info else 'order_verification' if live else 'ownership_mismatch'
         details[ticker]=dict(expected_contracts=expected.get(ticker,0),exchange_contracts=actual.get(ticker,0),market_state=q.get('status','unavailable'),market_end=end,reason=reason,informational=info)
     return details
+
+
+def verified_empty_finalized_intents(ticker, orders, quote, expected, actual, resting, history, fills, now):
+    """Identify *unfilled* intents that are safe to retire using complete exchange reads.
+
+    Absence of a client ID alone is never enough: require an authoritative finalized
+    market, no actual or modeled inventory, no resting orders, and no unexplained
+    exchange fill. The caller must provide fully paginated order and fill results;
+    pagination/transport failures must leave the market blocked.
+    """
+    if not quote or quote.get('status') not in ('settled','finalized'):
+        return []
+    if float(quote.get('close',now+1)) > now-60:
+        return []
+    if abs(Decimal(str(expected)))>.001 or abs(Decimal(str(actual)))>.001:
+        return []
+    local=[order for order in orders if order.get('ticker')==ticker]
+    if not local or any(order.get('status') not in ('intent','uncertain')
+                        or Decimal(str(order.get('filled',0)))!=0
+                        or Decimal(str(order.get('remaining',0)))!=0 for order in local):
+        return []
+    if any(order.get('ticker')==ticker for order in resting):
+        return []
+    clients={order['client_id'] for order in local}
+    market_history=[order for order in history if order.get('ticker')==ticker]
+    if any(order.get('client_order_id') in clients for order in market_history):
+        return []
+    exchange_ids={order['order_id'] for order in market_history if order.get('order_id')}
+    if any(order.get('exchange_id') in exchange_ids for order in local if order.get('exchange_id')):
+        return []
+    # An unexplained fill could belong to a lost-response order, even when
+    # unsettled inventory has dropped to zero. Never guess its ownership or P/L.
+    for fill in fills:
+        if (fill.get('ticker') or fill.get('market_ticker'))!=ticker:
+            return []
+        if not fill.get('order_id') or fill['order_id'] not in exchange_ids:
+            return []
+    return [order['client_id'] for order in local]
