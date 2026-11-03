@@ -1167,6 +1167,11 @@ def run(stop):
                         running=sum(r['progress'].get('desired')=='running' for r in bots),bots=len(bots))),flush=True)
                     notice_at=time.time()+60
                 if stop.wait(5):return
+            # The latest reported accidental reset is reversible only if all
+            # copied bots are unused. This guard runs under the exclusive
+            # worker fence and does not touch any exchange order or position.
+            from .reset import undo_recent_incident
+            undo_recent_incident(store)
             print(json.dumps(dict(event='demo_worker_ready',environment='demo',max_connections=3,watch_limit=100)),flush=True)
             # Retain legacy results/checkpoints but stop obsolete queued work so
             # collection analysis does not keep yielding to an absent replayer.
