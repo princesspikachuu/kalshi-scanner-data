@@ -1,7 +1,7 @@
 import {createResearchClient} from './research-client.mjs';
 import {createCollectionClient} from './collection-client.mjs';
 
-const minutes={btc:[15,10,5,3,1],eth:[15,10,5,3,1],crypto:[15,10,5,3,1],weather:[60,45,30,20,15,10,5,3,1],weather_daily:[360,180,120,60,30,15,5],sports:[360,180,120,60,30,15,5]};
+const minutes={btc:[15,10,5,3,1],eth:[15,10,5,3,1],crypto:[15,10,5,3,1],commodities_15m:[15,10,5,3,1],finance_15m:[15,10,5,3,1],weather:[60,45,30,20,15,10,5,3,1],weather_daily:[360,180,120,60,30,15,5],sports:[360,180,120,60,30,15,5]};
 const bands=['50-60','60-70','70-80','80-90','90-100'];
 export const conditionKey=s=>[s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes].join(':');
 
