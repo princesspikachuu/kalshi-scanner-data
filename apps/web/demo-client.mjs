@@ -93,7 +93,8 @@ export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  return {...base,reason:health.message||'The exchange account is being verified.',action:'The worker checks orders and positions before allowing new entries. Request verification or review Activity for the latest evidence.',phase:'Account verification'};
 }
 export function attentionMarkup(info,{botId=''}={}){
- const e=escapeHTML,params=new URLSearchParams({bot:botId});if(info.markets?.length===1)params.set('ticker',info.markets[0]);
+ const e=escapeHTML,params=new URLSearchParams({bot:botId});
+ const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${e(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;if(info.markets?.length===1)params.set('ticker',info.markets[0]);
  const controls={retry:'Retry verification',connection:'Manage connection',funds:'Review demo funds'};
  const verified=Number.isFinite(info.lastVerified)&&info.lastVerified>0?new Date(info.lastVerified*1000).toLocaleString():'No successful verification yet';
  const diagnostics=(info.markets||[]).slice(0,8).map(t=>{
@@ -101,12 +102,12 @@ export function attentionMarkup(info,{botId=''}={}){
   const bots=d.bots||[],rows=d.orders||[],missing=d.unowned_orders||[];
   const quantity=x=>Number.isFinite(Number(x))?String(x):'Unknown';
   const status=d.syncing?'Synchronizing recent order update':d.reason==='unowned_resting_order'?'Unowned resting order':d.reason==='order_verification'?'Order confirmation pending':'Position mismatch';
-  const botRows=bots.map(b=>`<tr><td>${e(b.name||b.id)}</td><td>${e(quantity(b.held_yes))}</td><td>${e(quantity(b.held_no))}</td><td>${e(quantity(b.net_contracts))}</td></tr>`).join('');
-  const orderRows=rows.map(o=>`<tr><td>${e(o.bot_name||o.bot_id||'Unknown')}</td><td>${e(o.kind==='exit'?(o.exit_role==='profit'?'Profit sell':'Protective sell'):'Buy')} ${e((o.side||'').toUpperCase())}</td><td>${e(o.status||'Unknown')}</td><td>${e(quantity(o.filled))} filled / ${e(quantity(o.remaining))} waiting</td><td><code>${e(o.client_id||o.exchange_id||'Unknown')}</code>${o.parent?`<br><small>Linked buy: <code>${e(o.parent)}</code></small>`:''}</td></tr>`).join('');
+  const botRows=bots.map(b=>`<tr><td>${e(b.name||b.id)}</td><td>${e(quantity(b.held_yes))}</td><td>${e(quantity(b.held_no))}</td><td>${e(quantity(b.net_contracts))}</td></tr>`);
+  const orderRows=rows.map(o=>`<tr><td>${e(o.bot_name||o.bot_id||'Unknown')}</td><td>${e(o.kind==='exit'?(o.exit_role==='profit'?'Profit sell':'Protective sell'):'Buy')} ${e((o.side||'').toUpperCase())}</td><td>${e(o.status||'Unknown')}</td><td>${e(quantity(o.filled))} filled / ${e(quantity(o.remaining))} waiting</td><td><code>${e(o.client_id||o.exchange_id||'Unknown')}</code>${o.parent?`<small>Linked buy: <code>${e(o.parent)}</code></small>`:''}</td></tr>`);
   const manualRows=missing.map(o=>`<li>Unowned exchange order <code>${e(o.exchange_id||o.client_id||'Unknown')}</code> · ${e(o.status||'resting')}</li>`).join('');
   return `<section class="panel"><strong>${e(t)}</strong> · ${e(status)}<p class="small">Saved bot net: ${e(quantity(d.expected_contracts))} YES contracts · Kalshi account net: ${e(quantity(d.exchange_contracts))} YES contracts · Duration: ${e(quantity(d.blocked_seconds))} seconds. Multiple bots may contribute to the same account position; this list does not establish which order caused the mismatch.</p>
-  ${botRows?`<h4>Participating bots</h4>${table(['Bot','Held YES','Held NO','Net YES'],botRows)}`:''}
-  ${orderRows?`<h4>Involved orders (${e(d.order_count||rows.length)})</h4>${table(['Bot','Action','Status','Contracts','Order ID'],orderRows)}`:''}
+  ${botRows.length?`<h4>Participating bots</h4>${table(['Bot','Held YES','Held NO','Net YES'],botRows)}`:''}
+  ${orderRows.length?`<h4>Involved orders (${e(d.order_count||rows.length)})</h4>${table(['Bot','Action','Status','Contracts','Order ID'],orderRows)}`:''}
   ${d.truncated_orders?`<p class="small">And ${e(d.truncated_orders)} more orders. See Activity for the complete history.</p>`:''}
   ${manualRows?`<h4>Unowned exchange orders</h4><ul>${manualRows}</ul>`:''}
   </section>`;
