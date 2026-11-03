@@ -123,7 +123,10 @@ class Worker:
             buffer=stats)
 
     def stream_recovered(self):
-        if self.stream_outage_since is None or not self.recovered:return False
+        # Price-feed recovery and account ownership verification are independent.
+        # New accepted orders can keep ownership reconciliation pending even when
+        # the WebSocket has restored live, sequenced, verified price books.
+        if self.stream_outage_since is None:return False
         now=time.time()
         active=any(q.get('status','active')=='active' and q.get('close',0)>now for q in self.quotes.values())
         if active and (self.socket is None or self.book_sid is None or not any(
