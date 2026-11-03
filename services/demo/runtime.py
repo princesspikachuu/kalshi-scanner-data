@@ -920,6 +920,16 @@ class Worker:
             self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
     def trade(self):
         now=time.time();bots={b['id']:b for b in self.bots}
+        # Hard safety deadline: handle every outstanding low buy before new
+        # entries or profit-sell scheduling. Keep filled lots and their sells.
+        from .cycles import buy_cancel_deadline
+        for order in self.orders:
+            if order.get('entry_strategy')!='buy_low_sell_high' or order.get('kind')!='entry' or order.get('remaining',0)<=0:continue
+            if order.get('status') in ('uncertain','intent','cancel_pending','closed','rejected'):continue
+            deadline=buy_cancel_deadline(order,self.quotes.get(order['ticker']))
+            if deadline is not None and now>=deadline:
+                self.cancel(order,'Three-minute cutoff: cancel unfilled low buy while retaining any filled contracts')
+                return
         if self.recovered and self.upgrade_legacy_exits():return
         for order in self.orders:
             if order.get('status')=='cancel_pending' or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
@@ -1061,7 +1071,7 @@ class Worker:
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
             extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
-            end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(config['cycle_cutoff_minutes']*60 if is_cycle else 0)
+            end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(180 if is_cycle else 0)
             self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
