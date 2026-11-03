@@ -27,7 +27,7 @@ class BotConfig(BaseModel):
     strategy:Literal['conditions','buy_low_sell_high']='conditions'
     cycle_buy_cents:int=Field(default=10,ge=1,le=49)
     cycle_sell_cents:int=Field(default=20,ge=2,le=99)
-    cycle_cutoff_minutes:int=Field(default=5,ge=0,le=1439)
+    cycle_cutoff_minutes:int=Field(default=3,ge=0,le=1439)
     cycle_repeat:bool=True
     squares:list[Square]=Field(min_length=1,max_length=45)
     qualification:Literal['bid','ask']='ask'
