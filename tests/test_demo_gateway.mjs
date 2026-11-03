@@ -34,7 +34,7 @@ test('Selected chart squares form conditions of one bot',()=>{
  assert.equal(squares.length,2);assert.equal(squares[0].max_price,69);assert.equal(squares[0].min_minutes,3);assert.equal(squares[0].report_id,123);
 });
 
-import {botGroup,attentionInfo,attentionMarkup,exitEvidence} from '../apps/web/demo-client.mjs';
+import {attentionInfo,attentionMarkup,exitEvidence} from '../apps/web/demo-client.mjs';
 test('attention names the failure, recovery action, affected market and order without a generic badge-only state',()=>{
  const h={state:'attention',at:1000,reconciled_at:990,issue:{summary:'Saved order not returned',action:'Review Activity or retry verification',control:'retry',phase:'reconciliation',market:'KXBTC15M-TEST',order_id:'order-one',code:'not_found',http_status:404}};
  const info=attentionInfo({key:'bot'},h,[],1001),html=attentionMarkup(info,{botId:'bot'});
