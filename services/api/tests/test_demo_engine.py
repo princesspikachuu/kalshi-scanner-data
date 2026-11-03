@@ -504,3 +504,36 @@ class CurrentTimeProtection(unittest.TestCase):
         b['config']['squares']=[btc,crypto]
         self.assertEqual(order_threshold(b,dict(square=1,revision=1,condition=crypto),quote(),NOW),60)
         self.assertEqual(order_threshold(b,dict(square=0,revision=1,condition=btc),quote(),NOW),50)
+
+
+
+class FifteenMinuteAssetRouting(unittest.TestCase):
+    def test_asset_series_are_separate_and_have_15_minute_windows(self):
+        from services.research.reports import SERIES,MINUTES
+        commodities={'KXGOLD15M','KXSILVER15M','KXPLATINUM15M','KXPALLADIUM15M',
+                     'KXCOPPER15M','KXWTI15M','KXNATGAS15M','KXBRENT15M'}
+        finance={'KXUSDCAD15M','KXAUDUSD15M','KXUSDJPY15M','KXGBPUSD15M','KXEURUSD15M',
+                 'KX2YRRATE15M','KX5YRRATE15M','KX10YRRATE15M','KX30YRRATE15M'}
+        self.assertEqual(SERIES['commodities_15m'],commodities)
+        self.assertEqual(SERIES['finance_15m'],finance)
+        self.assertFalse(commodities & finance)
+        self.assertEqual(MINUTES['commodities_15m'],(15,10,5,3,1))
+        self.assertEqual(MINUTES['finance_15m'],(15,10,5,3,1))
+
+    def test_sports_only_has_head_to_head_game_or_match_winner_series(self):
+        from services.research.reports import SERIES
+        self.assertEqual(SERIES['sports'],{'KXNBAGAME','KXNFLGAME','KXNHLGAME','KXMLBGAME','KXNCAAFGAME','KXATPMATCH','KXWTAMATCH'})
+
+    def test_commodity_and_finance_condition_qualification(self):
+        from services.api.demo_models import Square
+        from services.demo.engine import qualifies
+        from services.research.reports import SERIES
+        now=1700000000
+        for asset in ('commodities_15m','finance_15m'):
+            square=Square(asset=asset,min_price=60,max_price=70,min_minutes=3,max_minutes=10)
+            quote={'series':next(iter(SERIES[asset])),'bid':65,'ask':66,
+                   'close':now+5*60,'entry_close':now+5*60}
+            self.assertTrue(qualifies(square.model_dump(),quote,'yes',now,'bid'))
+            wrong='finance_15m' if asset=='commodities_15m' else 'commodities_15m'
+            wrong_square=Square(asset=wrong,min_price=60,max_price=70,min_minutes=3,max_minutes=10)
+            self.assertFalse(qualifies(wrong_square.model_dump(),quote,'yes',now,'bid'))
