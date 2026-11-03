@@ -518,6 +518,10 @@ class Worker:
                 fees=cents(raw.get('maker_fees_dollars',0))+cents(raw.get('taker_fees_dollars',0)))
             order['status']='resting' if raw['status']=='resting' else 'held' if order['kind']=='entry' and order['filled'] else 'closed'
             if order['kind']=='exit' and raw['status'] in TERMINAL:order['status']='closed'
+            if order['status']=='resting' and order.get('cancel_404_at') and now-order['cancel_404_at']<30:
+                # A still-resting order after a rejected cancel requires a
+                # bounded per-market retry cooldown, never a tight 404 loop.
+                blocked.add(order['ticker'])
             self.save_order(order)
             self.restore_filled_cycle_claim(order)
             if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
@@ -803,13 +807,16 @@ class Worker:
     def cancel(self,order,reason):
         self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
         if order.get('status') in ('cancel_pending','uncertain') or not order.get('remaining',0) or not order.get('exchange_id'):return
+        if order.get('cancel_404_at') and time.time()-order['cancel_404_at']<30:return
         try:self.exchange.cancel(order['exchange_id'],order['ticker'])
         except ExchangeFailure as error:
             if error.status!=404 or error.ambiguous:raise
             # Kalshi no longer finds this order on the DELETE route; it might
             # have filled, canceled, or moved before the request arrived.
             # A 404 does NOT prove zero resting exposure or authorize a retry.
-            order['status']='cancel_pending';self.save_order(order)
+            order.update(status='cancel_pending',cancel_404_at=time.time(),
+                cancel_404_count=order.get('cancel_404_count',0)+1)
+            self.save_order(order)
             self.record('cancel_verification_pending',order,
                 'Kalshi did not find the order when cancellation was requested; verifying order and position history before any replacement',
                 http_status=404,provider_code=error.provider_code)
@@ -901,6 +908,7 @@ class Worker:
             order['exit_reference']='ask';self.save_order(order)
         return False
     def park_cycle_entry(self,order,message):
+        if order.get('cancel_404_at') and time.time()-order['cancel_404_at']<30:return
         self.cancel(order,message)
         if order.get('status')=='cancel_pending':return
         if order.get('entry_strategy')!='buy_low_sell_high' or order.get('filled',0):return
@@ -914,14 +922,14 @@ class Worker:
         now=time.time();bots={b['id']:b for b in self.bots}
         if self.recovered and self.upgrade_legacy_exits():return
         for order in self.orders:
-            if order.get('status')=='cancel_pending':continue
+            if order.get('status')=='cancel_pending' or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
             if order['ticker'] in self.netting_pending and order['kind']=='exit' and order.get('remaining',0)>0:
                 self.cancel(order,'Canceling sells before reconciling offsetting YES and NO fills');return
         from .cycles import park_reason,entry_block_reason
         market_orders={}
         for order in self.orders:market_orders.setdefault(order['ticker'],[]).append(order)
         for order in self.orders:
-            if order.get('status')=='cancel_pending':continue
+            if order.get('status')=='cancel_pending' or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
             reason=park_reason(order,market_orders[order['ticker']])
             if reason:
                 self.park_cycle_entry(order,'Parking opposite low bid while filled inventory has a profit sell' if reason=='opposite_inventory' else 'Parking a low bid that would cross a bot profit sell')
@@ -930,7 +938,7 @@ class Worker:
             (o.get('kind')=='exit' and o.get('exit_role')!='profit' or o.get('kind')=='entry' and o.get('exit_triggered') and o.get('filled',0)>o.get('sold',0))}
         for order in self.orders:
             bot=bots.get(order['bot']);q=self.quotes.get(order['ticker'])
-            if order.get('status') in ('uncertain','cancel_pending'):continue
+            if order.get('status') in ('uncertain','cancel_pending') or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
             if self.recovered and order.get('revision',(bot or {}).get('revision'))==(bot or {}).get('revision') and order['kind']=='entry' and order.get('remaining',0)>0 and bot and bot['config'].get('maximum_cents') is not None and order.get('entry_pricing')!='cap_v2':
                 self.cancel(order,'Replacing the old fixed maximum with a capped calculated bid')
                 if order.get('status')=='cancel_pending':return
