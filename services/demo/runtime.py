@@ -50,6 +50,8 @@ class Worker:
         self.risk_sources=OrderedDict()
         self.legacy_exit_evidence=None;self.issue=None;self.last_health_state=None;self.context_market=None;self.context_order=None;self.context_bot=None
         self.reset_row=None;self.reset_controller=None;self.book_pong=None;self.last_book_ping=0;self.books=OrderBooks();self.cursor={};self.last_discovered={};self.last_account_write=0;self.trigger_digest={};self.order_cache={};self.bot_revisions={};self.maker_retries={}
+        self.stream_outage_since=None;self.stream_disconnect_count=0;self.stream_recovery_count=0
+        self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote
         from services.research.reports import SERIES
@@ -110,13 +112,61 @@ class Worker:
             else:message=f'{matched} matching conditions across {fresh} fresh Demo markets'
             summary[bot['id']]=dict(categories=sorted({s['asset'] for s in config['squares']}),estimated_finish=any(q.get('entry_clock')=='expected_expiration' and any(q['series'] in SERIES[s['asset']] for s in config['squares']) for q in self.quotes.values()),message=message,markets=available,fresh=fresh,incomplete_books=incomplete,matches=matched,attempted=submitted,blocked=blocked,maker_blocked=maker,budget_blocked=budget,exit_blocked=stop_blocked,minimum_blocked=minimum,exit_waiting=bool(exit_waiting))
         return summary
+    def stream_telemetry(self,now):
+        stats=self.socket.stats() if hasattr(self.socket,'stats') else {}
+        return dict(connected=self.socket is not None,
+            subscribed_markets=len(self.subscription),verified_subscription=self.book_sid is not None,
+            fresh_books=sum(q.get('source')=='orderbook' and q.get('book_ready') and 0<=now-q.get('at',0)<=5 for q in self.quotes.values()),
+            disconnects=self.stream_disconnect_count,recoveries=self.stream_recovery_count,
+            outage_seconds=round(max(0,now-self.stream_outage_since),2) if self.stream_outage_since is not None else 0,
+            last_recovered_at=self.stream_last_recovered_at,last_disconnected_at=self.stream_last_disconnected_at,
+            buffer=stats)
+
+    def stream_recovered(self):
+        if self.stream_outage_since is None or not self.recovered:return False
+        now=time.time()
+        active=any(q.get('status','active')=='active' and q.get('close',0)>now for q in self.quotes.values())
+        if active and (self.socket is None or self.book_sid is None or not any(
+            q.get('source')=='orderbook' and q.get('book_ready') and 0<=now-q.get('at',0)<=5 for q in self.quotes.values())):return False
+        duration=round(max(0,now-self.stream_outage_since),3)
+        self.stream_outage_since=None;self.stream_recovery_count+=1;self.stream_last_recovered_at=now;self.stream_outage_alerted=False
+        print(json.dumps(dict(event='demo_stream_recovered',downtime_seconds=duration,
+            reconnects=self.stream_disconnect_count,fresh_books=self.stream_telemetry(now)['fresh_books'])),flush=True)
+        self.store.clear_alert('stream')
+        return True
+
+    def mark_stream_failure(self,reason):
+        # Missing/gapped/invalid orderbook data is still an actionable error.
+        # Invalidate every previously observed quote before reconnecting.
+        now=time.time()
+        if self.stream_outage_since is None:self.stream_outage_since=now
+        self.stream_disconnect_count+=1;self.stream_last_disconnected_at=now
+        print(json.dumps(dict(event='demo_stream_integrity_failure',code=reason,
+            outage_seconds=round(now-self.stream_outage_since,2),
+            disconnects=self.stream_disconnect_count)),flush=True)
+
+    def recover_feed(self,error):
+        now=time.time()
+        buffer=self.socket.stats() if hasattr(self.socket,'stats') else {}
+        self.recovered=False;self.close_stream()
+        self.mark_stream_failure(error.code)
+        print(json.dumps(dict(event='demo_stream_disconnected',code=error.code,
+            outage_seconds=round(max(0,now-self.stream_outage_since),2),
+            reconnects=self.stream_disconnect_count,
+            buffer_messages=buffer.get('messages'),buffer_peak=buffer.get('peak_messages'),
+            close_code=buffer.get('close_code'))),flush=True)
+        if now-self.stream_outage_since>=25 and not self.stream_outage_alerted:
+            self.store.alert('stream','Kalshi Demo prices have been unavailable for more than 25 seconds. New entries wait for a verified fresh feed.',True)
+            self.stream_outage_alerted=True
+        self.health('reconnecting','Market-price stream reconnecting; entries wait for fresh quotes and verified orders')
+
     def health(self,state,message):
         now=time.time()
         if state=='ready':self.issue=None
         if now-self.last_health>=10 or state!=self.last_health_state:
             self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
-                reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),historical_markets=sorted(self.historical_markets),syncing_markets=sorted(self.syncing_markets),ownership_details=self.ownership_details,bots=self.entry_diagnostics(now),issue=self.issue))
+                stream=self.stream_telemetry(now),reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),historical_markets=sorted(self.historical_markets),syncing_markets=sorted(self.syncing_markets),ownership_details=self.ownership_details,bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
         if now-self.last_diagnostic>=60:
             print(json.dumps(dict(event='demo_diagnostic',state=state,stage=self.stage,
@@ -124,11 +174,18 @@ class Worker:
                 conditions=sum(len(b['config']['squares']) for b in self.bots if b['desired']=='running'),
                 categories=sorted({s['asset'] for b in self.bots if b['desired']=='running' for s in b['config']['squares']}),
                 watched=len(self.quotes),fresh=sum(now-q['at']<=5 for q in self.quotes.values()),
-                orders=len(self.orders),stream_buffer=self.socket.stats() if hasattr(self.socket,'stats') else None,read_requests=self.exchange.reads,write_requests=self.exchange.writes,
+                orders=len(self.orders),stream=self.stream_telemetry(now),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
                 reconciled=self.recovered,last_verified=self.last_verified,sync_action=self.sync_pending['action'] if self.sync_pending else None,
                 funding_waits=getattr(self.funding,'waits',{}),entry_diagnostics=self.entry_diagnostics(now))),flush=True)
             self.last_diagnostic=now
     def trading_health(self):
+        self.stream_recovered()
+        if self.stream_outage_since is not None:
+            duration=max(0,time.time()-self.stream_outage_since)
+            if duration>=25 and not self.stream_outage_alerted:
+                self.store.alert('stream','Kalshi Demo prices have been unavailable for more than 25 seconds. New entries wait for a verified fresh feed.',True)
+                self.stream_outage_alerted=True
+            self.health('reconnecting','Waiting for fresh sequenced price snapshots and verified account state');return
         if self.recovered:self.health('ready','Demo account verified')
         elif self.sync_pending and self.last_verified>0 and time.time()-self.last_verified<=45 and self.issue is None:
             self.health('syncing','Order '+self.sync_pending['action']+' · checking updated balances and positions before the next entry')
@@ -608,9 +665,12 @@ class Worker:
         if self.socket is None:
             self.close_stream()
             from websockets.sync.client import connect
-            connection=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
-                max_size=262144,max_queue=8,open_timeout=8,close_timeout=2,ping_interval=10,ping_timeout=10,compression=None)
-            self.socket=BufferedSocket(connection)
+            from websockets.exceptions import WebSocketException
+            try:
+                connection=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
+                    max_size=262144,max_queue=16,open_timeout=8,close_timeout=2,ping_interval=15,ping_timeout=20,compression=None)
+            except (OSError,TimeoutError,WebSocketException):raise ExchangeFailure('stream_connection_lost') from None
+            self.socket=BufferedSocket(connection);self.stream_opened_at=time.time()
             self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0,use_yes_price=False))))
             self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['fill','user_orders']))))
             self.subscription=desired;self.sequence={};self.recovered=False
@@ -628,7 +688,12 @@ class Worker:
             self.stream_command+=1;self.socket.send(json.dumps(dict(id=self.stream_command,cmd='subscribe',params=dict(channels=['market_lifecycle_v2']))));self.lifecycle_requested=True
         elif not want_lifecycle and self.lifecycle_sid is not None:
             self.stream_command+=1;self.socket.send(json.dumps(dict(id=self.stream_command,cmd='unsubscribe',params=dict(sids=[self.lifecycle_sid]))));self.lifecycle_sid=None;self.lifecycle_requested=False
-        for index in range(100):
+        # The receiver is independent of REST/database I/O. Drain a larger,
+        # time-bounded batch when those calls leave messages queued, without
+        # dropping any intermediate protective-exit price crossings.
+        started=time.monotonic()
+        for index in range(768):
+            if index>=32 and time.monotonic()-started>=.35:break
             try:message=json.loads(self.socket.recv(timeout=.5 if index==0 else 0))
             except TimeoutError:
                 # A quiet but sequenced book remains current after a confirmed
@@ -675,11 +740,15 @@ class Worker:
                 # Yield on the first crossing instead of collapsing a burst of
                 # exchange changes into its last (potentially much lower) price.
                 if observed['book_ready'] and self.observe_exit_triggers(ticker,now,old):return
+        # A connected TCP socket without a usable exchange subscription is
+        # not a working feed. Avoid leaving bots indefinitely waiting on it.
+        if self.socket is not None and self.book_sid is None and self.stream_opened_at and time.time()-self.stream_opened_at>25:
+            raise ExchangeFailure('stream_subscription')
     def close_stream(self):
         if self.socket:
             try:self.socket.close()
             except Exception:pass
-        self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.book_pong=None;self.last_book_ping=0;self.books.clear()
+        self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.book_pong=None;self.last_book_ping=0;self.books.clear();self.stream_opened_at=0
         for q in self.quotes.values():q['at']=0
     def cancel(self,order,reason):
         self.context_market=order['ticker'];self.context_order=order.get('exchange_id') or order['client_id'];self.context_bot=order['bot']
@@ -949,11 +1018,24 @@ class Worker:
                     self.stage="reconciliation"
                     if not self.recovered or now-self.last_reconcile>=30:self.reconcile()
                     self.stage='trade';self.trade();self.trading_health()
+                    if self.socket and now-self.stream_last_pressure_at>=30:
+                        pressure=self.socket.stats()
+                        if pressure['messages']>=1024 or pressure['oldest_age_seconds']>=3:
+                            print(json.dumps(dict(event='demo_stream_pressure',messages=pressure['messages'],
+                                bytes=pressure['bytes'],oldest_age_seconds=pressure['oldest_age_seconds'],
+                                peak_messages=pressure['peak_messages'])),flush=True)
+                            self.stream_last_pressure_at=now
                     if now>=maintenance_at:
                         from .maintenance import maintenance
                         maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                     backoff=1
                 except ExchangeFailure as error:
+                    if self.stage=='stream' and error.code in ('stream_closed','stream_connection_lost'):
+                        self.recover_feed(error)
+                        self.stop.wait(min(3,backoff));backoff=min(4,backoff*2)
+                        continue
+                    if self.stage=='stream' and error.code.startswith('stream'):
+                        self.mark_stream_failure(error.code)
                     print(json.dumps(dict(event='demo_exchange_failure',stage=self.stage,code=error.code,ambiguous=error.ambiguous,status=error.status,provider_code=error.provider_code,reason=error.reason)),flush=True)
                     self.recovered=False
                     from .diagnostics import exchange_issue

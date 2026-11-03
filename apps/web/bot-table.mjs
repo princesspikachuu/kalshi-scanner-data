@@ -1,7 +1,13 @@
 import {createResearchClient} from './research-client.mjs';
 import {createCollectionClient} from './collection-client.mjs';
 
-const minutes={btc:[15,10,5,3,1],eth:[15,10,5,3,1],crypto:[15,10,5,3,1],commodities_15m:[15,10,5,3,1],finance_15m:[15,10,5,3,1],weather:[60,45,30,20,15,10,5,3,1],weather_daily:[360,180,120,60,30,15,5],sports:[360,180,120,60,30,15,5]};
+const fifteenMinuteCategories=['btc','eth','sol','xrp','doge','bnb','hype','zec','near','crypto',
+ 'gold_15m','silver_15m','platinum_15m','palladium_15m','copper_15m','wti_15m','natgas_15m','brent_15m','commodities_15m',
+ 'usdcad_15m','audusd_15m','usdjpy_15m','gbpusd_15m','eurusd_15m',
+ 'rate2y_15m','rate5y_15m','rate10y_15m','rate30y_15m','sp500_15m','nasdaq100_15m','finance_15m'];
+const minutes={...Object.fromEntries(fifteenMinuteCategories.map(asset=>[asset,[15,10,5,3,1]])),
+ weather:[60,45,30,20,15,10,5,3,1],weather_daily:[360,180,120,60,30,15,5],sports:[360,180,120,60,30,15,5]};
+const savedResearchCategories=new Set(['btc','eth','crypto','weather','weather_daily','sports']);
 const bands=['50-60','60-70','70-80','80-90','90-100'];
 export const conditionKey=s=>[s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes].join(':');
 
@@ -32,6 +38,10 @@ export function createOfferingLoader({research=createResearchClient(),collection
   if(refresh)cache.delete(asset);
   if(!cache.has(asset)){
    const pending=(async()=>{
+    // Newly separated market choices don't have historical cohorts yet.
+    // Never substitute aggregate results for a single instrument: that would
+    // make a square's displayed ROI and exit threshold misleading.
+    if(!savedResearchCategories.has(asset))return {report:null,basis:'No instrument-specific historical research yet'};
     const category=await research.category(asset);
     if(category)return {report:category,basis:'All saved history'};
     const pages=await Promise.allSettled(['unfinished','finished'].map(group=>collection.list(asset,null,group,10)));

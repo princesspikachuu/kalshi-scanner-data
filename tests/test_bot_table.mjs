@@ -42,7 +42,7 @@ test('inline table selects and deselects cells without opening another strategy 
  renderOfferings(container,'btc',report,selected,()=>assert.fail('Not interactive during load'),{loading:true});assert.equal(button().disabled,true);
 });
 
-import {BOT_DRAFT_KEY,createBotDraftStore,duplicateBotConfig,resolveBotDraft} from '../apps/web/bot-builder.mjs';
+import {BOT_DRAFT_KEY,createBotDraftStore,duplicateBotConfig,resolveBotDraft,categoryGroups,categories,marketCategoryOptions} from '../apps/web/bot-builder.mjs';
 function draft(){return {version:1,mode:'new',fields:{botName:'My unfinished bot',qualification:'ask',priceReference:'bid',adjustment:'',minimum:'60',maximum:'96',bidPercent:'1.5',marketPercent:'3',botPercent:'10',lossMode:'manual',lossCents:'55',dailyLoss:'',tableAsset:'weather',squareAsset:'sports',squareLow:'70',squareHigh:'79',squareAfter:'5',squareThrough:'30'},squares:[offeringRows('btc',report)[2].cells[1].square,offeringRows('weather')[0].cells[2].square],details:[true,true]}}
 function storage(){const values=new Map();return {writes:0,getItem:key=>values.get(key)||null,setItem(key,value){this.writes++;values.set(key,value)},removeItem:key=>values.delete(key),values}}
 test('duplicate copies conditions and every setting independently, without identity or execution state',()=>{
@@ -108,4 +108,44 @@ test('buy low sell high drafts and duplicate preserve prices, cutoff, repeat and
  input.squares=[cycleSquare('weather')];assert.equal(store.save(input),true);assert.deepEqual(store.load().fields,input.fields);
  const source={config:{name:'Cycles',strategy:'buy_low_sell_high',cycle_buy_cents:8,cycle_sell_cents:18,cycle_cutoff_minutes:3,cycle_repeat:false,squares:input.squares}};
  const copy=duplicateBotConfig(source);assert.equal(copy.cycle_sell_cents,18);assert.equal(copy.cycle_repeat,false);copy.squares[0].asset='btc';assert.equal(source.config.squares[0].asset,'weather');
+});
+
+
+test('all individual 15-minute categories have independently selectable price-time grids',()=>{
+ const groups=Object.fromEntries(categoryGroups.map(g=>[g.name.split(' ·')[0],g.items]));
+ assert.equal(Object.keys(groups.Crypto).length,10);
+ assert.equal(Object.keys(groups.Commodities).length,9);
+ assert.equal(Object.keys(groups.Finance).length,12);
+ const instruments=['btc','eth','sol','xrp','doge','bnb','hype','zec','near',
+  'gold_15m','silver_15m','platinum_15m','palladium_15m','copper_15m','wti_15m','natgas_15m','brent_15m',
+  'usdcad_15m','audusd_15m','usdjpy_15m','gbpusd_15m','eurusd_15m',
+  'rate2y_15m','rate5y_15m','rate10y_15m','rate30y_15m','sp500_15m','nasdaq100_15m'];
+ assert.equal(instruments.length,28);
+ const unique=new Set();
+ for(const asset of instruments){
+  assert.ok(categories[asset],asset);
+  const rows=offeringRows(asset);
+  assert.deepEqual(rows.map(r=>r.minutes),[15,10,5,3,1],asset);
+  assert.equal(rows[0].cells[0].square.asset,asset);
+  unique.add(conditionKey(rows[0].cells[0].square));
+ }
+ assert.equal(unique.size,instruments.length,'selections for different instruments never collapse');
+ const options=marketCategoryOptions();
+ for(const token of ['Crypto · 15-minute','Commodities · 15-minute','Finance · 15-minute',
+  'value="sol"','value="gold_15m"','value="eurusd_15m"','value="sp500_15m"'])assert.ok(options.includes(token),token);
+ for(const broad of ['crypto','commodities_15m','finance_15m'])assert.ok(categories[broad],'Existing broad-category bots remain editable');
+});
+
+test('new individual categories do not show invented aggregate research statistics',async()=>{
+ let queried=false;
+ const loader=createOfferingLoader({
+  research:{category:()=>{queried=true;throw Error('Cannot use aggregate ROI for instrument')}},
+  collection:{list:()=>{queried=true;throw Error('Cannot use aggregate historical runs')}}
+ });
+ for(const asset of ['sol','gold_15m','rate10y_15m','sp500_15m','commodities_15m','finance_15m']){
+  const item=await loader(asset);
+  assert.equal(item.report,null);
+  assert.match(item.basis,/No instrument-specific historical research/);
+ }
+ assert.equal(queried,false);
 });
