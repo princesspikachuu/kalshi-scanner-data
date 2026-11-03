@@ -25,3 +25,29 @@ class OwnershipDetails(unittest.TestCase):
         for state in [dict(s,realized_cents=0),dict(s,reset_closed=True),dict(s,filled=2)]:self.assertFalse(needs_recovery(p,state,raw))
         self.assertFalse(needs_recovery(p,s,dict(raw,ticker='other')))
         self.assertFalse(needs_recovery(p,s,dict(raw,fill_count_fp='11.00')))
+
+
+class EmptyFinalizedIntentProof(unittest.TestCase):
+    def test_finalized_zero_exposure_unfilled_intents(self):
+        from services.demo.ownership import verified_empty_finalized_intents as proof
+        local=[dict(ticker='T',client_id='local-1',status='uncertain',filled=0,remaining=0),
+               dict(ticker='T',client_id='local-2',status='intent',filled=0,remaining=0)]
+        q=dict(status='finalized',close=NOW-3600)
+        self.assertEqual(proof('T',local,q,0,0,[],[],[],NOW),['local-1','local-2'])
+        self.assertEqual(proof('T',local,q,0,0,[],[],[dict(ticker='T',order_id='unexplained')],NOW),[])
+        history=[dict(ticker='T',order_id='manual-1')]
+        self.assertEqual(proof('T',local,q,0,0,[],history,[dict(ticker='T',order_id='manual-1')],NOW),[])
+        self.assertEqual(proof('T',local,q,0,0,[dict(ticker='T',order_id='manual-1')],[],[],NOW),[])
+        self.assertEqual(proof('T',local,q,0,0,[],[dict(ticker='T',client_order_id='local-1')],[],NOW),[])
+
+    def test_never_clear_pending_or_filled_exposure(self):
+        from services.demo.ownership import verified_empty_finalized_intents as proof
+        local=[dict(ticker='T',client_id='local-1',status='uncertain',filled=0,remaining=0)]
+        q=dict(status='finalized',close=NOW-3600)
+        for invalid in [dict(q,status='active'),dict(q,close=NOW+20),dict(q,close=NOW-30)]:
+            self.assertEqual(proof('T',local,invalid,0,0,[],[],[],NOW),[])
+        self.assertEqual(proof('T',local,q,1,0,[],[],[],NOW),[])
+        self.assertEqual(proof('T',local,q,0,1,[],[],[],NOW),[])
+        for bad in [dict(local[0],filled=1),dict(local[0],remaining=1),
+                    dict(local[0],status='resting'),dict(local[0],status='cancel_pending')]:
+            self.assertEqual(proof('T',[bad],q,0,0,[],[],[],NOW),[])
