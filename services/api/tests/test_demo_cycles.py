@@ -300,6 +300,31 @@ class PositionOffsets(unittest.TestCase):
         w.cancel.assert_called_once();w.submit.assert_not_called()
 
 class Lifecycle(unittest.TestCase):
+    def test_round_sweep_discovers_multiple_series_and_resumes_pagination(self):
+        w=worker();w.bots[0]['config']['squares'][0]['asset']='crypto'
+        w.exchange=Mock()
+        def market(series):
+            return dict(ticker=series+'-NEW',series_ticker=series,status='active',
+                close_time=NOW+100,open_time=NOW-10,yes_bid_dollars='.40',yes_ask_dollars='.60')
+        w.exchange.call.side_effect=[dict(markets=[market('KXBTC15M'),market('KXETH15M')],cursor='page2'),
+            dict(markets=[market('KXSOL15M')]),dict(markets=[]),dict(markets=[]),dict(markets=[]),dict(markets=[])]
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            w.discover()
+            self.assertTrue({'KXBTC15M-NEW','KXETH15M-NEW'}<=w.quotes.keys())
+            self.assertEqual(w.quotes['KXBTC15M-NEW']['at'],0)
+            params=w.exchange.call.call_args.kwargs['params']
+            self.assertNotIn('series_ticker',params)
+            self.assertEqual(params['max_close_ts'],(int(NOW//900)+1)*900+1)
+            w.discover()
+            self.assertEqual(w.exchange.call.call_args.kwargs['params']['cursor'],'page2')
+            self.assertIn('KXSOL15M-NEW',w.quotes)
+            w.discover()
+            self.assertIn('series_ticker',w.exchange.call.call_args.kwargs['params'])
+        with patch('services.demo.runtime.time.time',return_value=(int(NOW//900)+1)*900):
+            w.discover()
+            self.assertNotIn('cursor',w.exchange.call.call_args.kwargs['params'])
+            self.assertNotIn('series_ticker',w.exchange.call.call_args.kwargs['params'])
+
     def test_open_notification_refreshes_only_selected_series(self):
         w=worker();w.subscription={'t'};w.book_sid=1
         class Socket:

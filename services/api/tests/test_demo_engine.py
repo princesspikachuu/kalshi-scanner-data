@@ -1,5 +1,5 @@
 import unittest,json,threading
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
@@ -130,6 +130,23 @@ class FakeStore:
             result[ticker]=side if prior in (None,side) else 'both'
         return result
 class WorkerRecovery(unittest.TestCase):
+    def test_complete_resting_snapshot_avoids_redundant_history_for_unfilled_bids(self):
+        ex=Mock();ex.pages.return_value=[]
+        worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        worker.orders=[dict(ticker='t'+str(i),client_id='c'+str(i),status='resting',filled=0,created_at=NOW-10) for i in range(28)]
+        remote=[dict(ticker=o['ticker'],client_order_id=o['client_id'],fill_count=0) for o in worker.orders]
+        self.assertEqual(worker.order_history([],remote,NOW),[])
+        ex.pages.assert_not_called()
+        # Any evidence of fills, missing confirmations, uncertainty, manual
+        # orders or positions retains the full history verification path.
+        remote[0]['fill_count']=1
+        worker.orders[1]['filled']=1
+        remote.pop(2)
+        worker.orders[3]['status']='uncertain'
+        remote.append(dict(ticker='manual',client_order_id='unknown',fill_count=0))
+        worker.order_history([dict(ticker='position')],remote,NOW)
+        self.assertEqual({c.kwargs['ticker'] for c in ex.pages.call_args_list},{'t0','t1','t2','t3','manual','position'})
+
     def test_history_reconciliation_ignores_unrelated_account_churn(self):
         class Ex(Exchange):
             def __init__(self):self.seen=[]

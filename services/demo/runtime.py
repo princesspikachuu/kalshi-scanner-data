@@ -41,6 +41,7 @@ class Worker:
         self.last_reconcile=0;self.last_discovery=0;self.last_health=0;self.last_snapshot=0;self.last_diagnostic=0;self.stage="starting"
         self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.stream_command=3;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
+        self.cycle_discovery_epoch=-1;self.cycle_discovery_cursor=''
         self.daily_pnl={};self.daily_pnl_day=-1
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
@@ -491,17 +492,27 @@ class Worker:
         reconciliation enumerate thousands of unrelated canceled bids.
         """
         starts={}
+        known={o.get('client_id') for o in self.orders if o.get('client_id')}
+        resting={o.get('client_order_id'):o for o in remote if o.get('client_order_id')}
         for order in self.orders:
             ticker=order['ticker']
+            raw=resting.get(order.get('client_id'))
+            # A complete resting snapshot already verifies an untouched bid.
+            # Missing/filled/ambiguous local orders still require history.
+            if (raw and order.get('status')=='resting' and not order.get('filled',0)
+                and not count(raw,'fill_count')):continue
             starts[ticker]=min(starts.get(ticker,now),order['created_at'])
         # Include unowned positions/resting orders so closed local records can
         # still be recovered from exchange evidence. Do not time-limit these.
-        unbounded={p['ticker'] for p in positions}|{o['ticker'] for o in remote}
+        unbounded={p['ticker'] for p in positions}|{o['ticker'] for o in remote
+            if o.get('client_order_id') not in known or count(o,'fill_count')}
         history=[]
         for ticker in sorted(set(starts)|unbounded):
             params=dict(ticker=ticker)
             if ticker not in unbounded:params['min_ts']=int(starts[ticker])-60
             history.extend(self.exchange.pages('/portfolio/orders','orders',**params))
+        print(json.dumps(dict(event='demo_history_scope',local_orders=len(self.orders),
+            resting_orders=len(remote),history_markets=len(set(starts)|unbounded))),flush=True)
         return history
     def lookup_exchange_order(self,order):
         try:
@@ -697,9 +708,18 @@ class Worker:
             and b['config'].get('strategy')=='buy_low_sell_high'
             for square in b['config']['squares'] for s in SERIES[square['asset']]}
         requests=[];pending=set()
+        epoch=int(now//900);cycle_sweep=False
         if self.pending_markets:
             pending=set(self.pending_markets)
             requests=[dict(tickers=','.join(sorted(pending)),limit=200)]
+        elif cycle_series and (self.cycle_discovery_epoch!=epoch or self.cycle_discovery_cursor):
+            # Find this round across all series in a bounded, paginated read.
+            # Per-series fallback continues after this sweep completes.
+            cycle_sweep=True
+            params=dict(status='open',limit=200,min_close_ts=int(now),max_close_ts=(epoch+1)*900+1)
+            if self.cycle_discovery_epoch==epoch and self.cycle_discovery_cursor:
+                params['cursor']=self.cycle_discovery_cursor
+            requests=[params]
         elif pinned and (self.discovery_turn%5==0 or not series):
             requests=[dict(tickers=','.join(sorted(pinned)[:100]),limit=200)]
         elif series:
@@ -718,6 +738,8 @@ class Worker:
         for params in requests:
             page=self.exchange.call('GET','/markets',params=params)
             if not isinstance(page.get('markets'),list) or len(page['markets'])>200:raise ExchangeFailure('discovery_capacity')
+            if cycle_sweep:
+                self.cycle_discovery_epoch=epoch;self.cycle_discovery_cursor=page.get('cursor') or ''
             if 'series_ticker' in params:self.cursor[params['series_ticker']]=page.get('cursor') or ''
             for raw in page['markets']:
                 parsed=quote(raw,now)
@@ -847,6 +869,11 @@ class Worker:
                 if ticker not in self.quotes:continue
                 self.book_sid=message['sid']
                 now=time.time();old=self.quotes[ticker]
+                # Late updates from an ended market cannot authorize a trade.
+                # Consume their sequence without resetting unrelated live books.
+                if old['close']<=now or old.get('status') in ('closed','settled','finalized','determined'):
+                    self.books.books.pop(ticker,None);old['at']=0
+                    continue
                 ticker,observed=self.books.apply(message,getattr(self.socket,'received_at',None) or now)
                 self.quotes[ticker]=dict(old,**observed)
                 # Yield on the first crossing instead of collapsing a burst of
@@ -900,7 +927,8 @@ class Worker:
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted '+('profit sell' if intent.get('exit_role')=='profit' else 'maker-only '+intent['kind']))
             self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
             self.recent_market_changes[intent['ticker']]=self.sync_pending['at']
-            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
+            opened=self.quotes.get(intent['ticker'],{}).get('open')
+            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],bot=intent['bot'],ticker=intent['ticker'],seconds_since_open=round(time.time()-opened,2) if opened else None,asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
         except ExchangeFailure as error:
             if not error.ambiguous:intent['rejection_reason']=error.reason if error.code=='exchange_rejected' else None
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)

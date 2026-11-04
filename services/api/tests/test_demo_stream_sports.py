@@ -141,6 +141,29 @@ class FundingIsolation(unittest.TestCase):
 
 
 class StreamResilience(unittest.TestCase):
+    def test_ended_book_update_keeps_live_books_and_sequence_validation(self):
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        worker.quotes={'live':quote(),'ended':dict(quote(),close=NOW)}
+        worker.subscription={'live'};worker.book_sid=2
+        snapshot=dict(type='orderbook_snapshot',sid=2,seq=1,sending_ts_ms=NOW*1000,
+            msg=dict(market_ticker='live',clock=1,yes_dollars_fp=[['0.50','1']],no_dollars_fp=[['0.40','1']]))
+        ended=dict(type='orderbook_delta',sid=2,seq=2,
+            msg=dict(market_ticker='ended',clock=2,side='yes',price_dollars='1.00',delta_fp='1'))
+        messages=[snapshot,ended]
+        class Socket:
+            def recv(self,**kwargs):
+                if not messages:raise TimeoutError()
+                return json.dumps(messages.pop(0))
+        worker.socket=Socket()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.stream()
+        self.assertIn('live',worker.books.books)
+        self.assertEqual(worker.sequence[2],2)
+        # Bad prices in a still-active market remain a hard feed failure.
+        messages.append(dict(ended,seq=3,msg=dict(ended['msg'],market_ticker='live')))
+        with patch('services.demo.runtime.time.time',return_value=NOW),self.assertRaises(ExchangeFailure) as caught:
+            worker.stream()
+        self.assertEqual(caught.exception.code,'stream_book_invalid')
+
     def test_ordered_prices_survive_clean_exchange_close_and_trigger_controlled_reconnect(self):
         from websockets.frames import Close
         from websockets.exceptions import ConnectionClosedOK
@@ -456,6 +479,9 @@ class MarketOpenCoverage(unittest.TestCase):
             b=bot();b['id']=asset;b['config']['strategy']='buy_low_sell_high'
             b['config']['squares'][0]['asset']=asset
             worker.bots.append(b)
+        # The round-wide sweep runs first; per-series fallback retains its
+        # three-series coverage after that bounded sweep has completed.
+        worker.cycle_discovery_epoch=int(NOW//900)
         with patch('services.demo.runtime.time.time',return_value=NOW):worker.discover()
         self.assertEqual(len(seen),3)
         self.assertEqual({p['series_ticker'] for p in seen},set().union(*(SERIES[a] for a in ('btc','eth','sol'))))
