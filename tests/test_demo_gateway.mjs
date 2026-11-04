@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import test from 'node:test';import assert from 'node:assert/strict';import {proxyAuth} from '../apps/gateway/index.mjs';import {selectedSquares} from '../apps/web/bot-builder.mjs';
 import gateway from '../apps/gateway/index.mjs';
 import {readFile} from 'node:fs/promises';
@@ -163,16 +164,17 @@ test('routine confirmed-order verification keeps bots running; stalled, uncertai
  assert.equal(botGroup({...bot,desired:'paused'},health,[],1003),'Paused');
 });
 
-import {botExposure,botExposureMarkup} from '../apps/web/demo-client.mjs';
+import {botExposure,botExposureMarkup,marketPhase,ordersForView,nextMarketBoundary} from '../apps/web/demo-client.mjs';
 test('bot dropdown separates held contracts, partial entry remainders, exits and uncertain writes',()=>{
  const orders=[{kind:'entry',ticker:'BTC<test>',side:'yes',price:60,filled:5,sold:2,remaining:4,status:'resting'},
  {kind:'entry',ticker:'BTC<test>',side:'yes',price:70,filled:2,sold:0,remaining:0,status:'held'},
  {kind:'exit',ticker:'BTC<test>',side:'yes',price:56,filled:0,remaining:3,status:'resting'},
  {kind:'entry',ticker:'OTHER',side:'no',price:80,filled:0,remaining:0,status:'uncertain'}];
+ for(const order of orders)order.close=Date.now()/1000+60;
  const result=botExposure(orders);assert.equal(result.positions.length,1);assert.equal(result.positions[0].quantity,5);assert.equal(result.positions[0].price,64);
  assert.equal(result.waiting.length,3);
- const html=botExposureMarkup(orders,'bot-one');assert.match(html,/BTC&lt;test&gt;/);assert.doesNotMatch(html,/BTC<test>/);assert.match(html,/Protective exit/);assert.match(html,/Unconfirmed/);assert.match(html,/both sections/);
- const empty=botExposureMarkup([]);assert.match(empty,/No open positions/);assert.match(empty,/No waiting orders/);
+ const html=botExposureMarkup(orders,'bot-one');assert.match(html,/BTC&lt;test&gt;/);assert.doesNotMatch(html,/BTC<test>/);assert.match(html,/Protective exit/);assert.match(html,/Unconfirmed/);assert.match(html,/both orders and positions/);
+ const empty=botExposureMarkup([]);assert.match(empty,/No open positions/);assert.match(empty,/No active buy orders/);assert.match(empty,/No active sell orders/);
 });
 
 test('protective exits and rejected maker orders are informational while actual failures keep their explanation',()=>{
@@ -216,4 +218,57 @@ test('brief identified position synchronization does not mislabel every overlapp
  const info=attentionInfo(bot,unresolved,orders,1001),html=attentionMarkup(info,{botId:'a'});
  for(const expected of ['Alpha','entry-one','Held YES','Kalshi account net','3','T'])assert.ok(html.includes(expected),expected);
  assert.ok(html.includes('&lt;bad&gt;'));assert.ok(!html.includes('<bad>'));
+});
+
+
+test('active contracts move to Pending exactly at close, before settlement and without a new server snapshot',()=>{
+ const now=1000,entry={kind:'entry',client_id:'buy',ticker:'t',side:'yes',entry_strategy:'buy_low_sell_high',market_close_at:1100,close:920,filled:5,sold:0,price:3,remaining:0,status:'held'},
+ sell={kind:'exit',parent:'buy',ticker:'t',side:'yes',close:1100,remaining:5,filled:0,price:9,status:'resting'};
+ const orders=[entry,sell];
+ assert.equal(marketPhase(entry,{},now),'active','buy cancellation deadline is not market close');
+ assert.equal(botExposure(orders,{now:1099.999}).positions.length,1);
+ assert.equal(botExposure(orders,{now:1099.999}).sells.length,1);
+ assert.equal(botExposure(orders,{now:1100}).positions.length,0);
+ assert.equal(botExposure(orders,{now:1100}).waiting.length,0);
+ const pending=botExposure(orders,{now:1100,view:'pending'});
+ assert.equal(pending.positions[0].quantity,5);assert.match(pending.positions[0].sellStatus,/Awaiting settlement/);
+ assert.equal(pending.sells.length,1);assert.equal(sell.status,'resting','display must not fake cancellation or settlement');
+ assert.equal(nextMarketBoundary(orders,{},now),1100);
+});
+test('actual market close wins over an early sports deadline; closed exchange status wins over future timestamps',()=>{
+ const order={kind:'entry',ticker:'game',entry_strategy:'buy_low_sell_high',condition:{asset:'sports'},market_close_at:800,close:620,status:'held',filled:1,price:3};
+ const health={markets:{game:{open:100,close:1200,status:'active'}}};
+ assert.equal(marketPhase(order,health,1000),'active');
+ assert.equal(marketPhase(order,{markets:{game:{close:1200,status:'closed'}}},1000),'ended');
+ assert.equal(marketPhase({...order,market_trading_close_at:1200},{},1000),'active');
+ assert.equal(marketPhase(order,{},1000),'unknown','estimated sports finish cannot silently remove a live position');
+ assert.equal(ordersForView([order],{},'pending',1000).length,1);
+});
+test('missing and partial sell coverage are explicit, and terminal records never reappear as active positions',()=>{
+ const entry={kind:'entry',ticker:'t',side:'yes',price:3,filled:5,sold:0,close:2000,status:'held',entry_strategy:'buy_low_sell_high'};
+ const sell={kind:'exit',ticker:'t',side:'yes',price:6,filled:0,remaining:5,close:2180,status:'resting'};
+ assert.match(botExposure([entry],{now:1000}).positions[0].sellStatus,/Sell pending/);
+ assert.equal(botExposure([entry,sell],{now:1000}).positions[0].sellStatus,'Sell order active');
+ assert.match(botExposure([entry,{...sell,remaining:2}],{now:1000}).positions[0].sellStatus,/Partly covered/);
+ assert.match(botExposure([entry,{...sell,status:'uncertain'}],{now:1000}).positions[0].sellStatus,/confirmation pending/);
+ assert.equal(botExposure([{...entry,status:'closed'}],{now:1000}).positions.length,0);
+});
+test('active and pending order summaries share the same boundary across bots and Activity',()=>{
+ const orders=[{ticker:'old',kind:'entry',close:900,status:'uncertain',remaining:0},
+ {ticker:'live',kind:'entry',close:1100,status:'resting',remaining:2},
+ {ticker:'unknown',kind:'entry',status:'uncertain'},
+ {ticker:'terminal',kind:'exit',close:1100,status:'rejected'}];
+ assert.deepEqual(ordersForView(orders,{},'active',1000).map(o=>o.ticker),['live']);
+ assert.deepEqual(ordersForView(orders,{},'pending',1000).map(o=>o.ticker),['old','unknown']);
+ const html=botExposureMarkup(orders,'bot',{now:1000,view:'pending'});
+ assert.match(html,/Confirmation pending/);assert.doesNotMatch(html,/Waiting to buy/);
+ const bots=readFileSync(new URL('../apps/web/bots.mjs',import.meta.url),'utf8');
+ const activity=readFileSync(new URL('../apps/web/activity.mjs',import.meta.url),'utf8');
+ for(const source of [bots,activity])assert.match(source,/nextMarketBoundary/);
+});
+
+test('following an ended buy shows historical orders and pending settlement, never says exit rules are still active',()=>{
+ const html=orderDetailMarkup({entry:{ticker:'t',side:'yes',kind:'entry',price:3,filled:2,sold:0,status:'held',close:900},exits:[]},1000);
+ assert.match(html,/Market closed/);assert.match(html,/pending settlement \/ confirmation/);
+ assert.doesNotMatch(html,/exit rules remain active/);
 });

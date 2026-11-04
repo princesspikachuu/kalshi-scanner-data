@@ -1,7 +1,8 @@
 import {matchesActivity,matchingOrders} from './activity-filters.mjs';
 import './order-detail.mjs';
-import {demoCall,escapeHTML as e,money,exitEvidence,orderDetailButton,transactionBadge,marketLink} from './demo-client.mjs';
+import {demoCall,escapeHTML as e,money,ordersForView,nextMarketBoundary,botExposureMarkup,exitEvidence,orderDetailButton,transactionBadge,marketLink} from './demo-client.mjs';
 const $=id=>document.getElementById(id);let before=null,items=[],workspace,orders=[],initialFilters=true,eventVersion=0,loadVersion=0;
+let boundaryTimer;
 const date=value=>value?new Date(typeof value==='number'?value*1000:value).toLocaleString():'Not yet verified';
 function table(headers,rows){return `<table class="activity-table"><thead><tr>${headers.map(h=>`<th>${e(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`}
 function selectedFilters(){return {bot:$('botFilter').value,ticker:$('tickerFilter').value,kinds:[...document.querySelectorAll('[data-activity-kind]:checked')].map(el=>el.value)}}
@@ -17,8 +18,15 @@ async function events(append=false){
  before=page.next_before;renderEvents();$('older').hidden=!before;
 }
 function renderOrders(filters=selectedFilters()){
- const selected=matchingOrders(orders,filters);
- $('orders').innerHTML=selected.length?table(['Bot','Market / side','State','Quantity','Exchange order'],selected.map(o=>`<tr><td>${e(workspace.bots.find(b=>b.key===o.bot)?.config.name||o.bot)}</td><td>${marketLink(o.ticker)}<br>${transactionBadge({kind:o.filled>0?'fill':'order',details:{order_kind:o.kind}})}<br>${e(o.side)} · ${e(o.price)}¢</td><td>${e(o.status)}<br>${orderDetailButton(o.client_id,o.kind==='entry'?'Buy → linked sells':'Sell → buy')}</td><td>${e(o.filled||0)} filled · ${e(o.remaining||0)} resting</td><td>${e(o.exchange_id||'Awaiting confirmation')}</td></tr>`)):'<p class="small">No current orders or positions match the selected filters.</p>';
+ clearTimeout(boundaryTimer);if(!workspace)return;
+ const boundary=nextMarketBoundary(orders,workspace.health);
+ if(boundary)boundaryTimer=setTimeout(()=>renderOrders(),Math.min(2147483647,Math.max(1,boundary*1000-Date.now())));
+ // Event-type filters apply to history. The live view always includes linked
+ // sells so a buy-fill filter cannot falsely make held contracts look uncovered.
+ const matching=matchingOrders(orders,{...filters,kinds:[]}),view=$('marketView').value;
+ const selected=ordersForView(matching,workspace.health,view);
+ const ids=[...new Set(selected.map(o=>o.bot))];
+ $('orders').innerHTML=ids.length?ids.map(id=>`<h3>${e(workspace.bots.find(b=>b.key===id)?.config.name||id)}</h3>${botExposureMarkup(matching.filter(o=>o.bot===id),id,{health:workspace.health,view})}`).join(''):`<p class="small">${view==='pending'?'No pending records':'No orders or positions in active markets'} match the selected bot and market. Past activity stays in Execution history.</p>`;
 }
 function renderEvents(){const bots=new Map(workspace.bots.map(b=>[b.key,b.config.name]));$('events').innerHTML=items.length?table(['Time','Event · Demo','Bot / market','Evidence'],items.map(item=>`<tr><td>${e(date(item.time))}</td><td>${transactionBadge(item)}<br><strong>${e(item.kind)}</strong><br>${orderDetailButton(item.details?.client_id,item.details?.order_kind==='entry'?'Buy → linked sells':'Follow order')}<br>${e(item.message||item.summary)}</td><td>${e(bots.get(item.bot)||item.bot||'Account')}<br><span class="small">${marketLink(item.ticker,item.details?.quote)}</span></td><td>${item.archived?`<button data-restore="${item.id}" class="secondary">Restore details</button>`:`${item.details?.exchange_id?`Order ${e(item.details.exchange_id)}<br>`:''}${item.details?.price?`${e(item.details.side)} · ${item.details.price}¢ · ${item.details.quantity} contracts<br>`:''}${exitEvidence(item).map(line=>e(line)+'<br>').join('')}${item.details?.realized_cents!==undefined?`Estimated net ${money(item.details.realized_cents)}`:''}`}</td></tr>`)):'<div class="empty">No matching activity yet. The first verified order will appear here with its trigger, price, size and exchange order ID.</div>';for(const button of document.querySelectorAll('[data-restore]'))button.onclick=async()=>{button.disabled=true;try{await demoCall('restore/'+button.dataset.restore,{});$('message').textContent='Restore queued. Original archived data stays intact. Refresh after the worker restores details.'}catch(error){$('message').textContent=error.message}finally{button.disabled=false}}}
 async function load(){const token=++loadVersion;try{const [nextWorkspace,page]=await Promise.all([demoCall('workspace'),demoCall('orders')]);if(token!==loadVersion)return;workspace=nextWorkspace;orders=page.items;const query=new URLSearchParams(location.search),chosen=$('botFilter').value||(initialFilters?query.get('bot'):'')||'';$('botFilter').innerHTML='<option value="">All bots</option>'+workspace.bots.map(b=>`<option value="${b.key}">${e(b.config.name)}${b.archived?' · archived':''}</option>`).join('');if(chosen&&!workspace.bots.some(b=>b.key===chosen))$('botFilter').insertAdjacentHTML('beforeend',`<option value="${e(chosen)}">Selected bot · ${e(chosen.slice(0,8))}</option>`);$('botFilter').value=chosen;if(initialFilters){if(query.has('kind'))for(const input of document.querySelectorAll('[data-activity-kind]'))input.checked=query.get('kind').split(',').includes(input.value);updateTypeSummary();if(query.get('ticker'))$('tickerFilter').value=query.get('ticker');initialFilters=false}await events();if(token!==loadVersion)return;
@@ -31,4 +39,5 @@ $('tickerFilter').onchange=()=>events().catch(error=>$('message').textContent=er
 $('clearActivityTypes').onclick=()=>{for(const input of document.querySelectorAll('[data-activity-kind]'))input.checked=false;updateTypeSummary();events().catch(error=>$('message').textContent=error.message)};
 $('refresh').onclick=load;$('apply').onclick=()=>events().catch(error=>$('message').textContent=error.message);$('older').onclick=()=>events(true).catch(error=>$('message').textContent=error.message);
 $('policyForm').onsubmit=async event=>{event.preventDefault();try{await demoCall('policy',{archive_enabled:$('archiveEnabled').checked,archive_days:Number($('archiveDays').value),storage_warning_percent:Number($('storageWarning').value),storage_critical_percent:Number($('storageCritical').value),storage_limit_gb:Number($('storageLimit').value),backup_hours:Number($('backupHours').value),critical_email:$('criticalEmail').checked});$('message').textContent='Monitoring and archiving settings saved.'}catch(error){$('message').textContent=error.message}};
+$('marketView').onchange=()=>renderOrders();
 load();

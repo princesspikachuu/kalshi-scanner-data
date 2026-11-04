@@ -29,15 +29,60 @@ export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(!recent||(!routine&&!shortFeedReconnect&&health.state!=='ready')||health.issue||health.blocked_markets?.some(t=>!health.historical_markets?.includes(t)&&!health.syncing_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t)))return 'Needs attention';
  return 'Running';
 }
-export function botExposure(orders=[]){
- const positions=new Map();
- for(const order of orders){
+export function marketPhase(order,health={},now=Date.now()/1000){
+ const market=health.markets?.[order.ticker]||{},legacy=health.ownership_details?.[order.ticker]||{};
+ const number=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
+ const low=order.kind==='entry'&&order.entry_strategy==='buy_low_sell_high';
+ // Low-buy expiration is three minutes BEFORE market close. Sports entry
+ // deadlines can also use an estimated finish; only actual close ends trading.
+ const sports=order.condition?.asset==='sports';
+ const close=number(market.close)??number(order.market_trading_close_at)??number(legacy.market_end)??
+  (!sports?number(order.market_close_at):null)??(!low?number(order.close):!sports&&number(order.close)?order.close+180:null);
+ const status=market.status||legacy.market_state;
+ if(['closed','settled','finalized','determined'].includes(status)||close!==null&&now>=close)return 'ended';
+ if(number(market.open)>now||['initialized','unopened'].includes(status))return 'upcoming';
+ return close!==null?'active':'unknown';
+}
+export function ordersForView(orders=[],health={},view='active',now=Date.now()/1000){
+ return orders.filter(o=>!['closed','rejected'].includes(o.status)&&
+  (view==='pending'?marketPhase(o,health,now)!=='active':marketPhase(o,health,now)==='active'));
+}
+export function nextMarketBoundary(orders=[],health={},now=Date.now()/1000){
+ const times=[];
+ for(const o of orders){
+  const m=health.markets?.[o.ticker]||{};
+  for(const value of [m.open,m.close,o.market_trading_close_at,
+    o.condition?.asset!=='sports'?o.market_close_at:null,
+    o.entry_strategy==='buy_low_sell_high'&&o.kind==='entry'&&o.condition?.asset!=='sports'?o.close+180:o.close]){
+   if(Number.isFinite(value)&&value>now)times.push(value);
+  }
+ }
+ return times.length?Math.min(...times):null;
+}
+export function botExposure(orders=[],{health={},view='active',now=Date.now()/1000}={}){
+ const visible=ordersForView(orders,health,view,now),positions=new Map();
+ const waiting=visible.filter(o=>(o.remaining||0)>0||['intent','uncertain','cancel_pending'].includes(o.status));
+ for(const order of visible){
   const held=Math.max(0,(order.filled||0)-(order.sold||0));
   if(order.kind!=='entry'||!held)continue;
-  const key=JSON.stringify([order.ticker,order.side]),position=positions.get(key)||{ticker:order.ticker,side:order.side,quantity:0,cost:0};
-  position.quantity+=held;position.cost+=held*order.price;positions.set(key,position);
+  const key=JSON.stringify([order.ticker,order.side]),position=positions.get(key)||{ticker:order.ticker,side:order.side,quantity:0,cost:0,covered:0,sellPending:false,needsSell:false,phase:marketPhase(order,health,now)};
+  position.quantity+=held;position.cost+=held*order.price;
+  position.needsSell ||= order.entry_strategy==='buy_low_sell_high'||order.exit_triggered;
+  positions.set(key,position);
  }
- return {positions:[...positions.values()].map(p=>({...p,price:p.cost/p.quantity})),waiting:orders.filter(o=>(o.remaining||0)>0||['intent','uncertain','cancel_pending'].includes(o.status))};
+ for(const sell of waiting.filter(o=>o.kind==='exit')){
+  const p=positions.get(JSON.stringify([sell.ticker,sell.side]));if(!p)continue;
+  if(sell.status==='resting')p.covered+=sell.remaining||0;
+  else p.sellPending=true;
+ }
+ return {positions:[...positions.values()].map(p=>({...p,price:p.cost/p.quantity,
+  sellStatus:view==='pending'?(p.phase==='ended'?'Awaiting settlement / confirmation':p.phase==='upcoming'?'Market not open yet':'Market time needs verification'):
+   p.covered>=p.quantity?'Sell order active':p.covered>0?'Partly covered · more sells pending':p.sellPending?'Sell confirmation pending':p.needsSell?(health.blocked_markets?.includes(p.ticker)?'Sell pending · verifying orders / position':'Sell pending · awaiting verified submission'):'Holding · exit rules active'})),
+  waiting,buys:waiting.filter(o=>o.kind==='entry'),sells:waiting.filter(o=>o.kind==='exit')};
+}
+export function orderStateLabel(order,{pending=false}={}){
+ if(pending)return ['intent','uncertain','cancel_pending'].includes(order.status)?'Confirmation pending':'Pending reconciliation';
+ return {resting:order.kind==='entry'?'Waiting to buy':'Waiting to sell',held:'Buy filled',intent:'Submitting',uncertain:'Unconfirmed',cancel_pending:'Cancellation pending'}[order.status]||order.status;
 }
 export function orderDetailButton(identifier,label='Follow order'){
  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(identifier||'')?`<button class="secondary" type="button" data-order-detail="${escapeHTML(identifier)}">${escapeHTML(label)}</button>`:'';
@@ -62,13 +107,14 @@ export function transactionBadge(item){
  }
  return label?`<span class="trade-badge ${style}">${escapeHTML(label)}</span>`:'';
 }
-export function botExposureMarkup(orders=[],botId=''){
- const {positions,waiting}=botExposure(orders),e=escapeHTML;
+export function botExposureMarkup(orders=[],botId='',options={}){
+ const {positions,buys,sells}=botExposure(orders,options),e=escapeHTML,pending=options.view==='pending';
  const market=ticker=>`<a href="/activity?${e(new URLSearchParams({bot:botId,ticker}))}">${e(ticker)}</a>`;
  const qty=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);
  const price=n=>Number.isFinite(n)?qty(n)+'¢':'—';
  const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
- return `<h3>Open positions · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Contracts','Average entry limit'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td></tr>`)):'<p class="small">No open positions.</p>'}<h3>Waiting orders · ${waiting.length}</h3>${waiting.length?table(['Market','Order','Outcome','Remaining','Limit','Status'],waiting.map(o=>`<tr><td>${market(o.ticker)}</td><td>${orderDetailButton(o.client_id,o.kind==='entry'?'Buy → linked sells':o.exit_role==='profit'?'Profit sell → buy':'Protective sell → buy')||escapeHTML(o.kind==='entry'?'Entry bid':o.exit_role==='profit'?'Profit sell':'Protective exit')}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain','cancel_pending'].includes(o.status)?'Unconfirmed':qty(o.remaining)}</td><td>${price(o.price)}</td><td>${e(o.status)}</td></tr>`)):'<p class="small">No waiting orders.</p>'}<p class="small">Uses the latest saved exchange check. Entry limits can differ from actual execution prices. Partially filled bids appear in both sections.</p>`;
+ const orderTable=(rows,buy)=>rows.length?table(['Market','Outcome',pending?'Last unfilled quantity':'Unfilled contracts','Limit','Status','Follow'],rows.map(o=>`<tr><td>${market(o.ticker)}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain'].includes(o.status)?'Unconfirmed':qty(o.remaining||0)}</td><td>${price(o.price)}</td><td>${e(orderStateLabel(o,{pending}))}${!buy?` · ${o.exit_role==='profit'?'Profit sell':'Protective exit'}`:''}</td><td>${orderDetailButton(o.client_id,buy?'Buy → linked sells':'Sell → original buy')}</td></tr>`)):`<p class="small">No ${pending?'pending':'active'} ${buy?'buy':'sell'} orders.</p>`;
+ return `<p class="small">${pending?'Ended markets await settlement or confirmation here. Records without a verified market time also wait here. They are excluded from Active markets.':'Active markets only. Buys are unfilled requests; positions are contracts you own; sells are requests to close those contracts. A partially filled buy can appear in both orders and positions.'}</p><h3>${pending?'Contracts pending resolution':'Positions you own'} · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Held contracts','Average buy limit','What happens next'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td><td>${e(p.sellStatus)}</td></tr>`)):`<p class="small">${pending?'No contracts pending resolution.':'No open positions.'}</p>`}<h3>${pending?'Pending buy records':'Buy orders · waiting to fill'} · ${buys.length}</h3>${orderTable(buys,true)}<h3>${pending?'Pending sell records':'Sell orders · waiting to fill'} · ${sells.length}</h3>${orderTable(sells,false)}<p class="small">${pending?'Payout can arrive later than the market close. Follow any order to inspect its history.':'Markets leave this view at their close time, without waiting for payout. Check Pending for unresolved ended markets.'} Quantities use the latest saved exchange check.</p>`;
 }
 export function historicalExposureMarkup(bot,health,orders=[]){
  if(!bot)return '';

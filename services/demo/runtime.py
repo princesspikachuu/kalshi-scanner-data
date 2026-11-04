@@ -195,6 +195,7 @@ class Worker:
         if now-self.last_health>=10 or state!=self.last_health_state:
             self.store.put('health',dict(state=state,message=message,at=now,features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1'],
                 watched=len(self.quotes),read_requests=self.exchange.reads,write_requests=self.exchange.writes,
+                markets={t:{k:q.get(k) for k in ('close','open','status')} for t,q in self.quotes.items()},
                 stream=self.stream_telemetry(now),reconciled_at=self.last_verified or self.last_reconcile,sync_pending=self.sync_pending if state=='syncing' else None,blocked_markets=sorted(self.blocked),historical_markets=sorted(self.historical_markets),syncing_markets=sorted(self.syncing_markets),ownership_details=self.ownership_details,bots=self.entry_diagnostics(now),issue=self.issue))
             self.last_health=now;self.last_health_state=state
         if now-self.last_diagnostic>=60:
@@ -1183,6 +1184,7 @@ class Worker:
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
             extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
+            extra['market_trading_close_at']=self.quotes[item['ticker']]['close']
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(180 if is_cycle else 0)
             if is_cycle:self.last_entry_bot=item['bot']
             self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
