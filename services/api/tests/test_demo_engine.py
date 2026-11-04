@@ -130,6 +130,26 @@ class FakeStore:
             result[ticker]=side if prior in (None,side) else 'both'
         return result
 class WorkerRecovery(unittest.TestCase):
+    def test_old_unconfirmed_intents_poll_without_delaying_every_live_order(self):
+        ex=Mock();ex.pages.return_value=[]
+        worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)
+        worker.orders=[dict(ticker='expired',client_id='lost',status='uncertain',filled=0,remaining=0,created_at=NOW-900,close=NOW-120)]
+        worker.order_history([],[],NOW)
+        ex.pages.assert_called_once();ex.pages.reset_mock()
+        self.assertEqual(worker.order_history([],[],NOW+1),[])
+        ex.pages.assert_not_called()
+        self.assertEqual(worker.orders[0]['status'],'uncertain')
+        # Fresh position or resting-order evidence bypasses the poll interval.
+        worker.order_history([dict(ticker='expired')],[],NOW+2)
+        ex.pages.assert_called_once();ex.pages.reset_mock()
+        worker.order_history([], [dict(ticker='expired',client_order_id='lost')],NOW+3)
+        ex.pages.assert_called_once();ex.pages.reset_mock()
+        worker.order_history([],[],NOW+31)
+        ex.pages.assert_called_once();ex.pages.reset_mock()
+        worker.orders[0]['filled']=1
+        worker.order_history([],[],NOW+32)
+        ex.pages.assert_called_once()
+
     def test_complete_resting_snapshot_avoids_redundant_history_for_unfilled_bids(self):
         ex=Mock();ex.pages.return_value=[]
         worker=Worker(FakeStore(),ex,threading.Event(),lambda:None)

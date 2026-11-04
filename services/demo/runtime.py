@@ -42,6 +42,7 @@ class Worker:
         self.socket=None;self.subscription=set();self.lifecycle_sid=None;self.lifecycle_requested=False;self.book_sid=None;self.stream_command=3;self.sequence={};self.recovered=False;self.series_index=0;self.discovery_turn=0
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.cycle_discovery_epoch=-1;self.cycle_discovery_cursor=''
+        self.unconfirmed_history_at={}
         self.daily_pnl={};self.daily_pnl_day=-1
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
@@ -506,13 +507,29 @@ class Worker:
         # still be recovered from exchange evidence. Do not time-limit these.
         unbounded={p['ticker'] for p in positions}|{o['ticker'] for o in remote
             if o.get('client_order_id') not in known or count(o,'fill_count')}
+        # Old unconfirmed intents with no exchange ID or exposure stay blocked.
+        # Poll their histories every 30 seconds instead of delaying every live
+        # bid on the same empty lookup. Fresh account positions/resting orders
+        # still force immediate verification if any exposure appears.
+        quiet=set()
+        remote_tickers={o['ticker'] for o in remote}
+        for ticker in starts.keys()-unbounded-remote_tickers:
+            local=[o for o in self.orders if o['ticker']==ticker]
+            if all(o.get('status') in ('intent','uncertain') and not o.get('exchange_id')
+                and not o.get('filled',0) and not o.get('remaining',0)
+                and o.get('close',now)>0 and o.get('close',now)<=now-60 for o in local):
+                quiet.add(ticker)
         history=[]
+        checked=0
         for ticker in sorted(set(starts)|unbounded):
+            if ticker in quiet and now-self.unconfirmed_history_at.get(ticker,0)<30:continue
             params=dict(ticker=ticker)
             if ticker not in unbounded:params['min_ts']=int(starts[ticker])-60
             history.extend(self.exchange.pages('/portfolio/orders','orders',**params))
+            checked+=1
+            if ticker in quiet:self.unconfirmed_history_at[ticker]=now
         print(json.dumps(dict(event='demo_history_scope',local_orders=len(self.orders),
-            resting_orders=len(remote),history_markets=len(set(starts)|unbounded))),flush=True)
+            resting_orders=len(remote),history_markets=checked)),flush=True)
         return history
     def lookup_exchange_order(self,order):
         try:
