@@ -300,6 +300,17 @@ class PositionOffsets(unittest.TestCase):
         w.cancel.assert_called_once();w.submit.assert_not_called()
 
 class Lifecycle(unittest.TestCase):
+    def test_restart_restores_held_markets_before_the_new_round_sweep(self):
+        w=worker();w.orders=[entry()];w.exchange=Mock()
+        w.exchange.call.return_value=dict(markets=[])
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            w.discover()
+            self.assertEqual(w.exchange.call.call_args.kwargs['params']['tickers'],'t')
+            self.assertEqual(w.cycle_discovery_epoch,-1)
+            w.discover()
+            self.assertIn('max_close_ts',w.exchange.call.call_args.kwargs['params'])
+            self.assertNotIn('series_ticker',w.exchange.call.call_args.kwargs['params'])
+
     def test_round_sweep_discovers_multiple_series_and_resumes_pagination(self):
         w=worker();w.bots[0]['config']['squares'][0]['asset']='crypto'
         w.exchange=Mock()

@@ -729,6 +729,10 @@ class Worker:
         if self.pending_markets:
             pending=set(self.pending_markets)
             requests=[dict(tickers=','.join(sorted(pending)),limit=200)]
+        elif pinned and (self.discovery_turn%5==0 or not series):
+            # Restore held-market books first after a restart; entry discovery
+            # must never delay protection for existing positions.
+            requests=[dict(tickers=','.join(sorted(pinned)[:100]),limit=200)]
         elif cycle_series and (self.cycle_discovery_epoch!=epoch or self.cycle_discovery_cursor):
             # Find this round across all series in a bounded, paginated read.
             # Per-series fallback continues after this sweep completes.
@@ -737,8 +741,6 @@ class Worker:
             if self.cycle_discovery_epoch==epoch and self.cycle_discovery_cursor:
                 params['cursor']=self.cycle_discovery_cursor
             requests=[params]
-        elif pinned and (self.discovery_turn%5==0 or not series):
-            requests=[dict(tickers=','.join(sorted(pinned)[:100]),limit=200)]
         elif series:
             # Sweep multiple different 15-minute series at a time. Previously
             # a single series was queried only every 5 seconds, so 28 bots
