@@ -15,7 +15,7 @@ AGGREGATES="""count(*) AS orders,
  sum((progress->>'realized_cents')::numeric) FILTER (WHERE progress->>'status'='closed') AS recorded_pnl_cents,
  count(*) FILTER (WHERE coalesce((progress->>'reset_closed')::boolean,false) AND NOT (progress ? 'realized_cents')) AS unscored_resets"""
 
-def query_performance(pool,bot,identifier,group='square',period='all',timezone='America/Los_Angeles',start=None,end=None):
+def query_performance(pool,bot,identifier,group='square',period='all',timezone='America/Los_Angeles',start=None,end=None,revision=None):
     from zoneinfo import ZoneInfo
     if group not in ('square','time','time_price','hour') or period not in ('all',*PERIOD_HOURS):raise ValueError('Invalid performance filters')
     tz=ZoneInfo(timezone)
@@ -28,9 +28,10 @@ def query_performance(pool,bot,identifier,group='square',period='all',timezone='
     sql="""WITH base AS (SELECT parameters,progress,
         coalesce((parameters->>'created_at')::numeric,extract(epoch FROM created_at)) AS entered_at
         FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
-        AND parameters->>'kind'='entry' AND parameters->>'bot'=%s),
+        AND parameters->>'kind'='entry' AND parameters->>'bot'=%s
+        AND (%s::integer IS NULL OR coalesce((parameters->>'revision')::integer,0)=%s)),
         selected AS (SELECT * FROM base WHERE (%s::numeric IS NULL OR entered_at>=%s) AND (%s::numeric IS NULL OR entered_at>=%s) AND (%s::numeric IS NULL OR entered_at<%s))"""
-    args=[identifier,since,since,lower,lower,upper,upper]
+    args=[identifier,revision,revision,since,since,lower,lower,upper,upper]
     if group=='square':
         sql+=" SELECT parameters->'revision' AS revision,parameters->'square' AS square,parameters->'condition' AS condition,"+AGGREGATES+" FROM selected GROUP BY 1,2,3 ORDER BY 1 DESC,2,3 LIMIT 251"
     else:
@@ -92,3 +93,17 @@ def performance_rows(bot,rows):
 def time_bounds(bot):
     from services.research.reports import MINUTES
     return sorted({bound for square in bot['config']['squares'] for bound in MINUTES[square['asset']]})
+
+
+SUMMARY_PERIODS=('all','1H','6H','24H')
+
+def summary_metrics(connection,scope='TRUE',scope_args=(),now=None):
+    """One saved-order scan supplies every bot card's independent time buttons."""
+    now=time.time() if now is None else now
+    fields=["parameters->>'bot' AS bot","coalesce(sum((progress->>'realized_cents')::numeric),0) AS lifetime_pnl","count(*) AS lifetime_closed"]
+    args=[]
+    for hours in (1,6,24):
+        fields.extend([f"coalesce(sum((progress->>'realized_cents')::numeric) FILTER (WHERE (progress->>'closed_at')::numeric>=%s),0) AS pnl_{hours}",f"count(*) FILTER (WHERE (progress->>'closed_at')::numeric>=%s) AS closed_{hours}"])
+        args.extend([now-hours*3600]*2)
+    rows=connection.execute("SELECT "+','.join(fields)+" FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND parameters->>'kind'='entry' AND progress->>'status'='closed' AND progress ? 'realized_cents' AND "+scope+" GROUP BY parameters->>'bot'",[*args,*scope_args]).fetchall()
+    return {r['bot']:{'all':dict(realized_cents=int(r['lifetime_pnl']),closed=r['lifetime_closed']),**{f'{h}H':dict(realized_cents=int(r[f'pnl_{h}']),closed=r[f'closed_{h}']) for h in (1,6,24)}} for r in rows}

@@ -15,7 +15,7 @@ class PairResults(unittest.TestCase):
             @contextmanager
             def connection(self):yield connection
         page=completed_pairs(Pool(),before='cursor',bot='bot',ticker='market')
-        self.assertEqual(connection.args,('cursor','cursor','bot','bot','market','market'))
+        self.assertEqual(tuple(connection.args),('cursor','cursor','bot','bot','market','market'))
         self.assertEqual(len(page['items']),50);self.assertEqual(page['next_before'],'49')
         pair=page['items'][0]
         self.assertEqual(pair['sell_price'],7.8);self.assertEqual(pair['estimated_net_cents'],45)

@@ -11,6 +11,8 @@ class BotChanges(BotConfig):
 
 def install_demo(app,auth,mutate,pool):
     store=DemoStore(pool)
+    from .demo_versions import VersionCatalog,version_clause
+    versions=VersionCatalog(pool);app.state.demo_versions=versions
     def require_query(request,allowed=()):
         if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):raise HTTPException(422,'Invalid filters')
     def bot_get(identifier):
@@ -64,13 +66,16 @@ def install_demo(app,auth,mutate,pool):
             restored=result['restored'],resumed=result['resumed'])
     @app.get('/demo/workspace')
     def workspace(request:Request):
-        auth(request);require_query(request,('period',))
+        auth(request);require_query(request,('period','version'))
+        analysis_version=request.query_params.get('version','full')
+        try:scope,scope_args=version_clause(analysis_version,versions.load())
+        except ValueError:raise HTTPException(422,'Invalid analysis version') from None
         period=request.query_params.get('period','24H')
         if period not in PERIOD_HOURS:raise HTTPException(422,'Invalid period')
         bots=[]
         for row in store.rows('bot/',101):
             data=row['parameters'];state=row['progress']
-            bots.append(dict(id=row['id'],key=row['idempotency_key'].split('/')[-1],config=data['config'],revision=data['revision'],settings_revision=data.get('settings_revision',data['revision']),fresh_test=bool(data.get('reset_source')),**state))
+            bots.append(dict(id=row['id'],key=row['idempotency_key'].split('/')[-1],config=data['config'],revision=data['revision'],settings_revision=data.get('settings_revision',data['revision']),fresh_test=bool(data.get('reset_source')),analysis_version_info=versions.load().get(row['idempotency_key'].split('/')[-1]),**state))
         health=store.get('health');account=store.get('account');policy=store.get('policy')
         alerts=[dict(key=r['idempotency_key'].split('/')[-1],**r['progress']) for r in store.rows('alert/',30) if r['progress'].get('active')]
         reset=store.get('reset')
@@ -82,16 +87,18 @@ def install_demo(app,auth,mutate,pool):
         hours=PERIOD_HOURS[period]
         with pool.connection() as c:
             first=c.execute("SELECT progress FROM research_job WHERE idempotency_key>='demo/equity/' AND idempotency_key<'demo/equity/zzzz' AND created_at>clock_timestamp()-%s*interval '1 hour' ORDER BY created_at LIMIT 1",(hours,)).fetchone()
-            performance=c.execute("SELECT parameters->>'bot' AS bot,coalesce(sum((progress->>'realized_cents')::numeric),0) AS pnl,count(*) AS closed FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress ? 'realized_cents' AND (progress->>'closed_at')::numeric>%s GROUP BY parameters->>'bot'",(time.time()-hours*3600,)).fetchall()
+            performance=c.execute("SELECT parameters->>'bot' AS bot,coalesce(sum((progress->>'realized_cents')::numeric),0) AS pnl,count(*) AS closed FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress ? 'realized_cents' AND (progress->>'closed_at')::numeric>%s AND "+scope+" GROUP BY parameters->>'bot'",[time.time()-hours*3600,*scope_args]).fetchall()
+        from .demo_performance import summary_metrics
+        with pool.connection() as c:card_metrics=summary_metrics(c,scope,scope_args)
         metrics={r['bot']:dict(realized_cents=int(r['pnl']),closed=r['closed']) for r in performance}
         for b in bots:
-            if b.get('fresh_test'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
+            if b.get('fresh_test') or analysis_version=='latest' and b.get('analysis_version_info'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
         account_change=values['equity_cents']-first['progress']['value'] if values and first else None
         monitoring={r['idempotency_key'].split('/')[-1].split('-')[0]:r['progress'] for r in health_rows}
         return dict(contract='demo-v1',environment='demo',reset_mode='archive_copy',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
             health=status,account=values,alerts=alerts,policy=policy['progress'] if policy else Policy().model_dump(),
             connection_configured=bool(store.get('credentials') or os.environ.get('KALSHI_DEMO_API_KEY_ID')),
-            vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,account_change_cents=account_change,period=period)
+            vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,summary_metrics=card_metrics,account_change_cents=account_change,period=period,analysis_version=analysis_version)
     @app.post('/demo/bots')
     def create(body:BotConfig,request:Request):
         mutate(request);require_query(request)
@@ -129,7 +136,11 @@ def install_demo(app,auth,mutate,pool):
             from psycopg.types.json import Jsonb
             parameters=dict(parameters,config=config,revision=parameters['revision']+(0 if live_settings else 1),settings_revision=settings_revision+1)
             c.execute('UPDATE research_job SET parameters=%s WHERE idempotency_key=%s',(Jsonb(parameters),'demo/bot/'+str(identifier)))
-        store.event('bot_updated',config['name']+' configuration updated',bot=str(identifier))
+        store.event('bot_updated',config['name']+' configuration updated',bot=str(identifier),details=dict(
+            rule_revision_changed=not live_settings,revision=parameters['revision'],settings_revision=parameters['settings_revision'],changed_fields=sorted(changed),
+            old_cycle_buy_cents=old.get('cycle_buy_cents'),old_cycle_sell_cents=old.get('cycle_sell_cents'),
+            cycle_buy_cents=config.get('cycle_buy_cents'),cycle_sell_cents=config.get('cycle_sell_cents')))
+        versions.invalidate()
         return dict(contract='demo-v1',updated=True)
     @app.post('/demo/bots/{identifier}/control')
     def control(identifier:UUID,body:Controls,request:Request):
@@ -171,7 +182,7 @@ def install_demo(app,auth,mutate,pool):
         return dict(contract='demo-v1',accepted=True,count=len(rows))
     @app.get('/demo/activity')
     def activity(request:Request):
-        auth(request);require_query(request,('before','bot','ticker','kind'))
+        auth(request);require_query(request,('before','bot','ticker','kind','version'))
         before=request.query_params.get('before');bot=request.query_params.get('bot');ticker=request.query_params.get('ticker');kind=request.query_params.get('kind')
         try:
             if before:UUID(before)
@@ -185,6 +196,10 @@ def install_demo(app,auth,mutate,pool):
             if len(selected)>20 or any(not re.fullmatch('[a-z_]{1,40}',part) for part in selected):raise HTTPException(422,'Invalid activity types')
             transactions=['order_intent','order','order_rejected','order_uncertain','fill','fill_recovered','cancel','settlement','realized','position_offset']
             kinds=list(dict.fromkeys(k for part in selected for k in (transactions if part=='transactions' else [part])))
+        analysis_version=request.query_params.get('version','full')
+        if analysis_version not in ('full','latest'):raise HTTPException(422,'Invalid analysis version')
+        from .demo_versions import activity_version_clause
+        activity_scope,activity_args=activity_version_clause(analysis_version,versions.load())
         with pool.connection() as c:
             rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
                 WHERE status='succeeded' AND idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
@@ -192,11 +207,11 @@ def install_demo(app,auth,mutate,pool):
                 AND (%s::text IS NULL OR parameters->>'bot'=%s)
                 AND (%s::text IS NULL OR parameters->>'ticker'=%s)
                 AND (%s::text[] IS NULL OR parameters->>'kind'=ANY(%s::text[]))
-                ORDER BY created_at DESC,id DESC LIMIT 51""",(before,before,bot,bot,ticker,ticker,kinds,kinds)).fetchall()
+                AND """+activity_scope+""" ORDER BY created_at DESC,id DESC LIMIT 51""",[before,before,bot,bot,ticker,ticker,kinds,kinds,*activity_args]).fetchall()
         return dict(contract='demo-v1',items=[{'id':r['id'],**r['parameters'],**r['progress']} for r in rows[:50]],next_before=rows[49]['id'] if len(rows)>50 else None)
     @app.get('/demo/orders')
     def orders(request:Request):
-        auth(request);require_query(request,('client_id','completed','before','bot','ticker'))
+        auth(request);require_query(request,('client_id','completed','before','bot','ticker','version'))
         if request.query_params.get('completed')=='true':
             if 'client_id' in request.query_params:raise HTTPException(422,'Choose one order view')
             before=request.query_params.get('before') or None;bot=request.query_params.get('bot') or None;ticker=request.query_params.get('ticker') or None
@@ -206,7 +221,9 @@ def install_demo(app,auth,mutate,pool):
             except ValueError:raise HTTPException(422,'Invalid identifier') from None
             if ticker and len(ticker)>256:raise HTTPException(422,'Invalid market')
             from .demo_pairs import completed_pairs
-            return completed_pairs(pool,before,bot,ticker)
+            analysis_version=request.query_params.get('version','full')
+            if analysis_version not in ('full','latest'):raise HTTPException(422,'Invalid analysis version')
+            return completed_pairs(pool,before,bot,ticker,analysis_version,versions.load())
         if any(k!='client_id' for k in request.query_params):raise HTTPException(422,'Invalid filters')
         if 'client_id' not in request.query_params:return dict(contract='demo-v1',items=store.active_orders())
         try:identifier=str(UUID(request.query_params['client_id']))
@@ -251,15 +268,18 @@ def install_demo(app,auth,mutate,pool):
         return dict(contract='demo-v1',points=points[::step],period=period)
     @app.get('/demo/performance')
     def square_performance(request:Request):
-        auth(request);require_query(request,('bot','group','period','timezone','start','end'))
+        auth(request);require_query(request,('bot','group','period','timezone','start','end','version'))
         try:identifier=str(UUID(request.query_params.get('bot','')))
         except ValueError:raise HTTPException(422,'Choose a bot') from None
         bot=bot_get(identifier)
         group=request.query_params.get('group','square');period=request.query_params.get('period','all');zone=request.query_params.get('timezone','America/Los_Angeles')
         from .demo_performance import query_performance,time_bounds
-        try:items,limited=query_performance(pool,bot['parameters'],identifier,group,period,zone,request.query_params.get('start') or None,request.query_params.get('end') or None)
+        analysis_version=request.query_params.get('version','full')
+        if analysis_version not in ('full','latest'):raise HTTPException(422,'Invalid analysis version')
+        cohort=versions.load().get(identifier) if analysis_version=='latest' else None
+        try:items,limited=query_performance(pool,bot['parameters'],identifier,group,period,zone,request.query_params.get('start') or None,request.query_params.get('end') or None,revision=cohort['revision'] if cohort else None)
         except (ValueError,KeyError,OverflowError):raise HTTPException(422,'Invalid performance filters') from None
-        return dict(contract='demo-v1',bot=identifier,period='Lifetime' if period=='all' else period,group=group,timezone=zone,time_bounds=time_bounds(bot['parameters']),default_entry_price=bot['parameters']['config'].get('cycle_buy_cents'),start=request.query_params.get('start'),end=request.query_params.get('end'),items=items,limited=limited,at=time.time())
+        return dict(contract='demo-v1',bot=identifier,analysis_version=analysis_version,analysis_version_info=cohort,period='Lifetime' if period=='all' else period,group=group,timezone=zone,time_bounds=time_bounds(bot['parameters']),default_entry_price=bot['parameters']['config'].get('cycle_buy_cents'),start=request.query_params.get('start'),end=request.query_params.get('end'),items=items,limited=limited,at=time.time())
     @app.get('/demo/research')
     def research(request:Request):
         auth(request);require_query(request,('asset','bot','start','end'))

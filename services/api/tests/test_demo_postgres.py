@@ -93,6 +93,69 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(self.client.get('/demo/orders?completed=true&client_id='+completed).status_code,422)
         self.client.cookies.clear();self.assertEqual(self.client.get('/demo/orders?completed=true').status_code,401)
 
+    def test_latest_analysis_excludes_old_lots_and_follows_subsequent_rule_changes(self):
+        import time
+        from uuid import uuid4
+        now=time.time()
+        self.demo.put('health',dict(state='ready',at=now,features=['buy_low_sell_high_v1','editable_rules_v1']))
+        cfg=config(strategy='buy_low_sell_high',cycle_buy_cents=3,cycle_sell_cents=9)
+        bot=self.client.post('/demo/bots',json=cfg).json()['id']
+        def lot(revision,price,target,realized,entered):
+            buy=str(uuid4());sell=str(uuid4())
+            self.demo.put('order/'+buy,dict(status='closed',filled=1,remaining=0,realized_cents=realized,closed_at=now+5),parameters=dict(client_id=buy,kind='entry',entry_strategy='buy_low_sell_high',bot=bot,ticker='T',side='yes',revision=revision,square=0,price=price,profit_target_cents=target,created_at=entered,market_close_at=entered+600))
+            self.demo.put('order/'+sell,dict(status='closed',filled=1,remaining=0),parameters=dict(client_id=sell,parent=buy,kind='exit',bot=bot,ticker='T',side='yes',price=target))
+            return buy,sell
+        old,old_sell=lot(1,3,9,100,now-3600)
+        cfg['cycle_sell_cents']=6
+        changed=self.client.post('/demo/bots/'+bot+'/configure',json=cfg)
+        self.assertEqual(changed.status_code,200,changed.text)
+        new,new_sell=lot(2,1,4,10,now+1) # Maker retry shifts both prices, preserving the new spread.
+        for client in (old,old_sell,new,new_sell):self.demo.event('fill','Filled',bot=bot,ticker='T',details=dict(client_id=client))
+        full=self.client.get('/demo/workspace?period=24H&version=full').json()
+        v2=self.client.get('/demo/workspace?period=24H&version=latest').json()
+        self.assertEqual(full['metrics'][bot]['realized_cents'],110)
+        self.assertEqual(v2['metrics'][bot]['realized_cents'],10)
+        info=v2['bots'][0]['analysis_version_info'];self.assertEqual(info['revision'],2);self.assertEqual(info['evidence'],'saved_settings_event')
+        self.assertIsNotNone(info['changed_at'])
+        performance=self.client.get('/demo/performance?bot='+bot+'&version=latest').json()
+        self.assertEqual(sum(r['recorded_pnl_cents'] or 0 for r in performance['items']),10)
+        self.assertEqual(self.client.get('/demo/performance?bot='+bot+'&version=bad').status_code,422)
+        events=self.client.get('/demo/activity?bot='+bot+'&kind=fill&version=latest').json()['items']
+        self.assertEqual({r['details']['client_id'] for r in events},{new,new_sell})
+        pairs=self.client.get('/demo/orders?completed=true&bot='+bot+'&version=latest').json()['items']
+        self.assertEqual([r['entry']['client_id'] for r in pairs],[new])
+        all_pairs=self.client.get('/demo/orders?completed=true&bot='+bot+'&version=full').json()['items']
+        self.assertEqual(len(all_pairs),2)
+        # Another edit must select revision 3, even before it has traded.
+        cfg['cycle_sell_cents']=5
+        changed=self.client.post('/demo/bots/'+bot+'/configure',json=cfg)
+        self.assertEqual(changed.status_code,200,changed.text)
+        empty=self.client.get('/demo/workspace?period=24H&version=latest').json()
+        self.assertEqual(empty['metrics'][bot]['realized_cents'],0)
+        self.assertEqual(empty['bots'][0]['analysis_version_info']['revision'],3)
+        third,_=lot(3,2,5,7,now+2)
+        self.client.app.state.demo_versions.invalidate()
+        latest=self.client.get('/demo/workspace?period=24H&version=latest').json()
+        self.assertEqual(latest['metrics'][bot]['realized_cents'],7)
+        recent_pairs=self.client.get('/demo/orders?completed=true&bot='+bot+'&version=latest').json()['items']
+        self.assertEqual([r['entry']['client_id'] for r in recent_pairs],[third])
+
+    def test_bot_summary_periods_keep_version_lifetime_separate_from_hour_windows(self):
+        import time
+        from uuid import uuid4
+        now=time.time();cfg=config()
+        bot=self.client.post('/demo/bots',json=cfg).json()['id']
+        self.demo.put('bot/'+bot,dict(desired='paused'),parameters=dict(config=cfg,revision=2))
+        for revision,hours,pnl in [(1,.1,100),(2,26,1),(2,23,2),(2,5,4),(2,.5,8)]:
+            key=str(uuid4());closed=now-hours*3600
+            self.demo.put('order/'+key,dict(status='closed',filled=1,remaining=0,realized_cents=pnl,closed_at=closed),parameters=dict(client_id=key,kind='entry',bot=bot,revision=revision,price=3,created_at=closed-60))
+        response=self.client.get('/demo/workspace?period=24H&version=latest')
+        self.assertEqual(response.status_code,200,response.text)
+        periods=response.json()['summary_metrics'][bot]
+        self.assertEqual({k:v['realized_cents'] for k,v in periods.items()},{'all':15,'1H':8,'6H':12,'24H':14})
+        full=self.client.get('/demo/workspace?period=24H&version=full').json()['summary_metrics'][bot]
+        self.assertEqual({k:v['realized_cents'] for k,v in full.items()},{'all':115,'1H':108,'6H':112,'24H':114})
+
     def test_activity_combines_event_types_without_crossing_bot_or_market_filters(self):
         from uuid import uuid4
         daily=str(uuid4());sports=str(uuid4())

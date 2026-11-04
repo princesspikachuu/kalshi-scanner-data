@@ -54,7 +54,13 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
     store=store or PostgresStore(settings.database_url,require_runtime_db=settings.require_runtime_db)
     @asynccontextmanager
     async def lifespan(app):
-        if owned: store.open()
+        if owned:
+            store.open()
+            # Read-only startup inventory makes recovered analysis boundaries observable.
+            try:
+                from starlette.concurrency import run_in_threadpool
+                await run_in_threadpool(app.state.demo_versions.load)
+            except Exception:print('{"event":"demo_analysis_versions_unavailable"}',flush=True)
         try: yield
         finally:
             if owned:store.close()

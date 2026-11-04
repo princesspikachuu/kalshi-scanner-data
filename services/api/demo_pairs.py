@@ -1,6 +1,8 @@
 """Completed round trips from durable parent-linked exchange order checks."""
 
-def completed_pairs(pool, before=None, bot=None, ticker=None):
+def completed_pairs(pool, before=None, bot=None, ticker=None,version="full",versions=None):
+    from .demo_versions import version_clause
+    scope,args=version_clause(version,versions or {},"b.")
     with pool.connection() as c:
         rows = c.execute("""
             WITH sells AS (
@@ -31,8 +33,8 @@ def completed_pairs(pool, before=None, bot=None, ticker=None):
                 AND (%s::uuid IS NULL OR (b.finished_at,b.id)<(SELECT finished_at,id FROM research_job WHERE id=%s::uuid))
                 AND (%s::text IS NULL OR b.parameters->>'bot'=%s)
                 AND (%s::text IS NULL OR b.parameters->>'ticker'=%s)
-            ORDER BY b.finished_at DESC,b.id DESC LIMIT 51
-        """, (before,before,bot,bot,ticker,ticker)).fetchall()
+            AND """+scope+""" ORDER BY b.finished_at DESC,b.id DESC LIMIT 51
+        """, [before,before,bot,bot,ticker,ticker,*args]).fetchall()
     items=[]
     for row in rows[:50]:
         entry=dict(row['parameters'],**row['progress'])
