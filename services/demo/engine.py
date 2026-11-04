@@ -142,4 +142,4 @@ def wire_order(intent):
     return dict(ticker=intent['ticker'],client_order_id=intent['client_id'],side=book,
         count=f"{intent['quantity']:.2f}",price=f'{price/100:.4f}',
         time_in_force='good_till_canceled',expiration_time=int(intent['close']),exchange_index=intent.get('exchange_index',-1),
-        self_trade_prevention_type='taker_at_cross',post_only=intent.get('exit_role')!='profit',cancel_order_on_pause=True)
+        self_trade_prevention_type='taker_at_cross',post_only=True,cancel_order_on_pause=True)

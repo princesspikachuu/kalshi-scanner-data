@@ -34,6 +34,17 @@ class DemoStore:
                 AND progress->>'status' NOT IN ('closed','rejected') LIMIT 501""").fetchall()
         if len(rows)>500:raise RuntimeError('Order reconciliation capacity reached')
         return [dict(r['parameters'],**r['progress']) for r in rows]
+    def filled_cycle_sides(self,tickers):
+        """Closed entries still determine direction for the rest of their round."""
+        if not tickers:return {}
+        with self.pool.connection() as c:
+            rows=c.execute("""SELECT parameters->>'ticker' AS ticker,
+                array_agg(DISTINCT parameters->>'side') AS sides FROM research_job
+                WHERE idempotency_key >= 'demo/order/' AND idempotency_key < 'demo/order/zzzz'
+                AND parameters->>'ticker'=ANY(%s) AND parameters->>'kind'='entry'
+                AND parameters->>'entry_strategy'='buy_low_sell_high'
+                AND COALESCE((progress->>'filled')::numeric,0)>0 GROUP BY 1""",(sorted(tickers),)).fetchall()
+        return {r['ticker']:r['sides'][0] if len(r['sides'])==1 else 'both' for r in rows}
     def alert(self,key,message,critical=False):
         previous=self.get('alert/'+key)
         if previous and previous['progress'].get('active') and previous['progress'].get('message')==message:return

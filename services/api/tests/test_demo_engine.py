@@ -121,6 +121,14 @@ class FakeStore:
     def __init__(self):self.saved=[];self.events=[]
     def put(self,key,data,parameters=None):self.saved.append((key,data,parameters))
     def event(self,kind,message,**kw):self.events.append(kind)
+    def filled_cycle_sides(self,tickers):
+        result={}
+        for key,state,params in self.saved:
+            if not key.startswith('order/') or not params or params.get('ticker') not in tickers:continue
+            if params.get('kind')!='entry' or params.get('entry_strategy')!='buy_low_sell_high' or state.get('filled',0)<=0:continue
+            ticker=params['ticker'];side=params['side'];prior=result.get(ticker)
+            result[ticker]=side if prior in (None,side) else 'both'
+        return result
 class WorkerRecovery(unittest.TestCase):
     def test_history_reconciliation_ignores_unrelated_account_churn(self):
         class Ex(Exchange):

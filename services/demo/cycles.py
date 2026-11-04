@@ -31,14 +31,16 @@ def sell_floor(side,orders):
         and o.get('entry_strategy')==STRATEGY and not o.get('exit_triggered'))
     return min(prices,default=100)
 
-def park_reason(order,orders):
+def park_reason(order,orders,locked_side=None):
     if order.get('kind')!='entry' or order.get('entry_strategy')!=STRATEGY or order.get('remaining',0)<=0:return None
+    if locked_side and locked_side!=order['side']:return 'side_lock'
     if any(active(o) and held(o) and o['side']!=order['side'] for o in orders):return 'opposite_inventory'
     if order['price']>=sell_floor(order['side'],orders):return 'self_trade'
     return None
 
-def entry_block_reason(item,orders,netting=False):
+def entry_block_reason(item,orders,netting=False,locked_side=None):
     """Shared lots retain parent ownership; only incompatible orders wait."""
+    if locked_side and locked_side!=item['side']:return 'side_lock'
     rows=[o for o in orders if active(o)]
     if netting:return 'netting'
     if any(o.get('status') in ('intent','uncertain','cancel_pending') for o in rows):return 'verification'
@@ -83,7 +85,7 @@ def eligible(config,square,quote,now):
     return (quote.get('status')=='active' and quote['series'] in SERIES[square['asset']]
         and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-buy_entry_cutoff(config)*60)
 
-def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None,fair_running_count=1):
+def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None,fair_running_count=1,cycle_locks=None):
     from collections import Counter
     from .engine import side_quote,entry_protection_matches,quantity
     from .engine import fair_budget_config
@@ -106,7 +108,7 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,
             state=states.get(bot['id'],{}).get(f'{ticker}/{index}/{side}',{})
             price=state.get('retry_buy_cents',config['cycle_buy_cents'])
             item=dict(bot=bot['id'],side=side,price=price)
-            reason=entry_block_reason(item,rows,ticker in netting)
+            reason=entry_block_reason(item,rows,ticker in netting,(cycle_locks or {}).get(ticker))
             if not reason and state.get('submitted'):reason='complete'
             if not reason and not retry_ready(state.get('price_retry'),q,now):reason='price_retry'
             if not reason and ticker in blocked:reason='verification'
@@ -124,7 +126,7 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,
     own=[o for o in live if o['bot']==bot['id']]
     lows=sum(o['kind']=='entry' and o.get('remaining',0)>0 for o in own)
     highs=sum(o.get('exit_role')=='profit' and o.get('remaining',0)>0 for o in own)
-    labels=dict(verification='verifying current orders',other_strategy='another strategy owns this market',
+    labels=dict(side_lock='first filled side is locked for this round',verification='verifying current orders',other_strategy='another strategy owns this market',
         opposite_inventory='waiting for opposite-side positions to close',self_trade='would cross your own sell',netting='reconciling offsetting fills',
         budget='insufficient available funds or allocation',price_retry='waiting for a fresh quote to retry',protection='protective exit is active',
         maker='buy price would cross the current ask',stop='loss prevention blocks entry',capacity='order tracking limit reached',

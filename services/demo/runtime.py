@@ -53,7 +53,7 @@ class Worker:
         self.stream_outage_since=None;self.stream_disconnect_count=0;self.stream_recovery_count=0
         self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
         self.stream_event_revision=0;self.rest_feed_drains=0;self.rest_feed_messages=0
-        self.last_entry_bot=None
+        self.last_entry_bot=None;self.cycle_locks={}
         if isinstance(self.exchange,Exchange):self.exchange.before_read=self.drain_stream_during_read
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote,fair_budget_config
@@ -65,7 +65,7 @@ class Worker:
             if config.get('strategy')=='buy_low_sell_high':
                 from .cycles import diagnostics
                 summary[bot['id']]=diagnostics(bot,self.quotes,self.states,self.orders,now,self.blocked,self.netting_pending,self.account,self.recovered,
-                    daily_reason=self.daily_guard(bot,now),funding_waits=getattr(self.funding,'waits',{}),fair_running_count=running_count)
+                    daily_reason=self.daily_guard(bot,now),funding_waits=getattr(self.funding,'waits',{}),fair_running_count=running_count,cycle_locks=self.cycle_locks)
                 if config.get('daily_loss_percent') is not None:summary[bot['id']]['daily_risk']=dict(limit_percent=config['daily_loss_percent'],pnl_cents=self.daily_pnl.get(bot['id']))
                 continue
             market_exposure={};bot_exposure=0;exit_waiting=None
@@ -235,6 +235,7 @@ class Worker:
                     qualification=config['qualification'],price_reference=config['price_reference'],
                     adjustment_cents=config['adjustment_cents'],maximum_cents=config.get('maximum_cents'),minimum_cents=config.get('minimum_cents'))),flush=True)
         self.orders=self.store.active_orders()
+        self.refresh_cycle_locks()
         active={o['client_id'] for o in self.orders}
         self.order_cache={k:v for k,v in self.order_cache.items() if k in active}
         if any(b['config'].get('daily_loss_percent') is not None and b['id'] not in self.daily_pnl for b in self.bots):self.last_reconcile=0
@@ -299,7 +300,16 @@ class Worker:
             previous_price_cents=order['price'],retry_price_cents=(prices[0] if order['kind']=='entry' else prices[1]) if prices else None,
             profit_target_cents=prices[1] if prices else None)
         return True
+    def refresh_cycle_locks(self):
+        tickers=set(self.quotes)|{o['ticker'] for o in self.orders}
+        self.cycle_locks=self.store.filled_cycle_sides(tickers)
+        for order in self.orders:self.remember_cycle_side(order)
+    def remember_cycle_side(self,order):
+        if order.get('kind')!='entry' or order.get('entry_strategy')!='buy_low_sell_high' or order.get('filled',0)<=0:return
+        ticker=order['ticker'];prior=self.cycle_locks.get(ticker)
+        self.cycle_locks[ticker]=order['side'] if prior in (None,order['side']) else 'both'
     def save_order(self,order):
+        self.remember_cycle_side(order)
         data={k:v for k,v in order.items() if k not in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
         state={k:v for k,v in order.items() if k in ('status','filled','remaining','fees','exchange_id','closed_at','realized_cents')}
         packed=json.dumps([data,state],sort_keys=True)
@@ -728,6 +738,7 @@ class Worker:
         from .watchlist import select_markets
         eligible={t:q for t,q in self.quotes.items() if t in pinned or q['series'] in series}
         self.quotes=select_markets(eligible,pinned,now,cycle_series=cycle_series)
+        self.refresh_cycle_locks()
         self.maker_retries={t:r for t,r in self.maker_retries.items() if t in self.quotes}
         self.last_discovered={t:v for t,v in self.last_discovered.items() if t in self.quotes}
         self.last_discovery=now;self.discovery_turn+=1
@@ -974,6 +985,7 @@ class Worker:
             self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
     def trade(self):
         now=time.time();bots={b['id']:b for b in self.bots}
+        for order in self.orders:self.remember_cycle_side(order)
         # Hard safety deadline: handle every outstanding low buy before new
         # entries or profit-sell scheduling. Keep filled lots and their sells.
         from .cycles import buy_cancel_deadline
@@ -994,9 +1006,9 @@ class Worker:
         for order in self.orders:market_orders.setdefault(order['ticker'],[]).append(order)
         for order in self.orders:
             if order.get('status')=='cancel_pending' or (order.get('cancel_404_at') and now-order['cancel_404_at']<30):continue
-            reason=park_reason(order,market_orders[order['ticker']])
+            reason=park_reason(order,market_orders[order['ticker']],self.cycle_locks.get(order['ticker']))
             if reason:
-                self.park_cycle_entry(order,'Parking opposite low bid while filled inventory has a profit sell' if reason=='opposite_inventory' else 'Parking a low bid that would cross a bot profit sell')
+                self.park_cycle_entry(order,'Canceling a low bid outside the first filled side for this round' if reason=='side_lock' else 'Parking opposite low bid while filled inventory has a profit sell' if reason=='opposite_inventory' else 'Parking a low bid that would cross a bot profit sell')
                 return
         exiting={o['ticker'] for o in self.orders if o.get('status') not in ('closed','rejected') and
             (o.get('kind')=='exit' and o.get('exit_role')!='profit' or o.get('kind')=='entry' and o.get('exit_triggered') and o.get('filled',0)>o.get('sold',0))}
@@ -1085,38 +1097,43 @@ class Worker:
         # within their own slots; fairness must not override ranked strategies.
         cycle_bots={id for id,b in bots.items() if b['config'].get('strategy')=='buy_low_sell_high'}
         market_cost={};bot_cost={}
-        if options:
-            for order in self.orders:
-                if order['kind']=='entry':
-                    cost=(order.get('remaining',0)+max(0,order.get('filled',0)-order.get('sold',0)))*order['price']
-                    market_cost[order['ticker']]=market_cost.get(order['ticker'],0)+cost
-                    bot_cost[order['bot']]=bot_cost.get(order['bot'],0)+cost
+        for order in self.orders:
+            if order['kind']=='entry':
+                cost=(order.get('remaining',0)+max(0,order.get('filled',0)-order.get('sold',0)))*order['price']
+                market_cost[order['ticker']]=market_cost.get(order['ticker'],0)+cost
+                bot_cost[order['bot']]=bot_cost.get(order['bot'],0)+cost
         cycle_queue=iter(fair_order_candidates([i for i in options if i['bot'] in cycle_bots],self.last_entry_bot,bot_cost))
         options=[next(cycle_queue) if i['bot'] in cycle_bots else i for i in options]
         equity=self.account['equity_cents']
         needs_coverage=any(i['bot'] in cycle_bots and not self.daily_guard(bots[i['bot']],now)
             and bot_cost.get(i['bot'],0)<cycle_tranche(fair_configs[i['bot']],equity,running_count)/2
-            and not entry_block_reason(i,market_orders.get(i['ticker'],[]),i['ticker'] in self.netting_pending)
+            and not entry_block_reason(i,market_orders.get(i['ticker'],[]),i['ticker'] in self.netting_pending,self.cycle_locks.get(i['ticker']))
             for i in options)
         # Rebalancing yields entry slots between cancellations. Otherwise many
         # oversized historical bids could monopolize every trade pass.
-        if running_count>1 and needs_coverage and now-getattr(self,'last_allocation_cancel',0)>=30:
+        if now-getattr(self,'last_allocation_cancel',0)>=30:
             for order in sorted(self.orders,key=lambda o:o.get('remaining',0)*o.get('price',0),reverse=True):
                 if (order.get('entry_strategy')!='buy_low_sell_high' or order.get('kind')!='entry'
                     or order.get('status')!='resting' or order.get('remaining',0)<=0
                     or order['ticker'] in self.blocked or order.get('exit_triggered')
                     or now-order.get('cancel_404_at',0)<30 or order['bot'] not in cycle_bots):continue
                 tranche=cycle_tranche(fair_configs[order['bot']],equity,running_count)
-                if order['remaining']*order['price']>max(order['price'],tranche*1.25):
+                reserved=order['remaining']*order['price']
+                allowed=quantity(fair_configs[order['bot']],order['price'],equity,
+                    self.account['cash_cents']+reserved,
+                    max(0,market_cost.get(order['ticker'],0)-reserved),
+                    max(0,bot_cost.get(order['bot'],0)-reserved))
+                over_cap=order['remaining']>allowed
+                if over_cap or (running_count>1 and needs_coverage and reserved>max(order['price'],tranche*1.25)):
                     order['allocation_rearm']=True;self.save_order(order)
-                    self.cancel(order,'Redistributing an oversized unfilled bid so more eligible bots can trade')
+                    self.cancel(order,'Resizing an unfilled bid to current spending limits' if over_cap else 'Redistributing an oversized unfilled bid so more eligible bots can trade')
                     self.last_allocation_cancel=now
                     return
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
         for item in options:
             config=fair_configs[item['bot']]
-            if config.get('strategy')=='buy_low_sell_high' and not self.daily_guard(bots[item['bot']],now) and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):
+            if config.get('strategy')=='buy_low_sell_high' and not self.daily_guard(bots[item['bot']],now) and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending,self.cycle_locks.get(item['ticker'])):
                 if quantity(config,item['price'],equity,cash,market_cost.get(item['ticker'],0),bot_cost.get(item['bot'],0))>0:
                     peers.setdefault(item['ticker'],[]).append(item)
         for item in options:
@@ -1128,7 +1145,7 @@ class Worker:
             active_entries=[o for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'] and o['status'] not in ('closed','rejected')]
             if item['ticker'] in self.netting_pending:continue
             if is_cycle:
-                if entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending):continue
+                if entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending,self.cycle_locks.get(item['ticker'])):continue
             else:
                 if any(o.get('entry_strategy')=='buy_low_sell_high' for o in active_entries):continue
                 if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue
@@ -1151,7 +1168,7 @@ class Worker:
                     underserved={p['bot'] for p in options if p['bot'] in cycle_bots
                         and self.quotes[p['ticker']].get('exchange_index',0)==shard
                         and bot_cost.get(p['bot'],0)<=exposure
-                        and not entry_block_reason(p,market_orders.get(p['ticker'],[]),p['ticker'] in self.netting_pending)
+                        and not entry_block_reason(p,market_orders.get(p['ticker'],[]),p['ticker'] in self.netting_pending,self.cycle_locks.get(p['ticker']))
                         and not self.daily_guard(bots[p['bot']],now)}
                     amount=min(amount,max(1,int(local_cash/max(1,len(underserved))/item['price'])))
             target=amount*item['price'] if is_cycle else max(amount*item['price'],equity*config['bot_percent']/100-exposure)

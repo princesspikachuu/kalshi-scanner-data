@@ -26,6 +26,13 @@ class DemoPostgres(unittest.TestCase):
         challenge=self.client.get('/auth/challenge').json();self.client.post('/auth/google',json=dict(credential='opaque',nonce=challenge['nonce'],csrf_token=challenge['csrf_token']))
         self.client.headers['x-csrf-token']=self.client.cookies[CSRF]
     def tearDown(self):self.client.close()
+    def test_cycle_direction_uses_closed_fills_and_all_bot_revisions(self):
+        for key,ticker,side,filled,kind in [('yes','t','yes',2,'entry'),('zero','t','no',0,'entry'),
+                ('exit','t','no',3,'exit'),('both-yes','both','yes',1,'entry'),('both-no','both','no',1,'entry')]:
+            self.demo.put('order/'+key,dict(status='closed',filled=filled,remaining=0),
+                parameters=dict(ticker=ticker,side=side,kind=kind,entry_strategy='buy_low_sell_high',revision=1))
+        self.assertEqual(self.demo.filled_cycle_sides({'t','both','new'}),{'t':'yes','both':'both'})
+        self.assertEqual(self.demo.filled_cycle_sides(set()),{})
     def test_multi_square_bot_revision_and_archive_without_history_mutation(self):
         body=config();body['squares'].append(dict(body['squares'][0],min_price=80,max_price=89))
         result=self.client.post('/demo/bots',json=body);self.assertEqual(result.status_code,200,result.text);identifier=result.json()['id']

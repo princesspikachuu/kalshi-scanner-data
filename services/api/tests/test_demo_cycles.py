@@ -261,7 +261,7 @@ class ProfitSells(unittest.TestCase):
         w.submit.reset_mock();parent['filled']=3
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
         w.submit.assert_not_called()
-        payload=wire_order(sell);self.assertFalse(payload['post_only']);self.assertEqual(payload['price'],'0.2000')
+        payload=wire_order(sell);self.assertTrue(payload['post_only']);self.assertEqual(payload['price'],'0.2000')
     def test_profit_sell_does_not_chase_price_and_stop_cancels_it_first(self):
         w=worker();w.states={'bot-1':{'t/0/no':dict(cycle=1,submitted=True,first_at=NOW)}};parent=entry(filled=3,remaining=0);sell=dict(parent,client_id='high',kind='exit',parent='low',exit_role='profit',price=20,filled=0,remaining=3)
         w.orders=[parent,sell];w.cancel=Mock()
@@ -503,3 +503,56 @@ class CrossBotCapitalFairness(unittest.TestCase):
         w.bots=[low,normal]
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
         self.assertEqual(w.submit.call_args.args[0]['bot'],'z-normal')
+
+
+class PermanentCycleDirection(unittest.TestCase):
+    def test_closed_entry_locks_direction_across_restart_and_revision_change(self):
+        w=worker();closed=entry(status='closed',filled=10,sold=10,remaining=0)
+        w.save_order(closed)
+        restarted=Worker(w.store,object(),threading.Event(),lambda:None)
+        restarted.quotes={'t':book()};restarted.bots=[dict(bot(),revision=2)]
+        restarted.refresh_cycle_locks()
+        self.assertEqual(restarted.cycle_locks,{'t':'yes'})
+        opposite=dict(bot='bot-1',side='no',price=10)
+        self.assertEqual(entry_block_reason(opposite,[],locked_side=restarted.cycle_locks['t']),'side_lock')
+        self.assertIsNone(entry_block_reason(dict(opposite,side='yes'),[],locked_side='yes'))
+        self.assertEqual(park_reason(entry(side='no'),[],locked_side='yes'),'side_lock')
+    def test_legacy_both_side_fills_block_entries_and_keep_exit_inventory(self):
+        w=worker();w.save_order(entry(filled=2,remaining=0))
+        w.save_order(entry(client_id='other',side='no',filled=1,remaining=0))
+        w.refresh_cycle_locks();self.assertEqual(w.cycle_locks['t'],'both')
+        for side in ('yes','no'):
+            self.assertEqual(entry_block_reason(dict(side=side),[],locked_side='both'),'side_lock')
+        self.assertEqual(w.store.saved[-1][1]['filled'],1)
+    def test_no_opposite_submission_after_full_exit(self):
+        w=worker();w.cycle_locks={'t':'yes'}
+        w.states={'bot-1':{'t/0/yes':dict(cycle=1,submitted=True)}}
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.submit.assert_not_called()
+    def test_new_round_does_not_inherit_previous_round_direction(self):
+        w=worker();w.save_order(entry(status='closed',filled=1,remaining=0))
+        w.quotes={'next':book()};w.refresh_cycle_locks()
+        self.assertNotIn('next',w.cycle_locks)
+
+class SpendingLimitResizing(unittest.TestCase):
+    def test_lower_bid_cap_resizes_existing_order_without_empty_peers(self):
+        w=worker();w.bots=[bot(bid_percent=.5,market_percent=100,bot_percent=100)]
+        w.orders=[entry(quantity=100,remaining=100)]
+        w.states={'bot-1':{f't/0/{side}':dict(cycle=1,submitted=True) for side in ('yes','no')}}
+        w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertTrue(w.orders[0]['allocation_rearm']);w.cancel.assert_called_once()
+        self.assertIn('current spending limits',w.cancel.call_args.args[1]);w.submit.assert_not_called()
+    def test_bot_limit_counts_other_reserved_bids_even_without_candidates(self):
+        w=worker();w.bots=[bot(bid_percent=100,market_percent=100,bot_percent=10)]
+        w.orders=[entry(quantity=60,remaining=60),entry(client_id='other',ticker='other',quantity=60,remaining=60)]
+        w.states={'bot-1':{f't/0/{side}':dict(cycle=1,submitted=True) for side in ('yes','no')}}
+        w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.cancel.assert_called_once()
+    def test_partial_fill_is_preserved_when_canceling_oversized_remainder(self):
+        w=worker();w.bots=[bot(bid_percent=.5,market_percent=100,bot_percent=100)]
+        o=entry(quantity=100,remaining=90,filled=10);w.orders=[o]
+        w.profit_sell=Mock(return_value=False);w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.cancel.assert_called_once();self.assertEqual(o['filled'],10);self.assertEqual(o['sold'],0)
