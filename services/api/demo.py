@@ -196,7 +196,18 @@ def install_demo(app,auth,mutate,pool):
         return dict(contract='demo-v1',items=[{'id':r['id'],**r['parameters'],**r['progress']} for r in rows[:50]],next_before=rows[49]['id'] if len(rows)>50 else None)
     @app.get('/demo/orders')
     def orders(request:Request):
-        auth(request);require_query(request,('client_id',))
+        auth(request);require_query(request,('client_id','completed','before','bot','ticker'))
+        if request.query_params.get('completed')=='true':
+            if 'client_id' in request.query_params:raise HTTPException(422,'Choose one order view')
+            before=request.query_params.get('before') or None;bot=request.query_params.get('bot') or None;ticker=request.query_params.get('ticker') or None
+            try:
+                if before:UUID(before)
+                if bot:UUID(bot)
+            except ValueError:raise HTTPException(422,'Invalid identifier') from None
+            if ticker and len(ticker)>256:raise HTTPException(422,'Invalid market')
+            from .demo_pairs import completed_pairs
+            return completed_pairs(pool,before,bot,ticker)
+        if any(k!='client_id' for k in request.query_params):raise HTTPException(422,'Invalid filters')
         if 'client_id' not in request.query_params:return dict(contract='demo-v1',items=store.active_orders())
         try:identifier=str(UUID(request.query_params['client_id']))
         except ValueError:raise HTTPException(422,'Choose a valid order') from None

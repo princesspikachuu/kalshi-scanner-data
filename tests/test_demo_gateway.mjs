@@ -342,3 +342,45 @@ test('hour and six-hour filters pass through to every Demo performance endpoint'
   assert.equal(response.status,200);assert.equal(called.searchParams.get('period'),period);
  }
 });
+
+import {activityMarketMarkup,completedPairRow} from '../apps/web/activity-filters.mjs';
+test('Completed pairs show custom bot names, both legs, weighted sell prices, fees and escaped market context',()=>{
+ const bots=new Map([['bot','Etherium <custom>']]);
+ const item={entry:{client_id:'00000000-0000-0000-0000-000000000001',bot:'bot',ticker:'KXETH15M-26NOV041315-1',side:'yes',price:3,market_close_at:1800000000},contracts:10,sell_price:8.4,sell_count:2,fees:1,estimated_net_cents:53,completed_at:1800000000};
+ const html=completedPairRow(item,bots);
+ for(const value of ['Etherium &lt;custom&gt;','15-minute market','YES','Closes','BUY FILLED','SELL FILLED','8.4¢','10 contracts fully bought','across 2 sells','$0.53','recorded fees $0.01','data-order-detail=','Market code'])assert.ok(html.includes(value),value);
+ assert.doesNotMatch(html,/<custom>/);
+ assert.match(activityMarketMarkup({bot:'bot',ticker:item.entry.ticker,details:{side:'no',quote:{title:'<unsafe>'}}},bots),/&lt;unsafe&gt; · NO/);
+});
+test('Completed pair history is an owner-only GET with bounded filtering',async()=>{
+ const path='https://app.test/api/demo/orders?completed=true&bot=00000000-0000-0000-0000-000000000001&ticker=TEST';
+ assert.equal((await proxyAuth(new Request(path),env,options())).status,200);
+ assert.equal((await proxyAuth(new Request(path,{method:'POST'}),env,options())).status,405);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/workspace?completed=true'),env,options())).status,422);
+});
+test('Activity switches between events and completed pairs, preserves bot filtering and paginates the selected view',async()=>{
+ const names=['document','window','location','fetch','setTimeout','clearTimeout'],original=Object.fromEntries(names.map(k=>[k,globalThis[k]]));
+ const nodes=new Map(),element=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,insertAdjacentHTML(){},addEventListener(){}});return nodes.get(id)};
+ const bot='00000000-0000-0000-0000-000000000010',buy='00000000-0000-0000-0000-000000000001',requested=[];
+ const pair={id:buy,entry:{client_id:buy,bot,ticker:'KXETH15M-26NOV041315-1',side:'yes',price:3},contracts:2,sell_price:9,sell_count:1,fees:0,estimated_net_cents:12};
+ const workspace={contract:'demo-v1',bots:[{key:bot,config:{name:'My Ethereum'}}],health:{},alerts:[],policy:{}};
+ try{
+  globalThis.document={hidden:false,cookie:'',getElementById:element,querySelectorAll(){return []},addEventListener(){}};
+  globalThis.window={addEventListener(){}};globalThis.location={search:'',replace(){}};globalThis.setTimeout=()=>1;globalThis.clearTimeout=()=>{};
+  element('historyView').value='events';element('marketView').value='active';
+  globalThis.fetch=async url=>{
+   requested.push(url);const parsed=new URL(url,'https://app.test');
+   let payload={contract:'demo-v1',items:[]};
+   if(parsed.pathname.endsWith('workspace'))payload=workspace;
+   if(parsed.searchParams.get('completed')==='true')payload={contract:'demo-v1',items:[pair],next_before:parsed.searchParams.has('before')?null:buy};
+   return {ok:true,status:200,json:async()=>payload};
+  };
+  await import('../apps/web/activity.mjs?completed-pair-test');for(let i=0;i<8;i++)await new Promise(setImmediate);
+  element('botFilter').value=bot;element('historyView').value='pairs';await element('historyView').onchange();
+  assert.equal(element('activityTypes').hidden,true);assert.match(element('events').innerHTML,/My Ethereum/);assert.match(element('events').innerHTML,/BUY FILLED/);
+  assert.match(element('events').innerHTML,/data-label="Bot \/ market"/);assert.equal(element('older').hidden,false);
+  await element('older').onclick();assert.equal(element('older').hidden,true);
+  const last=new URL(requested.at(-1),'https://app.test');assert.equal(last.searchParams.get('before'),buy);assert.equal(last.searchParams.get('bot'),bot);
+  element('historyView').value='events';await element('historyView').onchange();assert.equal(element('activityTypes').hidden,false);assert.doesNotMatch(element('events').innerHTML,/BUY FILLED/);
+ }finally{for(const [k,v] of Object.entries(original)){if(v===undefined)delete globalThis[k];else globalThis[k]=v}}
+});

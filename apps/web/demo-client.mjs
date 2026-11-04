@@ -103,12 +103,12 @@ export function orderStateLabel(order,{pending=false}={}){
 export function orderDetailButton(identifier,label='Follow order'){
  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(identifier||'')?`<button class="secondary" type="button" data-order-detail="${escapeHTML(identifier)}">${escapeHTML(label)}</button>`:'';
 }
-export function marketLink(ticker,quote={}){
+export function marketLink(ticker,quote={},label=ticker){
  if(typeof ticker!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(ticker))return escapeHTML(ticker||'—');
  const event=quote?.event_ticker||ticker.split('-').slice(0,-1).join('-');
  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(event))return escapeHTML(ticker);
  const href='https://demo.kalshi.co/markets/kx/m/'+encodeURIComponent(event.toLowerCase());
- return `<a href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer" title="Open related market in Kalshi Demo">${escapeHTML(ticker)} ↗</a>`;
+ return `<a href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer" title="Open related market in Kalshi Demo">${escapeHTML(label)} ↗</a>`;
 }
 export function transactionBadge(item){
  const d=item.details||{};let label='',style='';

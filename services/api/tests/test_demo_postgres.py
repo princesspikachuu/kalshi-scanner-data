@@ -65,6 +65,34 @@ class DemoPostgres(unittest.TestCase):
         self.assertEqual(self.client.get('/demo/orders?client_id='+str(uuid4())).status_code,404)
         self.assertEqual(self.client.get('/demo/orders?client_id=bad').status_code,422)
         self.client.cookies.clear();self.assertEqual(self.client.get('/demo/orders?client_id='+buy).status_code,401)
+    def test_completed_pairs_require_all_contracts_sold_through_exact_links(self):
+        from uuid import uuid4
+        bot=str(uuid4());other=str(uuid4())
+        def buy(filled=10,**state):
+            key=str(uuid4())
+            self.demo.put('order/'+key,dict(status='closed',filled=filled,remaining=0,fees=1,**state),parameters=dict(client_id=key,kind='entry',bot=bot,ticker='T',side='yes',price=3))
+            return key
+        def sell(parent,filled,price=9,**fields):
+            key=str(uuid4())
+            self.demo.put('order/'+key,dict(status='closed',filled=filled,remaining=0,fees=1),parameters=dict(dict(client_id=key,parent=parent,kind='exit',bot=bot,ticker='T',side='yes',price=price),**fields))
+        completed=buy();sell(completed,4,6);sell(completed,6,9)
+        partial=buy();sell(partial,5)
+        settled=buy()
+        offset=buy(offset_quantity=10);sell(offset,10)
+        mismatch=buy();sell(mismatch,10,bot=other)
+        buy(0)
+        page=self.client.get('/demo/orders?completed=true&bot='+bot+'&ticker=T')
+        self.assertEqual(page.status_code,200,page.text)
+        rows=page.json()['items'];self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['entry']['client_id'],completed)
+        self.assertEqual(rows[0]['sell_price'],7.8)
+        self.assertEqual(rows[0]['estimated_net_cents'],45)
+        self.assertEqual(rows[0]['sell_count'],2)
+        self.assertFalse(self.client.get('/demo/orders?completed=true&bot='+other).json()['items'])
+        self.assertEqual(self.client.get('/demo/orders?completed=true&before=bad').status_code,422)
+        self.assertEqual(self.client.get('/demo/orders?completed=true&client_id='+completed).status_code,422)
+        self.client.cookies.clear();self.assertEqual(self.client.get('/demo/orders?completed=true').status_code,401)
+
     def test_activity_combines_event_types_without_crossing_bot_or_market_filters(self):
         from uuid import uuid4
         daily=str(uuid4());sports=str(uuid4())
