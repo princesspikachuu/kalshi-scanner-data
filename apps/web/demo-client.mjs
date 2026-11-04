@@ -21,6 +21,15 @@ export async function demoCall(path,body){
  }finally{clearTimeout(timer)}
 }
 
+export async function loadDemoSnapshots(call=demoCall,period='24H'){
+ const [workspace,orders]=await Promise.allSettled([call('workspace?period='+period),call('orders')]);
+ const message=result=>result.reason?.message||'Request failed';
+ return {workspace:workspace.status==='fulfilled'?workspace.value:null,
+  orders:orders.status==='fulfilled'?orders.value:null,
+  errors:[...(workspace.status==='rejected'?['Bot workspace: '+message(workspace)]:[]),
+   ...(orders.status==='rejected'?['Orders and positions: '+message(orders)]:[])]};
+}
+
 export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(bot.desired!=='running')return 'Paused';
  const recent=health.at>0&&now-health.at<=90;

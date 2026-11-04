@@ -156,12 +156,12 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
-   const text=new TextDecoder().decode(await boundedBody(upstream.body,(research||collection||paper||demo)?262144:32768));
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,demo?2097152:(research||collection||paper)?262144:32768));
    response=new Response(JSON.stringify(demo?demoBody(JSON.parse(text)):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;
- }catch{return problem(controller.signal.aborted?504:502,'Sign-in connection unavailable')}
+ }catch(error){return problem(controller.signal.aborted?504:502,demo?(controller.signal.aborted?'Demo data request timed out. Please retry.':error instanceof RangeError?'Demo data exceeds the dashboard response limit.':'Unable to load Demo data. Please retry.'):'Sign-in connection unavailable')}
  finally{clearTimeout(timer)}
 }
 export default {

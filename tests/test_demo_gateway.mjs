@@ -272,3 +272,54 @@ test('following an ended buy shows historical orders and pending settlement, nev
  assert.match(html,/Market closed/);assert.match(html,/pending settlement \/ confirmation/);
  assert.doesNotMatch(html,/exit rules remain active/);
 });
+
+import {loadDemoSnapshots} from '../apps/web/demo-client.mjs';
+test('a large valid Demo workspace is not mistaken for a sign-in failure; oversized responses remain bounded',async()=>{
+ const payload={contract:'demo-v1',environment:'demo',bots:Array.from({length:70},(_,i)=>({key:String(i),config:{name:'Bot '+i},details:'x'.repeat(4000)}))};
+ assert.ok(JSON.stringify(payload).length>262144);
+ let response=await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{fetcher:async()=>new Response(JSON.stringify(payload),{headers:{'content-type':'application/json'}})});
+ assert.equal(response.status,200);assert.equal((await response.json()).bots.length,70);
+ payload.bots[0].details='x'.repeat(2097153);
+ response=await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{fetcher:async()=>new Response(JSON.stringify(payload),{headers:{'content-type':'application/json'}})});
+ assert.equal(response.status,502);assert.match((await response.json()).detail,/Demo data exceeds/);
+});
+test('failed order requests preserve a successful workspace and identify the failing component',async()=>{
+ const workspace={contract:'demo-v1',bots:[{key:'saved'}],health:{state:'ready'}};
+ const result=await loadDemoSnapshots(async path=>{if(path==='orders')throw Error('Order request timed out');return workspace});
+ assert.equal(result.workspace,workspace);assert.equal(result.orders,null);assert.match(result.errors[0],/^Orders and positions:/);
+ const reversed=await loadDemoSnapshots(async path=>{if(path.startsWith('workspace'))throw Error('Workspace unavailable');return {contract:'demo-v1',items:[{client_id:'saved-order'}]}});
+ assert.equal(reversed.orders.items[0].client_id,'saved-order');assert.match(reversed.errors[0],/^Bot workspace:/);
+});
+test('Demo transport errors describe data loading rather than telling an authenticated user sign-in is unavailable',async()=>{
+ const response=await proxyAuth(new Request('https://app.test/api/demo/orders'),env,{fetcher:async()=>{throw Error('upstream unavailable')}});
+ assert.equal(response.status,502);const body=await response.json();assert.match(body.detail,/Unable to load Demo data/);assert.doesNotMatch(body.detail,/Sign-in/);
+});
+
+test('the real dashboard renders bots and balances when orders fail, retries, and preserves last good data',async()=>{
+ const original=Object.fromEntries(['document','window','location','localStorage','fetch','setTimeout','clearTimeout'].map(k=>[k,globalThis[k]]));
+ const nodes=new Map(),element=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',innerHTML:'',disabled:false,open:false,dataset:{},addEventListener(){},setAttribute(){},querySelectorAll(){return []},replaceChildren(){this.innerHTML=''}});return nodes.get(id)};
+ let orderFails=true,workspaceFails=false;
+ const now=Date.now()/1000,workspace={contract:'demo-v1',reset_mode:'archive_copy',alerts:[],account:{equity_cents:10000,cash_cents:9000,position_value_cents:1000,at:now},bots:[{key:'saved',revision:1,desired:'running',config:{name:'Saved BTC bot',strategy:'buy_low_sell_high',cycle_buy_cents:3,cycle_sell_cents:6,bot_percent:3,squares:[{asset:'btc'}]}}],health:{state:'ready',at:now,reconciled_at:now,message:'Demo account verified'},metrics:{}};
+ try{
+  globalThis.document={hidden:false,cookie:'',getElementById:element,querySelectorAll(){return []},addEventListener(){}};
+  globalThis.window={addEventListener(){}};globalThis.location={search:'',replace(){}};
+  globalThis.localStorage={getItem(){return null},setItem(){},removeItem(){}};
+  globalThis.setTimeout=()=>1;globalThis.clearTimeout=()=>{};
+  element('filter').value='active';element('marketView').value='active';
+  globalThis.fetch=async url=>{
+   if(url.includes('/orders')&&orderFails)throw Error('Orders unavailable');
+   if(url.includes('/workspace')&&workspaceFails)throw Error('Workspace unavailable');
+   return {ok:true,status:200,json:async()=>url.includes('/workspace')?workspace:{contract:'demo-v1',items:[]}};
+  };
+  await import('../apps/web/bots.mjs?partial-load-test');
+  for(let i=0;i<8;i++)await new Promise(setImmediate);
+  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');
+  assert.match(element('groups').innerHTML,/Orders and positions · unavailable/);
+  assert.match(element('message').textContent,/Orders and positions: Orders unavailable/);
+  orderFails=false;await element('reloadData').onclick();
+  assert.match(element('groups').innerHTML,/0 positions · 0 buys · 0 sells/);assert.equal(element('message').textContent,'');
+  workspaceFails=true;orderFails=true;await element('reloadData').onclick();
+  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');
+  assert.match(element('message').textContent,/Bot workspace:/);assert.match(element('message').textContent,/Showing the latest data/);
+ }finally{for(const [k,v] of Object.entries(original)){if(v===undefined)delete globalThis[k];else globalThis[k]=v}}
+});
