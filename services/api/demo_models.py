@@ -3,6 +3,8 @@ from typing import Literal,Annotated
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.research.reports import SERIES
 
+PERIOD_HOURS={'1H':1,'6H':6,'24H':24,'7D':168,'30D':720}
+
 class Square(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     asset:str

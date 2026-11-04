@@ -159,6 +159,30 @@ class DemoPostgres(unittest.TestCase):
     def test_private_controls_require_session_and_csrf(self):
         self.client.headers.pop('x-csrf-token');self.assertEqual(self.client.post('/demo/bots',json=config()).status_code,403)
         self.client.cookies.clear();self.assertEqual(self.client.get('/demo/workspace').status_code,401)
+    def test_hour_and_six_hour_windows_match_account_chart_and_bot_performance(self):
+        import time
+        from uuid import uuid4
+        now=time.time()
+        identifier=self.client.post('/demo/bots',json=config()).json()['id']
+        self.demo.put('account',dict(equity_cents=20000,cash_cents=20000,position_value_cents=0,at=now))
+        for hours,value,pnl in [(7,10000,100),(3,14000,200),(.5,18000,300)]:
+            at=now-hours*3600;key=str(uuid4())
+            self.demo.put('equity/'+key,dict(at=at,value=value))
+            with self.store.pool.connection() as c:
+                c.execute('UPDATE research_job SET created_at=to_timestamp(%s) WHERE idempotency_key=%s',(at,'demo/equity/'+key))
+            self.demo.put('order/'+key,dict(status='closed',filled=1,remaining=0,closed_at=at,realized_cents=pnl),
+                parameters=dict(client_id=key,bot=identifier,kind='entry',revision=1,square=0,price=10,created_at=at,close=at+900))
+        for period,values,pnl,change in [('1H',[18000],300,2000),('6H',[14000,18000],500,6000)]:
+            response=self.client.get('/demo/workspace?period='+period)
+            self.assertEqual(response.status_code,200,response.text);workspace=response.json()
+            self.assertEqual(workspace['period'],period);self.assertEqual(workspace['account_change_cents'],change)
+            self.assertEqual(workspace['metrics'][identifier]['realized_cents'],pnl)
+            chart=self.client.get('/demo/chart?period='+period)
+            self.assertEqual(chart.status_code,200,chart.text);self.assertEqual([p['value'] for p in chart.json()['points']],values)
+            performance=self.client.get('/demo/performance?bot='+identifier+'&period='+period)
+            self.assertEqual(performance.status_code,200,performance.text)
+            self.assertEqual(sum(r['recorded_pnl_cents'] or 0 for r in performance.json()['items']),pnl)
+        self.assertEqual(self.client.get('/demo/workspace?period=2H').status_code,422)
     def test_chart_and_research_empty_is_not_fabricated_data(self):
         self.assertEqual(self.client.get('/demo/chart?period=7D').json()['points'],[])
         r=self.client.get('/demo/research?asset=btc&start=2026-10-01&end=2026-10-30');self.assertEqual(r.status_code,200,r.text);self.assertEqual(r.json()['items'],[])

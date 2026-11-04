@@ -3,7 +3,7 @@ import os,time
 from uuid import UUID,uuid4
 from fastapi import Request,HTTPException
 from pydantic import BaseModel,ConfigDict,Field
-from .demo_models import BotConfig,Controls,Policy
+from .demo_models import BotConfig,Controls,Policy,PERIOD_HOURS
 from services.demo.store import DemoStore
 
 class BotChanges(BotConfig):
@@ -66,7 +66,7 @@ def install_demo(app,auth,mutate,pool):
     def workspace(request:Request):
         auth(request);require_query(request,('period',))
         period=request.query_params.get('period','24H')
-        if period not in ('24H','7D','30D'):raise HTTPException(422,'Invalid period')
+        if period not in PERIOD_HOURS:raise HTTPException(422,'Invalid period')
         bots=[]
         for row in store.rows('bot/',101):
             data=row['parameters'];state=row['progress']
@@ -79,7 +79,7 @@ def install_demo(app,auth,mutate,pool):
         values=account['progress'] if account else None
         with pool.connection() as c:
             health_rows=c.execute("SELECT idempotency_key,progress FROM research_job WHERE idempotency_key=ANY(%s)",(['demo/storage-health','demo/backup-health','demo/email-health','demo/compaction-health'],)).fetchall()
-        hours={'24H':24,'7D':168,'30D':720}[period]
+        hours=PERIOD_HOURS[period]
         with pool.connection() as c:
             first=c.execute("SELECT progress FROM research_job WHERE idempotency_key>='demo/equity/' AND idempotency_key<'demo/equity/zzzz' AND created_at>clock_timestamp()-%s*interval '1 hour' ORDER BY created_at LIMIT 1",(hours,)).fetchone()
             performance=c.execute("SELECT parameters->>'bot' AS bot,coalesce(sum((progress->>'realized_cents')::numeric),0) AS pnl,count(*) AS closed FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress ? 'realized_cents' AND (progress->>'closed_at')::numeric>%s GROUP BY parameters->>'bot'",(time.time()-hours*3600,)).fetchall()
@@ -229,7 +229,7 @@ def install_demo(app,auth,mutate,pool):
     @app.get('/demo/chart')
     def chart(request:Request):
         auth(request);require_query(request,('period',))
-        period=request.query_params.get('period','24H');hours={'24H':24,'7D':168,'30D':720}.get(period)
+        period=request.query_params.get('period','24H');hours=PERIOD_HOURS.get(period)
         if hours is None:raise HTTPException(422,'Invalid period')
         with pool.connection() as c:
             rows=c.execute("""SELECT progress FROM research_job WHERE idempotency_key>='demo/equity/'

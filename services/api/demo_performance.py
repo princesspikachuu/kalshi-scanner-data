@@ -1,6 +1,7 @@
 """Bounded saved-order summaries; no exchange requests or history rewrites."""
 import json
 import time
+from .demo_models import PERIOD_HOURS
 
 TIME_BOUNDS=(1,3,5,10,15,20,30,45,60,120,180,360,1440)
 AGGREGATES="""count(*) AS orders,
@@ -16,14 +17,14 @@ AGGREGATES="""count(*) AS orders,
 
 def query_performance(pool,bot,identifier,group='square',period='all',timezone='America/Los_Angeles',start=None,end=None):
     from zoneinfo import ZoneInfo
-    if group not in ('square','time','time_price','hour') or period not in ('all','1H','24H','7D','30D'):raise ValueError('Invalid performance filters')
+    if group not in ('square','time','time_price','hour') or period not in ('all',*PERIOD_HOURS):raise ValueError('Invalid performance filters')
     tz=ZoneInfo(timezone)
     from datetime import date,datetime,time as midnight,timedelta
     first=date.fromisoformat(start) if start else None;last=date.fromisoformat(end) if end else None
     if first and last and last<first:raise ValueError('Invalid dates')
     lower=datetime.combine(first,midnight.min,tz).timestamp() if first else None
     upper=datetime.combine(last+timedelta(days=1),midnight.min,tz).timestamp() if last else None
-    since=None if period=='all' else time.time()-{'1H':1,'24H':24,'7D':168,'30D':720}[period]*3600
+    since=None if period=='all' else time.time()-PERIOD_HOURS[period]*3600
     sql="""WITH base AS (SELECT parameters,progress,
         coalesce((parameters->>'created_at')::numeric,extract(epoch FROM created_at)) AS entered_at
         FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
