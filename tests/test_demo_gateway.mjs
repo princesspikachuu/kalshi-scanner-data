@@ -298,28 +298,29 @@ test('Demo transport errors describe data loading rather than telling an authent
 test('the real dashboard renders bots and balances when orders fail, retries, and preserves last good data',async()=>{
  const original=Object.fromEntries(['document','window','location','localStorage','fetch','setTimeout','clearTimeout'].map(k=>[k,globalThis[k]]));
  const nodes=new Map(),element=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',innerHTML:'',disabled:false,open:false,dataset:{},addEventListener(){},setAttribute(){},querySelectorAll(){return []},replaceChildren(){this.innerHTML=''}});return nodes.get(id)};
- let orderFails=true,workspaceFails=false;
+ let orderFails=true,workspaceFails=false;const requested=[];
  const now=Date.now()/1000,workspace={contract:'demo-v1',reset_mode:'archive_copy',alerts:[],account:{equity_cents:10000,cash_cents:9000,position_value_cents:1000,at:now},bots:[{key:'saved',revision:1,desired:'running',config:{name:'Saved BTC bot',strategy:'buy_low_sell_high',cycle_buy_cents:3,cycle_sell_cents:6,bot_percent:3,squares:[{asset:'btc'}]}}],health:{state:'ready',at:now,reconciled_at:now,message:'Demo account verified'},metrics:{}};
  try{
   globalThis.document={hidden:false,cookie:'',getElementById:element,querySelectorAll(){return []},addEventListener(){}};
   globalThis.window={addEventListener(){}};globalThis.location={search:'',replace(){}};
-  globalThis.localStorage={getItem(){return null},setItem(){},removeItem(){}};
+  globalThis.localStorage={getItem(key){return key==='money-period'?'6H':null},setItem(){},removeItem(){}};
   globalThis.setTimeout=()=>1;globalThis.clearTimeout=()=>{};
   element('filter').value='active';element('marketView').value='active';
   globalThis.fetch=async url=>{
+   requested.push(url);
    if(url.includes('/orders')&&orderFails)throw Error('Orders unavailable');
    if(url.includes('/workspace')&&workspaceFails)throw Error('Workspace unavailable');
    return {ok:true,status:200,json:async()=>url.includes('/workspace')?workspace:{contract:'demo-v1',items:[]}};
   };
   await import('../apps/web/bots.mjs?partial-load-test');
   for(let i=0;i<8;i++)await new Promise(setImmediate);
-  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');
+  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');assert.ok(requested.some(u=>u.endsWith('workspace?period=6H')));
   assert.match(element('groups').innerHTML,/Orders and positions · unavailable/);
   assert.match(element('message').textContent,/Orders and positions: Orders unavailable/);
   orderFails=false;await element('reloadData').onclick();
   assert.match(element('groups').innerHTML,/0 positions · 0 buys · 0 sells/);assert.equal(element('message').textContent,'');
   workspaceFails=true;orderFails=true;await element('reloadData').onclick();
-  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');
+  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');assert.ok(requested.some(u=>u.endsWith('workspace?period=6H')));
   assert.match(element('message').textContent,/Bot workspace:/);assert.match(element('message').textContent,/Showing the latest data/);
  }finally{for(const [k,v] of Object.entries(original)){if(v===undefined)delete globalThis[k];else globalThis[k]=v}}
 });
@@ -332,4 +333,12 @@ test('trading warnings are compact by default, expandable, and preserve full esc
  assert.doesNotMatch(html,/<details[^>]*\bopen\b/);assert.match(html,/Transfer waiting &lt;test&gt;/);
  assert.match(html,/37 price-feed reconnects/);assert.match(tradingNoticesMarkup(alerts,{},true),/<details[^>]*\bopen\b/);
  assert.equal(tradingNoticesMarkup([],{}),'');
+});
+
+test('hour and six-hour filters pass through to every Demo performance endpoint',async()=>{
+ for(const period of ['1H','6H'])for(const path of ['workspace','chart','performance?bot=00000000-0000-0000-0000-000000000001']){
+  let called;const query=path+(path.includes('?')?'&':'?')+'period='+period;
+  const response=await proxyAuth(new Request('https://app.test/api/demo/'+query),env,{fetcher:async(url)=>{called=new URL(url);return new Response(JSON.stringify({contract:'demo-v1',period}),{headers:{'content-type':'application/json'}})}});
+  assert.equal(response.status,200);assert.equal(called.searchParams.get('period'),period);
+ }
 });
