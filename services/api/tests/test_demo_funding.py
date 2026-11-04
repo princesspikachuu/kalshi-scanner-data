@@ -109,6 +109,26 @@ class CategoryShardFunding(unittest.TestCase):
                 self.assertEqual(body['amount'],100000)
 
 class FundingCorrections(unittest.TestCase):
+    def test_unknown_transfer_only_quarantines_its_amount_not_later_settlement_cash(self):
+        store=Store();exchange=Exchange(store);funding=ShardFunding(store,exchange)
+        funding.ensure(2,90,1000,{})
+        # Old destination was zero. A verified later $30 balance must not be
+        # frozen at zero: exclude the entire possible $10 incoming transfer.
+        original=exchange.call
+        def later_cash(method,path,**kw):
+            if path.endswith('/transfer-one'):return dict(transfer=None)
+            result=original(method,path,**kw)
+            if path=='/portfolio/subaccounts/balances':
+                for row in result['subaccount_balances']:
+                    if row['exchange_index']==2:row['balance']='30.00'
+            return result
+        exchange.call=later_cash;funding.checked_at=0;funding.poll_at=0
+        self.assertEqual(funding.available_cash(2,{2:500}),1500)
+        self.assertTrue(funding.ensure(2,900,1000,{2:500}))
+        self.assertFalse(funding.ensure(2,1501,2000,{2:500}))
+        self.assertEqual(store.data['funding']['status'],'pending')
+        self.assertEqual(len([c for c in exchange.calls if c[0]=='POST']),1)
+
     def test_confirmation_progresses_without_any_order_candidates(self):
         from services.demo.runtime import Worker
         store=Store();exchange=Exchange(store);funding=ShardFunding(store,exchange)

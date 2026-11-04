@@ -115,17 +115,22 @@ class ShardFunding:
         self.store.event('funding_transfer','Existing Demo funds moved to the trading shard',details=dict(source=body['source_exchange_shard'],destination=body['destination_exchange_shard'],amount_cents=body['amount']//100))
         print(__import__('json').dumps(dict(event='demo_shard_funded',source=body['source_exchange_shard'],destination=body['destination_exchange_shard'],amount_cents=body['amount']//100)),flush=True)
         return False
-    def ensure(self,index,required,target,reservations):
-        if not isinstance(index,int) or not 0<=index<=100:raise ExchangeFailure('market_shard_contract')
-        pending=self.poll()
+    def available_cash(self,index,reservations):
+        self.poll()
         if time.time()-self.checked_at>=30:self.balances_now()
         available={i:max(0,v-reservations.get(i,0)) for i,v in self.balances.items()}
-        if pending:
+        if self.pending_transfer and self.pending_transfer['status'] not in ('complete','rejected'):
             transfer=self.pending_transfer;body=transfer['body']
             source=body['source_exchange_shard'];destination=body['destination_exchange_shard']
-            # Reserve the uncertain debit and never credit unconfirmed incoming cash.
+            # Exclude the full possible debit and incoming credit. Independently
+            # verified settlement cash must not be frozen at an old balance.
             available[source]=max(0,available.get(source,0)-body['amount']/100)
-            available[destination]=min(available.get(destination,0),max(0,transfer.get('destination_before_cents',0)-reservations.get(destination,0)))
+            available[destination]=max(0,available.get(destination,0)-body['amount']/100)
+        return available if index is None else available.get(index,0)
+    def ensure(self,index,required,target,reservations):
+        if not isinstance(index,int) or not 0<=index<=100:raise ExchangeFailure('market_shard_contract')
+        available=self.available_cash(None,reservations)
+        pending=self.pending_transfer and self.pending_transfer['status'] not in ('complete','rejected')
         current=available.get(index,0)
         if current>=required:
             self.waits.pop(index,None)

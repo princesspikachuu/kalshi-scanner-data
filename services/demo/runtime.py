@@ -541,6 +541,7 @@ class Worker:
                 blocked.add(order['ticker'])
             self.save_order(order)
             self.restore_filled_cycle_claim(order)
+            self.rearm_allocation_cancel(order)
             if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
             if prior_status not in ('closed','held') and order['status']=='closed':self.record('cancel',order,'Exchange order is no longer resting')
         # Reload includes fills committed above and closed exits for per-entry allocation.
@@ -960,6 +961,14 @@ class Worker:
         if bot and memory and memory.get('cycle')==order['cycle']:
             memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
             self.store.put('trigger/'+order['bot'],self.states[order['bot']],parameters=dict(revision=bot['revision']))
+    def rearm_allocation_cancel(self,order):
+        if not order.get('allocation_rearm') or order['status']!='closed' or order.get('filled',0) or order.get('remaining',0):return
+        bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
+        key=f"{order['ticker']}/{order['square']}/{order['side']}"
+        memory=self.states.get(order['bot'],{}).get(key)
+        if bot and memory and memory.get('cycle')==order['cycle'] and memory.get('submitted'):
+            memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+            self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
     def trade(self):
         now=time.time();bots={b['id']:b for b in self.bots}
         # Hard safety deadline: handle every outstanding low buy before new
@@ -1064,7 +1073,7 @@ class Worker:
             elif self.profit_sell(order,q,now):return
         if not self.recovered or now-self.last_reconcile>35:return
         retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
-        from .engine import fair_budget_config,fair_order_candidates
+        from .engine import fair_budget_config,fair_order_candidates,cycle_tranche
         running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
         fair_configs={id:fair_budget_config(b['config'],running_count) for id,b in bots.items()}
         options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
@@ -1072,8 +1081,6 @@ class Worker:
         # condition bots (notably sports). Rotate only low/high opportunities
         # within their own slots; fairness must not override ranked strategies.
         cycle_bots={id for id,b in bots.items() if b['config'].get('strategy')=='buy_low_sell_high'}
-        cycle_queue=iter(fair_order_candidates([i for i in options if i['bot'] in cycle_bots],self.last_entry_bot))
-        options=[next(cycle_queue) if i['bot'] in cycle_bots else i for i in options]
         market_cost={};bot_cost={}
         if options:
             for order in self.orders:
@@ -1081,6 +1088,24 @@ class Worker:
                     cost=(order.get('remaining',0)+max(0,order.get('filled',0)-order.get('sold',0)))*order['price']
                     market_cost[order['ticker']]=market_cost.get(order['ticker'],0)+cost
                     bot_cost[order['bot']]=bot_cost.get(order['bot'],0)+cost
+        cycle_queue=iter(fair_order_candidates([i for i in options if i['bot'] in cycle_bots],self.last_entry_bot,bot_cost))
+        options=[next(cycle_queue) if i['bot'] in cycle_bots else i for i in options]
+        equity=self.account['equity_cents']
+        needs_coverage=any(i['bot'] in cycle_bots and not self.daily_guard(bots[i['bot']],now)
+            and bot_cost.get(i['bot'],0)<cycle_tranche(fair_configs[i['bot']],equity,running_count)/2
+            and not entry_block_reason(i,market_orders.get(i['ticker'],[]),i['ticker'] in self.netting_pending)
+            for i in options)
+        if running_count>1 and needs_coverage:
+            for order in sorted(self.orders,key=lambda o:o.get('remaining',0)*o.get('price',0),reverse=True):
+                if (order.get('entry_strategy')!='buy_low_sell_high' or order.get('kind')!='entry'
+                    or order.get('status')!='resting' or order.get('remaining',0)<=0
+                    or order['ticker'] in self.blocked or order.get('exit_triggered')
+                    or now-order.get('cancel_404_at',0)<30 or order['bot'] not in cycle_bots):continue
+                tranche=cycle_tranche(fair_configs[order['bot']],equity,running_count)
+                if order['remaining']*order['price']>max(order['price'],tranche*1.25):
+                    order['allocation_rearm']=True;self.save_order(order)
+                    self.cancel(order,'Redistributing an oversized unfilled bid so more eligible bots can trade')
+                    return
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
         for item in options:
@@ -1107,11 +1132,24 @@ class Worker:
             if is_cycle:
                 from .cycles import shared_quantity
                 amount=shared_quantity(item,peers.get(item['ticker'],[]),config,equity,cash,market,exposure)
+                amount=min(amount,max(1,int(cycle_tranche(config,equity,running_count)/item['price'])))
             if amount<1:continue
             if self.funding is None:
                 from .funding import ShardFunding
                 self.funding=ShardFunding(self.store,self.exchange)
-            if not self.funding.ensure(self.quotes[item['ticker']].get('exchange_index',0),amount*item['price'],max(amount*item['price'],equity*config['bot_percent']/100-exposure),self.shard_reservations):continue
+            shard=self.quotes[item['ticker']].get('exchange_index',0)
+            from .funding import ShardFunding
+            if isinstance(self.funding,ShardFunding):
+                local_cash=self.funding.available_cash(shard,self.shard_reservations)
+                if local_cash>=item['price']:
+                    underserved={p['bot'] for p in options if p['bot'] in cycle_bots
+                        and self.quotes[p['ticker']].get('exchange_index',0)==shard
+                        and bot_cost.get(p['bot'],0)<=exposure
+                        and not entry_block_reason(p,market_orders.get(p['ticker'],[]),p['ticker'] in self.netting_pending)
+                        and not self.daily_guard(bots[p['bot']],now)}
+                    amount=min(amount,max(1,int(local_cash/max(1,len(underserved))/item['price'])))
+            target=amount*item['price'] if is_cycle else max(amount*item['price'],equity*config['bot_percent']/100-exposure)
+            if not self.funding.ensure(shard,amount*item['price'],target,self.shard_reservations):continue
             # Funding requests take time: recheck prices and entry qualification
             # on the next stream tick before preparing any order.
             from .cycles import eligible

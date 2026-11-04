@@ -14,7 +14,7 @@ def fair_budget_config(config,running_bots):
     cap=min(config['bot_percent'],100/running_bots)
     return dict(config,bot_percent=cap) if cap<config['bot_percent'] else config
 
-def fair_order_candidates(items,last_bot=None):
+def fair_order_candidates(items,last_bot=None,committed=None):
     """Rotate candidate opportunities across bots; retain per-bot priority.
 
     A busy high-cardinality series must not repeatedly take the first write
@@ -27,6 +27,7 @@ def fair_order_candidates(items,last_bot=None):
     if last_bot in bots:
         pivot=(bots.index(last_bot)+1)%len(bots)
         bots=bots[pivot:]+bots[:pivot]
+    if committed is not None:bots.sort(key=lambda bot:committed.get(bot,0))
     result=[]
     while queues:
         for bot in bots:
@@ -35,6 +36,11 @@ def fair_order_candidates(items,last_bot=None):
             result.append(queue.popleft())
             if not queue:queues.pop(bot,None)
     return result
+
+def cycle_tranche(config,equity,running_bots):
+    """Build a bot allocation in four steps while other bots get coverage."""
+    share=equity*fair_budget_config(config,running_bots)['bot_percent']/100
+    return share/(4 if running_bots>1 else 1)
 
 def side_quote(quote,side):
     if side=='yes':return quote['bid'],quote['ask']

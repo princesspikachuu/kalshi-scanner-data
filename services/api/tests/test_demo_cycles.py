@@ -382,6 +382,52 @@ class ThreeMinuteLowBidExpiry(unittest.TestCase):
 
 
 class CrossBotCapitalFairness(unittest.TestCase):
+    def test_least_funded_bots_come_before_second_bids_for_funded_bots(self):
+        from services.demo.engine import fair_order_candidates
+        items=[dict(bot=b,ticker=b) for b in ('large','empty','small')]
+        self.assertEqual([p['bot'] for p in fair_order_candidates(items,'empty',{'large':4500,'empty':0,'small':300})],
+                         ['empty','small','large'])
+
+    def test_smaller_tranches_spread_initial_cash_across_28_bots(self):
+        from services.demo.engine import cycle_tranche,fair_budget_config
+        cfg=bot(bot_percent=100,bid_percent=100,market_percent=100)['config']
+        self.assertAlmostEqual(cycle_tranche(cfg,28000,28),250)
+        self.assertEqual(cycle_tranche(cfg,28000,1),28000)
+        self.assertEqual(cycle_tranche(fair_budget_config(dict(cfg,bot_percent=1),28),28000,28),70)
+
+    def test_small_verified_shard_cash_is_shared_instead_of_waiting_for_a_large_transfer(self):
+        from services.demo.funding import ShardFunding
+        w=worker();w.bots=[bot(bot_percent=100,bid_percent=100,market_percent=100),
+                         bot(bot_percent=100,bid_percent=100,market_percent=100)]
+        w.bots[1]['id']='bot-2'
+        w.store.get=Mock(return_value=None);w.store.clear_alert=Mock()
+        exchange=Mock();exchange.call.return_value=dict(subaccount_balances=[
+            dict(subaccount_number=0,exchange_index=0,balance='5.00')])
+        w.funding=ShardFunding(w.store,exchange)
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['quantity'],25)
+        self.assertFalse(any(c.args[0]=='POST' for c in exchange.call.call_args_list))
+
+    def test_oversized_unfilled_bid_is_released_without_selling_held_lots(self):
+        w=worker();a=bot(bot_percent=100,bid_percent=100,market_percent=100)
+        b=bot(bot_percent=100,bid_percent=100,market_percent=100);b['id']='bot-2'
+        w.bots=[a,b]
+        # The second bot has a fresh, unrelated market needing its first bid.
+        w.quotes['other']=book();o=entry(quantity=400,remaining=400,price=10)
+        w.orders=[o];w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.cancel.assert_called_once();self.assertEqual(w.cancel.call_args.args[0]['client_id'],'low')
+        self.assertTrue(o['allocation_rearm']);w.submit.assert_not_called()
+        w.states={o['bot']:{'t/0/yes':dict(cycle=1,submitted=True,attempt=0)}}
+        w.rearm_allocation_cancel(o)
+        self.assertTrue(w.states[o['bot']]['t/0/yes']['submitted'],'wait for terminal exchange evidence')
+        o.update(status='closed',remaining=0,filled=1)
+        w.rearm_allocation_cancel(o)
+        self.assertTrue(w.states[o['bot']]['t/0/yes']['submitted'],'a cancellation race fill is retained')
+        o['filled']=0;w.rearm_allocation_cancel(o)
+        self.assertFalse(w.states[o['bot']]['t/0/yes']['submitted'])
+        self.assertEqual(w.states[o['bot']]['t/0/yes']['attempt'],1)
+
     def test_equal_account_share_caps_28_bots_but_never_raises_user_limits(self):
         from services.demo.engine import fair_budget_config,quantity
         cfg=bot(bot_percent=100,bid_percent=100,market_percent=100)['config']
