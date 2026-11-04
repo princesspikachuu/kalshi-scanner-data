@@ -428,6 +428,16 @@ class CrossBotCapitalFairness(unittest.TestCase):
         self.assertFalse(w.states[o['bot']]['t/0/yes']['submitted'])
         self.assertEqual(w.states[o['bot']]['t/0/yes']['attempt'],1)
 
+    def test_rebalancing_yields_to_new_entries_between_cancellations(self):
+        w=worker();w.bots=[bot(bot_percent=100,bid_percent=100,market_percent=100),
+                         bot(bot_percent=100,bid_percent=100,market_percent=100)]
+        w.bots[1]['id']='bot-2';w.quotes['other']=book()
+        w.orders=[entry(quantity=400,remaining=400,price=10)]
+        w.last_allocation_cancel=NOW-10;w.cancel=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        w.cancel.assert_not_called();self.assertTrue(w.submit.called)
+        self.assertEqual(w.submit.call_args.args[0]['bot'],'bot-2')
+
     def test_equal_account_share_caps_28_bots_but_never_raises_user_limits(self):
         from services.demo.engine import fair_budget_config,quantity
         cfg=bot(bot_percent=100,bid_percent=100,market_percent=100)['config']

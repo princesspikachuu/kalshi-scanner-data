@@ -1098,7 +1098,9 @@ class Worker:
             and bot_cost.get(i['bot'],0)<cycle_tranche(fair_configs[i['bot']],equity,running_count)/2
             and not entry_block_reason(i,market_orders.get(i['ticker'],[]),i['ticker'] in self.netting_pending)
             for i in options)
-        if running_count>1 and needs_coverage:
+        # Rebalancing yields entry slots between cancellations. Otherwise many
+        # oversized historical bids could monopolize every trade pass.
+        if running_count>1 and needs_coverage and now-getattr(self,'last_allocation_cancel',0)>=30:
             for order in sorted(self.orders,key=lambda o:o.get('remaining',0)*o.get('price',0),reverse=True):
                 if (order.get('entry_strategy')!='buy_low_sell_high' or order.get('kind')!='entry'
                     or order.get('status')!='resting' or order.get('remaining',0)<=0
@@ -1108,6 +1110,7 @@ class Worker:
                 if order['remaining']*order['price']>max(order['price'],tranche*1.25):
                     order['allocation_rearm']=True;self.save_order(order)
                     self.cancel(order,'Redistributing an oversized unfilled bid so more eligible bots can trade')
+                    self.last_allocation_cancel=now
                     return
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
