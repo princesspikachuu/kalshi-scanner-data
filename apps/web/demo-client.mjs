@@ -30,6 +30,13 @@ export async function loadDemoSnapshots(call=demoCall,period='24H'){
    ...(orders.status==='rejected'?['Orders and positions: '+message(orders)]:[])]};
 }
 
+export function tradingNoticesMarkup(alerts=[],health={},open=false){
+ if(!alerts.length&&!health.issue)return '';
+ const critical=alerts.some(a=>a.critical)||Boolean(health.issue),count=Math.max(alerts.length,1);
+ const reconnects=health.stream?.disconnects||0;
+ return `<details class="trading-notices ${critical?'critical':''}" ${open?'open':''}><summary><strong>${critical?'Trading needs attention':'Trading notices'}</strong><span>${count} notice${count===1?'':'s'} · Details</span></summary><div class="notice-body">${alerts.map(a=>`<div class="alert ${a.critical?'critical':''}"><span>${escapeHTML(a.message)}</span><a href="/activity#settings">Review</a></div>`).join('')}<p class="small">Worker: ${escapeHTML(health.message||'Checking status')}${reconnects?` · ${reconnects} price-feed reconnects this worker session`:''}. Saved balances and bots are below.</p></div></details>`;
+}
+
 export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(bot.desired!=='running')return 'Paused';
  const recent=health.at>0&&now-health.at<=90;

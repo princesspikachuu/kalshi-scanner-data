@@ -323,3 +323,13 @@ test('the real dashboard renders bots and balances when orders fail, retries, an
   assert.match(element('message').textContent,/Bot workspace:/);assert.match(element('message').textContent,/Showing the latest data/);
  }finally{for(const [k,v] of Object.entries(original)){if(v===undefined)delete globalThis[k];else globalThis[k]=v}}
 });
+
+import {tradingNoticesMarkup} from '../apps/web/demo-client.mjs';
+test('trading warnings are compact by default, expandable, and preserve full escaped details',()=>{
+ const alerts=[{message:'Transfer waiting <test>',critical:true},{message:'20 markets wait',critical:true}];
+ const html=tradingNoticesMarkup(alerts,{message:'Order confirmation pending',stream:{disconnects:37}});
+ assert.match(html,/Trading needs attention/);assert.match(html,/2 notices/);
+ assert.doesNotMatch(html,/<details[^>]*\bopen\b/);assert.match(html,/Transfer waiting &lt;test&gt;/);
+ assert.match(html,/37 price-feed reconnects/);assert.match(tradingNoticesMarkup(alerts,{},true),/<details[^>]*\bopen\b/);
+ assert.equal(tradingNoticesMarkup([],{}),'');
+});

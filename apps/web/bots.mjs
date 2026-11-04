@@ -1,6 +1,6 @@
 import './order-detail.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {demoCall,escapeHTML as e,money,loadDemoSnapshots,botGroup,ordersForView,nextMarketBoundary,botExposure,botExposureMarkup,attentionInfo,attentionMarkup,resetMarkup,squarePerformanceMarkup,latestTransactionsMarkup} from './demo-client.mjs';
+import {demoCall,escapeHTML as e,money,tradingNoticesMarkup,loadDemoSnapshots,botGroup,ordersForView,nextMarketBoundary,botExposure,botExposureMarkup,attentionInfo,attentionMarkup,resetMarkup,squarePerformanceMarkup,latestTransactionsMarkup} from './demo-client.mjs';
 import {openBotBuilder,duplicateBotConfig,restoreBotDraft,clearBotDraft,categories} from './bot-builder.mjs';
 const $=id=>document.getElementById(id);let workspace,orders=[],period=localStorage.getItem('money-period')||'24H',busy=false,delay=15000,timer,draftChecked=false;
 if(!['24H','7D','30D'].includes(period))period='24H';
@@ -22,11 +22,13 @@ function draw(){
 
  const account=workspace.account;$('accountValue').textContent=money(account?.equity_cents);$('cash').textContent=money(account?.cash_cents);$('positions').textContent=money(account?.position_value_cents);$('accountChange').textContent=money(workspace.account_change_cents);$('fundsBalance').textContent=money(account?.cash_cents);
  $('accountTime').textContent=account?`Verified ${new Date(account.at*1000).toLocaleString()}`:'Connect your Demo account to load its actual balance.';
- const feed=workspace.health.stream||{},feedStatus=feed.outage_seconds>0?` · Feed unavailable ${Math.ceil(feed.outage_seconds)}s`:feed.disconnects?` · ${feed.disconnects} feed reconnect${feed.disconnects===1?'':'s'} this worker session`:'';
- $('health').textContent=workspace.health.message+feedStatus;$('health').className='health-pill '+workspace.health.state;
+ const feed=workspace.health.stream||{},waiting=(workspace.health.blocked_markets||[]).filter(t=>!workspace.health.historical_markets?.includes(t)&&!workspace.health.syncing_markets?.includes(t)).length;
+ const healthLabels={ready:'Trading worker connected',syncing:'Checking a recent order',attention:'Trading needs attention',reconnecting:'Reconnecting prices',reconciling:'Verifying orders and positions',waiting:'Waiting for worker',connection_required:'Connect Kalshi Demo',resetting:'Reset in progress'};
+ $('health').textContent=(healthLabels[workspace.health.state]||'Checking trading status')+(waiting?` · ${waiting} markets waiting`:'')+(feed.outage_seconds>0?' · Prices reconnecting':'');$('health').className='health-pill '+workspace.health.state;
  $('connect').textContent=workspace.connection_configured?'Manage connection':'Connect account';
  const alerts=[...workspace.alerts];if(workspace.health.state==='connection_required')alerts.unshift({key:'connection',message:workspace.health.message,critical:false});
- $('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.critical?'critical':''}"><span>${e(a.message)}</span><a href="/activity#settings">Review</a></div>`).join('');
+ const noticesOpen=$('alerts').querySelector?.('details')?.open||false;
+ $('alerts').innerHTML=tradingNoticesMarkup(alerts,workspace.health,noticesOpen);
  const find=$('find').value.toLowerCase(),filter=$('filter').value;
  const bots=workspace.bots.filter(b=>b.config.name.toLowerCase().includes(find)&&(filter==='all'||filter==='archived'?filter==='all'||b.archived:!b.archived));
  const open=new Map([...$('groups').querySelectorAll('details[data-group]')].map(d=>[d.dataset.group,d.open]));
