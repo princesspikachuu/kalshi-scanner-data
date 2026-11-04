@@ -314,13 +314,13 @@ test('the real dashboard renders bots and balances when orders fail, retries, an
   };
   await import('../apps/web/bots.mjs?partial-load-test');
   for(let i=0;i<8;i++)await new Promise(setImmediate);
-  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');assert.ok(requested.some(u=>u.endsWith('workspace?period=6H')));
+  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');assert.ok(requested.some(u=>u.endsWith('workspace?period=6H&version=latest')));
   assert.match(element('groups').innerHTML,/Orders and positions · unavailable/);
   assert.match(element('message').textContent,/Orders and positions: Orders unavailable/);
   orderFails=false;await element('reloadData').onclick();
   assert.match(element('groups').innerHTML,/0 positions · 0 buys · 0 sells/);assert.equal(element('message').textContent,'');
   workspaceFails=true;orderFails=true;await element('reloadData').onclick();
-  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');assert.ok(requested.some(u=>u.endsWith('workspace?period=6H')));
+  assert.match(element('groups').innerHTML,/Saved BTC bot/);assert.equal(element('accountValue').textContent,'$100.00');assert.ok(requested.some(u=>u.endsWith('workspace?period=6H&version=latest')));
   assert.match(element('message').textContent,/Bot workspace:/);assert.match(element('message').textContent,/Showing the latest data/);
  }finally{for(const [k,v] of Object.entries(original)){if(v===undefined)delete globalThis[k];else globalThis[k]=v}}
 });
@@ -383,4 +383,37 @@ test('Activity switches between events and completed pairs, preserves bot filter
   const last=new URL(requested.at(-1),'https://app.test');assert.equal(last.searchParams.get('before'),buy);assert.equal(last.searchParams.get('bot'),bot);
   element('historyView').value='events';await element('historyView').onchange();assert.equal(element('activityTypes').hidden,false);assert.doesNotMatch(element('events').innerHTML,/BUY FILLED/);
  }finally{for(const [k,v] of Object.entries(original)){if(v===undefined)delete globalThis[k];else globalThis[k]=v}}
+});
+
+import {analysisVersionMarkup,analysisVersionPreference} from '../apps/web/demo-client.mjs';
+test('Analysis versions distinguish matched settings times, uncertain boundaries and full history',()=>{
+ const cohort={revision:2,buy_cents:3,sell_cents:6,changed_at:1793757600,first_entry_at:1793757700};
+ assert.match(analysisVersionMarkup(cohort,'latest'),/Most recent version · v2 · 3¢ buy \/ 6¢ sell/);
+ assert.match(analysisVersionMarkup(cohort,'latest'),/Older entry lots are excluded/);
+ assert.match(analysisVersionMarkup(cohort,'full'),/Full history · all versions/);
+ const uncertain=analysisVersionMarkup({...cohort,changed_at:null,window_start:1793757500,window_end:1793757600},'latest');
+ assert.match(uncertain,/First verified entry for this version/);assert.match(uncertain,/Settings change falls between/);
+ assert.doesNotMatch(uncertain,/Version started/);
+ assert.equal(analysisVersionPreference(),'latest');
+});
+test('Version filters reach workspace, performance, transaction history and completed pairs',async()=>{
+ for(const path of ['workspace?period=6H','performance?bot=00000000-0000-0000-0000-000000000001','activity?kind=transactions','orders?completed=true']){
+  let upstream;const response=await proxyAuth(new Request('https://app.test/api/demo/'+path+'&version=latest'),env,{fetcher:async(url)=>{upstream=new URL(url);return new Response(JSON.stringify({contract:'demo-v1',items:[]}),{headers:{'content-type':'application/json'}})}});
+  assert.equal(response.status,200);assert.equal(upstream.searchParams.get('version'),'latest');
+ }
+});
+
+import {botSummaryPeriodMarkup,botSummaryPeriodPreferences} from '../apps/web/demo-client.mjs';
+test('Each bot summary has visible Lifetime, 1h, 6h and 24h buttons with an accessible selected state',()=>{
+ const html=botSummaryPeriodMarkup('ethereum','6H');
+ for(const label of ['Lifetime','1h','6h','24h'])assert.ok(html.includes('>'+label+'</button>'));
+ assert.match(html,/data-summary-period="6H" aria-pressed="true"/);
+ assert.equal((html.match(/aria-pressed="true"/g)||[]).length,1);
+ assert.doesNotMatch(html,/<select|<details/);assert.match(html,/data-bot-summary="ethereum"/);
+ const original=globalThis.localStorage;let saved;
+ try{
+  globalThis.localStorage={getItem(){return saved},setItem(k,v){saved=v}};
+  botSummaryPeriodPreferences({ethereum:'6H',bitcoin:'all'});
+  assert.deepEqual(botSummaryPeriodPreferences(),{ethereum:'6H',bitcoin:'all'});
+ }finally{if(original===undefined)delete globalThis.localStorage;else globalThis.localStorage=original}
 });

@@ -21,13 +21,32 @@ export async function demoCall(path,body){
  }finally{clearTimeout(timer)}
 }
 
-export async function loadDemoSnapshots(call=demoCall,period='24H'){
- const [workspace,orders]=await Promise.allSettled([call('workspace?period='+period),call('orders')]);
+export async function loadDemoSnapshots(call=demoCall,period='24H',version=null){
+ const [workspace,orders]=await Promise.allSettled([call('workspace?period='+period+(version?'&version='+version:'')),call('orders')]);
  const message=result=>result.reason?.message||'Request failed';
  return {workspace:workspace.status==='fulfilled'?workspace.value:null,
   orders:orders.status==='fulfilled'?orders.value:null,
   errors:[...(workspace.status==='rejected'?['Bot workspace: '+message(workspace)]:[]),
    ...(orders.status==='rejected'?['Orders and positions: '+message(orders)]:[])]};
+}
+
+export const BOT_SUMMARY_PERIODS=[['all','Lifetime'],['1H','1h'],['6H','6h'],['24H','24h']];
+export function botSummaryPeriodMarkup(botId,selected='all'){
+ return `<div class="bot-summary-periods" role="group" aria-label="Summary period">${BOT_SUMMARY_PERIODS.map(([value,label])=>`<button type="button" data-bot-summary="${escapeHTML(botId)}" data-summary-period="${value}" aria-pressed="${selected===value}">${label}</button>`).join('')}</div>`;
+}
+export function botSummaryPeriodPreferences(value){
+ try{if(value)localStorage.setItem('money-bot-summary-periods',JSON.stringify(value));const stored=JSON.parse(localStorage.getItem('money-bot-summary-periods')||'{}');return Object.fromEntries(Object.entries(stored).filter(([key,period])=>key.length<=80&&BOT_SUMMARY_PERIODS.some(([p])=>p===period)))}catch{return value||{}}
+}
+export function analysisVersionPreference(value){
+ try{if(value)localStorage.setItem('money-analysis-version',value);return localStorage.getItem('money-analysis-version')==='full'?'full':'latest'}catch{return value||'latest'}
+}
+export function analysisVersionMarkup(cohort,version='latest',compact=false){
+ if(compact)return `<p class="summary-version small">${version==='full'?'Full history · all versions':cohort?'Most recent version · v'+escapeHTML(cohort.revision):'Most recent version'}</p>`;
+ if(!cohort)return '<span class="small">Version information unavailable</span>';
+ const date=n=>new Date(n*1000).toLocaleString('en-US',{timeZone:'America/Los_Angeles',timeZoneName:'short'});
+ const when=cohort.changed_at?'Version started '+date(cohort.changed_at):cohort.first_entry_at?'First verified entry for this version '+date(cohort.first_entry_at):'Waiting for the first entry for this version';
+ const prices=Number.isFinite(cohort.buy_cents)&&Number.isFinite(cohort.sell_cents)?` · ${cohort.buy_cents}¢ buy / ${cohort.sell_cents}¢ sell`:'';
+ return `<p class="analysis-version-note small"><strong>${version==='latest'?'Most recent version · v'+escapeHTML(cohort.revision)+prices:'Full history · all versions'}</strong><br>${escapeHTML(when)}${!cohort.changed_at&&cohort.window_start?'<br>Settings change falls between '+escapeHTML(date(cohort.window_start))+' and '+escapeHTML(date(cohort.window_end)):''}. ${version==='latest'?'Older entry lots are excluded, including older buys that closed later.':'Includes earlier strategy versions.'}</p>`;
 }
 
 export function tradingNoticesMarkup(alerts=[],health={},open=false){
@@ -205,7 +224,7 @@ export function squarePerformanceMarkup(data){
  const rows=data.items.map(r=>{const s=r.condition,label=r.label||(s?`${s.asset} · ${s.min_price}–${s.max_price}¢ · >${s.min_minutes}–${s.max_minutes} min`:'Legacy square · condition unavailable');
  return `<tr><td>${e(label)}${group==='square'?`<br><span class="small">v${e(r.revision??'?')} · square ${e(Number.isInteger(r.square)?r.square+1:'?')}</span>`:''}</td><td>${e(r.orders)}</td><td>${e(r.filled_orders)} / ${e(r.contracts)}<br><span class="small">${r.orders?(100*r.filled_orders/r.orders).toFixed(1)+'%':'—'} filled</span></td><td>${e(r.resting_contracts)} / ${e(r.held_contracts)}</td><td>${e(r.scored)}<br><span class="small">${r.scored?(100*r.wins/r.scored).toFixed(1)+'% positive':'—'}</span></td><td>${money(r.recorded_pnl_cents)}</td></tr>`}).join('');
  const resets=data.items.reduce((n,r)=>n+r.unscored_resets,0);
- return `<p class="small">${e(data.start||data.end?`${data.start||'Earliest'} through ${data.end||'latest'}`:data.period||'Lifetime')} · ${e(data.timezone||'America/Los_Angeles')} · saved ${e(new Date(data.at*1000).toLocaleTimeString())}. ${group==='square'?'Each revision keeps its original squares.':'Entries are grouped by submission time across revisions. Date filters use entry submission dates; P&L follows those entry lots.'} Entry attempts include rejected and unfilled orders; fill rate counts attempts with any fill. Quantities are contracts.</p>${group==='time_price'?timePriceGridMarkup(data):group==='square'?squareGridMarkup(data):`<div class="scroll" tabindex="0" role="region" aria-label="Performance by ${e(heading.toLowerCase())}"><table class="activity-table"><thead><tr><th>${e(heading)}</th><th>Entry attempts</th><th>Filled orders / contracts</th><th>Resting / held</th><th>Closed / estimated win rate</th><th>Estimated net P&amp;L</th></tr></thead><tbody>${rows||'<tr><td colspan="6">No saved entries for these filters.</td></tr>'}</tbody></table></div>`}<p class="small">P&amp;L uses recorded limit prices less recorded fees, and may differ from actual execution proceeds. Positive closed entry lots count as wins; open lots and reset closures without assigned P&amp;L are excluded.${resets?' Unscored reset closures: '+e(resets)+'.':''}${['remaining','time'].includes(group)?' Older low/high orders without their original market clock appear as time remaining unavailable.':''}${data.limited?' History exceeds the display limit; this view is partial.':''}</p>`;
+ return `${data.analysis_version_info?analysisVersionMarkup(data.analysis_version_info,data.analysis_version):''}<p class="small">${e(data.start||data.end?`${data.start||'Earliest'} through ${data.end||'latest'}`:data.period||'Lifetime')} · ${e(data.timezone||'America/Los_Angeles')} · saved ${e(new Date(data.at*1000).toLocaleTimeString())}. ${group==='square'?'Each revision keeps its original squares.':'Entries are grouped by submission time across revisions. Date filters use entry submission dates; P&L follows those entry lots.'} Entry attempts include rejected and unfilled orders; fill rate counts attempts with any fill. Quantities are contracts.</p>${group==='time_price'?timePriceGridMarkup(data):group==='square'?squareGridMarkup(data):`<div class="scroll" tabindex="0" role="region" aria-label="Performance by ${e(heading.toLowerCase())}"><table class="activity-table"><thead><tr><th>${e(heading)}</th><th>Entry attempts</th><th>Filled orders / contracts</th><th>Resting / held</th><th>Closed / estimated win rate</th><th>Estimated net P&amp;L</th></tr></thead><tbody>${rows||'<tr><td colspan="6">No saved entries for these filters.</td></tr>'}</tbody></table></div>`}<p class="small">P&amp;L uses recorded limit prices less recorded fees, and may differ from actual execution proceeds. Positive closed entry lots count as wins; open lots and reset closures without assigned P&amp;L are excluded.${resets?' Unscored reset closures: '+e(resets)+'.':''}${['remaining','time'].includes(group)?' Older low/high orders without their original market clock appear as time remaining unavailable.':''}${data.limited?' History exceeds the display limit; this view is partial.':''}</p>`;
 }
 
 export function latestTransactionsMarkup(data,botId){

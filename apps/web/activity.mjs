@@ -1,8 +1,10 @@
 import {matchesActivity,matchingOrders,activityMarketMarkup,completedPairRow} from './activity-filters.mjs';
 import './order-detail.mjs';
-import {demoCall,escapeHTML as e,money,loadDemoSnapshots,ordersForView,nextMarketBoundary,botExposureMarkup,exitEvidence,orderDetailButton,transactionBadge} from './demo-client.mjs';
+import {demoCall,escapeHTML as e,money,loadDemoSnapshots,ordersForView,nextMarketBoundary,botExposureMarkup,exitEvidence,orderDetailButton,transactionBadge,analysisVersionPreference} from './demo-client.mjs';
 const $=id=>document.getElementById(id);let before=null,items=[],workspace,orders=[],initialFilters=true,eventVersion=0,loadVersion=0;
 let boundaryTimer,haveOrders=false;
+let analysisVersion=analysisVersionPreference();
+$('versionOnly').checked=analysisVersion==='latest';
 const date=value=>value?new Date(typeof value==='number'?value*1000:value).toLocaleString():'Not yet verified';
 function table(headers,rows){return `<table class="activity-table"><thead><tr>${headers.map(h=>`<th>${e(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>{let i=0;return row.replace(/<td>/g,()=>`<td data-label="${e(headers[i++])}">`)}).join('')}</tbody></table>`}
 function selectedFilters(){return {bot:$('botFilter').value,ticker:$('tickerFilter').value,kinds:[...document.querySelectorAll('[data-activity-kind]:checked')].map(el=>el.value)}}
@@ -11,6 +13,7 @@ async function events(append=false){
  const token=++eventVersion,filters=selectedFilters(),params=new URLSearchParams(),pairs=$('historyView').value==='pairs';
  $('activityTypes').hidden=pairs;
  $('historyHelp').textContent=pairs?'Each row is one fully filled buy and its linked filled sells. Partial sales, waiting orders, settlements and opposite-side offsets are excluded. Net is estimated from saved limits and recorded fees.':'Your bot name identifies each trade. Open Market code for the exchange ticker; tap the market description to open Kalshi.';
+ params.set('version',analysisVersion);
  if(append&&before)params.set('before',before);
  if(filters.bot)params.set('bot',filters.bot);if(filters.ticker)params.set('ticker',filters.ticker);if(!pairs&&filters.kinds.length)params.set('kind',filters.kinds.join(','));if(pairs)params.set('completed','true');
  if(!append){before=null;$('older').hidden=true;$('events').textContent='Loading activity for the selected filters…'}
@@ -41,6 +44,7 @@ const h=workspace.monitoring||{};$('health').innerHTML=[['Trading',workspace.hea
 }catch(error){$('message').textContent=error.message}}
 function updateTypeSummary(){const labels=[...document.querySelectorAll('[data-activity-kind]:checked')].map(el=>el.parentElement.textContent.trim());$('activityTypeSummary').textContent=labels.length>2?labels.length+' activity types':labels.join(' + ')||'All activity types'}
 for(const input of document.querySelectorAll('[data-activity-kind]'))input.onchange=()=>{updateTypeSummary();events().catch(error=>$('message').textContent=error.message)};
+$('versionOnly').onchange=()=>{analysisVersion=$('versionOnly').checked?'latest':'full';analysisVersionPreference(analysisVersion);events().catch(error=>$('message').textContent=error.message)};
 $('historyView').onchange=()=>events().catch(error=>$('message').textContent=error.message);
 $('botFilter').onchange=()=>events().catch(error=>$('message').textContent=error.message);
 $('tickerFilter').onchange=()=>events().catch(error=>$('message').textContent=error.message);
