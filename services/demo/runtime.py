@@ -539,9 +539,12 @@ class Worker:
                 # A still-resting order after a rejected cancel requires a
                 # bounded per-market retry cooldown, never a tight 404 loop.
                 blocked.add(order['ticker'])
+            self.rearm_allocation_cancel(order)
+            # Persist the replacement permission before retiring the old row.
+            # A restart between writes still sees an active cancellation and
+            # therefore cannot duplicate the replacement or lose its rearm.
             self.save_order(order)
             self.restore_filled_cycle_claim(order)
-            self.rearm_allocation_cancel(order)
             if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
             if prior_status not in ('closed','held') and order['status']=='closed':self.record('cancel',order,'Exchange order is no longer resting')
         # Reload includes fills committed above and closed exits for per-entry allocation.
