@@ -1,5 +1,5 @@
 """Entry-only availability checks; positions and verification never pause."""
-import math
+import math,time
 from decimal import Decimal
 from services.research.reports import SERIES
 INACTIVE_RECHECK_SECONDS=15*60
@@ -17,19 +17,42 @@ def external_book_ready(book,orders,ticker):
 class MarketActivityMixin:
     def restore_market_activity(self):
         row=self.store.get('market_activity')
-        if row and row['progress'].get('source')=='public_rest_v2':
+        if row and row['progress'].get('source')=='public_rest_v3':
             saved=row['progress']
             self.market_seen_active=saved.get('seen_active',{})
             self.market_inactive=saved.get('inactive',{})
             self.market_probe_at={s:v['retry_at'] for s,v in self.market_inactive.items()}
+            self.demo_trading_status=saved.get('demo_status')
+            self.demo_status_next=saved.get('demo_status_next',0)
 
     def save_market_activity(self):
-        self.store.put('market_activity',dict(source='public_rest_v2',seen_active=self.market_seen_active,inactive=self.market_inactive))
+        self.store.put('market_activity',dict(source='public_rest_v3',seen_active=self.market_seen_active,inactive=self.market_inactive,
+            demo_status=self.demo_trading_status,demo_status_next=self.demo_status_next))
+
+    def demo_trading_allowed(self,quote,now):
+        status=self.demo_trading_status
+        if not status or now>=self.demo_status_next:return False
+        index=quote.get('exchange_index',0)
+        return next((s.get('trading_active') is True for s in status.get('exchange_index_statuses',[]) if s.get('exchange_index')==index),status.get('trading_active') is True)
+
+    def check_demo_trading(self,now):
+        if now<self.demo_status_next:return
+        from .exchange import ExchangeFailure
+        try:
+            status=self.exchange.call('GET','/exchange/status')
+            if not isinstance(status,dict) or not isinstance(status.get('trading_active'),bool):raise ExchangeFailure('invalid_page')
+            self.demo_trading_status=status
+            self.demo_status_next=now+(30 if status['trading_active'] else INACTIVE_RECHECK_SECONDS)
+            self.save_market_activity()
+            import json
+            print(json.dumps(dict(event='demo_exchange_trading_status',trading_active=status['trading_active'],retry_seconds=self.demo_status_next-now)),flush=True)
+        except ExchangeFailure:
+            self.demo_trading_status=None;self.demo_status_next=now+30
 
     def market_entry_ready(self,config,ticker):
         if not config.get('require_active_market'):return True
         q=self.quotes.get(ticker,{})
-        return q.get('market_activity_ready') is True and q.get('series') not in self.market_inactive
+        return self.demo_trading_allowed(q,time.time()) and q.get('market_activity_ready') is True and q.get('series') not in self.market_inactive
 
     def refresh_market_activity(self,now):
         # Activity comes only from direct REST evidence. Stream gaps and thin
@@ -38,12 +61,17 @@ class MarketActivityMixin:
             evidence=self.market_api_activity.get(q['series'],{})
             q['market_activity_ready']=ticker in evidence.get('tickers',[]) and now-evidence.get('at',0)<=60
             q['market_inactive_reason']=self.market_inactive.get(q['series'],{}).get('reason')
+            if self.demo_trading_status and not self.demo_trading_allowed(q,min(now,self.demo_status_next-.001)):
+                q['market_inactive_reason']='Kalshi Demo trading paused or awaiting exchange-status verification.'
 
     def probe_market_activity(self,now):
         from .runtime import quote
         from .exchange import ExchangeFailure
         wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('require_active_market')
             for square in b['config']['squares'] for series in SERIES[square['asset']]}
+        if not wanted:return
+        self.check_demo_trading(now)
+        if not self.demo_trading_status or not self.demo_trading_status.get('trading_active'):return
         due=[s for s in wanted if self.market_probe_at.get(s,0)<=now and self.market_api_next.get(s,0)<=now]
         if not due:return
         # Active series go first; other probes are bounded to one per turn.
@@ -115,6 +143,12 @@ class MarketActivityMixin:
 
     def inactive_bot(self,bot):
         if not bot['config'].get('require_active_market'):return None
+        selected={s for square in bot['config']['squares'] for s in SERIES[square['asset']]}
+        quotes=[q for q in self.quotes.values() if q['series'] in selected]
+        paused=self.demo_trading_status and (all(not self.demo_trading_allowed(q,min(time.time(),self.demo_status_next-.001)) for q in quotes) if quotes else not self.demo_trading_status.get('trading_active'))
+        if paused:
+            return dict(reason='Kalshi Demo trading paused: the Demo exchange reports trading_active=false.',retry_at=self.demo_status_next,
+                action='No new buys are placed. Exchange status is checked again in 15 minutes; existing positions remain monitored.')
         series={s for square in bot['config']['squares'] for s in SERIES[square['asset']]}
         if not series or not all(s in self.market_inactive for s in series):return None
         issues=[self.market_inactive[s] for s in sorted(series)]

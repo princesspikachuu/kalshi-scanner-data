@@ -7,8 +7,32 @@ from services.demo.exchange import ExchangeFailure
 from services.demo.runtime import quote
 
 class MarketActivityTests(unittest.TestCase):
+    def test_demo_trading_pause_blocks_buys_and_skips_market_probes_for_fifteen_minutes(self):
+        w=self.worker();w.demo_status_next=0
+        w.exchange.call.return_value=dict(trading_active=False,exchange_index_statuses=[dict(exchange_index=2,trading_active=False)])
+        w.probe_market_activity(NOW)
+        w.exchange.market_activity_call.assert_not_called()
+        self.assertFalse(w.market_entry_ready(w.bots[0]['config'],'t'))
+        self.assertIn('Demo trading paused',w.inactive_bot(w.bots[0])['reason'])
+        self.assertEqual(w.demo_status_next,NOW+900)
+        w.exchange.call.reset_mock();w.probe_market_activity(NOW+899);w.exchange.call.assert_not_called()
+        w.exchange.call.return_value=dict(trading_active=True)
+        w.raw.update(open_time=NOW+800,close_time=NOW+1700)
+        w.probe_market_activity(NOW+901)
+        self.assertTrue(w.market_entry_ready(w.bots[0]['config'],'t'))
+
+    def test_paused_crypto_shard_overrides_active_global_flag(self):
+        w=self.worker();w.quotes['t']['exchange_index']=2
+        w.demo_trading_status=dict(trading_active=True,exchange_index_statuses=[dict(exchange_index=2,trading_active=False)])
+        w.market_api_activity={'KXBTC15M':dict(at=NOW,tickers=['t'])};w.refresh_market_activity(NOW)
+        self.assertFalse(w.market_entry_ready(w.bots[0]['config'],'t'))
+        self.assertIn('Demo trading paused',w.inactive_bot(w.bots[0])['reason'])
+
+    def setUp(self):
+        self.clock=patch('time.time',return_value=NOW);self.clock.start();self.addCleanup(self.clock.stop)
     def worker(self,volume=10,bid='.50',markets=True,trades=None):
         w=worker();w.bots[0]['config']['require_active_market']=True
+        w.demo_trading_status=dict(trading_active=True);w.demo_status_next=NOW+10000
         w.raw=dict(ticker='t',series_ticker='KXBTC15M',status='active',open_time=NOW-100,close_time=NOW+800,
             yes_bid_dollars=bid,yes_ask_dollars='.60',volume_fp=str(volume))
         w.api_markets=markets;w.api_trades=trades or [];w.api_book='.50'

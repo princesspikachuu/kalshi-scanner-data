@@ -66,6 +66,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.last_entry_bot=None;self.cycle_locks={}
         self.started_at=time.time();self.next_activity_check=0;self.market_probe_at={};self.market_inactive={};self.market_probe_started={};self.market_seen_active={}
         self.market_api_activity={};self.market_api_next={};self.market_api_samples={}
+        self.demo_trading_status=None;self.demo_status_next=0
         if isinstance(self.exchange,Exchange):self.exchange.before_read=self.drain_stream_during_read
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote,fair_budget_config
@@ -812,6 +813,8 @@ class Worker(LateExitMixin,MarketActivityMixin):
         cycle_series={s for b in self.bots if b['desired']=='running'
             and b['config'].get('strategy')=='buy_low_sell_high'
             for square in b['config']['squares'] for s in SERIES[square['asset']] if self.market_probe_at.get(s,0)<=now}
+        if self.demo_trading_status and not self.demo_trading_status.get('trading_active') and now<self.demo_status_next:
+            series=[];cycle_series=set() # Only held/unconfirmed markets need discovery during a Demo halt.
         requests=[];pending=set()
         epoch=int(now//900);cycle_sweep=False
         if self.pending_markets:
@@ -965,7 +968,8 @@ class Worker(LateExitMixin,MarketActivityMixin):
                 ticker=raw.get('market_ticker','')
                 from services.research.reports import SERIES
                 wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
-                if any(ticker.startswith(series+'-') for series in wanted) and self.market_probe_at.get(ticker.split('-')[0],0)<=time.time() and len(self.pending_markets)<100:
+                paused=self.demo_trading_status and not self.demo_trading_status.get('trading_active') and time.time()<self.demo_status_next
+                if not paused and any(ticker.startswith(series+'-') for series in wanted) and self.market_probe_at.get(ticker.split('-')[0],0)<=time.time() and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type')=='market_lifecycle_v2' and raw.get('event_type')=='price_level_structure_updated':
                 ticker=raw.get('market_ticker')
@@ -1534,6 +1538,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     self.stage="discovery"
                     desired_series={s for b in self.bots if b['desired']=='running' for square in b['config']['squares'] for s in SERIES[square['asset']]}
                     all_idle=desired_series and all(self.market_probe_at.get(s,0)>now for s in desired_series)
+                    all_idle=all_idle or self.demo_trading_status and not self.demo_trading_status.get('trading_active') and now<self.demo_status_next
                     discovery_interval=30 if all_idle else 2 if any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots) else 5
                     if self.pending_markets or now-self.last_discovery>=discovery_interval:self.discover()
                     self.stage="stream";self.stream(wait=False)
