@@ -98,7 +98,7 @@ class Exchange:
             tier=limits.get('usage_tier','unknown')
             if not isinstance(tier,str) or not re.fullmatch('[a-z_]{1,30}',tier):raise ValueError()
             balance_rate=5 if tier in ('premier','prime','institutional') else 1
-            buckets['balance']=Bucket(balance_rate,1)
+            buckets['balance']=Bucket(balance_rate*.8,1)
             self.buckets=buckets;self.endpoint_costs=parsed;self.default_cost=default
             cost=self.request_cost('POST','/portfolio/events/orders/batched')
             if min(buckets['read'].capacity,buckets['write'].capacity)<max(default,cost):raise ValueError()
@@ -152,6 +152,8 @@ class Exchange:
         try:
             with self.client.stream(method,ROOT+PATH+path,params=params,json=body,headers=self.signer.headers(method,PATH+path)) as response:
                 if response.status_code==429:
+                    operation=path if path in ('/portfolio/balance','/portfolio/positions','/portfolio/orders','/markets','/account/limits','/account/endpoint_costs') else 'other'
+                    print(json.dumps(dict(event='demo_rate_limit',method=method,operation=operation)),flush=True)
                     self.next_read=self.next_write=time.monotonic()+5
                     raise ExchangeFailure('rate_limited')
                 if not 200<=response.status_code<300:

@@ -13,6 +13,23 @@ def delta(**kw):
     return dict(type='orderbook_delta',sid=2,seq=2,sending_ts_ms=(NOW+1)*1000,msg=raw)
 
 class Books(unittest.TestCase):
+    def test_queued_delta_after_unsubscribe_preserves_other_books_and_sequence(self):
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        worker.quotes={'t':quote(),'removed':dict(quote(),series='inactive')}
+        worker.market_probe_at={'inactive':NOW+60};worker.subscription={'t','removed'};worker.book_sid=2
+        worker.books.apply(snapshot(),NOW);worker.books.apply(snapshot(market_ticker='removed'),NOW)
+        worker.sequence={2:1}
+        messages=[delta(market_ticker='removed'),dict(delta(),seq=3)]
+        class Socket:
+            def send(self,data):pass
+            def recv(self,**kw):
+                if not messages:raise TimeoutError
+                return json.dumps(messages.pop(0))
+        worker.socket=Socket()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.stream()
+        self.assertEqual(worker.subscription,{'t'});self.assertEqual(worker.sequence[2],3)
+        self.assertNotIn('removed',worker.books.books);self.assertEqual(worker.quotes['t']['ask'],55)
+
     def test_build_complement_apply_remove_and_replace(self):
         books=OrderBooks();_,q=books.apply(snapshot(),NOW)
         self.assertEqual((q['bid'],q['ask']),(50,60))

@@ -31,7 +31,7 @@ class ExchangeBudgets(unittest.TestCase):
             self.assertEqual(ex.writes,1)
             ex.call('GET','/portfolio/balance');first=clock[0]
             ex.call('GET','/portfolio/balance')
-            self.assertGreaterEqual(clock[0]-first,.999)
+            self.assertGreaterEqual(clock[0]-first,1.249)
         ex.close()
     def test_unverified_budget_does_not_enable_fast_writes(self):
         ex=self.exchange(lambda request:httpx.Response(404,json={}))

@@ -988,7 +988,9 @@ class Worker(LateExitMixin,MarketActivityMixin):
             if message.get('type')=='fill':return
             if message.get('type') in ('orderbook_snapshot','orderbook_delta'):
                 ticker=raw.get('market_ticker')
-                if ticker not in self.quotes:continue
+                # Removed subscriptions can still have queued deltas. Consume
+                # their sequence above without recreating a discarded book.
+                if ticker not in self.quotes or ticker not in self.subscription:continue
                 self.book_sid=message['sid']
                 now=time.time();old=self.quotes[ticker]
                 # Late updates from an ended market cannot authorize a trade.
