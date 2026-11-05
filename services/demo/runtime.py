@@ -992,13 +992,14 @@ class Worker:
         self.recent_market_changes[order['ticker']]=self.sync_pending['at']
         # Reconcile races/fills before considering any replacement or released cash.
         self.recovered=False;self.last_reconcile=0
-    def submit(self,intent):
+    def submit(self,intent,confirmation=None,prepared=False):
         self.context_market=intent['ticker'];self.context_order=intent['client_id'];self.context_bot=intent['bot']
         # Durable intent precedes network write. Ambiguous writes are never replayed.
-        self.save_order(intent);self.record('order_intent',intent,'Verified '+intent['kind']+' order prepared')
+        if not prepared:self.save_order(intent);self.record('order_intent',intent,'Verified '+intent['kind']+' order prepared')
         reconcile_needed=True
         try:
-            result=self.exchange.submit(intent)
+            if isinstance(confirmation,ExchangeFailure):raise confirmation
+            result=self.exchange.submit(intent) if confirmation is None else confirmation
             intent.update(exchange_id=result['order_id'],status='resting',remaining=number(result['remaining_count']),filled=number(result['fill_count']))
             self.save_order(intent);self.record('order',intent,'Kalshi Demo accepted '+('profit sell' if intent.get('exit_role')=='profit' else 'maker-only '+intent['kind']))
             self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
@@ -1039,6 +1040,101 @@ class Worker:
             raise
         finally:
             if reconcile_needed:self.recovered=False;self.last_reconcile=0
+
+    def submit_entry_batch(self,intents):
+        """Persist every claim before one network write; reconcile uncertain items."""
+        if self.socket:self.stream(wait=False)
+        now=time.time()
+        if not self.recovered or not self.last_reconcile or now-self.last_reconcile>35:return False
+        from .cycles import eligible
+        from .engine import side_quote
+        bots={b['id']:b for b in self.bots}
+        for intent in intents:
+            q=self.quotes.get(intent['ticker']);bot=bots.get(intent['bot'])
+            memory=self.states.get(intent['bot'],{}).get(f"{intent['ticker']}/{intent['square']}/{intent['side']}",{})
+            if (not q or not bot or bot['desired']!='running' or bot['revision']!=intent['revision']
+                or intent['ticker'] in self.blocked or intent['ticker'] in self.netting_pending
+                or not 0<=now-q.get('at',0)<=5 or q.get('source')!='orderbook' or not q.get('book_verified')
+                or not eligible(bot['config'],intent['condition'],q,now)
+                or not intent['price']<side_quote(q,intent['side'])[1]
+                or not entry_protection_matches(bot['config'],intent['condition'],q,intent['side'])
+                or memory.get('submitted') or memory.get('cycle')!=intent['cycle']):return False
+        for intent in intents:
+            self.save_order(intent);self.record('order_intent',intent,'Verified batch entry prepared')
+            memory=self.states[intent['bot']][f"{intent['ticker']}/{intent['square']}/{intent['side']}"]
+            memory['submitted']=True
+            self.store.put('trigger/'+intent['bot'],self.states[intent['bot']],parameters=dict(revision=intent['revision']))
+        # Database commits can take time. Recheck the stream and cutoff after
+        # durability, before any write; an unsent group can safely be rearmed.
+        if self.socket:self.stream(wait=False)
+        now=time.time()
+        valid=self.recovered and self.last_reconcile and now-self.last_reconcile<=35
+        for intent in intents:
+            q=self.quotes[intent['ticker']];bot=bots[intent['bot']]
+            valid=valid and (0<=now-q.get('at',0)<=5 and q.get('book_verified')
+                and eligible(bot['config'],intent['condition'],q,now)
+                and intent['price']<side_quote(q,intent['side'])[1]
+                and entry_protection_matches(bot['config'],intent['condition'],q,intent['side'])
+                and intent['ticker'] not in self.blocked and intent['ticker'] not in self.netting_pending
+                and self.cycle_locks.get(intent['ticker']) in (None,intent['side']))
+        if not valid:
+            for intent in intents:
+                intent['status']='rejected';self.save_order(intent)
+                self.record('order_aborted',intent,'Batch was not sent: account or market changed during preparation')
+                memory=self.states[intent['bot']][f"{intent['ticker']}/{intent['square']}/{intent['side']}"]
+                memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                self.store.put('trigger/'+intent['bot'],self.states[intent['bot']],parameters=dict(revision=intent['revision']))
+            self.recovered=False;self.last_reconcile=0
+            return False
+        started=time.time();request_error=None
+        try:
+            page=self.exchange.submit_batch(intents)
+            rows=page.get('orders') if isinstance(page,dict) else None
+        except ExchangeFailure as error:
+            request_error=error;rows=None
+        request_seconds=round(time.time()-started,3)
+        by_client={};duplicates=set()
+        if isinstance(rows,list) and len(rows)<=len(intents):
+            for row in rows:
+                if not isinstance(row,dict):continue
+                key=row.get('client_order_id')
+                if not isinstance(key,str):continue
+                if key in by_client:duplicates.add(key)
+                by_client[key]=row
+        first_error=None
+        for intent in intents:
+            row=by_client.get(intent['client_id']);result=ExchangeFailure('batch_confirmation',True)
+            if request_error and request_error.code=='rate_limited' and not request_error.ambiguous:
+                # Kalshi rejects the entire batch when it cannot fit the bucket.
+                result=ExchangeFailure('rate_limited',False,status=429)
+            elif intent['client_id'] not in duplicates and row:
+                try:
+                    filled=count(row,'fill_count');remaining=count(row,'remaining_count')
+                    if (not row.get('error') and isinstance(row.get('order_id'),str) and 0<len(row['order_id'])<=128
+                        and row.get('fill_count_fp',row.get('fill_count')) is not None
+                        and row.get('remaining_count_fp',row.get('remaining_count')) is not None
+                        and math.isfinite(filled) and math.isfinite(remaining)
+                        and min(filled,remaining)>=0 and filled+remaining<=intent['quantity']+.001):
+                        result=dict(order_id=row['order_id'],fill_count=filled,remaining_count=remaining)
+                    elif row.get('error') and not row.get('order_id'):
+                        error=row['error'];code=error.get('code') if isinstance(error,dict) else None
+                        reason='post_only' if code in ('post_only','post_only_cross','post_only_violation') else 'price_tick' if code in ('price_tick','invalid_price_increment') else None
+                        result=ExchangeFailure('exchange_rejected',False,status=400,reason=reason)
+                except (ValueError,TypeError,ArithmeticError):pass
+            try:self.submit(intent,confirmation=result,prepared=True)
+            except ExchangeFailure as error:
+                first_error=first_error or error
+                if error.code=='rate_limited' and not error.ambiguous:
+                    memory=self.states[intent['bot']][f"{intent['ticker']}/{intent['square']}/{intent['side']}"]
+                    memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
+                    self.store.put('trigger/'+intent['bot'],self.states[intent['bot']],parameters=dict(revision=intent['revision']))
+        self.recovered=False;self.last_reconcile=0
+        print(json.dumps(dict(event='demo_entry_batch',orders=len(intents),
+            accepted=sum(i['status']=='resting' for i in intents),uncertain=sum(i['status']=='uncertain' for i in intents),
+            rejected=sum(i['status']=='rejected' for i in intents),request_seconds=request_seconds,
+            confirmation_seconds=round(time.time()-started-request_seconds,3))),flush=True)
+        if first_error:raise first_error
+        return True
     def upgrade_legacy_exits(self):
         legacy=[o for o in self.orders if o['kind']=='entry' and o.get('exit_triggered') and o.get('exit_reference')!='ask']
         if not legacy:return False
@@ -1237,6 +1333,11 @@ class Worker:
                     return
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
         peers={};equity=self.account['equity_cents'];cash=self.account['cash_cents']
+        batching=isinstance(self.exchange,Exchange) and self.exchange.max_entry_batch>1
+        batch_limit=self.exchange.entry_batch_capacity() if batching else 1
+        if batch_limit<1:return
+        prepared=[];planning_writes=self.exchange.writes if batching else None
+        reservations=dict(self.shard_reservations) if batching else self.shard_reservations
         for item in options:
             config=fair_configs[item['bot']]
             if config.get('strategy')=='buy_low_sell_high' and not self.daily_guard(bots[item['bot']],now) and not entry_block_reason(item,market_orders.get(item['ticker'],[]),item['ticker'] in self.netting_pending,self.cycle_locks.get(item['ticker'])):
@@ -1244,10 +1345,11 @@ class Worker:
                     peers.setdefault(item['ticker'],[]).append(item)
         for item in options:
             self.context_market=item['ticker'];self.context_order=None;self.context_bot=item['bot']
-            if len({o['ticker'] for o in self.orders})>=100 and item['ticker'] not in {o['ticker'] for o in self.orders}:continue
-            if len(self.orders)>=490:continue
+            if len(market_orders)>=100 and item['ticker'] not in market_orders:continue
+            if len(self.orders)+len(prepared)>=490:continue
             bot=bots[item['bot']];config=fair_configs[item['bot']];equity=self.account['equity_cents']
             is_cycle=config.get('strategy')=='buy_low_sell_high'
+            if prepared and not is_cycle:break
             active_entries=[o for o in self.orders if o['kind']=='entry' and o['ticker']==item['ticker'] and o['status'] not in ('closed','rejected')]
             if item['ticker'] in self.netting_pending:continue
             if is_cycle:
@@ -1257,7 +1359,7 @@ class Worker:
                 if item['ticker'] in direction and direction[item['ticker']]!=item['side']:continue
             market=market_cost.get(item['ticker'],0);exposure=bot_cost.get(item['bot'],0)
             if self.daily_guard(bot,now):continue
-            amount=quantity(config,item['price'],equity,self.account['cash_cents'],market,exposure)
+            amount=quantity(config,item['price'],equity,cash,market,exposure)
             if is_cycle:
                 from .cycles import shared_quantity
                 amount=shared_quantity(item,peers.get(item['ticker'],[]),config,equity,cash,market,exposure)
@@ -1269,7 +1371,7 @@ class Worker:
             shard=self.quotes[item['ticker']].get('exchange_index',0)
             from .funding import ShardFunding
             if isinstance(self.funding,ShardFunding):
-                local_cash=self.funding.available_cash(shard,self.shard_reservations)
+                local_cash=self.funding.available_cash(shard,reservations)
                 if local_cash>=item['price']:
                     underserved={p['bot'] for p in options if p['bot'] in cycle_bots
                         and self.quotes[p['ticker']].get('exchange_index',0)==shard
@@ -1278,21 +1380,34 @@ class Worker:
                         and not self.daily_guard(bots[p['bot']],now)}
                     amount=min(amount,max(1,int(local_cash/max(1,len(underserved))/item['price'])))
             target=amount*item['price'] if is_cycle else max(amount*item['price'],equity*config['bot_percent']/100-exposure)
-            if not self.funding.ensure(shard,amount*item['price'],target,self.shard_reservations):continue
+            if not self.funding.ensure(shard,amount*item['price'],target,reservations):continue
             # Funding requests take time: recheck prices and entry qualification
             # on the next stream tick before preparing any order.
             from .cycles import eligible
             still_matches=eligible(config,config['squares'][item['square']],self.quotes[item['ticker']],time.time()) if is_cycle else qualifies(config['squares'][item['square']],self.quotes[item['ticker']],item['side'],time.time(),config['qualification'])
             if time.time()-self.quotes[item['ticker']]['at']>5 or not still_matches:continue
-            memory=self.states[item['bot']][item['key']];memory['submitted']=True
-            self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
+            memory=self.states[item['bot']][item['key']]
+            if not batching or not is_cycle:
+                memory['submitted']=True
+                self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
             extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],profit_floor_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
             extra['market_trading_close_at']=self.quotes[item['ticker']]['close']
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(180 if is_cycle else 0)
             if is_cycle:self.last_entry_bot=item['bot']
-            self.submit(dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra));return
+            intent=dict(client_id=identifier,kind='entry',entry_pricing='cap_v2',condition=config['squares'][item['square']],exit_reference='ask',exchange_index=self.quotes[item['ticker']].get('exchange_index',0),bot=item['bot'],revision=bot['revision'],ticker=item['ticker'],side=item['side'],square=item['square'],cycle=item['cycle'],price=item['price'],quantity=amount,close=end,created_at=now,status='intent',remaining=0,filled=0,**extra)
+            if not batching or not is_cycle:self.submit(intent);return
+            prepared.append(intent)
+            # Planning reservations are worst-case costs, never assumed fills.
+            cost=amount*item['price'];cash=max(0,cash-cost)
+            market_cost[item['ticker']]=market+cost;bot_cost[item['bot']]=exposure+cost
+            reservations[shard]=reservations.get(shard,0)+cost
+            market_orders.setdefault(item['ticker'],[]).append(dict(intent,status='resting',remaining=amount))
+            if len(prepared)>=batch_limit:break
+        if prepared:
+            if self.exchange.writes==planning_writes:self.submit_entry_batch(prepared)
+            return
         for bot in self.bots:
             # Compare state before writing; quiet ticks produce no database writes.
             packed=json.dumps(self.states[bot['id']],sort_keys=True)
@@ -1310,6 +1425,8 @@ class Worker:
                 try:
                     self.context_market=self.context_order=self.context_bot=None
                     self.guard()
+                    if isinstance(self.exchange,Exchange) and time.monotonic()>=self.exchange.next_limits:
+                        self.exchange.refresh_limits()
                     if now>=credential_check:
                         credential_check=now+30;record=self.store.get('credentials');changed=record['progress'].get('changed_at') if record else None
                         if credential_version is not None and changed!=credential_version:
@@ -1337,7 +1454,7 @@ class Worker:
                     if controls_due:self.stage='reconciliation';self.poll_funding()
                     self.stage="discovery"
                     if self.pending_markets or now-self.last_discovery>=(2 if any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots) else 5):self.discover()
-                    self.stage="stream";self.stream()
+                    self.stage="stream";self.stream(wait=False)
                     self.stage="reconciliation"
                     if not self.recovered or now-self.last_reconcile>=30:self.reconcile()
                     self.stage='trade';self.trade();self.trading_health()
@@ -1377,7 +1494,7 @@ class Worker:
                     self.store.alert('recovery',self.issue['summary']+' '+self.issue['action'],True)
                     self.health('attention',self.issue['summary'])
                     self.stop.wait(backoff);backoff=min(60,backoff*2)
-                self.stop.wait(.5)
+                self.stop.wait(.1)
         finally:
             self.close_stream();self.health('recovering','Worker restarting; preserve exchange orders for reconciliation')
 

@@ -70,13 +70,61 @@ class Exchange:
         self.client=client or httpx.Client(timeout=httpx.Timeout(8,connect=5),follow_redirects=False,
             limits=httpx.Limits(max_connections=2,max_keepalive_connections=2))
         self.next_read=0;self.next_write=0;self.reads=0;self.writes=0
+        self.buckets={};self.endpoint_costs=[];self.default_cost=10.;self.max_entry_batch=1;self.next_limits=0
         # Optional Demo-worker callback: process the already-received WS buffer
         # between REST reads. Never called for writes or from a background thread.
         self.before_read=None
     def close(self):self.client.close()
+    def refresh_limits(self):
+        """Use authenticated budgets; failed/unknown contracts retain slow mode."""
+        from .pacing import Bucket,positive
+        self.next_limits=time.monotonic()+300
+        try:
+            limits=self.call('GET','/account/limits')
+            costs=self.call('GET','/account/endpoint_costs')
+            default=positive(costs['default_cost']);rows=costs['endpoint_costs']
+            if not isinstance(rows,list) or len(rows)>500:raise ValueError()
+            parsed=[]
+            for row in rows:
+                path=row['path'];method=row['method']
+                if not isinstance(path,str) or len(path)>300 or method not in ('GET','POST','PUT','DELETE','PATCH'):raise ValueError()
+                if path.startswith(PATH):path=path[len(PATH):]
+                pattern=re.sub(r'\\\{[^{}]+\\\}',r'[^/]+',re.escape(path))
+                parsed.append((method,re.compile('^'+pattern+'$'),positive(row['cost'])))
+            buckets={}
+            for key in ('read','write'):
+                # Leave headroom for manual activity and other account clients.
+                buckets[key]=Bucket(positive(limits[key]['refill_rate'])*.8,positive(limits[key]['bucket_capacity'])*.8)
+            tier=limits.get('usage_tier','unknown')
+            if not isinstance(tier,str) or not re.fullmatch('[a-z_]{1,30}',tier):raise ValueError()
+            balance_rate=5 if tier in ('premier','prime','institutional') else 1
+            buckets['balance']=Bucket(balance_rate,1)
+            self.buckets=buckets;self.endpoint_costs=parsed;self.default_cost=default
+            cost=self.request_cost('POST','/portfolio/events/orders/batched')
+            if min(buckets['read'].capacity,buckets['write'].capacity)<max(default,cost):raise ValueError()
+            self.max_entry_batch=max(1,min(64,int(buckets['write'].capacity/cost)))
+            print(json.dumps(dict(event='demo_api_limits',verified=True,tier=tier,
+                read_tokens_per_second=buckets['read'].rate,write_tokens_per_second=buckets['write'].rate,
+                default_cost=default,batch_item_cost=cost,max_entry_batch=self.max_entry_batch)),flush=True)
+            return True
+        except (ExchangeFailure,KeyError,TypeError,ValueError,OverflowError):
+            self.buckets={};self.max_entry_batch=1
+            print(json.dumps(dict(event='demo_api_limits',verified=False,max_entry_batch=1)),flush=True)
+            return False
+    def request_cost(self,method,path):
+        return next((cost for verb,pattern,cost in self.endpoint_costs if verb==method and pattern.fullmatch(path)),self.default_cost)
+    def entry_batch_capacity(self):
+        if not self.buckets:return 1
+        if self.next_write>time.monotonic():return 0
+        cost=self.request_cost('POST','/portfolio/events/orders/batched')
+        return min(self.max_entry_batch,int(self.buckets['write'].available()/cost))
     def call(self,method,path,*,params=None,body=None):
         if not path.startswith('/') or '..' in path or '://' in path:raise ValueError('Invalid path')
         write=method!='GET';now=time.monotonic();next_at=self.next_write if write else self.next_read
+        bucket=self.buckets.get('write' if write else 'balance' if path=='/portfolio/balance' else 'read')
+        cost=1 if path=='/portfolio/balance' else self.request_cost(method,path)
+        if write and path.endswith('/batched'):cost*=len((body or {}).get('orders',[]))
+        if bucket and cost>bucket.capacity:raise ExchangeFailure('request_budget')
         if not write:
             poll=self.before_read
             if poll is not None:poll()
@@ -85,16 +133,22 @@ class Exchange:
             # synchronous and no order write may be replayed by this hook.
             last_poll=time.monotonic()
             while True:
-                remaining=next_at-time.monotonic()
+                remaining=max(next_at-time.monotonic(),bucket.delay(cost) if bucket else 0)
                 if remaining<=0:break
                 if poll is not None and time.monotonic()-last_poll>=.2:
                     poll();last_poll=time.monotonic()
-                remaining=next_at-time.monotonic()
+                remaining=max(next_at-time.monotonic(),bucket.delay(cost) if bucket else 0)
+                if remaining<=0:break
+                time.sleep(min(.1,remaining))
+        elif bucket:
+            while True:
+                remaining=max(next_at-time.monotonic(),bucket.delay(cost) if bucket else 0)
                 if remaining<=0:break
                 time.sleep(min(.1,remaining))
         elif next_at>now:time.sleep(min(5,next_at-now))
-        if write:self.guard();self.next_write=time.monotonic()+1;self.writes+=1
-        else:self.next_read=time.monotonic()+.25;self.reads+=1
+        if bucket:bucket.take(cost)
+        if write:self.guard();self.next_write=time.monotonic()+(0 if bucket else 1);self.writes+=1
+        else:self.next_read=time.monotonic()+(0 if bucket else .25);self.reads+=1
         try:
             with self.client.stream(method,ROOT+PATH+path,params=params,json=body,headers=self.signer.headers(method,PATH+path)) as response:
                 if response.status_code==429:
@@ -136,6 +190,10 @@ class Exchange:
     def submit(self,intent):
         from .engine import wire_order
         return self.call('POST','/portfolio/events/orders',body=wire_order(intent))
+    def submit_batch(self,intents):
+        from .engine import wire_order
+        if not 1<=len(intents)<=self.max_entry_batch:raise ExchangeFailure('batch_capacity')
+        return self.call('POST','/portfolio/events/orders/batched',body=dict(orders=[wire_order(i) for i in intents]))
     def cancel(self,order_id,ticker):
         if not re.fullmatch(r'[A-Za-z0-9-]{1,128}',order_id):raise ValueError('Invalid order ID')
         return self.call('DELETE','/portfolio/events/orders/'+order_id,params=dict(market_ticker=ticker,exchange_index=-1))
