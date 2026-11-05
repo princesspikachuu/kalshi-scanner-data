@@ -66,6 +66,7 @@ def credentials(store,env):
     return DemoSigner(data['key_id'],data['pem'])
 
 class Exchange:
+    root=ROOT
     def __init__(self,signer,*,client=None,guard=lambda:None):
         self.signer,self.guard=signer,guard
         self.client=client or httpx.Client(timeout=httpx.Timeout(8,connect=5),follow_redirects=False,
@@ -176,7 +177,7 @@ class Exchange:
         if write:self.guard();self.next_write=time.monotonic()+(0 if bucket else 1);self.writes+=1
         else:self.next_read=time.monotonic()+(0 if bucket else .25);self.reads+=1
         try:
-            with self.client.stream(method,ROOT+PATH+path,params=params,json=body,headers=self.signer.headers(method,PATH+path)) as response:
+            with self.client.stream(method,self.root+PATH+path,params=params,json=body,headers=self.signer.headers(method,PATH+path)) as response:
                 if response.status_code==429:
                     operation=path if path in ('/portfolio/balance','/portfolio/positions','/portfolio/orders','/markets','/account/limits','/account/endpoint_costs') else 'other'
                     print(json.dumps(dict(event='demo_rate_limit',method=method,operation=operation)),flush=True)

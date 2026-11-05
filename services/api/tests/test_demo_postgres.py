@@ -26,6 +26,124 @@ class DemoPostgres(unittest.TestCase):
         challenge=self.client.get('/auth/challenge').json();self.client.post('/auth/google',json=dict(credential='opaque',nonce=challenge['nonce'],csrf_token=challenge['csrf_token']))
         self.client.headers['x-csrf-token']=self.client.cookies[CSRF]
     def tearDown(self):self.client.close()
+    def test_live_handover_pauses_all_demo_and_blocks_every_resume_path(self):
+        from services.trading.mode import request_live,read_mode
+        from services.live.workspace import seed_live_bots
+        from uuid import uuid4
+        identifiers=[str(uuid4()),str(uuid4())]
+        for identifier in identifiers:
+            self.demo.put('bot/'+identifier,dict(desired='running'),parameters=dict(config=config(),revision=1,settings_revision=1))
+        seed_live_bots(self.store.pool)
+        live=self.client.get('/live/workspace').json()['bots'][0]
+        request_live(self.store.pool,live['key'],1)
+        self.assertEqual(read_mode(self.store.pool)['mode'],'draining_demo')
+        self.assertTrue(all(r['progress']['desired']=='paused' for r in self.demo.rows('bot/')))
+        self.assertEqual(self.client.post('/demo/bots/'+identifiers[0]+'/control',json=dict(action='resume',revision=1)).status_code,409)
+        self.assertEqual(self.client.post('/demo/bulk',json=dict(action='resume',bots=[dict(id=i,revision=1) for i in identifiers])).status_code,409)
+        self.assertEqual(self.client.post('/demo/bots/'+identifiers[0]+'/control',json=dict(action='pause',revision=1)).status_code,200)
+        with self.store.pool.connection() as c:
+            rows=c.execute("SELECT progress FROM research_job WHERE idempotency_key>='live/bot/' AND idempotency_key<'live/bot/zzzz'").fetchall()
+        self.assertTrue(all(r['progress']['desired']=='paused' for r in rows))
+    def test_stale_live_settings_do_not_pause_demo_or_start_a_handover(self):
+        from services.trading.mode import request_live,read_mode
+        from services.live.workspace import seed_live_bots
+        from uuid import uuid4
+        identifier=str(uuid4())
+        self.demo.put('bot/'+identifier,dict(desired='running'),parameters=dict(config=config(),revision=1,settings_revision=1))
+        seed_live_bots(self.store.pool);live=self.client.get('/live/workspace').json()['bots'][0]
+        with self.assertRaises(ValueError):request_live(self.store.pool,live['key'],999)
+        self.assertEqual(read_mode(self.store.pool)['mode'],'demo')
+        self.assertEqual(self.demo.get('bot/'+identifier)['progress']['desired'],'running')
+    def test_pilot_guard_claim_survives_order_updates_and_prevents_second_entry(self):
+        from services.live.store import LiveStore
+        from services.live.risk import PilotGuard,RiskBlocked
+        from services.api.tests.test_demo_cycles import entry
+        from services.demo.runtime import Worker
+        from services.trading.mode import write_mode
+        from unittest.mock import Mock
+        import time,threading
+        live=LiveStore(self.store.pool);bot='pilot-bot'
+        live.put('trial',dict(binding='test-binding',initial_cash_cents=5000,loss_limit_cents=2500,entry_claimed=False))
+        live.put('bot/'+bot,dict(desired='running'),parameters=dict(revision=1,config=config()))
+        with self.store.pool.connection() as c:write_mode(c,dict(mode='live',requested='live',pilot_bot=bot))
+        order=entry(bot=bot,quantity=1,remaining=0,status='intent',price=3,close=time.time()+100)
+        w=Worker(live,Mock(),threading.Event(),lambda:None);w.save_order(order)
+        exchange=Mock();exchange.pages.return_value=[];guard=PilotGuard(live,exchange,'test-binding',lambda:None)
+        guard([order]);self.assertTrue(live.get('trial')['progress']['entry_claimed'])
+        order.update(status='uncertain');w.save_order(order)
+        self.assertIsNotNone(live.get('write/'+order['client_id']))
+        with self.assertRaises(RiskBlocked):guard([order])
+        second=dict(order,client_id='second');w.save_order(second)
+        with self.assertRaises(RiskBlocked):guard([second])
+        self.assertIsNone(live.get('write/second'))
+    def test_guard_rejects_quantity_increase_and_manual_inventory(self):
+        from services.live.store import LiveStore
+        from services.live.risk import PilotGuard,RiskBlocked
+        from services.api.tests.test_demo_cycles import entry
+        from services.demo.runtime import Worker
+        from services.trading.mode import write_mode
+        from unittest.mock import Mock
+        import time,threading
+        live=LiveStore(self.store.pool);bot='pilot-bot'
+        live.put('trial',dict(binding='test-binding',entry_claimed=False))
+        live.put('bot/'+bot,dict(desired='running'),parameters=dict(revision=1,config=config()))
+        with self.store.pool.connection() as c:write_mode(c,dict(mode='live',requested='live',pilot_bot=bot))
+        order=entry(bot=bot,quantity=2,remaining=0,status='intent',price=3,close=time.time()+100)
+        w=Worker(live,Mock(),threading.Event(),lambda:None);w.save_order(order)
+        exchange=Mock();exchange.pages.return_value=[];guard=PilotGuard(live,exchange,'test-binding',lambda:None)
+        with self.assertRaises(RiskBlocked):guard([order])
+        order['quantity']=1;w.save_order(order)
+        exchange.pages.side_effect=[[dict(ticker='manual',position_fp='1')],[]]
+        with self.assertRaises(RiskBlocked):guard([order])
+        self.assertFalse(live.get('trial')['progress']['entry_claimed'])
+    def test_live_sell_guard_rejects_foreign_parent_and_existing_sell(self):
+        from services.live.store import LiveStore
+        from services.live.risk import PilotGuard,RiskBlocked
+        from services.api.tests.test_demo_cycles import entry
+        from services.demo.runtime import Worker
+        from services.trading.mode import write_mode
+        from unittest.mock import Mock
+        import time,threading
+        live=LiveStore(self.store.pool);bot='pilot-bot'
+        live.put('trial',dict(binding='test-binding',entry_claimed=True))
+        live.put('bot/'+bot,dict(desired='paused'),parameters=dict(revision=1,config=config()))
+        with self.store.pool.connection() as c:write_mode(c,dict(mode='live',requested='live',pilot_bot=bot))
+        parent=entry(bot=bot,quantity=1,filled=1,remaining=0,sold=0,status='held',price=3,close=time.time()+100,late_exit_triggered=True,late_exit_ceiling_cents=31)
+        sale=dict(parent,client_id='sale',kind='exit',parent=parent['client_id'],filled=0,status='intent',price=31)
+        w=Worker(live,Mock(),threading.Event(),lambda:None);w.save_order(parent);w.save_order(sale)
+        exchange=Mock();exchange.pages.side_effect=[[dict(ticker=sale['ticker'],position_fp='1')],[dict(order_id='already-selling')]]
+        guard=PilotGuard(live,exchange,'test-binding',lambda:None)
+        with self.assertRaises(RiskBlocked):guard([sale])
+        exchange.pages.side_effect=[[dict(ticker=sale['ticker'],position_fp='1')],[]]
+        guard([sale]);self.assertIsNotNone(live.get('write/sale'))
+    def test_live_preflight_is_read_only_then_requires_explicit_start_confirmation(self):
+        from services.live.store import LiveStore
+        from services.live.workspace import seed_live_bots,configure_approved_pilot
+        from services.trading.mode import read_mode
+        from uuid import uuid4
+        source=str(uuid4());self.demo.put('bot/'+source,dict(desired='running'),parameters=dict(config=config(strategy='buy_low_sell_high',cycle_exit_mode='late_threshold',cycle_buy_cents=3,cycle_entry_minutes=5,cycle_repeat=False),revision=1))
+        seed_live_bots(self.store.pool);configure_approved_pilot(self.store.pool)
+        live=LiveStore(self.store.pool);live.put('credentials',dict(binding='binding',subaccount=2))
+        bot=self.client.get('/live/workspace').json()['bots'][0]
+        with patch('services.live.exchange.load_connection',return_value=dict(binding='binding',key_id='key',pem='unused',subaccount=2)),patch('services.demo.exchange.DemoSigner'),patch('services.live.exchange.LiveExchange') as exchange:
+            exchange.return_value.call.return_value=dict(balance=5000,portfolio_value=0);exchange.return_value.pages.return_value=[]
+            result=self.client.post('/live/preflight',json=dict(bot=bot['key'],expected_settings_revision=1))
+            self.assertEqual(result.status_code,200,result.text);token=result.json()['token']
+            self.assertEqual(read_mode(self.store.pool)['mode'],'demo');exchange.return_value.submit.assert_not_called()
+        body=dict(bot=bot['key'],expected_settings_revision=1,token=token,confirmation='wrong')
+        self.assertEqual(self.client.post('/live/pilot',json=body).status_code,422)
+        body['confirmation']='START ONE LIVE CONTRACT';result=self.client.post('/live/pilot',json=body)
+        self.assertEqual(result.status_code,200,result.text);self.assertEqual(read_mode(self.store.pool)['mode'],'draining_demo')
+        self.assertEqual(self.demo.get('bot/'+source)['progress']['desired'],'paused')
+        self.assertEqual(self.client.post('/live/pilot',json=body).status_code,409)
+    def test_live_connection_errors_never_echo_private_keys_and_budget_locks_after_trial(self):
+        secret='PRIVATE-KEY-CONTENT-'+('x'*200)
+        with patch.dict('os.environ',DEMO_VAULT_KEY='present'),patch('services.live.exchange.save_connection',side_effect=RuntimeError(secret)):
+            response=self.client.post('/live/connection',json=dict(key_id='id',private_key=secret,subaccount=2))
+        self.assertEqual(response.status_code,503);self.assertNotIn(secret,response.text)
+        from services.live.store import LiveStore
+        LiveStore(self.store.pool).put('trial',dict(binding='binding'))
+        self.assertEqual(self.client.post('/live/budget',json=dict(trial_cap_cents=10000)).status_code,409)
     def test_live_copies_are_paused_isolated_idempotent_and_keep_source_version(self):
         from services.live.workspace import seed_live_bots
         from uuid import uuid4

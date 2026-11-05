@@ -1,1 +1,1 @@
-"""Paused live-bot configuration workspace. No exchange transport or executor."""
+"""Restricted-account LIVE setup and a durable one-contract execution pilot."""

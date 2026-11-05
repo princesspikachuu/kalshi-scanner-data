@@ -86,6 +86,7 @@ def qualifies(square,quote,side,now,reference):
         square['min_minutes']<minutes<=square['max_minutes'] and square['min_price']<=value<=square['max_price'])
 
 def protective_threshold(config,square):
+    if config.get('cycle_exit_mode')=='late_threshold':return None
     if square.get('loss_prevention_cents') is not None:return square['loss_prevention_cents']
     if config['loss_mode']=='manual':return config.get('loss_cents')
     if config['loss_mode']=='research':return square.get('loss_cents')
@@ -125,10 +126,8 @@ def entry_price(config,quote,side,square=None):
     return price if 1<=price<ask and price<=99 else None
 
 def quantity(config,price,equity,cash,market_exposure,bot_exposure):
-    available=min(cash,equity*config['bid_percent']/100,
-        equity*config['market_percent']/100-market_exposure,
-        equity*config['bot_percent']/100-bot_exposure)
-    return max(0,math.floor(available/price))
+    from services.trading.allocation import contracts
+    return contracts(config,price,equity,cash,market_exposure,bot_exposure)
 
 def candidates(bots,quotes,states,now,blocked=()):
     output=[]

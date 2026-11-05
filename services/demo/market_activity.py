@@ -42,7 +42,7 @@ class MarketActivityMixin:
             status=self.exchange.call('GET','/exchange/status')
             if not isinstance(status,dict) or not isinstance(status.get('trading_active'),bool):raise ExchangeFailure('invalid_page')
             self.demo_trading_status=status
-            self.demo_status_next=now+(30 if status['trading_active'] else INACTIVE_RECHECK_SECONDS)
+            self.demo_status_next=now+(INACTIVE_RECHECK_SECONDS if self.demo_exchange_paused(now) else 30)
             self.save_market_activity()
             import json
             print(json.dumps(dict(event='demo_exchange_trading_status',trading_active=status['trading_active'],retry_seconds=self.demo_status_next-now)),flush=True)
@@ -53,6 +53,15 @@ class MarketActivityMixin:
         if not config.get('require_active_market'):return True
         q=self.quotes.get(ticker,{})
         return self.demo_trading_allowed(q,time.time()) and q.get('market_activity_ready') is True and q.get('series') not in self.market_inactive
+
+    def demo_exchange_paused(self,now):
+        status=self.demo_trading_status
+        if not status:return False
+        wanted={series for b in self.bots if b['desired']=='running' for s in b['config']['squares'] for series in SERIES[s['asset']]}
+        indices={q.get('exchange_index',0) for q in self.quotes.values() if q.get('series') in wanted}
+        shards={s['exchange_index']:s.get('trading_active') is True for s in status.get('exchange_index_statuses',[])}
+        if indices:return not any(shards.get(i,status.get('trading_active') is True) for i in indices)
+        return not status.get('trading_active') and not any(shards.values())
 
     def refresh_market_activity(self,now):
         # Activity comes only from direct REST evidence. Stream gaps and thin
@@ -71,7 +80,7 @@ class MarketActivityMixin:
             for square in b['config']['squares'] for series in SERIES[square['asset']]}
         if not wanted:return
         self.check_demo_trading(now)
-        if not self.demo_trading_status or not self.demo_trading_status.get('trading_active'):return
+        if not self.demo_trading_status or self.demo_exchange_paused(now):return
         due=[s for s in wanted if self.market_probe_at.get(s,0)<=now and self.market_api_next.get(s,0)<=now]
         if not due:return
         # Active series go first; other probes are bounded to one per turn.

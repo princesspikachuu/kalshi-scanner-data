@@ -78,6 +78,9 @@ def undo_reset(store,identifier,*,incident=False):
     """
     identifier=str(UUID(str(identifier)))
     with store.pool.connection() as c:
+        from services.trading.mode import require_demo,ModeConflict
+        try:require_demo(c)
+        except ModeConflict as error:raise ResetConflict(str(error)) from None
         c.execute('SELECT pg_advisory_xact_lock(723741930)')
         row=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key='demo/reset' FOR UPDATE").fetchone()
         if not row or row['parameters'].get('request_id')!=identifier:raise ResetConflict('This is not the latest reset; no bots were changed')

@@ -67,22 +67,8 @@ def entry_block_reason(item,orders,netting=False,locked_side=None):
     return None
 
 def shared_quantity(item,peers,config,equity,cash,market_exposure,bot_exposure):
-    from .engine import quantity
-    amount=quantity(config,item['price'],equity,cash,market_exposure,bot_exposure)
-    if len(peers)>1:
-        # Percentages are ceilings. Leave room for the other eligible bot sides
-        # instead of letting the first bot consume the entire shared market cap.
-        allowance=max(0,min(cash,equity*config['market_percent']/100-market_exposure))
-        amount=min(amount,max(1,int(allowance/len(peers)/item['price'])))
-    # When this bot has both YES and NO low bids ready, reserve an equal
-    # part of its remaining allocation for each outcome. Otherwise the first
-    # write can spend the whole share before the other side is attempted.
-    same_bot_sides={p.get('side') for p in peers if p['bot']==item['bot']}
-    if len(same_bot_sides)>1:
-        remaining=max(0,min(cash,equity*config['bot_percent']/100-bot_exposure))
-        if remaining>=item['price']*len(same_bot_sides):
-            amount=min(amount,int(remaining/len(same_bot_sides)/item['price']))
-    return amount
+    from services.trading.allocation import contracts
+    return contracts(config,item['price'],equity,cash,market_exposure,bot_exposure,len(peers) or 1)
 
 def retry_ready(retry,quote,now):
     if retry and retry.get('reason')=='price_tick' and quote.get('metadata_at',0)>retry.get('rejected_at',now) and now>=retry['after']:return True

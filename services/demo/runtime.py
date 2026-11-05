@@ -42,6 +42,20 @@ def quote(raw,now):
     except (KeyError,ValueError,TypeError):return None
 
 class Worker(LateExitMixin,MarketActivityMixin):
+    namespace='demo'
+    def execute(self,connection,sql,params=None):
+        # Queries are source-owned constants. Only idempotency-key namespaces
+        # change; JSON values and account data are never rewritten.
+        if self.namespace=='live':
+            sql=sql.replace("'demo/", "'live/")
+            def key(value):
+                if isinstance(value,str) and value.startswith('demo/'):return 'live/'+value[5:]
+                if isinstance(value,list):return [key(x) for x in value]
+                if isinstance(value,tuple):return tuple(key(x) for x in value)
+                return value
+            params=key(params)
+        return connection.execute(sql,params) if params is not None else connection.execute(sql)
+
     def __init__(self,store,exchange,stop,guard):
         self.store,self.exchange,self.stop,self.guard=store,exchange,stop,guard
         self.quotes={};self.states={};self.bots=[];self.orders=[];self.blocked=set();self.account={}
@@ -64,6 +78,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
         self.stream_event_revision=0;self.rest_feed_drains=0;self.rest_feed_messages=0
         self.last_entry_bot=None;self.cycle_locks={}
+        self.execution_mode='demo'
         self.started_at=time.time();self.next_activity_check=0;self.market_probe_at={};self.market_inactive={};self.market_probe_started={};self.market_seen_active={}
         self.market_api_activity={};self.market_api_next={};self.market_api_samples={}
         self.demo_trading_status=None;self.demo_status_next=0
@@ -270,7 +285,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
     def repair_rejected_entries(self):
         if self.rejections_repaired:return
         with self.store.pool.connection() as c:
-            rows=c.execute("""SELECT parameters,progress FROM research_job
+            rows=self.execute(c,"""SELECT parameters,progress FROM research_job
                 WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
                 AND (parameters->>'kind'='entry' OR (parameters->>'exit_role'='profit'
                     AND parameters->>'rejection_reason' IN ('post_only','price_tick'))) AND progress->>'status'='rejected'
@@ -364,7 +379,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
     def research_stop(self,identifier,band,minutes):
         if identifier not in self.risk_sources:
             with self.store.pool.connection() as c:
-                row=c.execute("""SELECT asset,(SELECT jsonb_agg(jsonb_build_array(
+                row=self.execute(c,"""SELECT asset,(SELECT jsonb_agg(jsonb_build_array(
                     cell#>'{hold,price_band_cents}',cell#>'{hold,minutes_before_close}',
                     coalesce(cell#>>'{loss_prevention,sell_threshold_cents}',cell#>>'{loss_prevention,threshold_cents}',cell#>>'{conditional_loss,sell_threshold_cents}',cell#>>'{conditional_loss,threshold_cents}')::numeric))
                     FROM jsonb_array_elements(report#>'{historical,cells}') cell) AS stops
@@ -390,7 +405,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
             if amount:changes.append((order,dict(offset_quantity=round(order.get('offset_quantity',0)+amount,2),offset_credit_cents=round(order.get('offset_credit_cents',0)+50*amount,2))))
         with self.store.pool.connection() as c:
             for order,data in changes:
-                result=c.execute("""UPDATE research_job SET parameters=parameters||%s
+                result=self.execute(c,"""UPDATE research_job SET parameters=parameters||%s
                     WHERE idempotency_key=%s AND coalesce((parameters->>'offset_quantity')::numeric,0)=%s
                     AND progress->>'status' NOT IN ('closed','rejected')""",
                     (Jsonb(data),'demo/order/'+order['client_id'],order.get('offset_quantity',0)))
@@ -487,7 +502,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         from .ownership import needs_recovery
         keys=['demo/order/'+key for key in list(candidates)[:4000]]
         with self.store.pool.connection() as c:
-            rows=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) AND progress->>'status' IN ('closed','rejected')",(keys,)).fetchall()
+            rows=self.execute(c,"SELECT parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) AND progress->>'status' IN ('closed','rejected')",(keys,)).fetchall()
         recovered=False
         for row in rows:
             data,state=row['parameters'],row['progress'];raw=candidates.get(data.get('client_id'))
@@ -677,11 +692,11 @@ class Worker(LateExitMixin,MarketActivityMixin):
         # Reload includes fills committed above and closed exits for per-entry allocation.
         parents=[o['client_id'] for o in self.orders if o['kind']=='entry']
         with self.store.pool.connection() as c:
-            exits=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND parameters->>'kind'='exit' AND parameters->>'parent'=ANY(%s) AND progress->>'filled' IS NOT NULL LIMIT 5001",(parents,)).fetchall()
+            exits=self.execute(c,"SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND parameters->>'kind'='exit' AND parameters->>'parent'=ANY(%s) AND progress->>'filled' IS NOT NULL LIMIT 5001",(parents,)).fetchall()
             risk_bots=[b['id'] for b in self.bots if b['config'].get('daily_loss_percent') is not None]
             self.daily_pnl={b:0 for b in risk_bots};self.daily_pnl_day=int(now//86400)
             if risk_bots:
-                scores=c.execute("""SELECT parameters->>'bot' AS bot,sum((progress->>'realized_cents')::numeric) AS pnl FROM research_job
+                scores=self.execute(c,"""SELECT parameters->>'bot' AS bot,sum((progress->>'realized_cents')::numeric) AS pnl FROM research_job
                     WHERE idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz'
                     AND parameters->>'bot'=ANY(%s) AND parameters->>'kind'='entry' AND progress ? 'realized_cents'
                     AND (progress->>'closed_at')::numeric>=%s GROUP BY 1""",(risk_bots,self.daily_pnl_day*86400)).fetchall()
@@ -813,7 +828,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         cycle_series={s for b in self.bots if b['desired']=='running'
             and b['config'].get('strategy')=='buy_low_sell_high'
             for square in b['config']['squares'] for s in SERIES[square['asset']] if self.market_probe_at.get(s,0)<=now}
-        if self.demo_trading_status and not self.demo_trading_status.get('trading_active') and now<self.demo_status_next:
+        if self.demo_exchange_paused(now) and now<self.demo_status_next:
             series=[];cycle_series=set() # Only held/unconfirmed markets need discovery during a Demo halt.
         requests=[];pending=set()
         epoch=int(now//900);cycle_sweep=False
@@ -914,7 +929,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
             from websockets.sync.client import connect
             from websockets.exceptions import WebSocketException
             try:
-                connection=connect(WS,additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
+                connection=connect(getattr(self.exchange,'ws_root',WS),additional_headers=self.exchange.signer.headers('GET','/trade-api/ws/v2'),
                     max_size=262144,max_queue=16,open_timeout=8,close_timeout=2,ping_interval=15,ping_timeout=20,compression=None)
             except (OSError,TimeoutError,WebSocketException):raise ExchangeFailure('stream_connection_lost') from None
             self.socket=BufferedSocket(connection);self.stream_opened_at=time.time()
@@ -968,7 +983,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                 ticker=raw.get('market_ticker','')
                 from services.research.reports import SERIES
                 wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
-                paused=self.demo_trading_status and not self.demo_trading_status.get('trading_active') and time.time()<self.demo_status_next
+                paused=self.demo_exchange_paused(time.time()) and time.time()<self.demo_status_next
                 if not paused and any(ticker.startswith(series+'-') for series in wanted) and self.market_probe_at.get(ticker.split('-')[0],0)<=time.time() and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type')=='market_lifecycle_v2' and raw.get('event_type')=='price_level_structure_updated':
@@ -1044,7 +1059,13 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.recent_market_changes[order['ticker']]=self.sync_pending['at']
         # Reconcile races/fills before considering any replacement or released cash.
         self.recovered=False;self.last_reconcile=0
+    def demo_entries_allowed(self):
+        if self.namespace!='demo' or not hasattr(self.store,'pool'):return True
+        from services.trading.mode import demo_resume_allowed
+        return demo_resume_allowed(self.store.pool)
+
     def submit(self,intent,confirmation=None,prepared=False):
+        if confirmation is None and intent['kind']=='entry' and not self.demo_entries_allowed():return False
         self.context_market=intent['ticker'];self.context_order=intent['client_id'];self.context_bot=intent['bot']
         # Durable intent precedes network write. Ambiguous writes are never replayed.
         if not prepared:self.save_order(intent);self.record('order_intent',intent,'Verified '+intent['kind']+' order prepared')
@@ -1098,6 +1119,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
 
     def submit_entry_batch(self,intents):
         """Persist every claim before one network write; reconcile uncertain items."""
+        if not self.demo_entries_allowed():return False
         if self.socket:self.stream(wait=False)
         now=time.time()
         if not self.recovered or not self.last_reconcile or now-self.last_reconcile>35:return False
@@ -1198,7 +1220,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         if not legacy:return False
         if self.legacy_exit_evidence is None:
             with self.store.pool.connection() as c:
-                rows=c.execute("""SELECT progress->'details' AS details FROM research_job
+                rows=self.execute(c,"""SELECT progress->'details' AS details FROM research_job
                     WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
                     AND parameters->>'kind'='exit_trigger' AND progress->'details'->>'client_id'=ANY(%s)
                     ORDER BY created_at DESC LIMIT 5001""",([o['client_id'] for o in legacy],)).fetchall()
@@ -1355,9 +1377,9 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     identifier=str(uuid5(NAMESPACE_URL,f"demo-exit/{order['client_id']}/{attempt}"))
                     self.submit(dict(client_id=identifier,kind='exit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],ticker=order['ticker'],side=order['side'],price=price,quantity=order['filled']-order.get('sold',0),close=q['close'],created_at=now,exit_reference='ask',status='intent',remaining=0,filled=0));return
             elif self.profit_sell(order,q,now):return
-        if not allow_entries or not self.recovered or now-self.last_reconcile>35:return
+        if not allow_entries or not self.recovered or now-self.last_reconcile>35 or (self.namespace=='demo' and self.execution_mode!='demo'):return
         retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
-        from .engine import fair_budget_config,fair_order_candidates,cycle_tranche
+        from .engine import fair_budget_config,fair_order_candidates
         running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
         fair_configs={id:fair_budget_config(b['config'],running_count) for id,b in bots.items()}
         options=candidates(self.bots,self.quotes,self.states,now,self.blocked|exiting|retrying)
@@ -1374,10 +1396,6 @@ class Worker(LateExitMixin,MarketActivityMixin):
         cycle_queue=iter(fair_order_candidates([i for i in options if i['bot'] in cycle_bots],self.last_entry_bot,bot_cost))
         options=[next(cycle_queue) if i['bot'] in cycle_bots else i for i in options]
         equity=self.account['equity_cents']
-        needs_coverage=any(i['bot'] in cycle_bots and not self.daily_guard(bots[i['bot']],now)
-            and bot_cost.get(i['bot'],0)<cycle_tranche(fair_configs[i['bot']],equity,running_count)/2
-            and not entry_block_reason(i,market_orders.get(i['ticker'],[]),i['ticker'] in self.netting_pending,self.cycle_locks.get(i['ticker']))
-            for i in options)
         # Rebalancing yields entry slots between cancellations. Otherwise many
         # oversized historical bids could monopolize every trade pass.
         if now-getattr(self,'last_allocation_cancel',0)>=30:
@@ -1386,16 +1404,15 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     or order.get('status')!='resting' or order.get('remaining',0)<=0
                     or order['ticker'] in self.blocked or order.get('exit_triggered')
                     or now-order.get('cancel_404_at',0)<30 or order['bot'] not in cycle_bots):continue
-                tranche=cycle_tranche(fair_configs[order['bot']],equity,running_count)
                 reserved=order['remaining']*order['price']
                 allowed=quantity(fair_configs[order['bot']],order['price'],equity,
                     self.account['cash_cents']+reserved,
                     max(0,market_cost.get(order['ticker'],0)-reserved),
                     max(0,bot_cost.get(order['bot'],0)-reserved))
                 over_cap=order['remaining']>allowed
-                if over_cap or (running_count>1 and needs_coverage and reserved>max(order['price'],tranche*1.25)):
+                if over_cap:
                     order['allocation_rearm']=True;self.save_order(order)
-                    self.cancel(order,'Resizing an unfilled bid to current spending limits' if over_cap else 'Redistributing an oversized unfilled bid so more eligible bots can trade')
+                    self.cancel(order,'Resizing an unfilled bid to current spending limits')
                     self.last_allocation_cancel=now
                     return
         direction={o['ticker']:o['side'] for o in self.orders if o['kind']=='entry' and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0))}
@@ -1430,7 +1447,6 @@ class Worker(LateExitMixin,MarketActivityMixin):
             if is_cycle:
                 from .cycles import shared_quantity
                 amount=shared_quantity(item,peers.get(item['ticker'],[]),config,equity,cash,market,exposure)
-                amount=min(amount,max(1,int(cycle_tranche(config,equity,running_count)/item['price'])))
             if amount<1:continue
             if self.funding is None:
                 from .funding import ShardFunding
@@ -1473,6 +1489,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
             if not batching or not is_cycle:self.submit(intent);return
             prepared.append(intent)
             # Planning reservations are worst-case costs, never assumed fills.
+            if is_cycle:peers[item['ticker']]=[p for p in peers.get(item['ticker'],[]) if p is not item]
             cost=amount*item['price'];cash=max(0,cash-cost)
             market_cost[item['ticker']]=market+cost;bot_cost[item['bot']]=exposure+cost
             reservations[shard]=reservations.get(shard,0)+cost
@@ -1493,13 +1510,27 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.restore_market_activity()
         bootstrap=os.environ.get('DEMO_RESET_REQUEST_JSON')
         if bootstrap and not self.store.get('reset'):request_reset(self.store,ResetRequest.model_validate_json(bootstrap))
-        next_reconcile=0;next_controls=0;maintenance_at=0;backoff=1;credential_check=0;credential_version=None
+        next_reconcile=0;next_controls=0;maintenance_at=0;backoff=1;credential_check=0;credential_version=None;next_mode_check=0;mode=dict(mode='demo')
         try:
             while not self.stop.is_set():
                 now=time.time()
                 try:
                     self.context_market=self.context_order=self.context_bot=None
                     self.guard()
+                    from services.trading.mode import read_mode,complete_demo_drain
+                    if now>=next_mode_check:
+                        mode=read_mode(self.store.pool) if hasattr(self.store,'pool') else dict(mode='demo');next_mode_check=now+1
+                    self.execution_mode=mode.get('mode')
+                    if mode.get('mode') not in ('demo','draining_demo'):
+                        self.close_stream()
+                        self.health('paused','Demo execution paused: worker reserved for LIVE')
+                        self.mode_handed_over=True;return
+                    if mode.get('mode')=='draining_demo':
+                        # Override stale cached controls immediately; fills/exits
+                        # continue only until verified handover is possible.
+                        for bot in self.bots:bot['desired']='paused'
+                        self.drain_feed_revision=self.stream_event_revision
+                        if complete_demo_drain(self):continue
                     if isinstance(self.exchange,Exchange) and time.monotonic()>=self.exchange.next_limits:
                         self.exchange.refresh_limits()
                     if now>=credential_check:
@@ -1538,7 +1569,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     self.stage="discovery"
                     desired_series={s for b in self.bots if b['desired']=='running' for square in b['config']['squares'] for s in SERIES[square['asset']]}
                     all_idle=desired_series and all(self.market_probe_at.get(s,0)>now for s in desired_series)
-                    all_idle=all_idle or self.demo_trading_status and not self.demo_trading_status.get('trading_active') and now<self.demo_status_next
+                    all_idle=all_idle or self.demo_exchange_paused(now) and now<self.demo_status_next
                     discovery_interval=30 if all_idle else 2 if any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots) else 5
                     if self.pending_markets or now-self.last_discovery>=discovery_interval:self.discover()
                     self.stage="stream";self.stream(wait=False)
@@ -1583,7 +1614,9 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     self.stop.wait(backoff);backoff=min(60,backoff*2)
                 self.stop.wait(.1)
         finally:
-            self.close_stream();self.health('recovering','Worker restarting; preserve exchange orders for reconciliation')
+            self.close_stream()
+            if getattr(self,'mode_handed_over',False):self.health('paused','Demo paused; worker handed over to LIVE')
+            else:self.health('recovering','Worker restarting; preserve exchange orders for reconciliation')
 
 def run(stop):
     from services.api.db_privileges import audit_database

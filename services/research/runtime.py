@@ -95,7 +95,7 @@ def termination(stop):
 
 def run(settings,stop):
     if settings.role=='demo':
-        from services.demo.runtime import run as run_demo
+        from services.trading.runtime import run as run_demo
         return run_demo(stop)
     # Disabled staging deploys do not construct SDK/DB clients or schedule/fetch work.
     if not settings.enabled:

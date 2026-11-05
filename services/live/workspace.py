@@ -33,3 +33,14 @@ def seed_live_bots(pool):
             (str(uuid5(NAMESPACE_URL,MARKER)),Jsonb(dict(copied=copied,at=time.time())),MARKER))
     print(json.dumps(dict(event='live_bots_copied',count=copied,desired='paused',execution_enabled=False,credentials_copied=False)),flush=True)
     return copied
+
+def configure_approved_pilot(pool):
+    """Apply the user's $50 / 50% / one-contract plan once; never start bots."""
+    from services.trading.mode import LOCK
+    key='live/rollout/approved-pilot-20261105'
+    with pool.connection() as c:
+        c.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK,))
+        if c.execute('SELECT 1 FROM research_job WHERE idempotency_key=%s',(key,)).fetchone():return
+        if c.execute("SELECT 1 FROM research_job WHERE idempotency_key='live/trial'").fetchone():return
+        c.execute("INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at) VALUES(%s,'crypto','{}'::jsonb,%s,'live/budget','succeeded',clock_timestamp()) ON CONFLICT(idempotency_key) DO UPDATE SET progress=excluded.progress",(str(uuid5(NAMESPACE_URL,'approved-live-budget')),Jsonb(dict(trial_cap_cents=5000,loss_limit_cents=2500,portfolio_reference_cents=None,pilot_contracts=1))))
+        c.execute("INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at) VALUES(%s,'crypto','{}'::jsonb,%s,%s,'succeeded',clock_timestamp())",(str(uuid5(NAMESPACE_URL,key)),Jsonb(dict(at=time.time(),approved=True)),key))

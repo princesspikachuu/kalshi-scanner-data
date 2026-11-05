@@ -91,12 +91,15 @@ def backup(store,objects):
         rows=c.execute("""SELECT id::text,idempotency_key,parameters,progress FROM research_job
             WHERE (idempotency_key>='demo/bot/' AND idempotency_key<'demo/bot/zzzz')
             OR (idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress->>'status' NOT IN ('closed','rejected'))
-            OR idempotency_key IN ('demo/policy','demo/account','demo/funding','demo/reset') LIMIT 701""").fetchall()
+            OR (idempotency_key>='live/bot/' AND idempotency_key<'live/bot/zzzz')
+            OR (idempotency_key>='live/order/' AND idempotency_key<'live/order/zzzz')
+            OR (idempotency_key>='live/write/' AND idempotency_key<'live/write/zzzz')
+            OR idempotency_key IN ('demo/policy','demo/account','demo/funding','demo/reset','trading/mode','live/budget','live/trial','live/risk','live/account') LIMIT 701""").fetchall()
     if len(rows)>700:raise ValueError('Backup chunk capacity reached')
     reference=put_verified(objects,'backups',dict(version=1,created_at=time.time(),records=rows))
     # Reading and parsing the written object is a bounded restore validation.
     # put_verified already read, parsed and compared every record.
-    store.put('backup-health',dict(at=time.time(),verified=True,reference=reference,records=len(rows),scope='Demo controls and open orders; historical R2 evidence remains intact'))
+    store.put('backup-health',dict(at=time.time(),verified=True,reference=reference,records=len(rows),scope='Demo controls and open orders, LIVE pilot controls and complete execution ledger; credentials excluded'))
     print(json.dumps(dict(event='demo_control_backup_verified',records=len(rows),compressed_bytes=reference['size'])),flush=True)
 
 def emails(store,env,enabled):

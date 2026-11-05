@@ -61,8 +61,9 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
                 from starlette.concurrency import run_in_threadpool
                 await run_in_threadpool(app.state.demo_versions.load)
             except Exception:print('{"event":"demo_analysis_versions_unavailable"}',flush=True)
-            from services.live.workspace import seed_live_bots
+            from services.live.workspace import seed_live_bots,configure_approved_pilot
             await run_in_threadpool(seed_live_bots,store.pool)
+            await run_in_threadpool(configure_approved_pilot,store.pool)
         try: yield
         finally:
             if owned:store.close()

@@ -146,6 +146,10 @@ def install_demo(app,auth,mutate,pool):
     def control(identifier:UUID,body:Controls,request:Request):
         mutate(request);require_query(request)
         with pool.connection() as c:
+            from services.trading.mode import require_demo,ModeConflict
+            if body.action=='resume':
+                try:require_demo(c)
+                except ModeConflict as error:raise HTTPException(409,str(error)) from None
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
             row=c.execute('SELECT parameters,progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/bot/'+str(identifier),)).fetchone()
             if not row:raise HTTPException(404,'Bot not found')
@@ -172,6 +176,10 @@ def install_demo(app,auth,mutate,pool):
         keys=['demo/bot/'+str(b.id) for b in body.bots];expected={str(b.id):b.revision for b in body.bots}
         from psycopg.types.json import Jsonb
         with pool.connection() as c:
+            from services.trading.mode import require_demo,ModeConflict
+            if body.action=='resume':
+                try:require_demo(c)
+                except ModeConflict as error:raise HTTPException(409,str(error)) from None
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
             rows=c.execute('SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key=ANY(%s) FOR UPDATE',(keys,)).fetchall()
             if len(rows)!=len(keys) or any(r['parameters']['revision']!=expected[r['idempotency_key'].split('/')[-1]] for r in rows):raise HTTPException(409,'Bots changed; refresh before retrying')

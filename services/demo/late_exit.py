@@ -14,10 +14,11 @@ def due(order,quote,now):
     end=order.get('market_close_at',quote.get('entry_close',quote['close']))
     bid,ask=side_quote(quote,order['side'])
     return (0<end-now<=order.get('late_exit_minutes',5)*60
-        and 0<=bid<ask<=100 and bid<order.get('late_exit_threshold_cents',40))
+        and 0<bid<ask<=100 and bid<order.get('late_exit_threshold_cents',40))
 
 def maker_price(order,quote):
     bid,_=side_quote(quote,order['side'])
+    if bid<=0:return None # An empty bid is not an executable zero-cent quote.
     # A full cent above the bid, rounded UP to this market's actual tick grid.
     price=profit_maker_price(quote,order['side'],bid+1)
     ceiling=order.get('late_exit_ceiling_cents')
@@ -31,7 +32,7 @@ def needs_action(order,quote,orders,now):
     price=maker_price(order,quote)
     if price is None:return False
     if any(o.get('exit_role')!='late' for o in children):return True
-    if any(o.get('remaining',0)>0 and o['price']-price>order.get('late_exit_reprice_cents',5)+1e-8 for o in children):return True
+    if any(o.get('remaining',0)>0 and price<o['price'] and o['price']-side_quote(quote,order['side'])[0]>order.get('late_exit_reprice_cents',5)+1e-8 for o in children):return True
     return order['filled']-order.get('sold',0)-sum(o.get('remaining',0) for o in children)>.001
 
 class LateExitMixin:
@@ -65,7 +66,7 @@ class LateExitMixin:
         price=maker_price(order,quote)
         if price is None:return False # A rising bid never raises a saved limit.
         for child in children:
-            if child.get('exit_role')!='late' or (child.get('remaining',0)>0 and child['price']-price>order.get('late_exit_reprice_cents',5)+1e-8):
+            if child.get('exit_role')!='late' or (child.get('remaining',0)>0 and price<child['price'] and child['price']-side_quote(quote,order['side'])[0]>order.get('late_exit_reprice_cents',5)+1e-8):
                 order['late_exit_ceiling_cents']=min(order['late_exit_ceiling_cents'],price);self.save_order(order)
                 self.cancel(child,'Lowering conditional maker sell after price moved more than the reprice gap')
                 return True

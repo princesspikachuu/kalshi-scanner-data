@@ -18,7 +18,7 @@ class LateExitTests(unittest.TestCase):
         with patch('services.demo.runtime.time.time',return_value=now):w.trade(allow_entries=False)
     def test_final_window_and_strict_threshold_boundaries_on_both_sides(self):
         for side in ('yes','no'):
-            for bid,minutes,expected in [(39,5,True),(40,5,False),(50,1,False),(39,5.001,False),(0,5,True)]:
+            for bid,minutes,expected in [(39,5,True),(40,5,False),(50,1,False),(39,5.001,False),(0,5,False)]:
                 with self.subTest(side=side,bid=bid,minutes=minutes):
                     w,p,q=late_worker(side,bid,bid+2,minutes);self.trade(w)
                     self.assertEqual(w.submit.called,expected)
@@ -39,10 +39,10 @@ class LateExitTests(unittest.TestCase):
         sale.update(status='resting',remaining=10,exchange_id='remote');w.orders.append(sale);w.submit.reset_mock()
         w.cancel=Mock();return w,p,q,sale
     def test_gap_of_five_does_not_replace_but_six_does(self):
-        w,p,q,sale=self.working_sale();q.update(bid=25,ask=27)
+        w,p,q,sale=self.working_sale();q.update(bid=26,ask=28)
         self.trade(w);w.cancel.assert_not_called();w.submit.assert_not_called()
-        q.update(bid=24,ask=26);self.trade(w);w.cancel.assert_called_once_with(sale,unittest.mock.ANY)
-        self.assertEqual(p['late_exit_ceiling_cents'],25);w.submit.assert_not_called()
+        q.update(bid=25,ask=27);self.trade(w);w.cancel.assert_called_once_with(sale,unittest.mock.ANY)
+        self.assertEqual(p['late_exit_ceiling_cents'],26);w.submit.assert_not_called()
     def test_cancel_verification_precedes_replacement_and_partial_fills_reduce_quantity(self):
         w,p,q,sale=self.working_sale();w.cancel=Worker.cancel.__get__(w,Worker);q.update(bid=24,ask=26)
         self.trade(w);self.assertFalse(w.recovered);self.assertEqual(sale['status'],'cancel_pending');w.submit.assert_not_called()

@@ -65,7 +65,7 @@ function collectionBody(data){
  return data;
 }
 function demoBody(data){if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||(data.items&&(!Array.isArray(data.items)||data.items.length>500))||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100)))throw Error('Invalid demo contract');return data;}
-function liveBotsBody(data){if(data.contract!=='live-bots-v1'||data.environment!=='live'||data.execution_enabled!==false||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100||data.bots.some(b=>b.desired!=='paused'))))throw Error('Invalid live configuration workspace');return data;}
+function liveBotsBody(data){if(data.contract!=='live-bots-v2'||data.environment!=='live'||typeof data.execution_enabled!=='boolean'||(data.execution_enabled&&data.worker_mode?.mode!=='live')||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100||data.bots.some(b=>!['paused','running'].includes(b.desired)))))throw Error('Invalid live workspace');return data;}
 function paperBody(data){if(data.contract!=='paper-v1'||data.live_trading_enabled!==false)throw Error('invalid paper workspace');if(data.runs&&(!Array.isArray(data.runs)||data.runs.length>20))throw Error('invalid paper runs');return data;}
 function responseCookies(headers){
  const values=typeof headers.getSetCookie==='function'?headers.getSetCookie():headers.getAll('Set-Cookie');
@@ -79,7 +79,7 @@ function responseCookies(headers){
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
  const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|bots|bulk|policy|connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
- const liveBots=/^\/api\/live\/(?:workspace|budget|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
+ const liveBots=/^\/api\/live\/(?:workspace|budget|connection|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';

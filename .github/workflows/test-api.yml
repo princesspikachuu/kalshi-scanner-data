@@ -6,6 +6,8 @@ on:
       - 'services/research/**'
       - 'services/paper/**'
       - 'services/demo/**'
+      - 'services/live/**'
+      - 'services/trading/**'
       - 'apps/**'
       - 'tests/test_login_bridge.mjs'
       - 'tests/test_research_dashboard.mjs'

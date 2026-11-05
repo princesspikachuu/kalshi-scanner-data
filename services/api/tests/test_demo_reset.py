@@ -44,6 +44,8 @@ class UndoRecentReset(unittest.TestCase):
         def execute(sql,params=()):
             updates.append((sql,params))
             result=Mock()
+            if 'SELECT progress FROM research_job WHERE idempotency_key=%s' in sql:
+                result.fetchone.return_value=None
             if "SELECT parameters,progress FROM research_job WHERE idempotency_key='demo/reset'" in sql:
                 result.fetchone.return_value=reset
             elif 'SELECT idempotency_key,parameters,progress FROM research_job' in sql:

@@ -566,12 +566,12 @@ class CrossBotCapitalFairness(unittest.TestCase):
         self.assertEqual(w.submit.call_args.args[0]['quantity'],25)
         self.assertFalse(any(c.args[0]=='POST' for c in exchange.call.call_args_list))
 
-    def test_oversized_unfilled_bid_is_released_without_selling_held_lots(self):
+    def test_over_cap_unfilled_bid_is_released_without_selling_held_lots(self):
         w=worker();a=bot(bot_percent=100,bid_percent=100,market_percent=100)
         b=bot(bot_percent=100,bid_percent=100,market_percent=100);b['id']='bot-2'
         w.bots=[a,b]
         # The second bot has a fresh, unrelated market needing its first bid.
-        w.quotes['other']=book();o=entry(quantity=400,remaining=400,price=10)
+        w.quotes['other']=book();o=entry(quantity=600,remaining=600,price=10)
         w.orders=[o];w.cancel=Mock()
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
         w.cancel.assert_called_once();self.assertEqual(w.cancel.call_args.args[0]['client_id'],'low')
