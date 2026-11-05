@@ -140,6 +140,20 @@ def install_live_bots(app,auth,mutate,pool):
                 positions=list(exchange.pages('/portfolio/positions','market_positions',count_filter='position'))
                 if balance.get('balance')!=5000 or balance.get('portfolio_value')!=0 or orders or any(Decimal(str(p.get('position_fp',p.get('position',0)))) for p in positions):
                     raise RiskBlocked('The isolated subaccount must contain exactly $50 cash, with no orders or positions')
+                from services.research.reports import SERIES
+                from services.demo.runtime import quote
+                allowed={series for square in config['squares'] for series in SERIES[square['asset']]}
+                if len(allowed)!=1:raise RiskBlocked('Choose a bot covering one 15-minute series for the initial check')
+                page=exchange.call('GET','/markets',params=dict(series_ticker=next(iter(allowed)),status='open',min_close_ts=int(time.time()),max_close_ts=int(time.time()+900),limit=200))
+                current=[]
+                if not isinstance(page.get('markets'),list) or page.get('cursor'):raise RiskBlocked('Current pilot market could not be fully verified')
+                for raw in page['markets']:
+                    parsed=quote(raw,time.time())
+                    if parsed and parsed[1]['series'] in allowed and parsed[1].get('status')=='active' and parsed[1].get('open',float('inf'))<=time.time()<parsed[1]['close']:current.append(parsed[1])
+                if not current:raise RiskBlocked('No currently running market was found for this pilot bot. Check again when its market is active.')
+                index=min(current,key=lambda q:q['close'])['exchange_index']
+                available=exchange.call('GET','/portfolio/balance',params=dict(exchange_index=index))
+                if available.get('balance',0)<3:raise RiskBlocked(f'This market uses exchange index {index}. Its isolated subaccount needs at least 3 cents there from your existing $50 trial. The worker cannot transfer funds.')
             finally:exchange.close()
             token=str(uuid4());store.put('preflight',dict(at=time.time(),token=token,bot=str(body.bot),settings_revision=body.expected_settings_revision,binding=data['binding']))
             return dict(contract='live-bots-v2',environment='live',execution_enabled=False,ready=True,token=token,message='Account verified. The worker will verify venue, market, fees and backup before its one-contract bid.')

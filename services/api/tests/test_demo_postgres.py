@@ -126,7 +126,20 @@ class DemoPostgres(unittest.TestCase):
         live=LiveStore(self.store.pool);live.put('credentials',dict(binding='binding',subaccount=2))
         bot=self.client.get('/live/workspace').json()['bots'][0]
         with patch('services.live.exchange.load_connection',return_value=dict(binding='binding',key_id='key',pem='unused',subaccount=2)),patch('services.demo.exchange.DemoSigner'),patch('services.live.exchange.LiveExchange') as exchange:
-            exchange.return_value.call.return_value=dict(balance=5000,portfolio_value=0);exchange.return_value.pages.return_value=[]
+            import time
+            from datetime import datetime,timezone
+            from services.research.reports import SERIES
+            series=next(iter(SERIES['btc']))
+            market=dict(ticker=series+'-TEST-00',series_ticker=series,yes_bid_dollars='0.50',yes_ask_dollars='0.51',status='active',exchange_index=2,open_time=datetime.fromtimestamp(time.time()-10,timezone.utc).isoformat(),close_time=datetime.fromtimestamp(time.time()+890,timezone.utc).isoformat())
+            cash={'scoped':0}
+            def call(method,path,**kwargs):
+                if path=='/markets':return dict(markets=[market],cursor='')
+                return dict(balance=cash['scoped'] if kwargs.get('params',{}).get('exchange_index')==2 else 5000,portfolio_value=0)
+            exchange.return_value.call.side_effect=call;exchange.return_value.pages.return_value=[]
+            unavailable=self.client.post('/live/preflight',json=dict(bot=bot['key'],expected_settings_revision=1))
+            self.assertEqual(unavailable.status_code,409,unavailable.text);self.assertIsNone(live.get('preflight'))
+            self.assertEqual(read_mode(self.store.pool)['mode'],'demo')
+            cash['scoped']=3
             result=self.client.post('/live/preflight',json=dict(bot=bot['key'],expected_settings_revision=1))
             self.assertEqual(result.status_code,200,result.text);token=result.json()['token']
             self.assertEqual(read_mode(self.store.pool)['mode'],'demo');exchange.return_value.submit.assert_not_called()

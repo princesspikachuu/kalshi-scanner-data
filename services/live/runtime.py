@@ -16,7 +16,15 @@ class TrialFunding:
     def __init__(self,worker):self.worker=worker
     def ensure(self,shard,amount,target,reservations):
         # No transfers. Funding is a separate, user-controlled setup step.
-        return amount<=self.worker.account.get('cash_cents',0)
+        # The configured full-size amount is clamped to one 3c contract by
+        # the pilot. Verify cash on this market's actual exchange index; an
+        # aggregate $50 balance does not prove this shard can fund the bid.
+        if self.worker.account.get('cash_cents',0)<3:return False
+        balance=self.worker.exchange.call('GET','/portfolio/balance',params=dict(exchange_index=shard))
+        if balance.get('balance',0)<3:
+            self.worker.store.alert('funding',f'The pilot market uses exchange index {shard}, where its isolated subaccount needs at least 3 cents. Move existing trial cash there through Kalshi setup; the worker cannot transfer funds.',True)
+            return False
+        self.worker.store.clear_alert('funding');return True
     def poll(self):pass
 
 class LiveWorker(Worker):

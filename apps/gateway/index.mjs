@@ -138,7 +138,8 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   if(Number(request.headers.get('content-length'))>20480)return problem(413,'Request too large');
   try{body=await boundedBody(request.body,20480)}catch{return problem(413,'Request too large')}
  }
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ const readOnlySetup=liveBots&&['/api/live/connection','/api/live/preflight'].includes(url.pathname);
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),readOnlySetup?Math.max(timeoutMs,30000):timeoutMs);
  try{
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
   if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');

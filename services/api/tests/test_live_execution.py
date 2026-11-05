@@ -124,3 +124,15 @@ class LiveWorkerWiring(unittest.TestCase):
         with patch('services.live.runtime.read_mode',return_value=dict(mode='live')),patch('services.demo.runtime.Worker.submit',return_value=True) as send:
             w.submit(entry(quantity=500,side='yes'));self.assertEqual(send.call_args.args[0]['quantity'],1)
             send.reset_mock();w.submit(entry(quantity=500,side='no'));send.assert_not_called()
+
+class PilotShardFunding(unittest.TestCase):
+    def test_aggregate_cash_does_not_fund_a_different_exchange_index(self):
+        from services.live.runtime import TrialFunding
+        w=Mock();w.account=dict(cash_cents=4200);w.exchange.call.return_value=dict(balance=0)
+        self.assertFalse(TrialFunding(w).ensure(2,48,48,{}))
+        w.exchange.call.assert_called_once_with('GET','/portfolio/balance',params=dict(exchange_index=2))
+        w.store.alert.assert_called_once()
+    def test_only_one_contracts_cash_is_required_during_pilot(self):
+        from services.live.runtime import TrialFunding
+        w=Mock();w.account=dict(cash_cents=4200);w.exchange.call.return_value=dict(balance=3)
+        self.assertTrue(TrialFunding(w).ensure(2,48,48,{}))
