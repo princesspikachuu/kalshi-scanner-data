@@ -904,7 +904,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
     def stream(self,wait=True):
         desired={t for t,q in self.quotes.items() if q.get('status','active')=='active' and q['close']>time.time()
             and (self.market_probe_at.get(q['series'],0)<=time.time() or any(o['ticker']==t and o.get('status') not in ('closed','rejected') for o in self.orders))}
-        if not desired:return
+        if not desired and self.socket is None:return
         if self.socket is None:
             self.close_stream()
             from websockets.sync.client import connect

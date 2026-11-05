@@ -13,6 +13,22 @@ def delta(**kw):
     return dict(type='orderbook_delta',sid=2,seq=2,sending_ts_ms=(NOW+1)*1000,msg=raw)
 
 class Books(unittest.TestCase):
+    def test_all_markets_inactive_unsubscribes_and_drains_queued_updates(self):
+        worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
+        worker.quotes={'t':dict(quote(),series='inactive')};worker.market_probe_at={'inactive':NOW+60}
+        worker.subscription={'t'};worker.book_sid=2;worker.books.apply(snapshot(),NOW);worker.sequence={2:1}
+        messages=[delta()];sent=[]
+        class Socket:
+            def send(self,data):sent.append(json.loads(data))
+            def recv(self,**kw):
+                if not messages:raise TimeoutError
+                return json.dumps(messages.pop(0))
+        worker.socket=Socket()
+        with patch('services.demo.runtime.time.time',return_value=NOW):worker.stream()
+        self.assertEqual(worker.subscription,set());self.assertEqual(worker.books.books,{})
+        self.assertEqual(worker.sequence[2],2);self.assertEqual(messages,[])
+        self.assertEqual(sent[0]['params']['action'],'delete_markets')
+
     def test_queued_delta_after_unsubscribe_preserves_other_books_and_sequence(self):
         worker=Worker(FakeStore(),object(),threading.Event(),lambda:None)
         worker.quotes={'t':quote(),'removed':dict(quote(),series='inactive')}
