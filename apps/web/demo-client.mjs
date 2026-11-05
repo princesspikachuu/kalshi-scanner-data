@@ -45,7 +45,7 @@ export function analysisVersionMarkup(cohort,version='latest',compact=false){
  if(!cohort)return '<span class="small">Version information unavailable</span>';
  const date=n=>new Date(n*1000).toLocaleString('en-US',{timeZone:'America/Los_Angeles',timeZoneName:'short'});
  const when=cohort.changed_at?'Version started '+date(cohort.changed_at):cohort.first_entry_at?'First verified entry for this version '+date(cohort.first_entry_at):'Waiting for the first entry for this version';
- const prices=Number.isFinite(cohort.buy_cents)&&Number.isFinite(cohort.sell_cents)?` · ${cohort.buy_cents}¢ buy / ${cohort.sell_cents}¢ sell`:'';
+ const prices=cohort.exit_mode==='late_threshold'?` · ${cohort.buy_cents}¢ buy / conditional late exit below ${cohort.hold_threshold_cents}¢`:Number.isFinite(cohort.buy_cents)&&Number.isFinite(cohort.sell_cents)?` · ${cohort.buy_cents}¢ buy / ${cohort.sell_cents}¢ sell`:'';
  return `<p class="analysis-version-note small"><strong>${version==='latest'?'Most recent version · v'+escapeHTML(cohort.revision)+prices:'Full history · all versions'}</strong><br>${escapeHTML(when)}${!cohort.changed_at&&cohort.window_start?'<br>Settings change falls between '+escapeHTML(date(cohort.window_start))+' and '+escapeHTML(date(cohort.window_end)):''}. ${version==='latest'?'Older entry lots are excluded, including older buys that closed later.':'Includes earlier strategy versions.'}</p>`;
 }
 
@@ -58,6 +58,7 @@ export function tradingNoticesMarkup(alerts=[],health={},open=false){
 
 export function botGroup(bot,health,orders=[],now=Date.now()/1000){
  if(bot.desired!=='running')return 'Paused';
+ if(health.bots?.[bot.key]?.market_inactive)return 'Needs attention';
  const recent=health.at>0&&now-health.at<=90;
  const routine=health.state==='syncing'&&health.sync_pending&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
  const shortFeedReconnect=health.state==='reconnecting'&&health.stream?.outage_seconds<=10&&health.reconciled_at>0&&now-health.reconciled_at<=45&&!health.issue;
@@ -148,7 +149,7 @@ export function botExposureMarkup(orders=[],botId='',options={}){
  const qty=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);
  const price=n=>Number.isFinite(n)?qty(n)+'¢':'—';
  const table=(head,rows)=>`<div class="scroll"><table class="activity-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
- const orderTable=(rows,buy)=>rows.length?table(['Market','Outcome',pending?'Last unfilled quantity':'Unfilled contracts','Limit','Status','Follow'],rows.map(o=>`<tr><td>${market(o.ticker)}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain'].includes(o.status)?'Unconfirmed':qty(o.remaining||0)}</td><td>${price(o.price)}</td><td>${e(orderStateLabel(o,{pending}))}${!buy?` · ${o.exit_role==='profit'?'Profit sell':'Protective exit'}`:''}</td><td>${orderDetailButton(o.client_id,buy?'Buy → linked sells':'Sell → original buy')}</td></tr>`)):`<p class="small">No ${pending?'pending':'active'} ${buy?'buy':'sell'} orders.</p>`;
+ const orderTable=(rows,buy)=>rows.length?table(['Market','Outcome',pending?'Last unfilled quantity':'Unfilled contracts','Limit','Status','Follow'],rows.map(o=>`<tr><td>${market(o.ticker)}</td><td>${e(o.side?.toUpperCase())}</td><td>${['intent','uncertain'].includes(o.status)?'Unconfirmed':qty(o.remaining||0)}</td><td>${price(o.price)}</td><td>${e(orderStateLabel(o,{pending}))}${!buy?` · ${o.exit_role==='profit'?'Profit sell':o.exit_role==='late'?'Conditional late sell':'Protective exit'}`:''}</td><td>${orderDetailButton(o.client_id,buy?'Buy → linked sells':'Sell → original buy')}</td></tr>`)):`<p class="small">No ${pending?'pending':'active'} ${buy?'buy':'sell'} orders.</p>`;
  return `<p class="small">${pending?'Ended markets await settlement or confirmation here. Records without a verified market time also wait here. They are excluded from Active markets.':'Active markets only. Buys are unfilled requests; positions are contracts you own; sells are requests to close those contracts. A partially filled buy can appear in both orders and positions.'}</p><h3>${pending?'Contracts pending resolution':'Positions you own'} · ${positions.length}</h3>${positions.length?table(['Market','Outcome','Held contracts','Average buy limit','What happens next'],positions.map(p=>`<tr><td>${market(p.ticker)}</td><td>${e(p.side?.toUpperCase())}</td><td>${qty(p.quantity)}</td><td>${price(p.price)}</td><td>${e(p.sellStatus)}</td></tr>`)):`<p class="small">${pending?'No contracts pending resolution.':'No open positions.'}</p>`}<h3>${pending?'Pending buy records':'Buy orders · waiting to fill'} · ${buys.length}</h3>${orderTable(buys,true)}<h3>${pending?'Pending sell records':'Sell orders · waiting to fill'} · ${sells.length}</h3>${orderTable(sells,false)}<p class="small">${pending?'Payout can arrive later than the market close. Follow any order to inspect its history.':'Markets leave this view at their close time, without waiting for payout. Check Pending for unresolved ended markets.'} Quantities use the latest saved exchange check.</p>`;
 }
 export function historicalExposureMarkup(bot,health,orders=[]){
@@ -161,6 +162,7 @@ export function historicalExposureMarkup(bot,health,orders=[]){
 export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  const markets=(health.blocked_markets||[]).filter(t=>!health.historical_markets?.includes(t)&&!health.syncing_markets?.includes(t)&&orders.some(o=>o.bot===bot.key&&o.ticker===t));
  const base={markets,lastVerified:health.reconciled_at,lastSeen:health.at,control:'retry'};
+ const inactive=health.bots?.[bot.key]?.market_inactive;
  if(markets.length){
   const details=Object.fromEntries(markets.map(t=>[t,health.ownership_details?.[t]||{}]));
   const manual=markets.some(t=>details[t].unowned_order_count>0),uncertain=markets.some(t=>details[t].unconfirmed_order_count>0);
@@ -172,6 +174,7 @@ export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
  if(!health.at||now-health.at>90)return {...base,reason:'The trading worker has stopped checking in.',action:'New entries wait for worker recovery and order verification. Request verification or inspect Activity for the last successful check.',phase:'Worker recovery'};
  const issue=health.issue;
  if(issue)return {...base,reason:issue.summary,action:issue.action,control:issue.control,code:issue.code,httpStatus:issue.http_status,phase:({'controls':'Bot controls','discovery':'Market discovery','stream':'Market-price connection','reconciliation':'Order reconciliation','trade':'Order submission'})[issue.phase]||'Trading recovery',markets:issue.market?[issue.market]:[],orderId:issue.order_id};
+ if(inactive)return {...base,reason:inactive.reason,action:inactive.action,phase:'Inactive market · entries waiting'};
  return {...base,reason:health.message||'The exchange account is being verified.',action:'The worker checks orders and positions before allowing new entries. Request verification or review Activity for the latest evidence.',phase:'Account verification'};
 }
 export function attentionMarkup(info,{botId=''}={}){
@@ -185,7 +188,7 @@ export function attentionMarkup(info,{botId=''}={}){
   const quantity=x=>Number.isFinite(Number(x))?String(x):'Unknown';
   const status=d.syncing?'Synchronizing recent order update':d.reason==='unowned_resting_order'?'Unowned resting order':d.reason==='order_verification'?'Order confirmation pending':'Position mismatch';
   const botRows=bots.map(b=>`<tr><td>${e(b.name||b.id)}</td><td>${e(quantity(b.held_yes))}</td><td>${e(quantity(b.held_no))}</td><td>${e(quantity(b.net_contracts))}</td></tr>`);
-  const orderRows=rows.map(o=>`<tr><td>${e(o.bot_name||o.bot_id||'Unknown')}</td><td>${e(o.kind==='exit'?(o.exit_role==='profit'?'Profit sell':'Protective sell'):'Buy')} ${e((o.side||'').toUpperCase())}</td><td>${e(o.status||'Unknown')}</td><td>${e(quantity(o.filled))} filled / ${e(quantity(o.remaining))} waiting</td><td><code>${e(o.client_id||o.exchange_id||'Unknown')}</code>${o.parent?`<small>Linked buy: <code>${e(o.parent)}</code></small>`:''}</td></tr>`);
+  const orderRows=rows.map(o=>`<tr><td>${e(o.bot_name||o.bot_id||'Unknown')}</td><td>${e(o.kind==='exit'?(o.exit_role==='profit'?'Profit sell':o.exit_role==='late'?'Conditional late sell':'Protective sell'):'Buy')} ${e((o.side||'').toUpperCase())}</td><td>${e(o.status||'Unknown')}</td><td>${e(quantity(o.filled))} filled / ${e(quantity(o.remaining))} waiting</td><td><code>${e(o.client_id||o.exchange_id||'Unknown')}</code>${o.parent?`<small>Linked buy: <code>${e(o.parent)}</code></small>`:''}</td></tr>`);
   const manualRows=missing.map(o=>`<li>Unowned exchange order <code>${e(o.exchange_id||o.client_id||'Unknown')}</code> · ${e(o.status||'resting')}</li>`).join('');
   return `<section class="panel"><strong>${e(t)}</strong> · ${e(status)}<p class="small">Saved bot net: ${e(quantity(d.expected_contracts))} YES contracts · Kalshi account net: ${e(quantity(d.exchange_contracts))} YES contracts · Duration: ${e(quantity(d.blocked_seconds))} seconds. Multiple bots may contribute to the same account position; this list does not establish which order caused the mismatch.</p>
   ${botRows.length?`<h4>Participating bots</h4>${table(['Bot','Held YES','Held NO','Net YES'],botRows)}`:''}

@@ -26,6 +26,36 @@ class DemoPostgres(unittest.TestCase):
         challenge=self.client.get('/auth/challenge').json();self.client.post('/auth/google',json=dict(credential='opaque',nonce=challenge['nonce'],csrf_token=challenge['csrf_token']))
         self.client.headers['x-csrf-token']=self.client.cookies[CSRF]
     def tearDown(self):self.client.close()
+    def test_entry_window_rollout_is_scoped_audited_atomic_and_runs_only_once(self):
+        from services.demo.entry_policy import apply_entry_window_rollout,ROLLOUT
+        from uuid import uuid4
+        keys={name:str(uuid4()) for name in ('running','paused','archived','conditions')}
+        for name,key in keys.items():
+            self.demo.put('bot/'+key,dict(desired='paused' if name=='paused' else 'running',archived=name=='archived'),
+                parameters=dict(config=config(strategy='conditions' if name=='conditions' else 'buy_low_sell_high',cycle_repeat=True),revision=2,settings_revision=4))
+        for status in ('held','closed'):
+            self.demo.put('order/rollout-'+status,dict(status=status,filled=2,remaining=0),parameters=dict(bot=keys['running'],revision=2,kind='entry',entry_strategy='buy_low_sell_high'))
+        changed=apply_entry_window_rollout(self.demo)
+        self.assertEqual([r['bot'] for r in changed],[keys['running']])
+        updated=self.demo.get('bot/'+keys['running'])['parameters']
+        self.assertEqual((updated['revision'],updated['settings_revision']),(3,5))
+        self.assertEqual(updated['config']['cycle_entry_minutes'],5);self.assertFalse(updated['config']['cycle_repeat'])
+        self.assertEqual(updated['config']['cycle_exit_mode'],'late_threshold')
+        self.assertEqual(updated['config']['late_exit_threshold_cents'],40);self.assertTrue(updated['config']['require_active_market'])
+        from services.api.demo_models import BotConfig
+        BotConfig.model_validate(updated['config'])
+        self.assertEqual(updated['config']['bid_percent'],config()['bid_percent'])
+        self.assertIn('2',updated['prior_protection'])
+        adopted=self.demo.get('order/rollout-held')['parameters']
+        self.assertEqual(adopted['cycle_exit_mode'],'late_threshold');self.assertEqual(adopted['revision'],2)
+        self.assertNotIn('cycle_exit_mode',self.demo.get('order/rollout-closed')['parameters'])
+        for name in ('paused','archived','conditions'):
+            self.assertEqual(self.demo.get('bot/'+keys[name])['parameters']['revision'],2)
+        events=self.demo.rows('event/',100)
+        audit=next(r['progress'] for r in events if r['parameters'].get('kind')=='bot_updated')
+        self.assertEqual(audit['details']['revision'],3);self.assertTrue(audit['details']['rule_revision_changed'])
+        self.assertEqual(apply_entry_window_rollout(self.demo),[])
+        self.assertIsNotNone(self.demo.get(ROLLOUT.removeprefix('demo/')))
     def test_cycle_direction_uses_closed_fills_and_all_bot_revisions(self):
         for key,ticker,side,filled,kind in [('yes','t','yes',2,'entry'),('zero','t','no',0,'entry'),
                 ('exit','t','no',3,'exit'),('both-yes','both','yes',1,'entry'),('both-no','both','no',1,'entry')]:

@@ -417,3 +417,13 @@ test('Each bot summary has visible Lifetime, 1h, 6h and 24h buttons with an acce
   assert.deepEqual(botSummaryPeriodPreferences(),{ethereum:'6H',bitcoin:'all'});
  }finally{if(original===undefined)delete globalThis.localStorage;else globalThis.localStorage=original}
 });
+
+test('Inactive markets get per-bot attention without pausing healthy bots',async()=>{
+ const {botGroup,attentionInfo,analysisVersionMarkup}=await import('../apps/web/demo-client.mjs');
+ const now=1800000000,health={at:now,state:'ready',reconciled_at:now,bots:{quiet:{market_inactive:{reason:'No current active market',action:'Recheck every minute; waiting cash released'}}}};
+ assert.equal(botGroup({key:'quiet',desired:'running'},health,[],now),'Needs attention');
+ assert.equal(botGroup({key:'healthy',desired:'running'},health,[],now),'Running');
+ assert.match(attentionInfo({key:'quiet'},health,[],now).reason,/No current/);
+ const markup=analysisVersionMarkup({revision:3,buy_cents:3,sell_cents:null,exit_mode:'late_threshold',hold_threshold_cents:40,changed_at:now},'latest');
+ assert.match(markup,/conditional late exit below 40/);assert.doesNotMatch(markup,/6¢ sell/);
+});

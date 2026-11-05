@@ -30,6 +30,12 @@ class BotConfig(BaseModel):
     cycle_buy_cents:int=Field(default=10,ge=1,le=49)
     cycle_sell_cents:int=Field(default=20,ge=2,le=99)
     cycle_cutoff_minutes:int=Field(default=3,ge=0,le=1439)
+    cycle_entry_minutes:int|None=Field(default=None,ge=1,le=1440)
+    cycle_exit_mode:Literal['profit','late_threshold']='profit'
+    late_exit_minutes:int=Field(default=5,ge=1,le=1440)
+    late_exit_threshold_cents:int=Field(default=40,ge=1,le=99)
+    late_exit_reprice_cents:int=Field(default=5,ge=0,le=99)
+    require_active_market:bool=False
     cycle_repeat:bool=True
     squares:list[Square]=Field(min_length=1,max_length=45)
     qualification:Literal['bid','ask']='ask'
@@ -49,6 +55,8 @@ class BotConfig(BaseModel):
         if self.strategy=='buy_low_sell_high':
             if self.cycle_sell_cents<=self.cycle_buy_cents:raise ValueError('The profit sell price must be higher than the low buy price')
             if self.loss_mode=='research':raise ValueError('Use manual or off loss prevention for buy low, sell high')
+            if self.cycle_exit_mode=='late_threshold' and (self.cycle_repeat or self.loss_mode!='off'):
+                raise ValueError('Conditional late exits require no repeat buys and loss prevention off')
         if self.minimum_cents is not None and self.maximum_cents is not None and self.minimum_cents>self.maximum_cents:raise ValueError('Minimum bid must not exceed maximum bid')
         if self.loss_mode=='manual' and self.loss_cents is None:raise ValueError('Enter an exit threshold')
         keys=[(s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes) for s in self.squares]

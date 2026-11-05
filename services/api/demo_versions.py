@@ -21,7 +21,8 @@ def infer_versions(bots,orders,events):
         changed=float(bot['created_at']) if initial else float(exact['at']) if exact else None
         versions[key]=dict(label='Most recent version',revision=revision,
             buy_cents=config.get('cycle_buy_cents') if config.get('strategy')=='buy_low_sell_high' else None,
-            sell_cents=config.get('cycle_sell_cents') if config.get('strategy')=='buy_low_sell_high' else None,
+            sell_cents=config.get('cycle_sell_cents') if config.get('strategy')=='buy_low_sell_high' and config.get('cycle_exit_mode','profit')=='profit' else None,
+            exit_mode=config.get('cycle_exit_mode','profit'),hold_threshold_cents=config.get('late_exit_threshold_cents',40),
             changed_at=changed,first_entry_at=first,
             window_start=min((float(r['at']) for r in updates),default=None),
             window_end=max((float(r['at']) for r in updates),default=None),

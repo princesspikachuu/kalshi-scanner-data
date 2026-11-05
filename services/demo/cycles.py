@@ -4,7 +4,7 @@ from services.research.reports import SERIES
 STRATEGY='buy_low_sell_high'
 BUY_CANCEL_MINUTES=3
 
-def buy_cancel_deadline(order,quote=None):
+def buy_cancel_deadline(order,quote=None,config=None):
     """Hard deadline for an unfilled low bid, independent of entry cutoff.
 
     Prefer the durable market expiry saved with the submitted order. For older
@@ -14,7 +14,21 @@ def buy_cancel_deadline(order,quote=None):
     if order.get('kind')!='entry' or order.get('entry_strategy')!=STRATEGY:return None
     end=order.get('market_close_at')
     if end is None and quote is not None:end=quote.get('entry_close',quote.get('close'))
-    return float(end)-BUY_CANCEL_MINUTES*60 if end is not None else order.get('close')
+    deadlines=[float(end)-BUY_CANCEL_MINUTES*60] if end is not None else []
+    if order.get('close') is not None:deadlines.append(float(order['close']))
+    if order.get('entry_deadline_at') is not None:deadlines.append(float(order['entry_deadline_at']))
+    if config and config.get('cycle_entry_minutes') is not None:
+        opened=order.get('market_open_at') or (quote or {}).get('open')
+        if opened:deadlines.append(float(opened)+config['cycle_entry_minutes']*60)
+        else:return 0 # No verified opening time cannot authorize a resting buy.
+    return min(deadlines) if deadlines else None
+
+def entry_deadline(config,quote):
+    end=quote.get('entry_close',quote['close'])-buy_entry_cutoff(config)*60
+    minutes=config.get('cycle_entry_minutes')
+    if minutes is None:return end
+    opened=quote.get('open')
+    return min(end,opened+minutes*60) if opened else 0
 
 def buy_entry_cutoff(config):
     # Older persisted configs might allow bids inside the last three minutes.
@@ -40,6 +54,7 @@ def park_reason(order,orders,locked_side=None):
 
 def entry_block_reason(item,orders,netting=False,locked_side=None):
     """Shared lots retain parent ownership; only incompatible orders wait."""
+    if locked_side and item.get('no_repeat'):return 'complete'
     if locked_side and locked_side!=item['side']:return 'side_lock'
     rows=[o for o in orders if active(o)]
     if netting:return 'netting'
@@ -70,6 +85,7 @@ def shared_quantity(item,peers,config,equity,cash,market_exposure,bot_exposure):
     return amount
 
 def retry_ready(retry,quote,now):
+    if retry and retry.get('reason')=='price_tick' and quote.get('metadata_at',0)>retry.get('rejected_at',now) and now>=retry['after']:return True
     return (not retry or (now>=retry['after'] and
         (quote.get('clock'),quote.get('seq'))!=(retry.get('clock'),retry.get('seq'))))
 
@@ -83,7 +99,9 @@ def rejection_prices(order):
 
 def eligible(config,square,quote,now):
     return (quote.get('status')=='active' and quote['series'] in SERIES[square['asset']]
-        and quote.get('open',0)<=now<quote.get('entry_close',quote['close'])-buy_entry_cutoff(config)*60)
+        and not quote.get('price_grid_refresh')
+        and (not config.get('require_active_market') or quote.get('market_activity_ready') is True)
+        and quote.get('open',0)<=now<entry_deadline(config,quote))
 
 def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,*,daily_reason=None,funding_waits=None,fair_running_count=1,cycle_locks=None):
     from collections import Counter
@@ -107,7 +125,7 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,
         for side in ('yes','no'):
             state=states.get(bot['id'],{}).get(f'{ticker}/{index}/{side}',{})
             price=state.get('retry_buy_cents',config['cycle_buy_cents'])
-            item=dict(bot=bot['id'],side=side,price=price)
+            item=dict(bot=bot['id'],side=side,price=price,no_repeat=config.get('cycle_repeat') is False)
             reason=entry_block_reason(item,rows,ticker in netting,(cycle_locks or {}).get(ticker))
             if not reason and state.get('submitted'):reason='complete'
             if not reason and not retry_ready(state.get('price_retry'),q,now):reason='price_retry'
@@ -125,7 +143,7 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,
             else:ready+=1
     own=[o for o in live if o['bot']==bot['id']]
     lows=sum(o['kind']=='entry' and o.get('remaining',0)>0 for o in own)
-    highs=sum(o.get('exit_role')=='profit' and o.get('remaining',0)>0 for o in own)
+    highs=sum(o.get('exit_role') in ('profit','late') and o.get('remaining',0)>0 for o in own)
     labels=dict(side_lock='first filled side is locked for this round',verification='verifying current orders',other_strategy='another strategy owns this market',
         opposite_inventory='waiting for opposite-side positions to close',self_trade='would cross your own sell',netting='reconciling offsetting fills',
         budget='insufficient available funds or allocation',price_retry='waiting for a fresh quote to retry',protection='protective exit is active',
@@ -133,7 +151,8 @@ def diagnostics(bot,quotes,states,orders,now,blocked,netting,account,reconciled,
         funding='waiting for available cash on this market shard',transfer='waiting for a confirmed funding transfer',daily_loss='daily loss cutoff reached',daily_check='checking saved daily P&L')
     waiting=[f'{count} {labels[key]}' for key,count in sorted(reasons.items(),key=lambda pair:(-pair[1],pair[0])) if key in labels][:2]
     status='New entries paused' if bot['desired']!='running' else f'{ready} sides ready to bid' if ready else 'Entry bids waiting' if waiting else 'Waiting for existing bids or positions' if reasons.get('duplicate') else 'Cycle completed or stopped' if reasons.get('complete') else 'Waiting for fresh verified prices' if markets and not fresh else 'Waiting for the next market before cutoff'
-    message=f'Buy {config["cycle_buy_cents"]}¢ / sell {config["cycle_sell_cents"]}¢ · {lows} waiting buys · {highs} profit sells · {status}'
+    policy=f'Buy {config["cycle_buy_cents"]}¢ / conditional late exit below {config.get("late_exit_threshold_cents",40)}¢' if config.get('cycle_exit_mode')=='late_threshold' else f'Buy {config["cycle_buy_cents"]}¢ / sell {config["cycle_sell_cents"]}¢'
+    message=f'{policy} · {lows} waiting buys · {highs} sell orders · {status}'
     if waiting:message+=' · '+'; '.join(waiting)
     return dict(message=message,markets=len(markets),fresh=len(fresh),eligible_markets=eligible_markets,matches=ready,
         entry_blockers=dict(reasons),exit_waiting=False,categories=sorted({s['asset'] for s in config['squares']}),
@@ -157,7 +176,7 @@ def candidates(bot,quotes,states,now,blocked):
             _,ask=side_quote(q,side);price=state.get('retry_buy_cents',config['cycle_buy_cents'])
             if not price<ask or not entry_protection_matches(config,square,q,side):continue
             result.append(dict(bot=bot['id'],ticker=ticker,side=side,square=index,key=key,cycle=state['cycle'],
-                first_at=state['first_at'],price=price,profit_target_cents=state.get('retry_sell_cents',config['cycle_sell_cents']),expected_roi=0))
+                first_at=state['first_at'],price=price,no_repeat=config.get('cycle_repeat') is False,profit_target_cents=state.get('retry_sell_cents',config['cycle_sell_cents']),expected_roi=0))
     for key in list(memory):
         if key.split('/')[0] not in quotes and memory[key].get('expires_at',now+1)<=now:memory.pop(key)
     return result
