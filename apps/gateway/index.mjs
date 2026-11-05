@@ -5,7 +5,7 @@ const ROUTES=new Map([
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
 const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/live-paper');STATIC.add('/live-paper.html');STATIC.add('/live-paper.mjs');STATIC.add('/live-paper-view.mjs');STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
-for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs','/order-detail.mjs','/activity-filters.mjs'])STATIC.add(path);
+for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs','/order-detail.mjs','/activity-filters.mjs','/live-bots','/live-bots.html','/live-bots.mjs','/live-client.mjs'])STATIC.add(path);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -65,6 +65,7 @@ function collectionBody(data){
  return data;
 }
 function demoBody(data){if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||(data.items&&(!Array.isArray(data.items)||data.items.length>500))||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100)))throw Error('Invalid demo contract');return data;}
+function liveBotsBody(data){if(data.contract!=='live-bots-v1'||data.environment!=='live'||data.execution_enabled!==false||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100||data.bots.some(b=>b.desired!=='paused'))))throw Error('Invalid live configuration workspace');return data;}
 function paperBody(data){if(data.contract!=='paper-v1'||data.live_trading_enabled!==false)throw Error('invalid paper workspace');if(data.runs&&(!Array.isArray(data.runs)||data.runs.length>20))throw Error('invalid paper runs');return data;}
 function responseCookies(headers){
  const values=typeof headers.getSetCookie==='function'?headers.getSetCookie():headers.getAll('Set-Cookie');
@@ -78,6 +79,7 @@ function responseCookies(headers){
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
  const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|bots|bulk|policy|connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const liveBots=/^\/api\/live\/(?:workspace|budget|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
@@ -94,8 +96,9 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=liveBots?(url.pathname==='/api/live/workspace'?'GET':'POST'):demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
+ if(liveBots&&url.search)return problem(422,'Invalid filters');
  if(demo&&url.search){const query=[...url.searchParams];if(url.search.length>1024||new Set(query.map(([k])=>k)).size!==query.length||query.some(([k,v])=>![...['period','before','bot','ticker','kind','asset','start','end','version'],...(url.pathname==='/api/demo/performance'?['group','timezone']:[]),...(url.pathname==='/api/demo/orders'?['client_id','completed']:[])].includes(k)||v.length>256))return problem(422,'Invalid filters')}
  if(paper&&url.search){const entries=[...url.searchParams];if(!liveEvents||entries.length!==1||entries[0][0]!=='before'||!/^\d{1,12}$/.test(entries[0][1]))return problem(422,'Invalid request')}
  if(request.method!==method){const r=problem(405,'Method not allowed');r.headers.set('allow',method);return r}
@@ -140,14 +143,14 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
   if(upstream.status>=300&&upstream.status<400)return problem(502,'Sign-in connection unavailable');
   const outgoing=new Headers(BASE_HEADERS);
-  const setCookies=(research||collection||paper||demo)?[]:responseCookies(upstream.headers);
+  const setCookies=(research||collection||paper||demo||liveBots)?[]:responseCookies(upstream.headers);
   let response;
   if(!upstream.ok){
    const messages={400:'Invalid request',401:'Sign in required',403:'Request rejected',413:'Request too large',415:'JSON required',422:'Invalid sign-in request',429:'Too many requests. Try again shortly.',503:'Sign-in connection unavailable'};
-   if(research||collection||paper||demo){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
+   if(research||collection||paper||demo||liveBots){messages[404]='Result not found';messages[409]='Request conflicts with an existing collection';messages[422]='Invalid request'}
    const status=Object.hasOwn(messages,upstream.status)?upstream.status:502;
    let message=messages[status]||'Connection unavailable';
-   if(demo){try{const detail=JSON.parse(new TextDecoder().decode(await boundedBody(upstream.body,2048))).detail;if(typeof detail==='string'&&detail.length<=240)message=detail}catch{}}
+   if(demo||liveBots){try{const detail=JSON.parse(new TextDecoder().decode(await boundedBody(upstream.body,2048))).detail;if(typeof detail==='string'&&detail.length<=240)message=detail}catch{}}
    response=problem(status,message);
    if(status===429)response.headers.set('retry-after','60');
    await upstream.body?.cancel();
@@ -156,8 +159,8 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
-   const text=new TextDecoder().decode(await boundedBody(upstream.body,demo?2097152:(research||collection||paper)?262144:32768));
-   response=new Response(JSON.stringify(demo?demoBody(JSON.parse(text)):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   const text=new TextDecoder().decode(await boundedBody(upstream.body,(demo||liveBots)?2097152:(research||collection||paper)?262144:32768));
+   response=new Response(JSON.stringify(liveBots?liveBotsBody(JSON.parse(text)):demo?demoBody(JSON.parse(text)):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;

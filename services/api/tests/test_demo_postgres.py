@@ -26,6 +26,38 @@ class DemoPostgres(unittest.TestCase):
         challenge=self.client.get('/auth/challenge').json();self.client.post('/auth/google',json=dict(credential='opaque',nonce=challenge['nonce'],csrf_token=challenge['csrf_token']))
         self.client.headers['x-csrf-token']=self.client.cookies[CSRF]
     def tearDown(self):self.client.close()
+    def test_live_copies_are_paused_isolated_idempotent_and_keep_source_version(self):
+        from services.live.workspace import seed_live_bots
+        from uuid import uuid4
+        source=str(uuid4());paused=str(uuid4())
+        original=config(strategy='buy_low_sell_high',cycle_exit_mode='late_threshold',cycle_entry_minutes=5,cycle_buy_cents=3,
+            cycle_repeat=False,bid_percent=.5,market_percent=1,bot_percent=3)
+        self.demo.put('bot/'+source,dict(desired='running',archived=False),parameters=dict(config=original,revision=7))
+        self.demo.put('bot/'+paused,dict(desired='paused',archived=False),parameters=dict(config=original,revision=2))
+        self.demo.put('credentials',dict(encrypted='demo-only-secret'))
+        self.assertEqual(seed_live_bots(self.store.pool),1)
+        data=self.client.get('/live/workspace').json()
+        self.assertEqual(data['environment'],'live');self.assertFalse(data['execution_enabled']);self.assertFalse(data['connection_configured'])
+        self.assertEqual(len(data['bots']),1);bot=data['bots'][0]
+        self.assertEqual(bot['desired'],'paused');self.assertEqual(bot['config'],original)
+        self.assertEqual(bot['source_demo_revision'],7);self.assertNotEqual(bot['key'],source)
+        self.assertNotIn('demo-only-secret',str(data));self.assertIsNone(data['budget'])
+        result=self.client.post('/live/budget',json=dict(trial_cap_cents=2500,portfolio_reference_cents=100000))
+        self.assertEqual(result.status_code,200,result.text)
+        plan=self.client.get('/live/workspace').json()['bots'][0]
+        self.assertEqual(plan['sizing']['bid_cents'],12)
+        sizing=dict(expected_settings_revision=1,bid_percent=1,market_percent=2,bot_percent=4)
+        self.assertEqual(self.client.post('/live/bots/'+bot['key']+'/sizing',json=sizing).status_code,200)
+        self.assertEqual(self.client.post('/live/bots/'+bot['key']+'/sizing',json=sizing).status_code,409)
+        self.assertEqual(seed_live_bots(self.store.pool),0)
+        self.assertEqual(self.demo.get('bot/'+source)['parameters']['config']['bid_percent'],.5)
+        live=self.client.get('/live/workspace').json()['bots'][0]
+        self.assertEqual(live['config']['bid_percent'],1);self.assertEqual(live['desired'],'paused')
+        self.assertEqual(self.client.post('/live/bots/'+bot['key']+'/control',json=dict(action='resume')).status_code,404)
+        with self.store.pool.connection() as c:
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM research_job WHERE idempotency_key LIKE 'live/order/%'").fetchone()['n'],0)
+        self.client.cookies.clear();self.assertEqual(self.client.get('/live/workspace').status_code,401)
+
     def test_entry_window_rollout_is_scoped_audited_atomic_and_runs_only_once(self):
         from services.demo.entry_policy import apply_entry_window_rollout,ROLLOUT
         from uuid import uuid4

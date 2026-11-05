@@ -61,6 +61,8 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
                 from starlette.concurrency import run_in_threadpool
                 await run_in_threadpool(app.state.demo_versions.load)
             except Exception:print('{"event":"demo_analysis_versions_unavailable"}',flush=True)
+            from services.live.workspace import seed_live_bots
+            await run_in_threadpool(seed_live_bots,store.pool)
         try: yield
         finally:
             if owned:store.close()
@@ -165,4 +167,6 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
     install_history(app,current,settings,history_store or HistoryStore(getattr(store,'pool',None)))
     from .demo import install_demo
     install_demo(app,current,collection_mutation,getattr(store,'pool',None))
+    from .live_bots import install_live_bots
+    install_live_bots(app,current,collection_mutation,getattr(store,'pool',None))
     return app

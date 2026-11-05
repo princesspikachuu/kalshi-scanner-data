@@ -3,7 +3,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {pro
 import gateway from '../apps/gateway/index.mjs';
 import {readFile} from 'node:fs/promises';
 test('Every page entrypoint and imported module is served through the real gateway allowlist',async()=>{
- const base=new URL('../apps/web/',import.meta.url),queue=['index.html','bots.html','activity.html','collection.html','paper.html'],seen=new Set();
+ const base=new URL('../apps/web/',import.meta.url),queue=['index.html','bots.html','activity.html','collection.html','paper.html','live-bots.html'],seen=new Set();
  const environment={APP_ORIGIN:'https://app.test',ASSETS:{fetch:async request=>new Response(await readFile(new URL(new URL(request.url).pathname.slice(1),base),'utf8'),{headers:{'content-type':request.url.endsWith('.mjs')?'text/javascript':'text/html'}})}};
  while(queue.length){
   const path=queue.shift();if(seen.has(path))continue;seen.add(path);
@@ -426,4 +426,28 @@ test('Inactive markets get per-bot attention without pausing healthy bots',async
  assert.match(attentionInfo({key:'quiet'},health,[],now).reason,/No current/);
  const markup=analysisVersionMarkup({revision:3,buy_cents:3,sell_cents:null,exit_mode:'late_threshold',hold_threshold_cents:40,changed_at:now},'latest');
  assert.match(markup,/conditional late exit below 40/);assert.doesNotMatch(markup,/6¢ sell/);
+});
+
+import {liveBotCard} from '../apps/web/live-client.mjs';
+test('LIVE gateway accepts only paused configuration contracts and no order or resume route',async()=>{
+ const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'x'.repeat(32)};
+ const data={contract:'live-bots-v1',environment:'live',execution_enabled:false,bots:[{desired:'paused'}]};
+ let fetches=0;const fetcher=async()=>{fetches++;return new Response(JSON.stringify(data),{headers:{'content-type':'application/json'}})};
+ let response=await proxyAuth(new Request('https://app.test/api/live/workspace'),env,{fetcher});
+ assert.equal(response.status,200);assert.equal((await response.json()).environment,'live');
+ for(const path of ['/api/live/bots/11111111-1111-1111-1111-111111111111/control','/api/live/orders','/api/live/connection'])assert.equal((await proxyAuth(new Request('https://app.test'+path),env,{fetcher})).status,404);
+ assert.equal(fetches,1);
+ data.execution_enabled=true;assert.equal((await proxyAuth(new Request('https://app.test/api/live/workspace'),env,{fetcher})).status,502);
+ data.execution_enabled=false;data.bots[0].desired='running';assert.equal((await proxyAuth(new Request('https://app.test/api/live/workspace'),env,{fetcher})).status,502);
+});
+test('LIVE budget writes preserve origin and CSRF boundaries',async()=>{
+ const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'x'.repeat(32)};
+ let seen;const fetcher=async(url,options)=>{seen=options;return new Response(JSON.stringify({contract:'live-bots-v1',environment:'live',execution_enabled:false,saved:true}),{headers:{'content-type':'application/json'}})};
+ const make=origin=>new Request('https://app.test/api/live/budget',{method:'POST',headers:{origin,'content-type':'application/json','x-csrf-token':'test-csrf'},body:JSON.stringify({trial_cap_cents:2500})});
+ assert.equal((await proxyAuth(make('https://evil.test'),env,{fetcher})).status,403);assert.equal(seen,undefined);
+ assert.equal((await proxyAuth(make('https://app.test'),env,{fetcher})).status,200);assert.equal(seen.headers.get('x-csrf-token'),'test-csrf');
+});
+test('LIVE bot cards make trial basis and paused state explicit and escape copied names',()=>{
+ const html=liveBotCard({key:'live-one',source_demo_revision:7,config:{name:'<img src=x>',cycle_buy_cents:3,cycle_entry_minutes:5,cycle_exit_mode:'late_threshold',late_exit_minutes:5,late_exit_threshold_cents:40,late_exit_reprice_cents:5,squares:[{asset:'btc'}],bid_percent:.5,market_percent:1,bot_percent:3},sizing:{bid_cents:12,market_cents:25,bot_cents:75,contracts_per_bid:4}});
+ assert.ok(html.includes('Paused'));assert.ok(html.includes('% of trial'));assert.ok(html.includes('$0.12'));assert.ok(html.includes('No live trades'));assert.ok(!html.includes('<img'));assert.ok(!html.includes('Resume'));
 });
