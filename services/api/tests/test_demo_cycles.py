@@ -2,7 +2,7 @@ import json,threading,unittest
 from unittest.mock import Mock,patch
 from services.api.demo_models import BotConfig
 from services.api.tests.test_demo_engine import NOW,FakeStore,config,quote
-from services.demo.engine import candidates,wire_order
+from services.demo.engine import candidates,wire_order,profit_maker_price
 from services.demo.cycles import offset_plan,entry_block_reason,park_reason,shared_quantity
 from services.demo.runtime import Worker
 from services.demo.exchange import ExchangeFailure
@@ -45,26 +45,40 @@ class RejectionPrices(unittest.TestCase):
             w.quotes['t'].update(seq=3,at=NOW+2)
             result=candidates(w.bots,w.quotes,w.states,NOW+2)
             self.assertEqual((result[0]['price'],result[0]['profit_target_cents']),(6,16))
-    def test_profit_rejection_raises_target_waits_for_new_quote_and_preserves_inventory(self):
-        w=self.rejecting_worker('price_tick');parent=entry(filled=3,remaining=0);w.orders=[parent]
+    def test_profit_rejection_reprices_book_without_raising_floor_or_replaying_an_order(self):
+        w=self.rejecting_worker();parent=entry(filled=3,remaining=0);w.orders=[parent]
         self.assertTrue(w.profit_sell(parent,w.quotes['t'],NOW));sell=w.submit.call_args.args[0]
         with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,sell)
-        self.assertEqual(parent['profit_target_cents'],22);self.assertEqual(parent['filled'],3)
+        self.assertEqual(parent['profit_target_cents'],20);self.assertEqual(parent['filled'],3)
+        self.assertEqual(sell['price'],61)
         w.submit.reset_mock();self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+1))
-        w.quotes['t']['seq']=2
+        w.quotes['t'].update(seq=2,bid=75,ask=80)
         self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+.1))
         self.assertTrue(w.profit_sell(parent,w.quotes['t'],NOW+1))
-        retry=w.submit.call_args.args[0];self.assertEqual((retry['price'],retry['quantity']),(22,3))
+        retry=w.submit.call_args.args[0];self.assertEqual((retry['price'],retry['quantity']),(76,3))
         self.assertNotEqual(retry['client_id'],sell['client_id'])
+    def test_price_tick_rejection_requires_metadata_refresh_before_retry(self):
+        w=self.rejecting_worker('price_tick');parent=entry(filled=3,remaining=0);w.orders=[parent]
+        w.profit_sell(parent,w.quotes['t'],NOW);sell=w.submit.call_args.args[0]
+        with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,sell)
+        self.assertIn('t',w.pending_markets)
+        w.quotes['t'].update(seq=2,at=NOW+1)
+        self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+1))
+        w.quotes['t'].update(price_grid_refresh=False,metadata_at=NOW+1,
+            price_ranges=[dict(start='0',end='1',step='.001')],bid=60.1,ask=61)
+        self.assertTrue(w.profit_sell(parent,w.quotes['t'],NOW+1))
+        self.assertEqual(w.submit.call_args.args[0]['price'],60.2)
     def test_bounds_stop_retries_and_protective_exit_still_takes_over(self):
         w=self.rejecting_worker();order=entry(price=2,profit_target_cents=12)
         with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,order)
         w.quotes['t']['seq']=2
         self.assertEqual(candidates(w.bots,w.quotes,w.states,NOW+1),[])
-        parent=entry(filled=3,remaining=0,profit_target_cents=99);w.orders=[parent]
+        parent=entry(filled=3,remaining=0,profit_target_cents=99,profit_floor_cents=99);w.orders=[parent]
         sell=dict(parent,client_id='high',kind='exit',exit_role='profit',parent=parent['client_id'],price=99)
         with patch('services.demo.runtime.time.time',return_value=NOW):Worker.submit(w,sell)
-        self.assertTrue(parent['profit_retry_exhausted']);self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+1))
+        self.assertNotIn('profit_retry_exhausted',parent)
+        w.quotes['t'].update(seq=2,bid=99,ask=99.5)
+        self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW+1))
         parent.update(exit_triggered=True,exit_ceiling_cents=40);w.submit.reset_mock()
         w.quotes['t'].update(bid=30,ask=35)
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
@@ -190,7 +204,7 @@ class SharedMarkets(unittest.TestCase):
         w.submit.assert_not_called()
         other['status']='closed'
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
-        self.assertEqual((w.submit.call_args.args[0]['parent'],w.submit.call_args.args[0]['price']),('low',6))
+        self.assertEqual((w.submit.call_args.args[0]['parent'],w.submit.call_args.args[0]['price']),('low',61))
     def test_existing_profit_sell_blocks_only_crossing_prices_not_all_bots(self):
         parent=entry(price=3,profit_target_cents=6,filled=3,remaining=0)
         sell=dict(parent,kind='exit',parent='low',client_id='high',exit_role='profit',price=6,filled=0,remaining=3)
@@ -240,6 +254,92 @@ class SharedMarkets(unittest.TestCase):
         self.assertEqual(w.submit.call_args.args[0]['bot'],'bot-2')
 
 class ProfitSells(unittest.TestCase):
+    def test_valid_prices_snap_to_the_yes_grid_on_either_outcome(self):
+        grid=[dict(start='0',end='.1',step='.001'),dict(start='.1',end='.9',step='.01'),dict(start='.9',end='1',step='.001')]
+        q=book();q.update(bid=5.8,ask=7.1,price_ranges=grid)
+        self.assertEqual(profit_maker_price(q,'yes',6),6)
+        q.update(bid=6.1)
+        self.assertEqual(profit_maker_price(q,'yes',6),6.2)
+        q.update(bid=92.9,ask=93.9)
+        self.assertEqual(profit_maker_price(q,'no',6),6.2)
+        self.assertEqual(wire_order(dict(kind='exit',side='no',price=6.2,quantity=3,ticker='t',client_id='id',close=NOW+10))['price'],'0.9380')
+        q.update(bid=9.9,ask=12)
+        self.assertEqual(profit_maker_price(q,'yes',6),10)
+        q.update(bid=10,ask=12)
+        self.assertEqual(profit_maker_price(q,'yes',6),11)
+        # An asymmetric grid must be complemented, not reused as a NO grid.
+        q.update(bid=60,ask=65,price_ranges=[dict(start='.001',end='.999',step='.002')])
+        self.assertEqual(profit_maker_price(q,'no',6),35.1)
+
+    def test_missing_grid_uses_safe_whole_cents_invalid_or_crossed_books_wait(self):
+        q=book();q.update(bid=6.2,ask=8)
+        self.assertEqual(profit_maker_price(q,'yes',6),7)
+        q['price_ranges']=[dict(start='0',end='1',step='NaN')]
+        self.assertIsNone(profit_maker_price(q,'yes',6))
+        q['price_ranges']=[dict(start='0',end='1',step='.01')]
+        for bid,ask in [(8,8),(9,8),(100,100)]:
+            q.update(bid=bid,ask=ask)
+            self.assertIsNone(profit_maker_price(q,'yes',6))
+        q.update(bid=99,ask=100)
+        self.assertIsNone(profit_maker_price(q,'yes',6))
+
+    def test_legacy_inflated_floor_recovers_without_modifying_resting_sells(self):
+        w=worker();w.bots=[bot(cycle_buy_cents=3,cycle_sell_cents=6)]
+        parent=entry(price=3,profit_target_cents=22,profit_retry_exhausted=True,filled=3,remaining=0)
+        w.orders=[parent];w.quotes['t'].update(bid=2,ask=4)
+        self.assertTrue(w.profit_sell(parent,w.quotes['t'],NOW))
+        self.assertEqual((parent['profit_floor_cents'],parent['profit_target_cents']),(6,6))
+        self.assertEqual(w.submit.call_args.args[0]['price'],6)
+        w.orders.append(dict(w.submit.call_args.args[0],status='resting',remaining=3))
+        w.quotes['t'].update(bid=20,ask=25);w.submit.reset_mock()
+        self.assertFalse(w.profit_sell(parent,w.quotes['t'],NOW))
+        w.submit.assert_not_called()
+
+    def test_urgent_fill_verifies_then_posts_sell_without_entry_or_background_work(self):
+        w=worker();w.orders=[entry(filled=3,remaining=0)];w.pending_fills={'t':NOW};w.recovered=False
+        w.exchange=Mock(writes=0);steps=[]
+        def reconcile():
+            steps.append('verify');w.recovered=True;w.last_reconcile=NOW;w.pending_fills.clear()
+        def submit(intent):steps.append('sell');w.exchange.writes+=1
+        w.reconcile=Mock(side_effect=reconcile);w.submit.side_effect=submit
+        w.discover=Mock();w.poll_funding=Mock()
+        with patch('services.demo.runtime.time.time',return_value=NOW):self.assertTrue(w.service_urgent_exits())
+        self.assertEqual(steps,['verify','sell'])
+        self.assertEqual(w.submit.call_args.args[0]['exit_role'],'profit')
+        w.discover.assert_not_called();w.poll_funding.assert_not_called()
+        # A raced/unverified read must never authorize the sell or a new buy.
+        w.recovered=False;w.submit.reset_mock();w.reconcile.side_effect=None
+        with patch('services.demo.runtime.time.time',return_value=NOW):self.assertFalse(w.service_urgent_exits())
+        w.submit.assert_not_called()
+
+    def test_exit_only_pass_does_not_open_new_entries(self):
+        w=worker()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade(allow_entries=False)
+        w.submit.assert_not_called()
+        with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
+        self.assertEqual(w.submit.call_args.args[0]['kind'],'entry')
+
+    def test_worker_loop_posts_verified_fill_before_discovery_and_funding_reads(self):
+        w=worker();w.orders=[entry(filled=3,remaining=0)];w.pending_fills={'t':NOW};w.recovered=False
+        w.exchange=Mock(writes=0);w.store.get=Mock(return_value=None)
+        w.load_bots=Mock();w.repair_rejected_entries=Mock();w.stream=Mock()
+        w.discover=Mock();w.poll_funding=Mock();w.trading_health=Mock();w.health=Mock()
+        def reconcile():w.recovered=True;w.last_reconcile=NOW;w.pending_fills.clear()
+        def submit(intent):w.exchange.writes+=1;w.stop.set()
+        w.reconcile=Mock(side_effect=reconcile);w.submit.side_effect=submit
+        with patch('services.demo.runtime.time.time',return_value=NOW),patch('services.demo.reset.ResetController'):
+            w.loop()
+        w.reconcile.assert_called_once();w.submit.assert_called_once()
+        self.assertEqual(w.submit.call_args.args[0]['exit_role'],'profit')
+        w.discover.assert_not_called();w.poll_funding.assert_not_called()
+
+    def test_profit_sell_waits_for_fresh_verified_book_and_owned_inventory(self):
+        for changes in [dict(at=NOW-6),dict(book_verified=False),dict(source='rest'),dict(status='settled')]:
+            w=worker();parent=entry(filled=3,remaining=0);w.orders=[parent]
+            q=dict(w.quotes['t'],**changes)
+            self.assertFalse(w.profit_sell(parent,q,NOW))
+            w.submit.assert_not_called()
+
     def test_stale_quote_after_funding_does_not_starve_other_markets(self):
         w=worker();w.quotes['u']=book()
         def funded(*args):
@@ -253,7 +353,7 @@ class ProfitSells(unittest.TestCase):
     def test_partial_fills_get_only_uncovered_inventory_at_fixed_target(self):
         w=worker();w.states={'bot-1':{'t/0/no':dict(cycle=1,submitted=True,first_at=NOW)}};parent=entry(filled=3,remaining=7);w.orders=[parent]
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
-        sell=w.submit.call_args.args[0];self.assertEqual((sell['price'],sell['quantity'],sell['exit_role']),(20,3,'profit'))
+        sell=w.submit.call_args.args[0];self.assertEqual((sell['price'],sell['quantity'],sell['exit_role']),(61,3,'profit'))
         sell.update(status='resting',remaining=3);w.orders.append(sell);w.submit.reset_mock()
         parent['filled']=5;parent['remaining']=5
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
@@ -261,7 +361,7 @@ class ProfitSells(unittest.TestCase):
         w.submit.reset_mock();parent['filled']=3
         with patch('services.demo.runtime.time.time',return_value=NOW):w.trade()
         w.submit.assert_not_called()
-        payload=wire_order(sell);self.assertTrue(payload['post_only']);self.assertEqual(payload['price'],'0.2000')
+        payload=wire_order(sell);self.assertTrue(payload['post_only']);self.assertEqual(payload['price'],'0.6100')
     def test_profit_sell_does_not_chase_price_and_stop_cancels_it_first(self):
         w=worker();w.states={'bot-1':{'t/0/no':dict(cycle=1,submitted=True,first_at=NOW)}};parent=entry(filled=3,remaining=0);sell=dict(parent,client_id='high',kind='exit',parent='low',exit_role='profit',price=20,filled=0,remaining=3)
         w.orders=[parent,sell];w.cancel=Mock()
@@ -300,6 +400,28 @@ class PositionOffsets(unittest.TestCase):
         w.cancel.assert_called_once();w.submit.assert_not_called()
 
 class Lifecycle(unittest.TestCase):
+    def test_grid_change_refreshes_metadata_without_using_rest_prices_as_a_live_book(self):
+        w=worker();w.subscription={'t'};w.book_sid=1
+        messages=[dict(type='market_lifecycle_v2',sid=3,seq=1,msg=dict(event_type='price_level_structure_updated',market_ticker='t'))]
+        class Socket:
+            def send(self,message):pass
+            def recv(self,timeout):
+                if not messages:raise TimeoutError()
+                return json.dumps(messages.pop(0))
+        w.socket=Socket()
+        ranges=[dict(start='0',end='1',step='.001')]
+        w.exchange=Mock();w.exchange.call.return_value=dict(markets=[dict(ticker='t',series_ticker='KXBTC15M',
+            status='active',close_time=NOW+900,yes_bid_dollars='.20',yes_ask_dollars='.25',price_ranges=ranges)])
+        with patch('services.demo.runtime.time.time',return_value=NOW):
+            w.stream()
+            self.assertTrue(w.quotes['t']['price_grid_refresh'])
+            self.assertEqual(w.pending_markets,{'t'})
+            w.discover()
+        self.assertEqual(w.quotes['t']['price_ranges'],ranges)
+        self.assertFalse(w.quotes['t']['price_grid_refresh'])
+        self.assertEqual(w.quotes['t']['bid'],60)
+        self.assertEqual(w.quotes['t']['source'],'orderbook')
+
     def test_restart_restores_held_markets_before_the_new_round_sweep(self):
         w=worker();w.orders=[entry()];w.exchange=Mock()
         w.exchange.call.return_value=dict(markets=[])

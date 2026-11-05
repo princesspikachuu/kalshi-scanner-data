@@ -31,7 +31,7 @@ def quote(raw,now):
             expected=timestamp(raw['expected_expiration_time'])
             if math.isfinite(expected) and 0<expected<=close:entry_close=expected;entry_clock='expected_expiration'
         return ticker,dict(bid=bid,ask=ask,at=now,close=close,entry_close=entry_close,entry_clock=entry_clock,
-            metadata_at=now,open=timestamp(raw['open_time']) if raw.get('open_time') else 0,exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
+            metadata_at=now,price_ranges=raw.get('price_ranges'),open=timestamp(raw['open_time']) if raw.get('open_time') else 0,exchange_index=raw.get('exchange_index',0),series=series,result=raw.get('result'),status=raw.get('status'))
     except (KeyError,ValueError,TypeError):return None
 
 class Worker:
@@ -43,6 +43,7 @@ class Worker:
         self.funding=None;self.shard_reservations={};self.rejections_repaired=False
         self.cycle_discovery_epoch=-1;self.cycle_discovery_cursor=''
         self.unconfirmed_history_at={}
+        self.pending_fills={}
         self.daily_pnl={};self.daily_pnl_day=-1
         self.last_verified=0;self.sync_pending=None;self.netting_pending=set();self.pending_markets=set();self.lifecycle_sid=None;self.lifecycle_requested=False
         self.ownership_details={};self.historical_markets=set();self.ownership_digest=None;self.next_closed_repair=0
@@ -280,8 +281,8 @@ class Worker:
         if (order.get('entry_strategy')!=STRATEGY and order.get('exit_role')!='profit') or order.get('rejection_reason') not in ('post_only','price_tick'):return False
         now=time.time();quote=self.quotes.get(order['ticker'],{})
         retry=dict(after=now+.5,clock=quote.get('clock'),seq=quote.get('seq'),source=order['client_id'])
-        prices=rejection_prices(order)
         if order['kind']=='entry':
+            prices=rejection_prices(order)
             bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
             key=f"{order['ticker']}/{order['square']}/{order['side']}"
             memory=self.states.get(order['bot'],{}).get(key)
@@ -294,13 +295,20 @@ class Worker:
             parent=next((o for o in self.orders if o['client_id']==order.get('parent')),None)
             if not parent:return False
             if (parent.get('profit_price_retry') or {}).get('source')!=order['client_id']:
-                parent.update(profit_price_retry=retry,profit_retry_exhausted=prices is None)
-                if prices:parent['profit_target_cents']=prices[1]
+                parent['profit_price_retry']=dict(retry,reason=order['rejection_reason'],rejected_at=now)
+                parent.pop('profit_retry_exhausted',None)
                 self.save_order(parent)
+            if order['rejection_reason']=='price_tick':
+                quote['price_grid_refresh']=True
+                self.pending_markets.add(order['ticker']);self.last_discovery=0
+            order['funding_retry_v1']=True;self.save_order(order)
+            self.record('cycle_price_retry',order,'Profit sell will reprice from a fresh verified book; profit floor retained',
+                previous_price_cents=order['price'],profit_target_cents=parent.get('profit_floor_cents',parent['profit_target_cents']))
+            return True
         order['funding_retry_v1']=True;self.save_order(order)
         self.record('cycle_price_retry',order,
-            ('Buy retry lowered 2¢; future profit sell lowered 2¢' if order['kind']=='entry' else 'Profit sell retry raised 2¢') if prices else 'Price retry reached the market price boundary; no further price retry',
-            previous_price_cents=order['price'],retry_price_cents=(prices[0] if order['kind']=='entry' else prices[1]) if prices else None,
+            'Buy retry lowered 2¢; future profit sell lowered 2¢' if prices else 'Price retry reached the market price boundary; no further price retry',
+            previous_price_cents=order['price'],retry_price_cents=prices[0] if prices else None,
             profit_target_cents=prices[1] if prices else None)
         return True
     def refresh_cycle_locks(self):
@@ -378,8 +386,24 @@ class Worker:
     def profit_sell(self,order,quote,now):
         if order.get('entry_strategy')!='buy_low_sell_high' or order.get('exit_triggered') or not self.recovered:return False
         if order['ticker'] in self.blocked or order['ticker'] in self.netting_pending:return False
+        if quote.get('source')!='orderbook' or not quote.get('book_verified') or not 0<=now-quote.get('at',0)<=5 or now>=quote['close']:return False
+        if quote.get('status')!='active' or quote.get('price_grid_refresh'):return False
         from .cycles import retry_ready
-        if order.get('profit_retry_exhausted') or not retry_ready(order.get('profit_price_retry'),quote,now):return False
+        retry=order.get('profit_price_retry')
+        refreshed=retry and retry.get('reason')=='price_tick' and quote.get('metadata_at',0)>retry.get('rejected_at',now) and now>=retry['after']
+        if not refreshed and not retry_ready(retry,quote,now):return False
+        if 'profit_floor_cents' not in order:
+            floor=order['profit_target_cents']
+            bot=next((b for b in self.bots if b['id']==order['bot'] and b['revision']==order['revision']),None)
+            if bot and bot['config'].get('strategy')=='buy_low_sell_high':
+                # Restore legacy targets inflated by the former +2c sell retry.
+                # Entry retries retain their original buy/sell spread.
+                floor=min(floor,order['price']+bot['config']['cycle_sell_cents']-bot['config']['cycle_buy_cents'])
+            order.update(profit_floor_cents=floor,profit_target_cents=floor)
+            order.pop('profit_retry_exhausted',None);self.save_order(order)
+        from .engine import profit_maker_price,side_quote
+        price=profit_maker_price(quote,order['side'],order['profit_floor_cents'])
+        if price is None:return False
         if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']!=order['side'] and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('filled',0)>o.get('sold',0) or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
         if any(o['kind']=='entry' and o['ticker']==order['ticker'] and o['side']==order['side'] and o['price']>=order['profit_target_cents']
             and o.get('status') not in ('closed','rejected') and (o.get('remaining',0)>0 or o.get('status') in ('intent','uncertain','cancel_pending')) for o in self.orders):return False
@@ -390,9 +414,31 @@ class Worker:
         attempt=order.get('profit_attempt',0)+1;order['profit_attempt']=attempt;self.save_order(order)
         identifier=str(uuid5(NAMESPACE_URL,f"demo-profit/{order['client_id']}/{attempt}"))
         self.submit(dict(client_id=identifier,kind='exit',exit_role='profit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],
-            ticker=order['ticker'],side=order['side'],price=order['profit_target_cents'],quantity=amount,close=quote['close'],exchange_index=order.get('exchange_index',-1),
+            ticker=order['ticker'],side=order['side'],price=price,quantity=amount,close=quote['close'],exchange_index=order.get('exchange_index',-1),
+            profit_floor_cents=order['profit_floor_cents'],pricing_bid_cents=side_quote(quote,order['side'])[0],verified_fill_at=order.get('last_fill_verified_at'),
             created_at=now,status='intent',remaining=0,filled=0))
         return True
+
+    def urgent_exit_pending(self,now):
+        if self.pending_fills:return True
+        for order in self.orders:
+            if order.get('kind')!='entry' or order.get('status') in ('closed','rejected','uncertain'):continue
+            held=order.get('filled',0)-order.get('sold',0)
+            q=self.quotes.get(order['ticker'])
+            if held<=.001 or not q or now>=q['close'] or not 0<=now-q.get('at',0)<=5:continue
+            if order['ticker'] in self.blocked or order['ticker'] in self.netting_pending or q.get('price_grid_refresh'):continue
+            children=[o for o in self.orders if o.get('parent')==order['client_id'] and o.get('status') not in ('closed','rejected')]
+            if not any(o.get('status') in ('intent','uncertain','cancel_pending') for o in children) and held-sum(o.get('remaining',0) for o in children)>.001:return True
+        return False
+
+    def service_urgent_exits(self):
+        """Verify fills and protect held lots before discovery or funding I/O."""
+        if not self.urgent_exit_pending(time.time()):return False
+        self.stage='reconciliation'
+        if not self.recovered or time.time()-self.last_reconcile>=30:self.reconcile()
+        before=self.exchange.writes
+        self.stage='trade';self.trade(allow_entries=False)
+        return self.exchange.writes>before
     def recover_closed_orders(self,by_client,known,blocked,now):
         if now<self.next_closed_repair:return False
         self.next_closed_repair=now+60
@@ -584,7 +630,9 @@ class Worker:
             # therefore cannot duplicate the replacement or lose its rearm.
             self.save_order(order)
             self.restore_filled_cycle_claim(order)
-            if order['filled']>previous:self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
+            if order['filled']>previous:
+                order['last_fill_verified_at']=time.time();self.save_order(order)
+                self.record('fill',order,'Exchange-confirmed '+order['kind']+' fill',filled=order['filled'])
             if prior_status not in ('closed','held') and order['status']=='closed':self.record('cancel',order,'Exchange order is no longer resting')
         # Reload includes fills committed above and closed exits for per-entry allocation.
         parents=[o['client_id'] for o in self.orders if o['kind']=='entry']
@@ -713,6 +761,7 @@ class Worker:
         # successful but raced reconciliation erase their verification flag.
         changed_during_read=self.stream_event_revision!=start_feed_revision
         self.last_reconcile=0 if changed_during_read else now
+        if not changed_during_read:self.pending_fills.clear()
         self.last_verified=time.time();self.recovered=not changed_during_read
         if not changed_during_read:self.sync_pending=None;self.issue=None
         self.store.clear_alert('recovery');self.store.clear_alert('exchange')
@@ -772,7 +821,7 @@ class Worker:
                         q=dict(old,close=q['close'],entry_close=q['entry_close'],
                             entry_clock=q['entry_clock'],status=q['status'],
                             result=q['result'],exchange_index=q['exchange_index'],
-                            series=q['series'],open=q.get('open',0),metadata_at=now)
+                            series=q['series'],open=q.get('open',0),metadata_at=now,price_ranges=q.get('price_ranges'),price_grid_refresh=False)
                     else:q['at']=0
                     self.quotes[ticker]=q;self.last_discovered[ticker]=now
             if 'series_ticker' in params:self.series_index+=1
@@ -872,14 +921,22 @@ class Worker:
                 wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
                 if any(ticker.startswith(series+'-') for series in wanted) and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
+            if message.get('type')=='market_lifecycle_v2' and raw.get('event_type')=='price_level_structure_updated':
+                ticker=raw.get('market_ticker')
+                if ticker in self.quotes:
+                    self.quotes[ticker]['price_grid_refresh']=True
+                    self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type') in ('fill','user_orders'):
                 # Order-update notifications can accompany every accepted bid.
                 # Only a fill changes exposure and invalidates a REST history
                 # snapshot that is still being paginated.
-                if message.get('type')=='fill':self.stream_event_revision+=1
+                if message.get('type')=='fill':
+                    self.stream_event_revision+=1
+                    self.recovered=False
                 self.last_reconcile=0
                 ticker=raw.get('market_ticker') or raw.get('ticker')
                 if ticker:self.recent_market_changes[ticker]=time.time()
+                if ticker and message.get('type')=='fill':self.pending_fills.setdefault(ticker,time.time())
             # Verify newly filled exposure before consuming later price changes;
             # otherwise its first stop crossing could arrive while filled=0.
             if message.get('type')=='fill':return
@@ -947,7 +1004,8 @@ class Worker:
             self.sync_pending=dict(action='accepted',bot=intent['bot'],market=intent['ticker'],at=time.time())
             self.recent_market_changes[intent['ticker']]=self.sync_pending['at']
             opened=self.quotes.get(intent['ticker'],{}).get('open')
-            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],bot=intent['bot'],ticker=intent['ticker'],seconds_since_open=round(time.time()-opened,2) if opened else None,asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'])),flush=True)
+            verified=intent.get('verified_fill_at')
+            print(json.dumps(dict(event='demo_order_accepted',kind=intent['kind'],exit_role=intent.get('exit_role'),bot=intent['bot'],ticker=intent['ticker'],seconds_since_open=round(time.time()-opened,2) if opened else None,asset=(intent.get('condition') or {}).get('asset'),exchange_index=intent.get('exchange_index'),remaining=intent['remaining'],filled=intent['filled'],price=intent['price'],side=intent['side'],profit_floor_cents=intent.get('profit_floor_cents'),pricing_bid_cents=intent.get('pricing_bid_cents'),verified_fill_to_accept_seconds=round(time.time()-verified,3) if verified else None)),flush=True)
         except ExchangeFailure as error:
             if not error.ambiguous:intent['rejection_reason']=error.reason if error.code=='exchange_rejected' else None
             intent['status']='uncertain' if error.ambiguous else 'rejected';self.save_order(intent)
@@ -1031,7 +1089,7 @@ class Worker:
         if bot and memory and memory.get('cycle')==order['cycle'] and memory.get('submitted'):
             memory.update(submitted=False,attempt=memory.get('attempt',0)+1)
             self.store.put('trigger/'+bot['id'],self.states[bot['id']],parameters=dict(revision=bot['revision']))
-    def trade(self):
+    def trade(self,allow_entries=True):
         now=time.time();bots={b['id']:b for b in self.bots}
         for order in self.orders:self.remember_cycle_side(order)
         # Hard safety deadline: handle every outstanding low buy before new
@@ -1134,7 +1192,7 @@ class Worker:
                     identifier=str(uuid5(NAMESPACE_URL,f"demo-exit/{order['client_id']}/{attempt}"))
                     self.submit(dict(client_id=identifier,kind='exit',parent=order['client_id'],bot=order['bot'],revision=order['revision'],ticker=order['ticker'],side=order['side'],price=price,quantity=order['filled']-order.get('sold',0),close=q['close'],created_at=now,exit_reference='ask',status='intent',remaining=0,filled=0));return
             elif self.profit_sell(order,q,now):return
-        if not self.recovered or now-self.last_reconcile>35:return
+        if not allow_entries or not self.recovered or now-self.last_reconcile>35:return
         retrying={t for t,r in self.maker_retries.items() if now<r['after'] or (self.quotes.get(t,{}).get('clock'),self.quotes.get(t,{}).get('seq'))==(r['clock'],r.get('seq'))}
         from .engine import fair_budget_config,fair_order_candidates,cycle_tranche
         running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
@@ -1229,7 +1287,7 @@ class Worker:
             memory=self.states[item['bot']][item['key']];memory['submitted']=True
             self.store.put('trigger/'+item['bot'],self.states[item['bot']],parameters=dict(revision=bot['revision']))
             identifier=str(uuid5(NAMESPACE_URL,f"demo-entry/{item['bot']}/{bot['revision']}/{item['key']}/{item['cycle']}/{item['first_at']:.6f}/{memory.get('attempt',0)}"))
-            extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
+            extra=dict(entry_strategy='buy_low_sell_high',profit_target_cents=item['profit_target_cents'],profit_floor_cents=item['profit_target_cents'],entry_attempt=memory.get('attempt',0)) if is_cycle else {}
             extra['market_close_at']=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])
             extra['market_trading_close_at']=self.quotes[item['ticker']]['close']
             end=self.quotes[item['ticker']].get('entry_close',self.quotes[item['ticker']]['close'])-(180 if is_cycle else 0)
@@ -1273,6 +1331,9 @@ class Worker:
                             from .maintenance import maintenance
                             maintenance(self.store,os.environ,self.stop);maintenance_at=now+300
                         self.stop.wait(.5);continue
+                    self.stage='stream';self.stream(wait=False)
+                    if self.service_urgent_exits():
+                        self.trading_health();self.stop.wait(.05);continue
                     if controls_due:self.stage='reconciliation';self.poll_funding()
                     self.stage="discovery"
                     if self.pending_markets or now-self.last_discovery>=(2 if any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots) else 5):self.discover()

@@ -46,6 +46,38 @@ def side_quote(quote,side):
     if side=='yes':return quote['bid'],quote['ask']
     return round(100-quote['ask'],4),round(100-quote['bid'],4)
 
+def profit_maker_price(quote,side,target):
+    """Lowest valid outcome sell at/above target and strictly above its bid.
+
+    Market grids are in YES dollars, including for NO orders. Missing legacy
+    metadata falls back to whole cents, valid in every documented structure.
+    Explicitly malformed grids fail closed until discovery refreshes them.
+    """
+    from decimal import Decimal,InvalidOperation,ROUND_CEILING,ROUND_FLOOR
+    try:
+        bid,ask=(Decimal(str(x)) for x in side_quote(quote,side))
+        floor=Decimal(str(target))
+        if side not in ('yes','no') or not all(x.is_finite() for x in (bid,ask,floor)):return None
+        if not 0<=bid<ask<=100 or not 0<floor<100:return None
+        ranges=quote.get('price_ranges')
+        if ranges is None or ranges==[]:ranges=[dict(start='0',end='1',step='.01')]
+        if not isinstance(ranges,list) or not 0<len(ranges)<=32:return None
+        prices=[]
+        for band in ranges:
+            start,end,step=(Decimal(str(band[k]))*100 for k in ('start','end','step'))
+            if not all(x.is_finite() for x in (start,end,step)):return None
+            if not 0<=start<end<=100 or step<Decimal('.01'):return None
+            if any(x!=x.quantize(Decimal('.01')) for x in (start,end,step)):return None
+            if side=='no':
+                last=start+((end-start)/step).to_integral_value(rounding=ROUND_FLOOR)*step
+                start,end=100-last,100-start
+            ticks=max(((floor-start)/step).to_integral_value(rounding=ROUND_CEILING),
+                ((bid-start)/step).to_integral_value(rounding=ROUND_FLOOR)+1,Decimal(0))
+            price=start+ticks*step
+            if 0<price<100 and price<=end:prices.append(price)
+        return float(min(prices)) if prices else None
+    except (KeyError,TypeError,ValueError,InvalidOperation):return None
+
 def qualifies(square,quote,side,now,reference):
     bid,ask=side_quote(quote,side)
     minutes=(quote.get('entry_close',quote['close'])-now)/60
