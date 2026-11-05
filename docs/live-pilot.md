@@ -23,7 +23,7 @@ The worker never runs both environments simultaneously. A pause stops new LIVE b
 - Exit: in the final five minutes, a positive held-side bid below 40 cents latches an exit; maker sell one cent above bid, rounded up to the market's tick. At or above 40 cents before the trigger, hold. Empty bids do not fabricate a 1-cent sale.
 - Repricing: down only; cancel when the resting sell exceeds the current bid by more than five cents, verify the cancellation/fills, then replace only the remaining inventory. A rebound does not raise the saved limit.
 - Durable intent and a separate write claim precede HTTP. An uncertain response never permits replaying the write. An exchange acceptance is not a fill.
-- The worker verifies owned inventory before a sell and prevents simultaneous resting sells. Kalshi's V2 reduce-only flag is not used because it is incompatible with resting maker orders.
+- The worker verifies owned inventory before a sell, supports exits for partially filled contracts, and prevents simultaneous resting sells. Kalshi's V2 reduce-only flag is not used because it is incompatible with resting maker orders.
 - New entries require a verified control backup and a zero-maker-fee schedule including event overrides and scheduled changes. Existing exits continue if a later backup fails.
 - The $25 cutoff reserves worst-case open-contract cost against realized results. It stops new buys; it is not a guaranteed $25 maximum loss after open exposure or fees.
 - Statistics and credentials use a separate `live/` namespace. Backups include LIVE controls, trial, write claims and the complete pilot order ledger, excluding credentials.

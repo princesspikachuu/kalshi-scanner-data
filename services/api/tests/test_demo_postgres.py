@@ -116,6 +116,29 @@ class DemoPostgres(unittest.TestCase):
         with self.assertRaises(RiskBlocked):guard([sale])
         exchange.pages.side_effect=[[dict(ticker=sale['ticker'],position_fp='1')],[]]
         guard([sale]);self.assertIsNotNone(live.get('write/sale'))
+    def test_partial_pilot_fill_can_exit_only_its_owned_fraction(self):
+        from services.live.store import LiveStore
+        from services.live.risk import PilotGuard,RiskBlocked
+        from services.api.tests.test_demo_cycles import entry
+        from services.demo.runtime import Worker
+        from services.trading.mode import write_mode
+        from unittest.mock import Mock
+        import time,threading
+        live=LiveStore(self.store.pool);bot='pilot-bot'
+        live.put('trial',dict(binding='test-binding',entry_claimed=True))
+        live.put('bot/'+bot,dict(desired='paused'),parameters=dict(revision=1,config=config()))
+        with self.store.pool.connection() as c:write_mode(c,dict(mode='live',requested='live',pilot_bot=bot))
+        parent=entry(bot=bot,quantity=1,filled=.5,remaining=0,sold=0,status='held',price=3,close=time.time()+100,late_exit_triggered=True,late_exit_ceiling_cents=31)
+        w=Worker(live,Mock(),threading.Event(),lambda:None);w.save_order(parent)
+        exchange=Mock();guard=PilotGuard(live,exchange,'test-binding',lambda:None)
+        # A full-contract sale must fail against a half-contract fill.
+        sale=dict(parent,client_id='partial-sale',kind='exit',parent=parent['client_id'],quantity=1,filled=0,status='intent',price=31)
+        w.save_order(sale);exchange.pages.side_effect=[[dict(ticker=sale['ticker'],position_fp='0.50')],[]]
+        with self.assertRaises(RiskBlocked):guard([sale])
+        self.assertIsNone(live.get('write/partial-sale'))
+        sale['quantity']=.5;w.save_order(sale);exchange.pages.side_effect=[[dict(ticker=sale['ticker'],position_fp='0.50')],[]]
+        guard([sale]);self.assertIsNotNone(live.get('write/partial-sale'))
+
     def test_live_preflight_is_read_only_then_requires_explicit_start_confirmation(self):
         from services.live.store import LiveStore
         from services.live.workspace import seed_live_bots,configure_approved_pilot
