@@ -64,7 +64,8 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.stream_last_recovered_at=0;self.stream_last_disconnected_at=0;self.stream_last_pressure_at=0;self.stream_opened_at=0;self.stream_outage_alerted=False
         self.stream_event_revision=0;self.rest_feed_drains=0;self.rest_feed_messages=0
         self.last_entry_bot=None;self.cycle_locks={}
-        self.started_at=time.time();self.next_activity_check=0;self.market_probe_at={};self.market_inactive={};self.market_probe_started={}
+        self.started_at=time.time();self.next_activity_check=0;self.market_probe_at={};self.market_inactive={};self.market_probe_started={};self.market_seen_active={}
+        self.market_api_activity={};self.market_api_next={};self.market_api_samples={}
         if isinstance(self.exchange,Exchange):self.exchange.before_read=self.drain_stream_during_read
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote,fair_budget_config
@@ -964,8 +965,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                 ticker=raw.get('market_ticker','')
                 from services.research.reports import SERIES
                 wanted={series for b in self.bots if b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for square in b['config']['squares'] for series in SERIES[square['asset']]}
-                if any(ticker.startswith(series+'-') for series in wanted) and len(self.pending_markets)<100:
-                    if raw.get('event_type')=='activated':self.market_probe_at.pop(ticker.split('-')[0],None)
+                if any(ticker.startswith(series+'-') for series in wanted) and self.market_probe_at.get(ticker.split('-')[0],0)<=time.time() and len(self.pending_markets)<100:
                     self.pending_markets.add(ticker);self.last_discovery=0
             if message.get('type')=='market_lifecycle_v2' and raw.get('event_type')=='price_level_structure_updated':
                 ticker=raw.get('market_ticker')
@@ -1486,6 +1486,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         from .reset import ResetController,ResetRequest,request_reset,ACTIVE
         from services.research.reports import SERIES
         self.reset_controller=ResetController(self.store,self.exchange)
+        self.restore_market_activity()
         bootstrap=os.environ.get('DEMO_RESET_REQUEST_JSON')
         if bootstrap and not self.store.get('reset'):request_reset(self.store,ResetRequest.model_validate_json(bootstrap))
         next_reconcile=0;next_controls=0;maintenance_at=0;backoff=1;credential_check=0;credential_version=None
@@ -1522,6 +1523,13 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     self.refresh_market_activity(time.time())
                     if self.service_urgent_exits():
                         self.trading_health();self.stop.wait(.05);continue
+                    # Verified active books get their bids before discovery or
+                    # funding checks spend time probing other series.
+                    if self.recovered and now-self.last_reconcile<30:
+                        before=self.exchange.writes;self.stage='trade';self.trade()
+                        if self.exchange.writes>before:
+                            self.trading_health();self.stop.wait(.05);continue
+                    self.stage='activity';self.probe_market_activity(time.time())
                     if controls_due:self.stage='reconciliation';self.poll_funding()
                     self.stage="discovery"
                     desired_series={s for b in self.bots if b['desired']=='running' for square in b['config']['squares'] for s in SERIES[square['asset']]}
