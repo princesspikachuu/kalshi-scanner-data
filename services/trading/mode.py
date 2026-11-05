@@ -58,7 +58,16 @@ def complete_demo_drain(worker):
     if not worker.recovered or worker.last_reconcile<state.get('drain_started_at',float('inf')):return False
     now=time.time()
     # An expired local intent is still ambiguous until reconciliation resolves it.
-    if any(o.get('status') in ('intent','uncertain','cancel_pending') for o in worker.orders):return False
+    def verified_historical_flat(order):
+        ticker=order['ticker'];q=worker.quotes.get(ticker,{})
+        detail=worker.ownership_details.get(ticker,{})
+        # A local expiry alone is insufficient. Require reconciled, zero local
+        # and exchange inventory plus verified ended-market metadata. These
+        # records stay searchable; the final global REST check below must
+        # still find no resting orders or positions before LIVE can own work.
+        ended=q.get('status') in ('closed','settled','finalized','determined') or (q.get('close',float('inf'))<=now and q.get('metadata_at',0)>=q.get('close',float('inf')))
+        return bool(ended and detail.get('informational') and detail.get('expected_contracts')==0 and detail.get('exchange_contracts')==0)
+    if any(o.get('status') in ('intent','uncertain','cancel_pending') and not verified_historical_flat(o) for o in worker.orders):return False
     if any(b.get('desired')=='running' for b in worker.bots):return False
     if getattr(worker,'mode_drain_checked_revision',None)==worker.last_reconcile:return False
     worker.mode_drain_checked_revision=worker.last_reconcile

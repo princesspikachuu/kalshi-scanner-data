@@ -13,7 +13,7 @@ Approved trial: $50 initial cash, $25 loss cutoff, one bot and one YES contract 
 
 ## Exclusive handover
 
-Starting the check pauses every Demo bot. Existing buys cancel while held Demo contracts keep their original management. LIVE waits for fresh reconciliation, no ambiguous Demo writes, no resting exchange orders (including manual orders), and no exchange positions. The same advisory fence is released by Demo before LIVE can acquire it. Resume, bulk resume and reset undo cannot restart Demo during handover or LIVE operation.
+Starting the check pauses every Demo bot. Existing buys cancel while held Demo contracts keep their original management. LIVE waits for fresh reconciliation, no unresolved current-market Demo writes, no resting exchange orders (including manual orders), and no exchange positions. Verified closed, flat historical records stay searchable without preventing handover; a local expiry alone is insufficient. The same advisory fence is released by Demo before LIVE can acquire it. Resume, bulk resume and reset undo cannot restart Demo during handover or LIVE operation.
 
 The worker never runs both environments simultaneously. A pause stops new LIVE buys and cancels waiting buys; filled contracts retain their exits. Returning to Demo is blocked until LIVE is verified flat. Demo bots remain paused until explicitly resumed.
 

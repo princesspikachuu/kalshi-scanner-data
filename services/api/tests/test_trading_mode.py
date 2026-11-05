@@ -67,3 +67,22 @@ class TradingModeTests(unittest.TestCase):
             w.loop()
         w.exchange.call.assert_not_called();w.exchange.pages.assert_not_called()
         w.stream.assert_not_called();w.discover.assert_not_called();w.poll_funding.assert_not_called()
+
+    def test_verified_closed_flat_history_does_not_block_exclusive_handover(self):
+        w=self.draining_worker();w.orders=[entry(status='uncertain',close=1,remaining=0)]
+        w.quotes['t'].update(status='settled',close=1,metadata_at=200)
+        w.ownership_details['t']=dict(informational=True,expected_contracts=0,exchange_contracts=0)
+        state=dict(mode='draining_demo',requested='live',drain_started_at=100)
+        c=w.store.pool.connection.return_value.__enter__.return_value
+        c.execute.return_value.fetchone.return_value=dict(progress=state)
+        with patch('services.trading.mode.read_mode',return_value=state),patch('services.trading.mode.write_mode') as write:
+            self.assertTrue(complete_demo_drain(w))
+        self.assertEqual(write.call_args.args[1]['mode'],'live');self.assertEqual(w.exchange.pages.call_count,2)
+        self.assertEqual(w.orders[0]['status'],'uncertain','Historical evidence is retained')
+    def test_historical_label_does_not_hide_unverified_market_or_inventory(self):
+        for changes,detail in [(dict(status='active'),dict(informational=True,expected_contracts=0,exchange_contracts=0)),(dict(status='closed'),dict(informational=True,expected_contracts=1,exchange_contracts=0))]:
+            w=self.draining_worker();w.orders=[entry(status='uncertain',close=1,remaining=0)]
+            w.quotes['t'].update(changes);w.ownership_details['t']=detail
+            with patch('services.trading.mode.read_mode',return_value=dict(mode='draining_demo',requested='live',drain_started_at=100)):
+                self.assertFalse(complete_demo_drain(w))
+            w.exchange.pages.assert_not_called()
