@@ -6,6 +6,30 @@ from services.demo.runtime import Worker
 from services.api.tests.test_demo_cycles import worker,NOW
 
 class ExchangeBudgets(unittest.TestCase):
+    def test_public_activity_transport_is_unsigned_read_only_and_separate_from_demo_orders(self):
+        seen=[]
+        def handler(request):seen.append(request);return httpx.Response(200,json=dict(markets=[]))
+        ex=self.exchange(handler)
+        try:
+            ex.market_activity_call('GET','/markets',params=dict(series_ticker='KXBTC15M'))
+            self.assertEqual(seen[0].url.host,'external-api.kalshi.com')
+            self.assertFalse(any(key.startswith('kalshi-access') for key in seen[0].headers))
+            ex.signer.headers.assert_not_called()
+            for method,path in [('POST','/markets'),('GET','/portfolio/orders'),('GET','/../markets')]:
+                with self.assertRaises(ValueError):ex.market_activity_call(method,path)
+            self.assertEqual(len(seen),1)
+        finally:ex.close()
+
+    def test_public_rate_limit_does_not_block_demo_worker_for_cooldown_duration(self):
+        ex=self.exchange(lambda request:httpx.Response(429))
+        try:
+            with self.assertRaises(ExchangeFailure):ex.market_activity_call('GET','/markets')
+            with patch('services.demo.exchange.time.sleep') as sleep:
+                with self.assertRaises(ExchangeFailure):ex.market_activity_call('GET','/markets')
+                sleep.assert_not_called()
+            self.assertEqual(ex.next_read,0);self.assertEqual(ex.next_write,0)
+        finally:ex.close()
+
     def exchange(self,handler):
         signer=Mock();signer.headers.return_value={}
         return Exchange(signer,client=httpx.Client(transport=httpx.MockTransport(handler)))

@@ -17,14 +17,14 @@ class MarketActivityTests(unittest.TestCase):
             if path.endswith('/orderbook'):return dict(orderbook_fp=dict(yes_dollars=[[w.api_book,'10']],no_dollars=[['.40','10']]))
             if path=='/markets/trades':return dict(trades=w.api_trades)
             raise AssertionError(path)
-        w.exchange=Mock(writes=0);w.exchange.call.side_effect=call
+        w.exchange=Mock(writes=0);w.exchange.market_activity_call.side_effect=call
         w.quotes['t'].update(series='KXBTC15M',open=NOW-100)
         return w
     def test_rest_activity_does_not_depend_on_stream_volume_or_two_sided_book(self):
         w=self.worker();w.quotes['t'].update(market_volume=0,book_ready=False)
         w.probe_market_activity(NOW)
         self.assertTrue(w.market_entry_ready(w.bots[0]['config'],'t'));self.assertIsNone(w.inactive_bot(w.bots[0]))
-        self.assertEqual(w.exchange.call.call_args.args[:2],('GET','/markets'))
+        self.assertEqual(w.exchange.market_activity_call.call_args.args[:2],('GET','/markets'))
     def test_zero_reported_volume_with_api_price_movement_is_active(self):
         w=self.worker(volume=0);w.probe_market_activity(NOW)
         self.assertIsNone(w.inactive_bot(w.bots[0]));self.assertFalse(w.market_entry_ready(w.bots[0]['config'],'t'))
@@ -38,12 +38,12 @@ class MarketActivityTests(unittest.TestCase):
         w=self.worker(volume=0);w.probe_market_activity(NOW)
         w.api_trades=[dict(ticker='t')];w.probe_market_activity(NOW+2)
         self.assertTrue(w.market_entry_ready(w.bots[0]['config'],'t'))
-        self.assertEqual(w.exchange.call.call_args.kwargs['params']['min_ts'],NOW-100)
+        self.assertEqual(w.exchange.market_activity_call.call_args.kwargs['params']['min_ts'],NOW-100)
     def test_confirmed_quiet_market_gets_no_buy_and_rechecks_only_after_fifteen_minutes(self):
         w=self.worker(volume=0);w.probe_market_activity(NOW);w.probe_market_activity(NOW+6)
         self.assertEqual(w.market_probe_at['KXBTC15M'],NOW+906)
-        self.assertIsNotNone(w.inactive_bot(w.bots[0]));w.exchange.call.reset_mock()
-        w.probe_market_activity(NOW+900);w.exchange.call.assert_not_called()
+        self.assertIsNotNone(w.inactive_bot(w.bots[0]));w.exchange.market_activity_call.reset_mock()
+        w.probe_market_activity(NOW+900);w.exchange.market_activity_call.assert_not_called()
         w.submit_entry_batch=Mock()
         with patch('services.demo.runtime.time.time',return_value=NOW+6):w.trade()
         w.submit.assert_not_called();w.submit_entry_batch.assert_not_called()
@@ -54,8 +54,8 @@ class MarketActivityTests(unittest.TestCase):
         self.assertIsNone(w.inactive_bot(w.bots[0]));self.assertTrue(w.market_entry_ready(w.bots[0]['config'],'t'))
     def test_api_failure_and_incomplete_response_do_not_mark_market_inactive(self):
         for response in (ExchangeFailure('rate_limited'),dict(markets=[],cursor='more'),dict(markets=[{}])):
-            w=self.worker();w.exchange.call.side_effect=response if isinstance(response,Exception) else None
-            if not isinstance(response,Exception):w.exchange.call.return_value=response
+            w=self.worker();w.exchange.market_activity_call.side_effect=response if isinstance(response,Exception) else None
+            if not isinstance(response,Exception):w.exchange.market_activity_call.return_value=response
             w.probe_market_activity(NOW)
             self.assertIsNone(w.inactive_bot(w.bots[0]));self.assertFalse(w.market_entry_ready(w.bots[0]['config'],'t'))
     def test_cooldown_survives_restart_and_legacy_inferred_flags_are_discarded(self):
@@ -67,7 +67,7 @@ class MarketActivityTests(unittest.TestCase):
     def test_known_active_series_probed_before_unknown(self):
         w=self.worker();other=dict(w.bots[0],id='other',config=dict(w.bots[0]['config'],squares=[dict(w.bots[0]['config']['squares'][0],asset='bnb')]))
         w.bots.append(other);w.market_seen_active['KXBTC15M']=NOW-30;w.probe_market_activity(NOW)
-        self.assertEqual(w.exchange.call.call_args.kwargs['params']['series_ticker'],'KXBTC15M')
+        self.assertEqual(w.exchange.market_activity_call.call_args.kwargs['params']['series_ticker'],'KXBTC15M')
     def test_verified_bid_precedes_other_series_checks(self):
         w=self.worker();w.probe_market_activity(NOW);w.store.get=Mock(return_value=None)
         w.load_bots=Mock();w.repair_rejected_entries=Mock();w.stream=Mock();w.discover=Mock();w.probe_market_activity=Mock()

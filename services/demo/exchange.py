@@ -8,6 +8,7 @@ from cryptography.fernet import Fernet
 ROOT='https://external-api.demo.kalshi.co'
 WS='wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2'
 PATH='/trade-api/v2'
+PUBLIC_ACTIVITY_ROOT='https://external-api.kalshi.com'
 class ExchangeFailure(Exception):
     def __init__(self,code,ambiguous=False,*,status=None,provider_code=None,reason=None):
         self.code,self.ambiguous=code,ambiguous
@@ -75,6 +76,31 @@ class Exchange:
         # between REST reads. Never called for writes or from a background thread.
         self.before_read=None
     def close(self):self.client.close()
+    def market_activity_call(self,method,path,*,params=None):
+        """Credential-free, read-only public activity reference. Never orders."""
+        if method!='GET' or not (path in ('/markets','/markets/trades') or re.fullmatch(r'/markets/[A-Za-z0-9-]{1,128}/orderbook',path)):
+            raise ValueError('Invalid public activity route')
+        if getattr(self,'next_activity_read',0)-time.monotonic()>1:
+            raise ExchangeFailure('activity_rate_limited')
+        while time.monotonic()<getattr(self,'next_activity_read',0):
+            if self.before_read:self.before_read()
+            time.sleep(min(.1,max(0,self.next_activity_read-time.monotonic())))
+        if self.before_read:self.before_read()
+        self.next_activity_read=time.monotonic()+.35
+        try:
+            with self.client.stream('GET',PUBLIC_ACTIVITY_ROOT+PATH+path,params=params) as response:
+                if response.status_code==429:
+                    self.next_activity_read=time.monotonic()+30
+                    raise ExchangeFailure('activity_rate_limited')
+                if response.status_code!=200:raise ExchangeFailure('activity_unavailable',status=response.status_code)
+                data=bytearray()
+                for chunk in response.iter_bytes():
+                    data.extend(chunk)
+                    if len(data)>1048576:raise ExchangeFailure('response_too_large')
+                result=json.loads(data)
+                if not isinstance(result,dict):raise ExchangeFailure('invalid_page')
+                return result
+        except (httpx.HTTPError,ValueError):raise ExchangeFailure('activity_unavailable') from None
     def refresh_limits(self):
         """Use authenticated budgets; failed/unknown contracts retain slow mode."""
         from .pacing import Bucket,positive

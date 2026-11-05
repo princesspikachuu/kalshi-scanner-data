@@ -17,14 +17,14 @@ def external_book_ready(book,orders,ticker):
 class MarketActivityMixin:
     def restore_market_activity(self):
         row=self.store.get('market_activity')
-        if row and row['progress'].get('source')=='rest_v1':
+        if row and row['progress'].get('source')=='public_rest_v2':
             saved=row['progress']
             self.market_seen_active=saved.get('seen_active',{})
             self.market_inactive=saved.get('inactive',{})
             self.market_probe_at={s:v['retry_at'] for s,v in self.market_inactive.items()}
 
     def save_market_activity(self):
-        self.store.put('market_activity',dict(source='rest_v1',seen_active=self.market_seen_active,inactive=self.market_inactive))
+        self.store.put('market_activity',dict(source='public_rest_v2',seen_active=self.market_seen_active,inactive=self.market_inactive))
 
     def market_entry_ready(self,config,ticker):
         if not config.get('require_active_market'):return True
@@ -50,7 +50,7 @@ class MarketActivityMixin:
         series=min(due,key=lambda s:(s not in self.market_seen_active,self.market_api_next.get(s,0),s))
         self.market_api_next[series]=now+5
         try:
-            page=self.exchange.call('GET','/markets',params=dict(series_ticker=series,status='open',limit=200,min_close_ts=int(now),max_close_ts=int(now+900)))
+            page=self.exchange.market_activity_call('GET','/markets',params=dict(series_ticker=series,status='open',limit=200,min_close_ts=int(now),max_close_ts=int(now+900)))
             rows=page.get('markets')
             if not isinstance(rows,list) or len(rows)>200:raise ExchangeFailure('invalid_page')
             current=[]
@@ -65,7 +65,7 @@ class MarketActivityMixin:
             fingerprint={t:[q['bid'],q['ask'],q.get('market_volume')] for t,q in current}
             for ticker,q in current:
                 if q.get('market_volume',0):continue
-                result=self.exchange.call('GET','/markets/'+ticker+'/orderbook',params=dict(depth=1))
+                result=self.exchange.market_activity_call('GET','/markets/'+ticker+'/orderbook',params=dict(depth=1))
                 book=result.get('orderbook_fp')
                 if not isinstance(book,dict):raise ExchangeFailure('invalid_page')
                 levels=[]
@@ -88,7 +88,7 @@ class MarketActivityMixin:
                     self.market_api_samples[series]=dict(at=now,prices=fingerprint)
                     self.market_api_next[series]=now+2;return
                 for ticker,q in current:
-                    trades=self.exchange.call('GET','/markets/trades',params=dict(ticker=ticker,min_ts=int(max(q['open'],now-900)),limit=1))
+                    trades=self.exchange.market_activity_call('GET','/markets/trades',params=dict(ticker=ticker,min_ts=int(max(q['open'],now-900)),limit=1))
                     if not isinstance(trades.get('trades'),list):raise ExchangeFailure('invalid_page')
                     if any(t.get('ticker')==ticker for t in trades['trades']):active.append(ticker);basis.append('recent_trade')
                 if not active and now-prior['at']<5:
@@ -105,7 +105,7 @@ class MarketActivityMixin:
                 self.market_inactive[series]=dict(reason=reason,retry_at=now+INACTIVE_RECHECK_SECONDS)
             self.save_market_activity();self.refresh_market_activity(now)
             import json
-            print(json.dumps(dict(event='demo_market_activity_api',series=series,active=bool(active),markets=len(current),evidence=sorted(set(basis)),retry_seconds=30 if active else INACTIVE_RECHECK_SECONDS)),flush=True)
+            print(json.dumps(dict(event='demo_market_activity_api',source='public_rest',series=series,active=bool(active),markets=len(current),evidence=sorted(set(basis)),retry_seconds=30 if active else INACTIVE_RECHECK_SECONDS)),flush=True)
         except ExchangeFailure as error:
             # API failure means verification pending, never confirmed inactive.
             if error.code=='authentication':raise
