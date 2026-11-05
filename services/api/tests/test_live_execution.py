@@ -115,6 +115,7 @@ class LiveWorkerWiring(unittest.TestCase):
                 w.loop()
             w.probe_market_activity.assert_called_once();w.refresh_market_activity.assert_called_once()
             w.trade.assert_called_once_with(allow_entries=backup_ok);w.service_urgent_exits.assert_called_once()
+            if not backup_ok:self.assertEqual(w.health.call_args.args[0],'attention')
     def test_large_configured_bid_is_clamped_to_one_yes_contract_for_pilot(self):
         from services.live.runtime import LiveWorker
         import time
@@ -131,8 +132,8 @@ class PilotShardFunding(unittest.TestCase):
         w=Mock();w.account=dict(cash_cents=4200);w.exchange.call.return_value=dict(balance=0)
         self.assertFalse(TrialFunding(w).ensure(2,48,48,{}))
         w.exchange.call.assert_called_once_with('GET','/portfolio/balance',params=dict(exchange_index=2))
-        w.store.alert.assert_called_once()
+        w.store.alert.assert_called_once();self.assertIn('exchange index 2',w.funding_message)
     def test_only_one_contracts_cash_is_required_during_pilot(self):
         from services.live.runtime import TrialFunding
         w=Mock();w.account=dict(cash_cents=4200);w.exchange.call.return_value=dict(balance=3)
-        self.assertTrue(TrialFunding(w).ensure(2,48,48,{}))
+        self.assertTrue(TrialFunding(w).ensure(2,48,48,{}));self.assertIsNone(w.funding_message)

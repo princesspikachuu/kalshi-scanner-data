@@ -22,16 +22,17 @@ class TrialFunding:
         if self.worker.account.get('cash_cents',0)<3:return False
         balance=self.worker.exchange.call('GET','/portfolio/balance',params=dict(exchange_index=shard))
         if balance.get('balance',0)<3:
-            self.worker.store.alert('funding',f'The pilot market uses exchange index {shard}, where its isolated subaccount needs at least 3 cents. Move existing trial cash there through Kalshi setup; the worker cannot transfer funds.',True)
+            self.worker.funding_message=f'The pilot market uses exchange index {shard}, where its isolated subaccount needs at least 3 cents. Move existing trial cash there through Kalshi setup; the worker cannot transfer funds.'
+            self.worker.store.alert('funding',self.worker.funding_message,True)
             return False
-        self.worker.store.clear_alert('funding');return True
+        self.worker.funding_message=None;self.worker.store.clear_alert('funding');return True
     def poll(self):pass
 
 class LiveWorker(Worker):
     namespace='live'
     def __init__(self,store,exchange,stop,guard,binding):
         super().__init__(store,exchange,stop,guard)
-        self.binding=binding;self.funding=TrialFunding(self);self.fee_verified={};self.trial=None;self.backup_verified=False
+        self.binding=binding;self.funding=TrialFunding(self);self.fee_verified={};self.trial=None;self.backup_verified=False;self.funding_message=None
         self.exchange.order_guard=PilotGuard(store,exchange,binding,guard)
     def record(self,kind,order,message,**detail):
         return super().record(kind,order,message.replace('Kalshi Demo','Kalshi LIVE'),**detail)
@@ -117,7 +118,10 @@ class LiveWorker(Worker):
                     self.service_urgent_exits()
                     trial=value(self.store,'trial',{})
                     self.trade(allow_entries=not trial.get('entry_claimed') and self.backup_verified)
-                    self.health('ready' if self.recovered else 'reconciling','LIVE one-contract check · Demo is paused')
+                    if not self.backup_verified:self.health('attention','Live control backup is not verified; new buys remain paused')
+                    elif self.funding_message:self.health('attention',self.funding_message)
+                    elif self.market_inactive and any(b['desired']=='running' for b in self.bots):self.health('attention','The selected market is inactive; checking again in 15 minutes. Existing positions remain managed.')
+                    else:self.health('ready' if self.recovered else 'reconciling','LIVE one-contract check · Demo is paused')
                     self.stop.wait(.1)
                 except (ExchangeFailure,RiskBlocked,LiveConnectionError) as error:
                     self.recovered=False
