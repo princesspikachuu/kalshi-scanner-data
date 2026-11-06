@@ -675,12 +675,17 @@ class Engine:
         elif source == 'spot':
             self.spot.add(float(payload['price']), payload['event_time'], now)
             if self.strategy and self.spot.spike:
+                already_paused=now<self.safety_until
                 self.safety_until=max(self.safety_until,now+10)
-                for ticker in self.markets:
-                    if ticker not in self.closed_reports:
-                        self.strategy.safety_cancel(ticker)
-                        self.cancel_buys(ticker)
-                        self.log('SPOT_SAFETY_CANCEL', ticker=ticker, reason='2.5 sigma strategy valve; stable 10-second cooldown')
+                # A sustained break may generate hundreds of spot prints. Once
+                # entries are paused and bids canceled, extend the timer without
+                # rewriting every market's checkpoint/audit on every tick.
+                if not already_paused:
+                    for ticker in self.markets:
+                        if ticker not in self.closed_reports:
+                            self.strategy.safety_cancel(ticker)
+                            self.cancel_buys(ticker)
+                            self.log('SPOT_SAFETY_CANCEL', ticker=ticker, reason='2.5 sigma strategy valve; stable 10-second cooldown')
         elif source == 'book_heartbeat':
             sid=payload.get('sid')
             if sid in self.sequences:self.book_feed_at[sid]=now

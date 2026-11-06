@@ -30,6 +30,15 @@ class SpikeCooldownTests(unittest.TestCase):
         self.assertEqual(sum(o.status=='pending' for o in e.orders.values()),2)
         self.assertTrue(all(o.price==D('.1') for o in e.orders.values()))
 
+    def test_sustained_spike_does_not_repeat_market_audits_per_print(self):
+        e,b=self.fixture();e.audit.log.reset_mock();initial=e.safety_until
+        for i in range(1000):
+            at=1000.31+i*.0001
+            e.handle('spot',dict(price=100100,event_time=at),at)
+        self.assertGreater(e.safety_until,initial)
+        e.audit.log.assert_not_called()
+        self.assertEqual(sum(item[2]=='cancel' for item in e.pending),2)
+
     def test_new_spike_extends_the_pause(self):
         e,b=self.fixture()
         e.handle('spot',dict(price=100200,event_time=1005),1005)
