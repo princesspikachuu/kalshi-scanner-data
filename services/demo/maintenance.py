@@ -92,15 +92,15 @@ def backup(store,objects):
             WHERE (idempotency_key>='demo/bot/' AND idempotency_key<'demo/bot/zzzz')
             OR (idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress->>'status' NOT IN ('closed','rejected'))
             OR idempotency_key='demo/paper/cash'
-            OR (idempotency_key>='demo/paper/resting/' AND idempotency_key<'demo/paper/resting/zzzz')
-            OR (idempotency_key>='demo/paper/position/' AND idempotency_key<'demo/paper/position/zzzz' AND progress->>'quantity'<>'0')
+            OR (idempotency_key>='demo/paper/resting/' AND idempotency_key<'demo/paper/resting/zzzz' AND progress->>'status'='resting')
+            OR (idempotency_key>='demo/paper/position/' AND idempotency_key<'demo/paper/position/zzzz' AND (progress->>'quantity')::numeric<>0)
             OR (idempotency_key>='demo/paper/order/' AND idempotency_key<'demo/paper/order/zzzz' AND (progress->>'status'='resting' OR EXISTS(SELECT 1 FROM research_job AS local WHERE local.idempotency_key='demo/order/'||(research_job.progress->>'client_id') AND local.progress->>'status' NOT IN ('closed','rejected'))))
             OR (idempotency_key>='live/bot/' AND idempotency_key<'live/bot/zzzz')
             OR (idempotency_key>='live/order/' AND idempotency_key<'live/order/zzzz')
             OR (idempotency_key>='live/write/' AND idempotency_key<'live/write/zzzz')
             OR (idempotency_key>='live/onboarding-op/' AND idempotency_key<'live/onboarding-op/zzzz')
-            OR idempotency_key IN ('demo/engine','live/onboarding','demo/policy','demo/account','demo/funding','demo/reset','trading/mode','live/budget','live/trial','live/risk','live/account') LIMIT 701""").fetchall()
-    if len(rows)>700:raise ValueError('Backup chunk capacity reached')
+            OR idempotency_key IN ('demo/engine','live/onboarding','demo/policy','demo/account','demo/funding','demo/reset','trading/mode','live/budget','live/trial','live/risk','live/account') LIMIT 2001""").fetchall()
+    if len(rows)>2000:raise ValueError('Backup chunk capacity reached')
     reference=put_verified(objects,'backups',dict(version=1,created_at=time.time(),records=rows))
     # Reading and parsing the written object is a bounded restore validation.
     # put_verified already read, parsed and compared every record.

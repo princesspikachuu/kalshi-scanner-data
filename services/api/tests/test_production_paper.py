@@ -134,6 +134,27 @@ class PaperPostgres(unittest.TestCase):
         self.trade('2',side='yes',ts=self.now+1.1,yes_price_dollars='.97',no_price_dollars='.03')
         self.assertEqual(self.ledger.positions(),[])
         with self.store.pool.connection() as c:self.assertEqual(D(get(c,'cash')['dollars']),D('101.88'))
+    def test_fractional_flat_positions_do_not_accumulate_in_active_snapshots(self):
+        from services.paper_demo.ledger import rows
+        self.scenario();entry,_=self.order(quantity=2.5);self.trade('2.50')
+        self.order(quantity=2.5,kind='exit',parent=entry['client_id']);self.trade('2.50',side='yes',ts=self.now+1.1)
+        with self.store.pool.connection() as c:self.assertEqual(rows(c,'position'),[])
+    def test_cancel_retirement_works_with_research_job_update_permission_only(self):
+        from psycopg import sql
+        from services.paper_demo.ledger import save,rows
+        self.scenario();self.order();order=self.ledger.orders()[0];order.update(status='canceled',remaining='0')
+        role=sql.Identifier('paper_test_'+uuid4().hex)
+        with self.store.pool.connection() as c:
+            c.execute(sql.SQL('CREATE ROLE {} NOLOGIN').format(role))
+            c.execute(sql.SQL('GRANT USAGE ON SCHEMA public TO {}').format(role))
+            c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE ON public.research_job TO {}').format(role))
+        try:
+            with self.store.pool.connection() as c:
+                c.execute(sql.SQL('SET LOCAL ROLE {}').format(role));save(c,order)
+                self.assertEqual(rows(c,'resting'),[])
+        finally:
+            with self.store.pool.connection() as c:
+                c.execute(sql.SQL('DROP OWNED BY {}').format(role));c.execute(sql.SQL('DROP ROLE {}').format(role))
     def test_subcent_fees_are_deducted_without_rounding_to_whole_cents(self):
         self.scenario();intent=dict(client_id=str(uuid4()),ticker='t',side='yes',kind='entry',quantity=1,price=3,close=self.now+300)
         self.ledger.submit(intent,self.book,self.q,('quadratic_with_maker_fees',1),self.now);self.trade('1')

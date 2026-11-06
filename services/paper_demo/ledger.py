@@ -22,14 +22,14 @@ def put(c,key,data):
       ON CONFLICT(idempotency_key) DO UPDATE SET progress=excluded.progress,finished_at=clock_timestamp()""",(uuid4(),Jsonb(data),PREFIX+key))
 
 def rows(c,kind,ticker=None,min_ts=0):
-    found=c.execute("SELECT progress FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s AND (%s::text IS NULL OR progress->>'ticker'=%s) AND created_at>=to_timestamp(%s) AND (%s<>'position' OR progress->>'quantity'<>'0') ORDER BY created_at LIMIT 10001",(PREFIX+kind+'/',PREFIX+kind+'/zzzz',ticker,ticker,min_ts,kind)).fetchall()
+    found=c.execute("SELECT progress FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s AND (%s::text IS NULL OR progress->>'ticker'=%s) AND created_at>=to_timestamp(%s) AND (%s<>'position' OR (progress->>'quantity')::numeric<>0) AND (%s<>'resting' OR progress->>'status'='resting') ORDER BY created_at LIMIT 10001",(PREFIX+kind+'/',PREFIX+kind+'/zzzz',ticker,ticker,min_ts,kind,kind)).fetchall()
     if len(found)>10000:raise ExchangeFailure('paper_ledger_capacity')
     return [r['progress'] for r in found]
 
 def save(c,order):
     put(c,'order/'+order['client_id'],order)
     if order['status']=='resting':put(c,'resting/'+order['client_id'],order)
-    else:c.execute('DELETE FROM research_job WHERE idempotency_key=%s',(PREFIX+'resting/'+order['client_id'],))
+    else:c.execute('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',(Jsonb(dict(status=order['status'])),PREFIX+'resting/'+order['client_id']))
 
 def wire(order):
     return dict(order_id=order['id'],client_order_id=order['client_id'],ticker=order['ticker'],side=order['side'],action='buy' if order['kind']=='entry' else 'sell',
