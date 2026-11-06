@@ -23,6 +23,8 @@ class HostedRun(ForwardRun):
         rows=store.rows('shadow/bot/',100)
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
+        self.allow_rest_settlement_recovery=True  # Approved fallback for missed WS settlement notifications.
+        self.settlement_checks={}
         self.strategy=StrategyFleet(self.engine,self.profiles)
         self.audit.engine,self.audit.fleet=self.engine,self.strategy
         prior=store.get('shadow/checkpoint')
@@ -40,6 +42,18 @@ class HostedRun(ForwardRun):
         for p in self.profiles:
             self.strategy.bots[p['series']].enabled=next(r['progress'].get('desired')=='running' for r in rows if r['parameters']['id']==p['id'])
         self.audit.checkpoint()
+
+    async def settlement_observed(self,ticker):
+        if ticker in self.engine.settled:return True
+        if not self.allow_rest_settlement_recovery:return False
+        market=self.engine.markets[ticker];now=time.time()
+        if now<market['close'] or now-self.settlement_checks.get(ticker,0)<15:return False
+        self.settlement_checks[ticker]=now
+        raw=(await self.api.fetch('/markets/'+ticker))['market']
+        if raw.get('ticker')!=ticker or raw.get('status') not in ('finalized','settled') or raw.get('result') not in ('yes','no'):
+            return False
+        await self.put('rest_settlement_confirmed',dict(ticker=ticker,status=raw['status'],result=raw['result']))
+        return False  # Only the serialized, audited consumer may release the barrier.
 
     async def fee_policy(self,market,metadata):
         ticker=market['ticker']
@@ -111,15 +125,31 @@ class HostedRun(ForwardRun):
             source,payload,received=await self.queue.get()
             now=max(received,last)
             if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
-            last=now;self.audit.begin()
+            last=now;self.audit.begin();recovered=False
             try:
                 payload=self.prepare_fees(source,payload,now)
-                self.engine.handle(source,payload,now)
+                if source=='rest_settlement_confirmed':
+                    if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
+                    ticker=payload['ticker']
+                    if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
+                        raise ValueError('REST settlement confirmation invalid')
+                    self.engine.advance(now)
+                    if ticker not in self.engine.settled:
+                        self.engine.markets[ticker]['settlement_confirmation']='production_rest'
+                        self.engine.settled.add(ticker)
+                        self.engine.cancel_buys(ticker)
+                        self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
+                        recovered=True
+                else:self.engine.handle(source,payload,now)
             except ValueError as exc:
                 self.reject_input(source,payload,exc)
             except BaseException:
                 self.audit.abort();raise
-            self.audit.flush();self.queue.task_done()
+            self.audit.flush()
+            if recovered:
+                print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
+                                      confirmation='production_rest',real_orders_enabled=False)),flush=True)
+            self.queue.task_done()
 
     async def control(self):
         while not self.done.is_set():

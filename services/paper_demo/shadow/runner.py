@@ -81,13 +81,16 @@ class ForwardRun:
     async def fee_policy(self,market,metadata):
         return FeePolicy.from_series(metadata)
 
+    async def settlement_observed(self,ticker):
+        return ticker in self.engine.settled
+
     async def discover(self):
         while not self.done.is_set():
             try:
                 for series, ticker in list(self.selected.items()):
-                    if ticker in self.engine.settled:
+                    if await self.settlement_observed(ticker):
                         market = (await self.api.fetch('/markets/'+ticker))['market']
-                        if market['status']=='settled' and market.get('result') in ('yes','no'):
+                        if market['status'] in ('finalized','settled') and market.get('result') in ('yes','no'):
                             await self.put('settlement', dict(ticker=ticker,
                                 yes_payout='1' if market['result']=='yes' else '0'))
                             while not self.engine.markets[ticker].get('paid'):
