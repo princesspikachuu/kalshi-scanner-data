@@ -9,6 +9,7 @@ from services.paper_demo.shadow.storage import put
 from services.trading.mode import require_demo,ModeConflict
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
+ACCOUNTING_LOG_AT=0
 
 
 def aggregate(reports):
@@ -30,6 +31,7 @@ def install_shadow(app,auth,mutate,pool):
             raise HTTPException(422,'Invalid filters')
     @app.get('/demo/shadow/workspace')
     def workspace(request:Request):
+        global ACCOUNTING_LOG_AT
         auth(request);query(request,('version',))
         latest=request.query_params.get('version','latest')
         if latest not in ('latest','full'):raise HTTPException(422,'Invalid version')
@@ -37,6 +39,9 @@ def install_shadow(app,auth,mutate,pool):
         if not marker:return dict(contract='demo-v1',installed=False,bots=[],real_orders_enabled=False)
         health=store.get('health');status=store.get('shadow/status')
         status=status['progress'] if status else dict(virtual_cash='1000',available_cash='1000',positions=[],orders=[],market_states={})
+        money=status.get('accounting')
+        current=money.get('current_cycles',{}) if money else {}
+        snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
         profiles=sorted(store.rows('shadow/bot/',100),key=lambda r:r['parameters']['name'])
         revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
@@ -58,17 +63,58 @@ def install_shadow(app,auth,mutate,pool):
                 nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0))::text AS win_rate
                 FROM r CROSS JOIN windows WHERE seconds IS NULL OR (p->>'at')::numeric>=%s-seconds
                 GROUP BY p->>'bot_id',period""",(latest=='full',Jsonb(revisions),now)).fetchall()
+            # Financial results include every paper trade. Data quality is a
+            # separate count; it must never make a real simulated loss disappear.
+            financial=c.execute("""WITH history AS (
+                SELECT progress AS p,true AS reported FROM research_job
+                WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz'
+                AND NOT ((progress->>'ticker')=ANY(%s::text[]))
+                AND (progress->>'at')::numeric<=%s),
+                r AS (SELECT * FROM history UNION ALL SELECT value,false FROM jsonb_each(%s::jsonb)),
+                windows(period,seconds,full_history) AS (VALUES ('account',NULL::integer,true),
+                    ('all',NULL::integer,false),('1H',3600,false),('6H',21600,false),('24H',86400,false))
+                SELECT p->>'bot_id' AS bot,period,
+                count(*) FILTER(WHERE reported AND (p->>'data_valid')::boolean) AS cycles,
+                count(*) FILTER(WHERE reported AND NOT (p->>'data_valid')::boolean) AS excluded_cycles,
+                coalesce(sum((p->>'gross_profit')::numeric),0)::text AS gross_profit,
+                coalesce(sum((p->>'total_fees_paid')::numeric),0)::text AS fees,
+                coalesce(sum((p->>'net_realized_pnl')::numeric),0)::text AS net_realized_pnl,
+                (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate
+                FROM r CROSS JOIN windows
+                WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
+                AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
+                GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
         mapped={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in metrics}
+        actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in financial}
         reports={r['progress'].get('bot_id'):r['progress'] for r in latest_rows}
         bots=[]
         for row in profiles:
             profile=row['parameters']
+            account=dict(money['bots'].get(profile['id'],{})) if money else None
+            lifetime=actual.get((profile['id'],'account'),aggregate([]))
+            if account is not None:
+                account['realized_pnl']=lifetime['net_realized_pnl']
+                account['total_pnl']=str(D(account['realized_pnl'])+D(account['unrealized_pnl'])) if account.get('unrealized_pnl') is not None else None
             bots.append(dict(profile,desired=row['progress']['desired'],
                 metrics={period:mapped.get((profile['id'],period),aggregate([])) for period in PERIODS},
+                financial_metrics={period:actual.get((profile['id'],period),aggregate([])) for period in PERIODS},
+                account=account,
                 latest_report=reports.get(profile['id'])))
+        if money:
+            money['quality']=dict(verified_cycles=sum(m['cycles'] for m in financial if m['period']=='account'),
+                gap_cycles=sum(m['excluded_cycles'] for m in financial if m['period']=='account'))
+            key='total_pnl' if money['portfolio']['total_pnl'] is not None else 'realized_pnl'
+            money['portfolio']['reconciliation_difference']=str(D(money['portfolio'][key])-
+                sum((D(b['account'].get(key) or '0') for b in bots),D(0)))
+            if time.monotonic()>=ACCOUNTING_LOG_AT:
+                ACCOUNTING_LOG_AT=time.monotonic()+30
+                print(json.dumps(dict(event='shadow_accounting_reconciled',at=snapshot_at,
+                    realized_pnl=money['portfolio']['realized_pnl'],total_pnl=money['portfolio']['total_pnl'],
+                    difference=money['portfolio']['reconciliation_difference'],
+                    **money['quality'],real_orders_enabled=False)),flush=True)
         commands=store.rows('shadow/command/',100)
         return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
-            engine=marker['progress'],bots=bots,status=status,version=latest,
+            engine=marker['progress'],bots=bots,status=status,accounting=money,version=latest,
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
             pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done')))

@@ -142,6 +142,47 @@ class HostedPostgres(unittest.TestCase):
         self.assertEqual(D(metric['net_realized_pnl']),0)
         self.assertEqual(metric['excluded_cycles'],1)
 
+    def test_financial_totals_include_gap_losses_and_reconcile_with_open_positions(self):
+        from services.api.tests.test_shadow_accounting import fixture as accounting_fixture,PROFILES
+        from services.paper_demo.shadow.accounting import snapshot
+        self.seed();money=snapshot(accounting_fixture(),PROFILES,1000)
+        self.demo.put('shadow/status',dict(at=1000,accounting=money))
+        with self.demo.pool.connection() as c:
+            for ticker,bot,gross,net,fees,at in (
+                    ('KXBTC15M-old','btc','-19','-20','1',100),
+                    ('KXETH15M-old','eth','2','1.3','.7',100),
+                    ('KXBTC15M-test','btc','999','999','0',900)):
+                put(c,'demo/shadow/report/'+ticker,{},dict(ticker=ticker,bot_id=bot,bot_revision=1,
+                    at=at,data_valid=False,gross_profit=gross,total_fees_paid=fees,net_realized_pnl=net,
+                    closed_contracts='10',winning_contracts='0',final=ticker.endswith('old')))
+        result=self.client.get('/demo/shadow/workspace').json()
+        btc=next(b for b in result['bots'] if b['id']=='btc')
+        self.assertEqual(D(btc['metrics']['all']['net_realized_pnl']),0)
+        self.assertEqual(D(btc['financial_metrics']['all']['net_realized_pnl']),-20)
+        self.assertEqual(D(btc['account']['total_pnl']),-11)
+        a=result['accounting']['portfolio']
+        self.assertEqual(D(a['total_pnl']),-3);self.assertEqual(D(a['reconciliation_difference']),0)
+        self.assertEqual(result['accounting']['quality'],{'verified_cycles':0,'gap_cycles':2})
+        # Version filters change realized-result analysis, never all-history cash exposure.
+        self.client.post('/demo/shadow/bots/btc',json=dict(revision=1,contracts=2))
+        latest=self.client.get('/demo/shadow/workspace').json()
+        btc=next(b for b in latest['bots'] if b['id']=='btc')
+        self.assertEqual(D(btc['financial_metrics']['all']['net_realized_pnl']),0)
+        self.assertEqual(D(btc['account']['total_pnl']),-11)
+        full=self.client.get('/demo/shadow/workspace?version=full').json()
+        self.assertEqual(D(next(b for b in full['bots'] if b['id']=='btc')['financial_metrics']['all']['net_realized_pnl']),-20)
+
+    def test_gap_money_follows_hour_six_and_day_windows_without_becoming_zero_lifetime(self):
+        self.seed();now=time.time()
+        with self.demo.pool.connection() as c:
+            put(c,'demo/shadow/report/KXBTC15M-older',{},dict(ticker='KXBTC15M-older',bot_id='btc',
+                bot_revision=1,at=now-3700,data_valid=False,gross_profit='-9',total_fees_paid='1',
+                net_realized_pnl='-10',closed_contracts='1',winning_contracts='0',final=True))
+        result=self.client.get('/demo/shadow/workspace').json()
+        periods=next(b for b in result['bots'] if b['id']=='btc')['financial_metrics']
+        self.assertEqual(D(periods['1H']['net_realized_pnl']),0)
+        for period in ('all','6H','24H'):self.assertEqual(D(periods[period]['net_realized_pnl']),-10)
+
 class HostedFailureTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_input_does_not_checkpoint_uncertain_mutated_memory(self):
         import asyncio

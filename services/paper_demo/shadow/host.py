@@ -9,6 +9,7 @@ from .core import Engine,StrategyFleet,FeePolicy
 from .runner import ForwardRun,ProductionData as PublicData
 from .storage import HostedAudit,put
 from .state import restore
+from .accounting import snapshot as money_snapshot
 
 LOG=logging.getLogger('shadow-host')
 
@@ -168,6 +169,7 @@ class HostedRun(ForwardRun):
                             self.engine.advance(now)
                             if ticker not in self.engine.settled:
                                 self.engine.markets[ticker]['settlement_confirmation']='production_rest'
+                                self.engine.markets[ticker]['yes_payout_confirmed']='1' if payload['result']=='yes' else '0'
                                 self.engine.settled.add(ticker)
                                 self.engine.cancel_buys(ticker)
                                 self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
@@ -247,17 +249,20 @@ class HostedRun(ForwardRun):
                     real_orders_enabled=False)),flush=True)
             if time.monotonic()>=self.publish_at:
                 self.publish_at=time.monotonic()+5
+                money=money_snapshot(self.engine,self.profiles,time.time())
+                portfolio=money['portfolio']
+                if time.monotonic()>=getattr(self,'accounting_log_at',0):
+                    self.accounting_log_at=time.monotonic()+30
+                    print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
+                                          real_orders_enabled=False)),flush=True)
                 self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['shadow_convexity_v1'],real_orders_enabled=False))
                 self.store.put('shadow/status',dict(at=time.time(),selected=self.selected,
-                    equity=str(self.engine.wallet.cash+sum((l.quantity*((self.engine.books[l.ticker].bid(l.side) or D(0)) if self.engine.books[l.ticker].valid else l.price) for l in self.engine.wallet.lots),D(0))),
-                    virtual_cash=str(self.engine.wallet.cash),available_cash=str(self.engine.available()),
+                    equity=portfolio['equity'],accounting=money,
+                    virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
                     open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                     market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
-                        book_valid=self.engine.books[t].valid) for t,m in self.engine.markets.items()},
-                    orders=[dict(id=o.id,ticker=o.ticker,side=o.side,action=o.action,quantity=str(o.remaining),price=str(o.price),
-                        status=o.status,maker=o.maker) for o in self.engine.orders.values() if o.status in ('resting','pending')],
-                    positions=[dict(ticker=l.ticker,side=l.side,quantity=str(l.quantity),is_armed=l.is_armed,phase_origin=l.phase_origin)
-                               for l in self.engine.wallet.lots]))
+                        book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
+                    orders=money['orders'],positions=money['positions']))
             # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
             # execution state in the hot checkpoint; never rewrite years of history.
             self.engine.prune_terminal_orders()
