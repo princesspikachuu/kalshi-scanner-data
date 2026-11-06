@@ -90,7 +90,7 @@ def archive_events(store,objects,policy,pressure):
     now=time.time();cutoff=now-(7 if pressure else policy['archive_days'])*86400
     rows=[dict(id=r['id'],parameters=r['parameters'],progress=r['progress']) for r in page
           if 'archive' not in r['progress'] and
-          float(r['progress'].get('restored_at',0))<now-86400 and r['created_at'].timestamp()<cutoff]
+          float(r['progress'].get('restored_at') or 0)<now-86400 and r['created_at'].timestamp()<cutoff]
     if rows:
         reference=put_verified(objects,'events',rows)
         # Only verified bytes may replace details with a searchable pointer.

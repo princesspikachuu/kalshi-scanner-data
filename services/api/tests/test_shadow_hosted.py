@@ -48,7 +48,7 @@ class HostedPostgres(unittest.TestCase):
             def get_object(self,**kw):
                 body=self.objects[kw['Key']];return dict(ContentLength=len(body),Body=io.BytesIO(body))
         records=[entry('demo/event/'+f'{i:04}',{},dict(original=i)) for i in range(201)]
-        records.append(entry('demo/shadow/event/one',{},dict(original='shadow')))
+        records.append(entry('demo/shadow/event/one',{},dict(original='shadow',restored_at=None)))
         with self.demo.pool.connection() as c:
             with c.cursor() as cur:cur.executemany(UPSERT,records)
             c.execute("UPDATE research_job SET created_at=clock_timestamp()-interval '40 days'")
