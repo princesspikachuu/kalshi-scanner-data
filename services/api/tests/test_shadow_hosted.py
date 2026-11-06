@@ -87,7 +87,9 @@ class HostedPostgres(unittest.TestCase):
         audit.flush()
         with self.demo.pool.connection() as c:
             count=c.execute("SELECT count(*) AS n FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz'").fetchone()['n']
+            balances=c.execute("SELECT (progress->>'cash')::numeric AS cash FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz'").fetchall()
         self.assertEqual(count,54)
+        self.assertEqual(sorted(row['cash'] for row in balances),list(range(51,105)))
         self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),104)
         shutil.rmtree(audit.path)
 

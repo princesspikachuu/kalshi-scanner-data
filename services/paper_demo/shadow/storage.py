@@ -30,7 +30,7 @@ class HostedAudit:
     def abort(self):self.buffer=None
     def log(self,now,kind,wallet,**fields):
         if not self.engine or not self.fleet:return
-        record=(now,kind,dict(fields))
+        record=(now,kind,dict(fields,cash=str(wallet.cash)))
         if getattr(self,'buffer',None) is not None:
             self.buffer.append(record);return
         self.commit([record])
@@ -42,7 +42,8 @@ class HostedAudit:
         batch=[entry(KEY,{},data)]
         commands=[];written_events=[]
         for now,kind,fields in records:
-            event=json.loads(json.dumps(dict(time=now,event=kind,cash=str(self.engine.wallet.cash),**fields),default=str))
+            event=json.loads(json.dumps(dict(time=now,event=kind,**fields),default=str))
+            event.setdefault('cash',str(self.engine.wallet.cash))
             written_events.append(event)
             batch.append(entry('demo/shadow/event/'+str(uuid4()),dict(kind=kind,ticker=fields.get('ticker'),time=now),event))
             if kind=='REFILL' and self.command_key:commands.append((Jsonb(dict(done=True,at=now)),self.command_key))

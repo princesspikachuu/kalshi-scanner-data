@@ -71,6 +71,21 @@ class InputRecoveryTests(unittest.TestCase):
 
 
 class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_backpressure_cannot_reorder_producer_timestamps(self):
+        run=object.__new__(ForwardRun);blocked=asyncio.Event();release=asyncio.Event();items=[]
+        class Queue:
+            async def put(self,item):
+                if item[1]=='older':blocked.set();await release.wait()
+                items.append(item)
+        run.queue=Queue()
+        with patch('services.paper_demo.shadow.runner.time.time',side_effect=[1000,1001]):
+            older=asyncio.create_task(run.put('clock','older'));await blocked.wait()
+            newer=asyncio.create_task(run.put('clock','newer'));await asyncio.sleep(0)
+            self.assertEqual(items,[])
+            release.set();await asyncio.gather(older,newer)
+        self.assertEqual([x[1] for x in items],['older','newer'])
+        self.assertEqual([x[2] for x in items],[1000,1001])
+
     async def test_buffered_burst_yields_to_socket_task_without_reordering(self):
         run=object.__new__(HostedRun)
         run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
@@ -86,6 +101,18 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
         await run.consume();await reader
         self.assertEqual(seen,list(range(96)))
         self.assertLess(socket_observed[0],96)
+        self.assertGreaterEqual(run.audit.flush.call_count,3)
+        self.assertLess(run.audit.flush.call_count,96)
+
+    async def test_failed_batch_does_not_acknowledge_uncertain_inputs(self):
+        run=object.__new__(HostedRun)
+        run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
+        run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload
+        run.audit.flush.side_effect=RuntimeError('database commit failed')
+        for n in range(4):await run.queue.put(('clock',{},1000+n*.01))
+        with self.assertRaises(RuntimeError):await run.consume()
+        run.audit.abort.assert_called_once()
+        self.assertEqual(run.queue._unfinished_tasks,4)
 
     async def test_consumer_keeps_specific_error_and_only_affected_book(self):
         run=object.__new__(HostedRun)

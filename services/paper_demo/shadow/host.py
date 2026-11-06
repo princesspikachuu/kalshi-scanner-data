@@ -42,7 +42,9 @@ class HostedRun(ForwardRun):
         self.revisions={p['id']:p['revision'] for p in self.profiles}
         self.fee_slots=asyncio.Semaphore(4);self.fee_locks={}
         self.status={};self.data_versions={};self.health_log_at=0
-        self.publish_at=0;self.maintenance_at=time.time()+300
+        # Surface backup/archive failures soon after recovery, then use the
+        # normal five-minute cadence without adding Kalshi REST requests.
+        self.publish_at=0;self.maintenance_at=time.time()+60
         for p in self.profiles:
             self.strategy.bots[p['series']].enabled=next(r['progress'].get('desired')=='running' for r in rows if r['parameters']['id']==p['id'])
         self.audit.checkpoint()
@@ -146,41 +148,49 @@ class HostedRun(ForwardRun):
         return payload
 
     async def consume(self):
-        last=self.engine.now;processed=0
+        last=self.engine.now
         while not self.done.is_set():
-            source,payload,received=await self.queue.get()
-            now=max(received,last)
-            if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
-            last=now;self.audit.begin();recovered=False
+            item=await self.queue.get()
+            self.audit.begin();completed=0;recovered=[];started=time.monotonic()
             try:
-                payload=self.prepare_fees(source,payload,now)
-                if source=='rest_settlement_confirmed':
-                    if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
-                    ticker=payload['ticker']
-                    if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
-                        raise ValueError('REST settlement confirmation invalid')
-                    self.engine.advance(now)
-                    if ticker not in self.engine.settled:
-                        self.engine.markets[ticker]['settlement_confirmation']='production_rest'
-                        self.engine.settled.add(ticker)
-                        self.engine.cancel_buys(ticker)
-                        self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
-                        recovered=True
-                else:self.engine.handle(source,payload,now)
-            except ValueError as exc:
-                self.reject_input(source,payload,exc)
+                while True:
+                    source,payload,received=item
+                    now=max(received,last)
+                    if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
+                    last=now
+                    try:
+                        payload=self.prepare_fees(source,payload,now)
+                        if source=='rest_settlement_confirmed':
+                            if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
+                            ticker=payload['ticker']
+                            if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
+                                raise ValueError('REST settlement confirmation invalid')
+                            self.engine.advance(now)
+                            if ticker not in self.engine.settled:
+                                self.engine.markets[ticker]['settlement_confirmation']='production_rest'
+                                self.engine.settled.add(ticker)
+                                self.engine.cancel_buys(ticker)
+                                self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
+                                recovered.append(ticker)
+                        else:self.engine.handle(source,payload,now)
+                    except ValueError as exc:
+                        self.reject_input(source,payload,exc)
+                    completed+=1
+                    # Preserve every event and its cash value, but avoid a DB
+                    # round trip/checkpoint for each partial fill in a burst.
+                    if self.done.is_set() or self.queue.empty() or completed>=32 or time.monotonic()-started>=.005:
+                        break
+                    item=self.queue.get_nowait()
+                self.audit.flush()
             except BaseException:
                 self.audit.abort();raise
-            self.audit.flush()
-            if recovered:
+            for ticker in recovered:
                 print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
                                       confirmation='production_rest',real_orders_enabled=False)),flush=True)
-            self.queue.task_done()
-            processed+=1
-            if processed%32==0:
-                # queue.get() doesn't yield while a burst is buffered. Keep the
-                # socket readers/pongs running without changing receipt order.
-                await asyncio.sleep(0)
+            for _ in range(completed):self.queue.task_done()
+            # queue.get() doesn't yield while a burst is buffered. Socket
+            # readers, pongs and controls still run between committed batches.
+            await asyncio.sleep(0)
 
     async def control(self):
         while not self.done.is_set():

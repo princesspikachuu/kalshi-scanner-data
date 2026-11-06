@@ -84,7 +84,11 @@ class ForwardRun:
 
     async def put(self, source, payload):
         # Consumer assigns the simulation clock and records exact processing order.
-        await self.queue.put((source, payload, time.time()))
+        # A full queue suspends put(). Serialize producers so a newer timestamp
+        # cannot overtake an older producer waiting for capacity.
+        if not hasattr(self,'input_lock'):self.input_lock=asyncio.Lock()
+        async with self.input_lock:
+            await self.queue.put((source, payload, time.time()))
 
     async def fee_policy(self,market,metadata):
         return FeePolicy.from_series(metadata)
