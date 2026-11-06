@@ -1,5 +1,5 @@
 """One atomic ledger boundary; retain original Kalshi Demo records unchanged."""
-import time
+import time,json
 from uuid import uuid4
 from psycopg.types.json import Jsonb
 from services.demo.exchange import credentials,Exchange,ExchangeFailure
@@ -9,6 +9,7 @@ FEATURES=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','
 
 def migrate(store,env,guard):
     if store.get('engine'):return
+    print(json.dumps(dict(event='paper_transition_phase',phase='cancel_demo_bids')),flush=True)
     guard();old=store.active_orders();owned={o['client_id'] for o in old}
     signer=credentials(store,env)
     if signer:
@@ -21,7 +22,11 @@ def migrate(store,env,guard):
                 raise ExchangeFailure('paper_transition_waiting_for_demo_cancels')
         finally:exchange.close()
     elif any(o.get('remaining',0) for o in old):raise ExchangeFailure('paper_transition_demo_key_required')
+    print(json.dumps(dict(event='paper_transition_phase',phase='archive_demo_history')),flush=True)
     with store.pool.connection() as c:
+        # A one-time atomic namespace move can exceed the normal 5s query
+        # budget on an existing ledger. Retain a bounded migration deadline.
+        c.execute('SET LOCAL statement_timeout=60000')
         c.execute('SELECT pg_advisory_xact_lock(%s)',(MODE_LOCK,));guard()
         mode=c.execute("SELECT progress FROM research_job WHERE idempotency_key='trading/mode' FOR UPDATE").fetchone()
         if mode and mode['progress'].get('mode')!='demo':raise ExchangeFailure('paper_transition_waiting_for_demo_mode')
@@ -50,4 +55,5 @@ def migrate(store,env,guard):
     for row in bots:
         key=row['idempotency_key'].split('/')[-1]
         store.event('bot_updated','Fresh version for production-data paper trading',bot=key,details=dict(revision=row['parameters']['revision']+1,rule_revision_changed=True,execution_engine_changed=True))
+    print(json.dumps(dict(event='paper_transition_phase',phase='initialized',bots=len(bots))),flush=True)
     store.event('engine_changed','Kalshi Demo history archived separately; production-data paper simulation selected',details=marker)

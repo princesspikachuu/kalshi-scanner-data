@@ -1,5 +1,5 @@
 """A single worker process dispatches one trading environment at a time."""
-import os,time,json
+import os,time,json,traceback
 from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 from .mode import read_mode
@@ -19,5 +19,5 @@ def run(stop):
             execute(stop)
         except Exception as error:
             # Never print provider bodies, decrypted keys, or connection strings.
-            print(json.dumps(dict(event='trading_router_recovery',error_type=type(error).__name__)),flush=True)
+            print(json.dumps(dict(event='trading_router_recovery',error_type=type(error).__name__,code=getattr(error,'code',None),status=getattr(error,'status',None),frames=[dict(function=f.name,line=f.lineno) for f in traceback.extract_tb(error.__traceback__)[-4:]])),flush=True)
             stop.wait(5)
