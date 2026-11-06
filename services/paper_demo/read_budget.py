@@ -13,6 +13,8 @@ class ReadBudget:
             if now<self.next_read:time.sleep(self.next_read-now)
             if time.monotonic()<self.blocked_until:raise ExchangeFailure('paper_data_rate_limited')
             self.next_read=time.monotonic()+self.interval
+    def remaining(self):
+        with self.lock:return max(0.,self.blocked_until-time.monotonic())
     def reject(self,seconds=30):
         with self.lock:self.blocked_until=max(self.blocked_until,time.monotonic()+seconds)
 

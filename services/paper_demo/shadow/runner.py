@@ -87,64 +87,92 @@ class ForwardRun:
     async def settlement_observed(self,ticker):
         return ticker in self.engine.settled
 
+    async def metadata_unavailable(self,scope,exc,*,ticker=None,series=None):
+        # REST availability is not evidence that an authenticated price stream
+        # lost data. Fee TTL, WS sequence and book-freshness checks stay separate.
+        status=getattr(exc,'status',None)
+        if status is None and isinstance(exc,RuntimeError):
+            match=re.fullmatch(r'Public data HTTP (\d{3})',str(exc))
+            if match:status=int(match[1])
+        code=getattr(exc,'code',None)
+        rate_limited=status==429 or code=='paper_data_rate_limited'
+        reason=('Kalshi REST rate limited; retrying' if rate_limited else
+                f'Kalshi metadata HTTP {status}; retrying' if status else
+                'Metadata unavailable or invalid; retrying')
+        if not hasattr(self,'metadata_logs'):self.metadata_logs={}
+        key=('rate_limit',None,None) if rate_limited else (scope,ticker,series)
+        now=time.monotonic()
+        if now-self.metadata_logs.get(key,-1e9)<30:return
+        self.metadata_logs[key]=now
+        LOG.warning('METADATA_RETRY scope=%s series=%s ticker=%s code=%s status=%s',
+                    scope,series,ticker,code or type(exc).__name__,status)
+        await self.put('metadata_retry',dict(scope=scope,ticker=None if rate_limited else ticker,
+            series=series,reason=reason,status=status,code=code or type(exc).__name__))
+
+    async def discover_once(self):
+        if not hasattr(self,'discovery_retry_at'):self.discovery_retry_at={}
+        if not hasattr(self,'known_active'):self.known_active=set(self.selected)
+        # A failed lookup for one expired market must not strand other families.
+        for series,ticker in list(self.selected.items()):
+            try:
+                if await self.settlement_observed(ticker):
+                    market=(await self.api.fetch('/markets/'+ticker))['market']
+                    if market.get('ticker',ticker)!=ticker:raise ValueError('Settlement market mismatch')
+                    if market['status'] in ('finalized','settled') and market.get('result') in ('yes','no'):
+                        await self.put('settlement',dict(ticker=ticker,yes_payout='1' if market['result']=='yes' else '0'))
+                        while not self.engine.markets[ticker].get('paid'):await asyncio.sleep(.02)
+                        self.selected.pop(series,None)
+            except asyncio.CancelledError:raise
+            except Exception as exc:
+                await self.metadata_unavailable('settlement',exc,ticker=ticker,series=series)
+        now=time.time()
+        wanted={p['series']:p for p in self.profiles if p['series'] not in self.selected and
+                now>=self.discovery_retry_at.get(p['series'],0)}
+        if not wanted:return
+        try:
+            rows,cursor,seen=[],'',set()
+            for _ in range(20):
+                result=await self.api.fetch('/markets',dict(status='open',min_close_ts=int(now),
+                    max_close_ts=int(now+900),limit=1000,cursor=cursor))
+                if not isinstance(result.get('markets'),list):raise ValueError('Invalid market inventory')
+                rows.extend(result['markets']);cursor=result.get('cursor','')
+                if not cursor:break
+                if cursor in seen:raise ValueError('Repeated discovery cursor')
+                seen.add(cursor)
+            else:raise ValueError('Market discovery capacity reached')
+        except asyncio.CancelledError:raise
+        except Exception as exc:
+            await self.metadata_unavailable('discovery',exc);return
+        for series,profile in wanted.items():
+            try:
+                candidates=[m for m in rows if isinstance(m,dict) and m.get('ticker','').startswith(series+'-') and
+                    m.get('status')=='active' and ts(m['open_time'])<=now and
+                    0<ts(m['close_time'])-now<=900 and m['ticker'] not in self.engine.markets]
+                if not candidates:
+                    # Long-inactive families wait 15 minutes. Known rolling
+                    # families retry quickly across the brief close/open boundary.
+                    self.discovery_retry_at[series]=now+(2 if series in self.known_active else 900)
+                    continue
+                market=min(candidates,key=lambda m:ts(m['close_time']))
+                metadata=(await self.api.fetch('/series/'+series))['series']
+                fee=await self.fee_policy(market,metadata)
+                normalized=dict(ticker=market['ticker'],close=ts(market['close_time']),
+                    open=ts(market['open_time']),event_ticker=market['event_ticker'],
+                    bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile['version'],
+                    fee_type=metadata['fee_type'],fee_multiplier=str(metadata['fee_multiplier']))
+                self.selected[series]=market['ticker'];self.known_active.add(series)
+                self.discovery_retry_at.pop(series,None)
+                await self.put('market',dict(market=normalized,taker_multiplier=str(fee.taker_multiplier),
+                    maker_multiplier=str(fee.maker_multiplier)))
+            except asyncio.CancelledError:raise
+            except Exception as exc:
+                self.discovery_retry_at[series]=now+2
+                await self.metadata_unavailable('fees',exc,series=series)
+
     async def discover(self):
         while not self.done.is_set():
-            try:
-                for series, ticker in list(self.selected.items()):
-                    if await self.settlement_observed(ticker):
-                        market = (await self.api.fetch('/markets/'+ticker))['market']
-                        if market['status'] in ('finalized','settled') and market.get('result') in ('yes','no'):
-                            await self.put('settlement', dict(ticker=ticker,
-                                yes_payout='1' if market['result']=='yes' else '0'))
-                            while not self.engine.markets[ticker].get('paid'):
-                                await asyncio.sleep(.02)
-                            self.selected.pop(series, None)
-                wanted={p['series']:p for p in self.profiles if p['series'] not in self.selected}
-                if wanted:
-                    now=time.time()
-                    rows, cursor, seen=[], '', set()
-                    for _ in range(20):
-                        result=await self.api.fetch('/markets',dict(status='open',
-                            min_close_ts=int(now),max_close_ts=int(now+900),limit=1000,cursor=cursor))
-                        rows.extend(result['markets'])
-                        cursor=result.get('cursor','')
-                        if not cursor:
-                            break
-                        if cursor in seen:
-                            raise ValueError('Repeated discovery cursor')
-                        seen.add(cursor)
-                    else:
-                        raise ValueError('Market discovery capacity reached')
-                    for profile in self.profiles:
-                        series=profile['series']
-                        if series not in wanted:
-                            continue
-                        candidates=[m for m in rows if m['ticker'].startswith(series+'-') and
-                            m['status']=='active' and ts(m['open_time'])<=now and
-                            0<ts(m['close_time'])-now<=900 and m['ticker'] not in self.engine.markets]
-                        if not candidates:
-                            continue
-                        market=min(candidates,key=lambda m:ts(m['close_time']))
-                        try:
-                            metadata=(await self.api.fetch('/series/'+series))['series']
-                            fee=await self.fee_policy(market,metadata)
-                        except (ValueError,RuntimeError):
-                            LOG.warning('Market %s waiting for verified fee metadata',series)
-                            continue
-                        normalized=dict(ticker=market['ticker'],close=ts(market['close_time']),
-                            open=ts(market['open_time']),event_ticker=market['event_ticker'],
-                            bot_id=profile['id'],bot_name=profile['name'],
-                            strategy_version=profile['version'],fee_type=metadata['fee_type'],
-                            fee_multiplier=str(metadata['fee_multiplier']))
-                        self.selected[series]=market['ticker']
-                        await self.put('market',dict(market=normalized,
-                            taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                LOG.error('DISCOVERY_OR_SETTLEMENT %s: %s',type(exc).__name__,str(exc))
-                await self.put('gap',{'reason':'discovery/fee/settlement metadata failed'})
-            await asyncio.sleep(2)
+            await self.discover_once()
+            await asyncio.sleep(max(2,PRODUCTION_READS.remaining()))
 
     async def kalshi(self):
         delay = .25

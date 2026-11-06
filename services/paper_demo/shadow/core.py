@@ -674,6 +674,9 @@ class Engine:
                         self.strategy.halted.add(ticker)
                         self.cancel_buys(ticker)
                         self.log('SPOT_SAFETY_CANCEL', ticker=ticker, reason='2.5 sigma strategy valve')
+        elif source == 'metadata_retry':
+            self.log('METADATA_RETRY',ticker=payload.get('ticker'),reason=payload['reason'],
+                     details=json.dumps({k:payload.get(k) for k in ('scope','series','status','code')}))
         elif source == 'gap':
             self.sequences.clear()
             self.spot = Spot()

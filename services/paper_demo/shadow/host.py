@@ -3,6 +3,7 @@ import asyncio,json,time,logging
 from types import SimpleNamespace
 from decimal import Decimal as D
 from services.paper_demo.exchange import credentials,ProductionData,Fees
+from services.paper_demo.read_budget import PRODUCTION_READS
 from services.trading.mode import read_mode,write_mode,LOCK as MODE_LOCK
 from .core import Engine,StrategyFleet,FeePolicy
 from .runner import ForwardRun,ProductionData as PublicData
@@ -74,15 +75,16 @@ class HostedRun(ForwardRun):
             await self.fee_policy(dict(self.engine.markets[ticker],ticker=ticker),{})
             return True
         except Exception as exc:
-            code=getattr(exc,'code',type(exc).__name__)
-            LOG.warning('SHADOW_FEE_REFRESH_FAILED ticker=%s code=%s status=%s',
-                        ticker,code,getattr(exc,'status',None))
+            await self.metadata_unavailable('fee_refresh',exc,ticker=ticker,series=ticker.split('-')[0])
             return False
 
     async def fee_maintenance(self):
         # Independent of the once-per-second UI/control loop. Four bounded
         # verifiers share the data adapter's global request pacing/cooldown.
         while not self.done.is_set():
+            remaining=PRODUCTION_READS.remaining()
+            if remaining:
+                await asyncio.sleep(min(5,remaining));continue
             now=time.time()
             due=[t for t in set(self.selected.values()) if t in self.engine.markets and
                  t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
@@ -247,6 +249,7 @@ class HostedRun(ForwardRun):
                     bot.entered={k for k in bot.entered if k[0]!=ticker};bot.locked={k for k in bot.locked if k[0]!=ticker}
             if retired:
                 self.rejection_logs={k:v for k,v in getattr(self,'rejection_logs',{}).items() if k[1] not in retired}
+                self.metadata_logs={k:v for k,v in getattr(self,'metadata_logs',{}).items() if k[1] not in retired}
                 self.audit.checkpoint()
             if time.time()>=self.maintenance_at:
                 from services.demo.maintenance import maintenance
