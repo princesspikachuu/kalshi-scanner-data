@@ -153,7 +153,7 @@ class Onboarding:
     def reconcile(self,state):
         action=state.get('busy')
         if action not in ('prepare','fund','upgrade'):return
-        row=self.store.get(self.opkey(state,action))
+        row=self.store.get('onboarding-op/'+state['id']+'/'+action)
         if not row:return
         op=row['progress'];body=op['body'];transfer=None
         if action=='upgrade':

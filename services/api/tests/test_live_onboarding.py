@@ -32,6 +32,14 @@ class SetupTransport(unittest.TestCase):
             self.assertEqual(ex.write('/account/api_usage_level/upgrade',{}),{})
             self.assertIsNone(ex.approved);self.assertEqual(len(seen),1)
         finally:ex.close()
+    def test_cash_recovery_reads_the_namespaced_store_key_once(self):
+        store=Mock();draft=str(uuid4());expected='onboarding-op/'+draft+'/fund'
+        store.get.side_effect=lambda key:dict(progress=dict(body={})) if key==expected else None
+        service=Onboarding(store,Mock(),None);service.finish=Mock()
+        state=dict(id=draft,busy='fund',account_cents=5000,market_cents=5000)
+        service.reconcile(state)
+        store.get.assert_called_once_with(expected);service.finish.assert_called_once()
+        service.exchange.call.assert_not_called()
     def test_public_progress_never_contains_setup_or_trading_secrets(self):
         result=public(dict(id='safe',private_key='secret',binding='fingerprint',encrypted='secret',body={'private_key':'secret'}))
         self.assertNotIn('secret',json.dumps(result));self.assertNotIn('binding',result)
