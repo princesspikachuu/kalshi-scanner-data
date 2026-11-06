@@ -28,6 +28,9 @@ class HostedRun(ForwardRun):
         self.strategy=StrategyFleet(self.engine,self.profiles)
         self.audit.engine,self.audit.fleet=self.engine,self.strategy
         prior=store.get('shadow/checkpoint')
+        self.prior_halts=set()
+        if prior:
+            self.prior_halts={t for b in prior['progress'].get('fleet',{}).values() for t in b.get('halted',[])}
         if prior:restore(self.engine,self.strategy,prior['progress'])
         self.api=PublicData();self.signer=signer
         self.verified_data=ProductionData(signer);self.verified_fees=Fees(self.verified_data)
@@ -92,6 +95,11 @@ class HostedRun(ForwardRun):
             await asyncio.sleep(.05)
 
     async def put(self,source,payload):
+        if source=='kalshi' and payload.get('type')=='orderbook_snapshot' and not getattr(self,'snapshot_schema_logged',False):
+            self.snapshot_schema_logged=True;msg=payload.get('msg',{})
+            print(json.dumps(dict(event='shadow_book_schema',yes_fp_levels=len(msg.get('yes_dollars_fp',[])),
+                no_fp_levels=len(msg.get('no_dollars_fp',[])),has_yes_dollars='yes_dollars' in msg,
+                has_no_dollars='no_dollars' in msg,has_legacy_yes='yes' in msg)),flush=True)
         if source=='market':
             series=payload['market']['ticker'].split('-')[0]
             p=next(p for p in self.profiles if p['series']==series)
@@ -193,6 +201,11 @@ class HostedRun(ForwardRun):
                 self.health_log_at=time.monotonic()+30
                 print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                     valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
+                    mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
+                    two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
+                    halted_markets=sum(t in self.strategy.halted for t in active),
+                    prior_halted_markets=sum(t in self.prior_halts for t in active),
+                    phase_counts={str(phase):sum(b.phases.get(t)==phase for t in active for b in [self.strategy.owner(t)] if b) for phase in (1,2,3)},
                     awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
                         self.engine.markets[t]['close']<=now and t not in self.engine.settled),
                     spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
