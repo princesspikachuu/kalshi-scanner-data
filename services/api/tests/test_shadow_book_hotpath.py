@@ -51,7 +51,8 @@ class BookHotpathTests(unittest.TestCase):
 
 class CachedFeeBoundaryTests(unittest.TestCase):
     def test_cache_switches_at_exact_scheduled_boundary_and_accepts_earlier_lookup(self):
-        now=time.time();stamp=lambda t:datetime.fromtimestamp(t,timezone.utc).isoformat()
+        # Match exchange ISO timestamp precision exactly at the boundary.
+        now=float(int(time.time()));stamp=lambda t:datetime.fromtimestamp(t,timezone.utc).isoformat()
         fees=Fees(Mock());fees.cache['t']=dict(at=now,base=('quadratic',1),changes=[],events=[
             dict(scheduled_ts=stamp(now+10),fee_type_override='quadratic_with_maker_fees',fee_multiplier_override=2),
             dict(scheduled_ts=stamp(now+20),fee_type_override=None,fee_multiplier_override=None)])
