@@ -2,26 +2,53 @@ import {escapeHTML as e} from './demo-client.mjs';
 export const dollars=value=>value===null||value===undefined?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(value));
 export const pnlClass=value=>value===null||value===undefined?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
 const metric=(label,value,note='')=>`<div><span>${e(label)}</span><strong>${e(dollars(value))}</strong>${note?`<small>${e(note)}</small>`:''}</div>`;
+const finite=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+export function valueBounds(a,positions=[],kind='position'){
+ if(!a)return null;
+ const exact=a[kind+'_value'];
+ if(finite(exact))return {low:Number(exact),high:Number(exact),unpriced:0};
+ const quantity=kind==='position'?Number(a.active_contracts||0)+Number(a.pending_contracts||0):Number(a[kind+'_contracts']||0);
+ if(!quantity)return null;
+ const priced=positions.filter(p=>(kind==='position'||p.state===kind)&&finite(p.value));
+ const known=priced.reduce((s,p)=>s+Number(p.value),0);
+ const missing=Math.max(0,quantity-priced.reduce((s,p)=>s+Number(p.quantity),0));
+ return {low:known,high:known+missing,unpriced:missing};
+}
+const shifted=(range,amount)=>range&&finite(amount)?{...range,low:range.low+Number(amount),high:range.high+Number(amount)}:null;
+export const rangeText=range=>!range?'—':dollars(range.low)===dollars(range.high)?dollars(range.low):`${dollars(range.low)} to ${dollars(range.high)}`;
+const rangeClass=range=>!range?'':range.high<0?'negative':range.low>0?'positive':'';
+const rangedMetric=(label,range,note)=>`<div><span>${e(label)}</span><strong class="${range?.unpriced?'value-range':''}">${e(rangeText(range))}</strong><small>${e(note)}</small></div>`;
+export function accountPnl(a,positions=[]){
+ if(finite(a?.total_pnl))return {text:dollars(a.total_pnl),className:pnlClass(a.total_pnl),uncertain:false};
+ const range=shifted(valueBounds(a,positions),Number(a?.realized_pnl)-Number(a?.position_cost));
+ return {text:rangeText(range),className:rangeClass(range),uncertain:!!range?.unpriced};
+}
 export function pendingLabel(a){
  if(!a||!Number(a.pending_contracts))return 'No payment pending';
  if(a.pending_payout_state==='confirmed')return `Confirmed payout ${dollars(a.pending_value)}`;
  if(a.pending_payout_state==='estimated')return `Estimated payout ${dollars(a.pending_value)} · outcome unconfirmed`;
  return `Outcome unconfirmed · up to ${dollars(a.pending_max_payout)}`;
 }
-export function exposureMarkup(a){
+export function exposureMarkup(a,positions=[]){
  if(!a)return '<p class="small">Waiting for the worker’s accounting snapshot…</p>';
- return `<div class="money-grid bot-money">${metric('Unfilled buy bids',a.unfilled_bids,'Cash reserved, not spent')}${metric('Active positions · cost',a.active_cost,`Current value ${dollars(a.active_value)}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}${metric('Open position P/L',a.unrealized_pnl,'Current and pending positions · after entry fees')}</div>`;
+ const unreal=finite(a.unrealized_pnl)?{low:Number(a.unrealized_pnl),high:Number(a.unrealized_pnl),unpriced:0}:shifted(valueBounds(a,positions),-Number(a.position_cost));
+ return `<div class="money-grid bot-money">${metric('Unfilled buy bids',a.unfilled_bids,'Cash reserved, not spent')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}${rangedMetric('Open position P/L',unreal,unreal?.unpriced?'Estimated range · some positions unpriced':'Current and pending positions · after entry fees')}</div>`;
 }
-export function accountMarkup(account,now=Date.now()/1000){
+export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  if(!account)return '<p>Waiting for a consistent accounting snapshot…</p>';
  const a=account.portfolio,q=account.quality||{},noVerified=!Number(q.verified_cycles),gaps=Number(q.gap_cycles||0);
  const warning=noVerified?'No verified completed cycles yet. Account P/L includes unverified simulated trades.':gaps?`${gaps} cycles had data gaps. Every simulated trade is still included in account P/L.`:'';
- return `<div class="portfolio-headlines"><div><span>Portfolio value · estimated</span><strong>${e(dollars(a.equity))}</strong><small>Cash plus the current value of positions</small></div><div><span>Total P/L · after fees</span><strong class="${pnlClass(a.total_pnl)}">${e(dollars(a.total_pnl))}</strong><small>Lifetime · all bots and versions</small></div></div>
- <div class="portfolio-breakdown">${metric('Realized P/L',a.realized_pnl,'Closed trades and settled contracts · after fees')}${metric('Unrealized P/L',a.unrealized_pnl,'Value change of positions still held')}${metric('Virtual funds added',a.deposits,'Starting bankroll plus refills; not profit')}</div>
- <div class="money-grid">${metric('Available cash',a.available_cash,`Total cash ${dollars(a.cash)}`)}${metric('Unfilled buy bids',a.unfilled_bids,'Reserved from cash; includes estimated fees')}${metric('Active positions · cost',a.active_cost,`Current value ${dollars(a.active_value)}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}</div>
+ const value=valueBounds(a,positions),uncertain=!!value?.unpriced;
+ const equity=finite(a.equity)?{low:Number(a.equity),high:Number(a.equity),unpriced:0}:shifted(value,a.cash);
+ const pnl=finite(a.total_pnl)?{low:Number(a.total_pnl),high:Number(a.total_pnl),unpriced:0}:shifted(equity,-Number(a.deposits));
+ const unreal=finite(a.unrealized_pnl)?{low:Number(a.unrealized_pnl),high:Number(a.unrealized_pnl),unpriced:0}:shifted(value,-Number(a.position_cost));
+ return `<div class="portfolio-headlines"><div><span>Portfolio value · ${uncertain?'estimated range':'estimated'}</span><strong class="${uncertain?'value-range':''}">${e(rangeText(equity))}</strong><small>Cash plus the current value of positions</small></div><div><span>Total P/L · ${uncertain?'estimated range · ':''}after fees</span><strong class="${rangeClass(pnl)} ${uncertain?'value-range':''}">${e(rangeText(pnl))}</strong><small>Lifetime · all bots and versions</small></div></div>
+ ${uncertain?`<p class="account-warning">${e(String(Number(value.unpriced.toFixed(2))))} contracts have no usable bid quote. Known cash and priced positions are included; unpriced contracts are valued from $0 to $1 each. These ranges are not predicted payouts.</p>`:''}
+ <div class="portfolio-breakdown">${metric('Realized P/L',a.realized_pnl,'Closed trades and settled contracts · after fees')}${rangedMetric('Unrealized P/L',unreal,uncertain?'Estimated range for positions still held':'Value change of positions still held')}${metric('Virtual funds added',a.deposits,'Starting bankroll plus refills; not profit')}</div>
+ <div class="money-grid">${metric('Available cash',a.available_cash,`Total cash ${dollars(a.cash)}`)}${metric('Unfilled buy bids',a.unfilled_bids,'Reserved from cash; includes estimated fees')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}</div>
  <p class="small accounting-equation">Portfolio value = cash (including reserved bids) + active position value + estimated pending payout. Position cost is shown separately from value. Values round to cents on screen.</p>
  ${now-account.at>30?`<p class="account-warning">Accounting snapshot is ${e(String(Math.floor(now-account.at)))} seconds old. These figures may be stale.</p>`:''}
- ${a.equity===null?'<p class="account-warning">A position has no current verified quote. Portfolio value and unrealized P/L are unavailable until it can be valued.</p>':''}
+ ${a.equity===null&&!equity?'<p class="account-warning">A position has no current verified quote. Its value is unavailable; confirmed cash and realized P/L remain shown.</p>':''}
  ${warning?`<p class="account-warning">${e(warning)}</p>`:''}
  ${Math.abs(Number(a.reconciliation_difference||0))>.005?`<p class="account-warning">${e(dollars(a.reconciliation_difference))} of account P/L is not assigned to the current bot cards. Account totals come from the wallet ledger.</p>`:''}
  <p class="small">${e(String(q.verified_cycles||0))} verified cycle reports · ${e(String(q.gap_cycles||0))} with data gaps · Accounting updated ${e(new Date(account.at*1000).toLocaleTimeString())}</p>`;

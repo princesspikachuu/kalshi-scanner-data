@@ -150,7 +150,7 @@ test('new individual categories do not show invented aggregate research statisti
  assert.equal(queried,false);
 });
 
-import {accountMarkup,exposureMarkup,pendingLabel,pnlClass} from '../apps/web/shadow-view.mjs';
+import {accountMarkup,exposureMarkup,pendingLabel,pnlClass,valueBounds,accountPnl} from '../apps/web/shadow-view.mjs';
 test('shadow totals show wallet losses even with zero verified cycles and label costs separately',()=>{
  const portfolio={total_pnl:'-3',equity:'97',realized_pnl:'-18.7',unrealized_pnl:'15.7',deposits:'100',
   cash:'70',available_cash:'60',unfilled_bids:'10',active_cost:'11',active_value:'20',pending_cost:'.3',
@@ -167,11 +167,17 @@ test('pending payout labels distinguish confirmed returns, estimates and unavail
  assert.equal(pendingLabel({pending_contracts:'10',pending_payout_state:'unknown',pending_max_payout:'10'}),'Outcome unconfirmed · up to $10.00');
  assert.equal(pendingLabel({pending_contracts:'0'}),'No payment pending');
 });
-test('unknown portfolio marks show unavailable figures rather than invented zero pnl',()=>{
- const html=accountMarkup({portfolio:{total_pnl:null,equity:null,realized_pnl:'-2',unrealized_pnl:null,pending_contracts:'0'},quality:{},at:1000});
- assert.match(html,/position has no current verified quote/);
- assert.match(html,/unavailable until it can be valued/);
- assert.ok(!html.includes('positive'));
+test('missing marks retain known account values and bound only unpriced contracts',()=>{
+ const portfolio={cash:'80',deposits:'100',position_cost:'20',active_contracts:'20',pending_contracts:'0',
+  equity:null,total_pnl:null,unrealized_pnl:null,position_value:null,active_value:null,realized_pnl:'0'};
+ const positions=[{quantity:'10',value:'12',state:'active'},{quantity:'10',value:null,state:'active'}];
+ assert.deepEqual(valueBounds(portfolio,positions),{low:12,high:22,unpriced:10});
+ const html=accountMarkup({portfolio,quality:{},at:1000},1000,positions);
+ for(const token of ['$92.00 to $102.00','-$8.00 to $2.00','10 contracts have no usable bid quote','not predicted payouts'])assert.ok(html.includes(token),token);
+ assert.ok(!html.includes('class="positive'));
+ assert.deepEqual(valueBounds(portfolio,[]),{low:0,high:20,unpriced:20});
+ const bot=accountPnl({...portfolio,realized_pnl:'-2',position_cost:'10',active_contracts:'10'},[{quantity:'10',value:null}]);
+ assert.equal(bot.text,'-$12.00 to -$2.00');assert.equal(bot.className,'negative');assert.equal(bot.uncertain,true);
 });
 test('shadow accounting freshness is visible when the worker snapshot stops updating',()=>{
  const data={portfolio:{pending_contracts:'0'},quality:{},at:1000};
