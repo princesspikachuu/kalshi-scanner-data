@@ -59,6 +59,16 @@ class HostedRun(ForwardRun):
         await self.put('rest_settlement_confirmed',dict(ticker=ticker,status=raw['status'],result=raw['result']))
         return False  # Only the serialized, audited consumer may release the barrier.
 
+    def resnapshot_allowed(self,ticker):
+        try:self.verified_fees.schedule(ticker,time.time());return True
+        except Exception:return False
+
+    async def market_metadata(self,market,series):
+        # Fees.load already verifies series metadata; do not request it twice.
+        fee=await self.fee_policy(market,{})
+        kind,m=self.verified_fees.schedule(market['ticker'],time.time())
+        return dict(fee_type=kind,fee_multiplier=m),fee
+
     async def fee_policy(self,market,metadata):
         ticker=market['ticker']
         async with self.fee_locks.setdefault(ticker,asyncio.Lock()):
@@ -130,6 +140,8 @@ class HostedRun(ForwardRun):
                 'orderbook_snapshot','orderbook_delta','trade'):
             # Consume subscription sequence without applying unverified inputs.
             # The invalid book must receive a fresh snapshot after fees recover.
+            if payload.get('type')=='orderbook_snapshot':
+                self.engine.books[payload['msg']['market_ticker']].sid=payload.get('sid')
             payload=dict(payload,type='fee_blocked')
         return payload
 
@@ -207,6 +219,7 @@ class HostedRun(ForwardRun):
                     two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
                     halted_markets=sum(t in self.strategy.halted for t in active),
                     prior_halted_markets=sum(t in self.prior_halts for t in active),
+                    spike_cooldown_seconds=max(0,self.engine.safety_until-now),
                     phase_counts={str(phase):sum(b.phases.get(t)==phase for t in active for b in [self.strategy.owner(t)] if b) for phase in (1,2,3)},
                     awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
                         self.engine.markets[t]['close']<=now and t not in self.engine.settled),
@@ -246,6 +259,7 @@ class HostedRun(ForwardRun):
                 self.engine.orders={k:o for k,o in self.engine.orders.items() if o.ticker!=ticker}
                 for bot in self.strategy.bots.values():
                     bot.phases.pop(ticker,None);bot.emergency.pop(ticker,None);bot.last_exit.pop(ticker,None)
+                    bot.safety_retries={k for k in bot.safety_retries if k[0]!=ticker}
                     bot.entered={k for k in bot.entered if k[0]!=ticker};bot.locked={k for k in bot.locked if k[0]!=ticker}
             if retired:
                 self.rejection_logs={k:v for k,v in getattr(self,'rejection_logs',{}).items() if k[1] not in retired}

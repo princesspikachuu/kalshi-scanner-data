@@ -394,6 +394,12 @@ class Engine:
         self.closed_reports, self.settled = set(), set()
         self.strategy = None
         self.gap_reasons = {}
+        self.safety_until = 0.0
+        self.book_feed_at = {}
+
+    def book_fresh(self,ticker):
+        book=self.books[ticker]
+        return book.valid and self.now-max(book.at,self.book_feed_at.get(book.sid,0))<=self.stale_seconds
 
     def log(self, kind: str, order: Order | None = None, **fields):
         if order:
@@ -487,7 +493,7 @@ class Engine:
     def arrive(self, order: Order):
         book = self.books[order.ticker]
         market = self.markets[order.ticker]
-        if (not book.valid or self.now-book.at > self.stale_seconds or
+        if (not self.book_fresh(order.ticker) or
                 self.now >= market['close'] or order.ticker in self.settled):
             order.status, order.reserved = 'rejected', ZERO
             self.log('ORDER_REJECTED', order, reason='stale/missing/closed book')
@@ -577,7 +583,7 @@ class Engine:
             return
         self.trade_ids.add(ident)
         book = self.books[ticker]
-        if not book.valid or self.now-book.at > self.stale_seconds:
+        if not self.book_fresh(ticker):
             return
         aggressor = trade.get('taker_outcome_side', trade.get('taker_side'))
         if aggressor not in ('yes','no'):
@@ -669,16 +675,20 @@ class Engine:
         elif source == 'spot':
             self.spot.add(float(payload['price']), payload['event_time'], now)
             if self.strategy and self.spot.spike:
+                self.safety_until=max(self.safety_until,now+10)
                 for ticker in self.markets:
                     if ticker not in self.closed_reports:
-                        self.strategy.halted.add(ticker)
+                        self.strategy.safety_cancel(ticker)
                         self.cancel_buys(ticker)
-                        self.log('SPOT_SAFETY_CANCEL', ticker=ticker, reason='2.5 sigma strategy valve')
+                        self.log('SPOT_SAFETY_CANCEL', ticker=ticker, reason='2.5 sigma strategy valve; stable 10-second cooldown')
+        elif source == 'book_heartbeat':
+            sid=payload.get('sid')
+            if sid in self.sequences:self.book_feed_at[sid]=now
         elif source == 'metadata_retry':
             self.log('METADATA_RETRY',ticker=payload.get('ticker'),reason=payload['reason'],
                      details=json.dumps({k:payload.get(k) for k in ('scope','series','status','code')}))
         elif source == 'gap':
-            self.sequences.clear()
+            self.sequences.clear();self.book_feed_at.clear()
             self.spot = Spot()
             for ticker in list(self.books):
                 if ticker not in self.settled:
@@ -725,6 +735,7 @@ class Engine:
                             # Subscription sequence is shared across subscribed markets.
                             self.books[ticker].seq = previous_seq
                         self.books[ticker].apply(payload, now)
+                        self.book_feed_at[sid]=now
                     except ValueError as exc:
                         self.data_gap(ticker, str(exc))
                         raise
@@ -739,7 +750,7 @@ class Engine:
         if source == 'clock':
             for ticker, book in self.books.items():
                 if self.now < self.markets[ticker]['close'] and book.valid and (
-                        self.now-book.at > self.stale_seconds or
+                        not self.book_fresh(ticker) or
                         (self.spot.at and self.now-self.spot.at > self.stale_seconds)):
                     self.data_gap(ticker, 'market/spot data stale')
         if self.strategy:
@@ -760,9 +771,15 @@ class ConvexityStrategy:
         self.series, self.name = series, name or series
         self.enabled = True
         self.phases, self.entered, self.locked = {}, set(), set()
+        self.safety_retries=set()
         self.halted, self.emergency, self.last_exit = set(), {}, {}
         self.e.fill_callback = self.on_fill
         self.e.strategy = self
+
+    def safety_cancel(self,ticker):
+        for order in self.e.orders.values():
+            if order.ticker==ticker and order.maker and order.status in ('pending','resting'):
+                self.safety_retries.add((ticker,order.phase,order.side))
 
     def on_fill(self, order: Order, quantity: D):
         self.locked.add((order.ticker, phase_at(self.e.markets[order.ticker]['close'], self.e.now)))
@@ -790,7 +807,7 @@ class ConvexityStrategy:
                 self.phases[ticker] = phase
                 self.e.log('PHASE', ticker=ticker, details=str(phase))
             book = self.e.books[ticker]
-            if not book.valid or self.e.now-book.at > self.e.stale_seconds:
+            if not self.e.book_fresh(ticker):
                 continue
             for lot in self.e.wallet.lots:
                 if lot.ticker != ticker or phase not in (1,2):
@@ -813,7 +830,15 @@ class ConvexityStrategy:
                         self.last_exit[ticker] = self.e.now
                         self.e.place(ticker, side, 'sell', sum((l.quantity for l in targets), ZERO),
                                      D('.01'), maker=False, phase=phase, targets=[l.id for l in targets])
-            if (self.enabled and book.bid('yes') is not None and book.bid('no') is not None and phase in (1,2) and ticker not in self.halted and ticker not in self.e.settled and
+            for key in tuple(self.safety_retries):
+                if key[0]!=ticker:continue
+                if key[1]!=phase or (ticker,phase) in self.locked:
+                    self.safety_retries.discard(key);continue
+                if self.e.now>=self.e.safety_until and not any(o.ticker==ticker and o.maker and
+                        o.phase==phase and o.side==key[2] and o.status in ('pending','resting') for o in self.e.orders.values()):
+                    self.entered.discard(key);self.safety_retries.discard(key)
+                    self.e.log('SAFETY_REENTRY_READY',ticker=ticker,side=key[2],reason='cooldown ended; prior bid unfilled')
+            if (self.enabled and self.e.now>=self.e.safety_until and book.bid('yes') is not None and book.bid('no') is not None and phase in (1,2) and ticker not in self.halted and ticker not in self.e.settled and
                     self.e.wallet.stat(ticker).valid and (ticker,phase) not in self.locked and
                     (not self.require_spot or self.e.spot.ready(self.e.now))):
                 price = D('.10') if phase==1 else D('.03')
@@ -846,6 +871,10 @@ class StrategyFleet:
 
     def owner(self, ticker):
         return self.bots.get(ticker.split('-')[0])
+
+    def safety_cancel(self,ticker):
+        bot=self.owner(ticker)
+        if bot:bot.safety_cancel(ticker)
 
     def on_fill(self, order, quantity):
         bot = self.owner(order.ticker)

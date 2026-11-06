@@ -1,5 +1,6 @@
 """Atomic hosted wallet/checkpoint and audit records under the existing trading fence."""
 import json,time,tempfile
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 from psycopg.types.json import Jsonb
@@ -39,9 +40,10 @@ class HostedAudit:
     def commit(self,records):
         self.guard();data=self.snapshot()
         batch=[entry(KEY,{},data)]
-        commands=[]
+        commands=[];written_events=[]
         for now,kind,fields in records:
             event=json.loads(json.dumps(dict(time=now,event=kind,cash=str(self.engine.wallet.cash),**fields),default=str))
+            written_events.append(event)
             batch.append(entry('demo/shadow/event/'+str(uuid4()),dict(kind=kind,ticker=fields.get('ticker'),time=now),event))
             if kind=='REFILL' and self.command_key:commands.append((Jsonb(dict(done=True,at=now)),self.command_key))
             if kind=='CYCLE_REPORT':
@@ -54,6 +56,11 @@ class HostedAudit:
             with c.cursor() as cur:
                 cur.executemany(UPSERT,batch)
                 if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
+        counts=Counter(e['event'] for e in written_events)
+        if any(k in counts for k in ('ORDER_SUBMITTED','MAKER_RESTING','FILL','CANCELLED','SPOT_SAFETY_CANCEL','SAFETY_REENTRY_READY','IOC_COMPLETE','DATA_GAP')):
+            print(json.dumps(dict(event='shadow_audit_committed',counts=dict(counts),
+                fills=[e for e in written_events if e['event']=='FILL'],
+                gaps=[e for e in written_events if e['event']=='DATA_GAP'],real_orders_enabled=False)),flush=True)
         self.last_snapshot=time.monotonic()
     def checkpoint(self):
         self.guard()

@@ -84,6 +84,10 @@ class ForwardRun:
     async def fee_policy(self,market,metadata):
         return FeePolicy.from_series(metadata)
 
+    async def market_metadata(self,market,series):
+        metadata=(await self.api.fetch('/series/'+series))['series']
+        return metadata,await self.fee_policy(market,metadata)
+
     async def settlement_observed(self,ticker):
         return ticker in self.engine.settled
 
@@ -154,8 +158,7 @@ class ForwardRun:
                     self.discovery_retry_at[series]=now+(2 if series in self.known_active else 900)
                     continue
                 market=min(candidates,key=lambda m:ts(m['close_time']))
-                metadata=(await self.api.fetch('/series/'+series))['series']
-                fee=await self.fee_policy(market,metadata)
+                metadata,fee=await self.market_metadata(market,series)
                 normalized=dict(ticker=market['ticker'],close=ts(market['close_time']),
                     open=ts(market['open_time']),event_ticker=market['event_ticker'],
                     bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile['version'],
@@ -174,6 +177,8 @@ class ForwardRun:
             await self.discover_once()
             await asyncio.sleep(max(2,PRODUCTION_READS.remaining()))
 
+    def resnapshot_allowed(self,ticker):return True
+
     async def kalshi(self):
         delay = .25
         while not self.done.is_set():
@@ -186,8 +191,14 @@ class ForwardRun:
                     subscribed, ident = set(), 2
                     book_sid=trade_sid=None
                     last_snapshot_request = 0.0
+                    last_heartbeat=time.monotonic()
                     connected_at = time.monotonic()
                     while not self.done.is_set():
+                        if book_sid is not None and time.monotonic()-last_heartbeat>=1:
+                            pong=await ws.ping()
+                            await asyncio.wait_for(pong,self.engine.stale_seconds)
+                            await self.put('book_heartbeat',dict(sid=book_sid))
+                            last_heartbeat=time.monotonic()
                         # Keep lifecycle subscription across rolls to avoid missing settlement events.
                         desired={t for t in self.selected.values() if t in self.engine.markets}
                         additions=desired-subscribed
@@ -211,7 +222,7 @@ class ForwardRun:
                             subscribed.update(additions)
                         if book_sid is not None and time.time()-last_snapshot_request>1:
                             invalid=[(t,self.engine.books[t]) for t in desired if not self.engine.books[t].valid
-                                     and self.engine.books[t].sid == book_sid]
+                                     and self.engine.books[t].sid == book_sid and self.resnapshot_allowed(t)]
                             if invalid:
                                 await ws.send(json.dumps(dict(id=ident,cmd='update_subscription',params=dict(
                                     sid=book_sid,market_tickers=[t for t,b in invalid],action='get_snapshot'))))

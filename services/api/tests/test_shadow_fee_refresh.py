@@ -32,6 +32,8 @@ class FeeInputTests(unittest.TestCase):
         prepared=self.run.prepare_fees('kalshi',payload,1000)
         self.run.engine.handle('kalshi',prepared,1000)
         self.assertFalse(self.run.engine.books['WTI'].valid)
+        self.assertEqual(self.run.engine.books['WTI'].sid,1)
+        self.assertFalse(self.run.resnapshot_allowed('WTI'))
         self.assertFalse(self.run.engine.wallet.stat('WTI').valid)
         self.assertTrue(self.run.engine.books['BTC'].valid)
         self.assertEqual(self.run.engine.sequences[1],1)

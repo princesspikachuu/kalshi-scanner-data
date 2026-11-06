@@ -18,4 +18,4 @@ class ReadBudget:
     def reject(self,seconds=30):
         with self.lock:self.blocked_until=max(self.blocked_until,time.monotonic()+seconds)
 
-PRODUCTION_READS=ReadBudget()
+PRODUCTION_READS=ReadBudget(interval=1/3)  # Three REST reads/sec across discovery and fees.

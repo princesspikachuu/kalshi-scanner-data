@@ -4,7 +4,7 @@ from .core import D, ZERO, Wallet, Lot, Stats, Order, Book, FeePolicy
 
 
 def encode(engine, fleet):
-    return dict(schema=1, now=engine.now, serial=engine.serial,rng_state=engine.rng.getstate(),
+    return dict(schema=1, now=engine.now,safety_until=engine.safety_until, serial=engine.serial,rng_state=engine.rng.getstate(),
         wallet=dict(cash=str(engine.wallet.cash),deposits=str(engine.wallet.deposits),
             lots=[asdict(l) for l in engine.wallet.lots],
             stats={k:asdict(v) for k,v in engine.wallet.stats.items()}),
@@ -12,7 +12,7 @@ def encode(engine, fleet):
         orders={k:asdict(v) for k,v in engine.orders.items()},pending=engine.pending,
         closed_reports=sorted(engine.closed_reports),settled=sorted(engine.settled),
         fleet={series:dict(phases=b.phases,entered=sorted(b.entered),locked=sorted(b.locked),
-            halted=sorted(b.halted),emergency=b.emergency,last_exit=b.last_exit)
+            halted=sorted(b.halted),safety_retries=sorted(b.safety_retries),emergency=b.emergency,last_exit=b.last_exit)
             for series,b in fleet.bots.items()})
 
 
@@ -26,6 +26,7 @@ def restore(engine,fleet,data):
     decimal_stats=[k for k,v in asdict(Stats()).items() if isinstance(v,D)]
     engine.wallet.stats={k:Stats(**dict(v,**{field:D(v[field]) for field in decimal_stats}))
                          for k,v in w['stats'].items()}
+    engine.safety_until=data.get('safety_until',0)
     engine.markets=data['markets'];engine.serial=data['serial'];engine.now=data['now']
     engine.fees={k:FeePolicy(**{field:D(value) for field,value in v.items()}) for k,v in data['fees'].items()}
     engine.books={ticker:Book() for ticker in engine.markets}
@@ -39,6 +40,7 @@ def restore(engine,fleet,data):
         b=fleet.bots[series]
         b.phases=info['phases'];b.entered={tuple(v) for v in info['entered']}
         b.locked={tuple(v) for v in info['locked']};b.halted.update(info['halted'])
+        b.safety_retries={tuple(v) for v in info.get('safety_retries',[])}
         b.emergency=info['emergency'];b.last_exit=info['last_exit']
     # Never replay hypothetical submissions across unobserved downtime. Wallet/fills
     # remain durable; interrupted cycles are excluded and entries wait for new cycles.
