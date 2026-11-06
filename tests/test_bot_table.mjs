@@ -149,3 +149,32 @@ test('new individual categories do not show invented aggregate research statisti
  }
  assert.equal(queried,false);
 });
+
+import {accountMarkup,exposureMarkup,pendingLabel,pnlClass} from '../apps/web/shadow-view.mjs';
+test('shadow totals show wallet losses even with zero verified cycles and label costs separately',()=>{
+ const portfolio={total_pnl:'-3',equity:'97',realized_pnl:'-18.7',unrealized_pnl:'15.7',deposits:'100',
+  cash:'70',available_cash:'60',unfilled_bids:'10',active_cost:'11',active_value:'20',pending_cost:'.3',
+  pending_contracts:'10',pending_value:'7',pending_payout_state:'estimated',reconciliation_difference:'0'};
+ const html=accountMarkup({portfolio,quality:{verified_cycles:0,gap_cycles:18},at:1000});
+ for(const token of ['Total P/L','-$3.00','$97.00','-$18.70','$15.70','No verified completed cycles',
+  'Unfilled buy bids','Active positions · cost','Awaiting settlement · cost','outcome unconfirmed'])assert.ok(html.includes(token),token);
+ assert.equal(pnlClass('-3'),'negative');assert.equal(pnlClass(null),'');
+ assert.ok(exposureMarkup(portfolio).includes('Cash reserved, not spent'));
+});
+test('pending payout labels distinguish confirmed returns, estimates and unavailable prices',()=>{
+ assert.equal(pendingLabel({pending_contracts:'10',pending_payout_state:'confirmed',pending_value:'10'}),'Confirmed payout $10.00');
+ assert.match(pendingLabel({pending_contracts:'10',pending_payout_state:'estimated',pending_value:'7'}),/Estimated payout \$7.00.*unconfirmed/);
+ assert.equal(pendingLabel({pending_contracts:'10',pending_payout_state:'unknown',pending_max_payout:'10'}),'Outcome unconfirmed · up to $10.00');
+ assert.equal(pendingLabel({pending_contracts:'0'}),'No payment pending');
+});
+test('unknown portfolio marks show unavailable figures rather than invented zero pnl',()=>{
+ const html=accountMarkup({portfolio:{total_pnl:null,equity:null,realized_pnl:'-2',unrealized_pnl:null,pending_contracts:'0'},quality:{},at:1000});
+ assert.match(html,/position has no current verified quote/);
+ assert.match(html,/unavailable until it can be valued/);
+ assert.ok(!html.includes('positive'));
+});
+test('shadow accounting freshness is visible when the worker snapshot stops updating',()=>{
+ const data={portfolio:{pending_contracts:'0'},quality:{},at:1000};
+ assert.ok(!accountMarkup(data,1029).includes('may be stale'));
+ assert.match(accountMarkup(data,1031),/31 seconds old/);
+});
