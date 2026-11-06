@@ -94,7 +94,8 @@ def backup(store,objects):
             OR (idempotency_key>='live/bot/' AND idempotency_key<'live/bot/zzzz')
             OR (idempotency_key>='live/order/' AND idempotency_key<'live/order/zzzz')
             OR (idempotency_key>='live/write/' AND idempotency_key<'live/write/zzzz')
-            OR idempotency_key IN ('demo/policy','demo/account','demo/funding','demo/reset','trading/mode','live/budget','live/trial','live/risk','live/account') LIMIT 701""").fetchall()
+            OR (idempotency_key>='live/onboarding-op/' AND idempotency_key<'live/onboarding-op/zzzz')
+            OR idempotency_key IN ('live/onboarding','demo/policy','demo/account','demo/funding','demo/reset','trading/mode','live/budget','live/trial','live/risk','live/account') LIMIT 701""").fetchall()
     if len(rows)>700:raise ValueError('Backup chunk capacity reached')
     reference=put_verified(objects,'backups',dict(version=1,created_at=time.time(),records=rows))
     # Reading and parsing the written object is a bounded restore validation.

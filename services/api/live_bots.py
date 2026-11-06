@@ -2,6 +2,7 @@
 import os,time
 from decimal import Decimal,ROUND_DOWN
 from uuid import UUID,uuid4
+from typing import Literal
 from pydantic import BaseModel,ConfigDict,Field,StrictInt,model_validator
 from fastapi import Request,HTTPException
 from psycopg.types.json import Jsonb
@@ -39,6 +40,7 @@ def sizing(config,budget):
     return result
 
 def install_live_bots(app,auth,mutate,pool):
+    from services.live.onboarding import public as public_onboarding
     from services.live.store import LiveStore
     from services.live.risk import value
     from services.trading.mode import read_mode,require_demo,LOCK,ModeConflict
@@ -61,6 +63,7 @@ def install_live_bots(app,auth,mutate,pool):
             connection=dict(subaccount=connection.get('subaccount'),verified_at=connection.get('verified_at')),worker_mode=mode,health=health,
             vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),pilot_contracts=1,budget=budget,bots=bots,orders=orders,
             risk=value(store,'risk'),account=value(store,'account'),pilot_result=value(store,'pilot-result'),
+            onboarding=public_onboarding(value(store,'onboarding')),
             message='One bot, one YES contract at 3¢. No automatic repeat or expansion. Demo must drain before LIVE runs.')
     @app.post('/live/budget')
     def budget(body:TrialBudget,request:Request):
@@ -199,3 +202,29 @@ def install_live_bots(app,auth,mutate,pool):
             c.execute("UPDATE research_job SET progress=progress||'{\"desired\":\"paused\"}'::jsonb WHERE idempotency_key>='live/bot/' AND idempotency_key<'live/bot/zzzz'")
             write_mode(c,dict(mode='demo',requested='demo',message='Worker returned to Demo. Resume desired Demo bots explicitly.'))
         return dict(contract='live-bots-v2',environment='live',execution_enabled=False,saved=True)
+
+    class OnboardingRequest(BaseModel):
+        model_config=ConfigDict(extra='forbid')
+        action:Literal['check','upgrade','create','prepare','fund','connect']
+        key_id:str=Field(min_length=1,max_length=128,repr=False)
+        private_key:str=Field(min_length=100,max_length=12000,repr=False)
+        bot:UUID
+        draft:UUID|None=None
+        confirmation:str=Field(default='',max_length=64)
+    @app.post('/live/onboarding')
+    def onboarding(body:OnboardingRequest,request:Request):
+        mutate(request);query(request)
+        from services.live.onboarding import Onboarding,SetupExchange,SetupError
+        from services.demo.exchange import CredentialInputError,ExchangeFailure
+        exchange=None
+        try:
+            exchange=SetupExchange(body.key_id,body.private_key)
+            setup=Onboarding(store,exchange,os.environ.get('DEMO_VAULT_KEY'))
+            state=setup.check(str(body.bot)) if body.action=='check' else setup.perform(body.action,str(body.bot),str(body.draft) if body.draft else None,body.confirmation)
+            return dict(contract='live-bots-v2',environment='live',execution_enabled=False,onboarding=state)
+        except (SetupError,CredentialInputError) as error:raise HTTPException(409,str(error)) from None
+        except ExchangeFailure as error:
+            raise HTTPException(503,'Kalshi setup access could not be verified. Check the temporary setup key and refresh; no automatic retry or trading will occur.') from None
+        except Exception:raise HTTPException(503,'Setup could not be verified. The temporary key was not saved. Refresh setup before repeating an action.') from None
+        finally:
+            if exchange:exchange.close()

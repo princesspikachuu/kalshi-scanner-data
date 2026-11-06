@@ -452,3 +452,18 @@ test('LIVE bot cards make trial basis and paused state explicit and escape copie
  const html=liveBotCard({key:'live-one',source_demo_revision:7,config:{name:'<img src=x>',cycle_buy_cents:3,cycle_entry_minutes:5,cycle_exit_mode:'late_threshold',late_exit_minutes:5,late_exit_threshold_cents:40,late_exit_reprice_cents:5,squares:[{asset:'btc'}],bid_percent:.5,market_percent:1,bot_percent:3},sizing:{bid_cents:12,market_cents:25,bot_cents:75,contracts_per_bid:4}});
  assert.ok(html.includes('Paused'));assert.ok(html.includes('% of trial'));assert.ok(html.includes('$0.12'));assert.ok(html.includes('Independent LIVE history'));assert.ok(!html.includes('<img'));assert.ok(!html.includes('Resume'));
 });
+
+test('guided LIVE setup gates every write and never repeats pending funding',async()=>{
+ const {setupSteps}=await import('../apps/web/live-onboarding.mjs');
+ const enabled=s=>setupSteps(s).filter(x=>x.enabled).map(x=>x.action);
+ const state={can_write:true,eligible:true,market_running:true,subaccount:2,account_cents:0,market_cents:0,primary_market_cents:5000,prepare_cents:0};
+ assert.deepEqual(enabled(state),['fund']);
+ assert.deepEqual(enabled({...state,busy:'fund'}),[]);
+ assert.deepEqual(enabled({...state,account_cents:5000,market_cents:5000}),['connect']);
+ assert.deepEqual(enabled({...state,account_cents:5001,market_cents:5001}),[]);
+ assert.deepEqual(enabled({...state,can_write:false}),[]);
+ assert.deepEqual(enabled({...state,eligible:false}),['upgrade']);
+ assert.deepEqual(enabled({...state,subaccount:null}),['create']);
+ assert.deepEqual(enabled({...state,subaccount:null,market_running:false}),[]);
+ assert.deepEqual(enabled({...state,primary_market_cents:0,prepare_cents:5000,source_index:0}),['prepare']);
+});

@@ -5,7 +5,7 @@ const ROUTES=new Map([
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
 const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/live-paper');STATIC.add('/live-paper.html');STATIC.add('/live-paper.mjs');STATIC.add('/live-paper-view.mjs');STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
-for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs','/order-detail.mjs','/activity-filters.mjs','/live-bots','/live-bots.html','/live-bots.mjs','/live-client.mjs'])STATIC.add(path);
+for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs','/order-detail.mjs','/activity-filters.mjs','/live-bots','/live-bots.html','/live-bots.mjs','/live-client.mjs','/live-onboarding.mjs'])STATIC.add(path);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -79,7 +79,7 @@ function responseCookies(headers){
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
  const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|bots|bulk|policy|connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
- const liveBots=/^\/api\/live\/(?:workspace|budget|connection|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
+ const liveBots=/^\/api\/live\/(?:workspace|budget|connection|onboarding|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
  const category='(?:btc|eth|crypto|weather|weather_daily|sports)';
@@ -138,7 +138,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   if(Number(request.headers.get('content-length'))>20480)return problem(413,'Request too large');
   try{body=await boundedBody(request.body,20480)}catch{return problem(413,'Request too large')}
  }
- const readOnlySetup=liveBots&&['/api/live/connection','/api/live/preflight'].includes(url.pathname);
+ const readOnlySetup=liveBots&&['/api/live/connection','/api/live/preflight','/api/live/onboarding'].includes(url.pathname);
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),readOnlySetup?Math.max(timeoutMs,30000):timeoutMs);
  try{
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});

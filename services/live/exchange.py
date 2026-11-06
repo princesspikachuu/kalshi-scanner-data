@@ -86,15 +86,19 @@ class LiveExchange(Exchange):
         if self.order_guard is None:raise LiveConnectionError('Live order guard is missing')
         raise LiveConnectionError('Batched orders are disabled during the one-contract pilot')
 
-def save_connection(store,key_id,pem,subaccount,vault_key):
+def verified_connection(key_id,pem,subaccount,vault_key):
     signer=DemoSigner(key_id,pem)
     exchange=LiveExchange(signer,subaccount)
     try:exchange.verify_scope()
     finally:exchange.close()
     payload=dict(environment='live',key_id=key_id,pem=pem,subaccount=subaccount,binding=binding(key_id,subaccount))
     sealed=Fernet(vault_key.encode()).encrypt(json.dumps(payload).encode()).decode()
-    store.put('credentials',dict(encrypted=sealed,subaccount=subaccount,binding=payload['binding'],verified_at=time.time()))
-    return payload['binding']
+    return dict(encrypted=sealed,subaccount=subaccount,binding=payload['binding'],verified_at=time.time())
+
+def save_connection(store,key_id,pem,subaccount,vault_key):
+    record=verified_connection(key_id,pem,subaccount,vault_key)
+    store.put('credentials',record)
+    return record['binding']
 
 def load_connection(store,vault_key):
     row=store.get('credentials')

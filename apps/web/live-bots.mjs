@@ -1,8 +1,11 @@
 import {createAuthClient} from './auth-client.mjs';
 import {money,escapeHTML as e} from './demo-client.mjs';
 import {liveCall,liveBotCard} from './live-client.mjs';
+import {installOnboarding} from './live-onboarding.mjs';
 const $=id=>document.getElementById(id);let workspace,selected,busy=false,preflightToken=null;
+const onboarding=installOnboarding({call:liveCall,reload:()=>load()});
 function draw(){
+ onboarding.render(workspace);
  const budget=workspace.budget,bots=workspace.bots,query=$('findLive').value.toLowerCase();
  $('trialValue').textContent=budget?money(budget.trial_cap_cents):'Not set';
  $('portfolioShare').textContent=budget?.portfolio_reference_cents?`${(budget.trial_cap_cents/budget.portfolio_reference_cents*100).toFixed(3)}%`:'Enter portfolio value to compare';
