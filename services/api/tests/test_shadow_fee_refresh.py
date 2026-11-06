@@ -35,6 +35,8 @@ class FeeInputTests(unittest.TestCase):
         self.assertFalse(self.run.engine.wallet.stat('WTI').valid)
         self.assertTrue(self.run.engine.books['BTC'].valid)
         self.assertEqual(self.run.engine.sequences[1],1)
+        self.assertEqual(self.run.engine.fees['BTC'].maker_multiplier,0)
+        self.run.prepare_fees('clock',{},1000)
         self.assertEqual(self.run.engine.fees['BTC'].maker_multiplier,2)
 
     def test_lifecycle_settlement_still_processed_when_fee_lookup_fails(self):

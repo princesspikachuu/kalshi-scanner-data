@@ -103,7 +103,11 @@ class HostedRun(ForwardRun):
         # simulated execution. In particular a replacement snapshot must never
         # make a fee-blocked book tradable again.
         blocked=set()
-        for ticker in self.engine.books:
+        targets={self.engine.orders[item[3]].ticker for item in self.engine.pending if item[0]<=now}
+        if source in ('clock','refill'):targets.update(self.engine.books)
+        elif source=='kalshi':targets.add(payload.get('msg',{}).get('market_ticker'))
+        for ticker in targets:
+            if ticker not in self.engine.books:continue
             if ticker in self.engine.settled:continue
             try:
                 kind,m=self.verified_fees.schedule(ticker,now)
@@ -214,6 +218,8 @@ class HostedRun(ForwardRun):
                      not any(o.ticker==t and o.id in pending_ids for o in self.engine.orders.values())]
             for ticker in retired:
                 self.engine.markets.pop(ticker,None);self.engine.books.pop(ticker,None)
+                self.verified_fees.cache.pop(ticker,None);self.fee_locks.pop(ticker,None)
+                self.settlement_checks.pop(ticker,None);self.engine.gap_reasons.pop(ticker,None)
                 self.engine.fees.pop(ticker,None);self.engine.wallet.stats.pop(ticker,None)
                 self.engine.closed_reports.discard(ticker);self.engine.settled.discard(ticker)
                 self.strategy.halted.discard(ticker)

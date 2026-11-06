@@ -16,6 +16,7 @@ import time
 import requests
 from websockets.asyncio.client import connect
 from .auth import Signer
+from services.paper_demo.read_budget import PRODUCTION_READS
 from .core import Audit, ConvexityStrategy, Engine, FeePolicy, StrategyFleet
 
 LOG = logging.getLogger('shadow')
@@ -36,9 +37,11 @@ class ProductionData:
                 re.fullmatch(r'/series/KX[A-Z0-9]+15M', path)):
             raise ValueError('Data client route not allowed')
         # No shared requests.Session across threads. Connection setup isn't in the execution path.
+        PRODUCTION_READS.wait()
         with requests.Session() as session:
             session.trust_env = False
             response = session.get(BASE+path, params=params, timeout=(2,5), allow_redirects=False)
+            if response.status_code==429:PRODUCTION_READS.reject()
             if response.status_code != 200:
                 raise RuntimeError(f'Public data HTTP {response.status_code}')
             return response.json()

@@ -609,8 +609,10 @@ class Engine:
 
     def handle(self, source: str, payload: dict, now: float):
         # Execute due actions against the last causally observed book BEFORE a newer event.
+        changed={self.orders[item[3]].ticker for item in self.pending if item[0]<=now}
         self.advance(now)
         if source == 'market':
+            changed.add(payload['market']['ticker'])
             self.add_market(payload['market'], FeePolicy(D(payload['taker_multiplier']),
                                                        D(payload['maker_multiplier'])))
         elif source == 'refill':
@@ -642,6 +644,7 @@ class Engine:
         elif source == 'kalshi':
             kind, msg = payload.get('type'), payload.get('msg', {})
             ticker = msg.get('market_ticker')
+            if ticker in self.markets:changed.add(ticker)
             sid, seq = payload.get('sid'), payload.get('seq')
             previous_seq = self.sequences.get(sid)
             if sid is not None and seq is not None:
@@ -688,7 +691,9 @@ class Engine:
                         (self.spot.at and self.now-self.spot.at > self.stale_seconds)):
                     self.data_gap(ticker, 'market/spot data stale')
         if self.strategy:
-            self.strategy.step()
+            if source in ('clock','refill'):self.strategy.step()
+            else:
+                for affected in changed:self.strategy.step(affected)
         for ticker, market in self.markets.items():
             if now >= market['close'] and ticker not in self.closed_reports:
                 self.cancel_buys(ticker)
@@ -722,8 +727,9 @@ class ConvexityStrategy:
         phase = phase_at(self.e.markets[order.ticker]['close'], self.e.now)
         return phase in (1,2) or (phase == 3 and self.emergency.get(order.ticker) == order.side)
 
-    def step(self):
+    def step(self,changed_ticker=None):
         for ticker, market in self.e.markets.items():
+            if changed_ticker is not None and ticker!=changed_ticker:continue
             if self.series and not ticker.startswith(self.series+'-'):
                 continue
             phase = phase_at(market['close'], self.e.now)
@@ -798,6 +804,9 @@ class StrategyFleet:
         bot = self.owner(order.ticker)
         return bool(bot and bot.exit_allowed(order))
 
-    def step(self):
-        for bot in self.bots.values():
-            bot.step()
+    def step(self,changed_ticker=None):
+        if changed_ticker is not None:
+            bot=self.owner(changed_ticker)
+            if bot:bot.step(changed_ticker)
+        else:
+            for bot in self.bots.values():bot.step()
