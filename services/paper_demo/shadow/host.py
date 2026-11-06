@@ -34,17 +34,43 @@ class HostedRun(ForwardRun):
         self.raw=NoCapture();self.config={};self.refill_offset=0
         self.args=SimpleNamespace(output=str(self.audit.path))
         self.revisions={p['id']:p['revision'] for p in self.profiles}
-        self.fee_refresh_at=0;self.status={};self.data_versions={}
+        self.fee_slots=asyncio.Semaphore(4);self.fee_locks={}
+        self.status={};self.data_versions={};self.health_log_at=0
         self.publish_at=0;self.maintenance_at=time.time()+300
         for p in self.profiles:
             self.strategy.bots[p['series']].enabled=next(r['progress'].get('desired')=='running' for r in rows if r['parameters']['id']==p['id'])
         self.audit.checkpoint()
 
     async def fee_policy(self,market,metadata):
-        now=time.time();ticker=market['ticker']
-        await asyncio.to_thread(self.verified_fees.load,ticker,market,now)
-        kind,multiplier=self.verified_fees.schedule(ticker,now)
-        return FeePolicy(D(str(multiplier)),D(str(multiplier)) if kind=='quadratic_with_maker_fees' else D(0))
+        ticker=market['ticker']
+        async with self.fee_locks.setdefault(ticker,asyncio.Lock()):
+            async with self.fee_slots:
+                # A cold cache is restored before any book/clock input is consumed.
+                await asyncio.to_thread(self.verified_fees.load,ticker,market,time.time())
+            kind,multiplier=self.verified_fees.schedule(ticker,time.time())
+            return FeePolicy(D(str(multiplier)),D(str(multiplier)) if kind=='quadratic_with_maker_fees' else D(0))
+
+    async def refresh_fee(self,ticker):
+        try:
+            # Fee resolution needs the event/series identifiers already saved in
+            # the market checkpoint; another /markets request only adds latency.
+            await self.fee_policy(dict(self.engine.markets[ticker],ticker=ticker),{})
+            return True
+        except Exception as exc:
+            code=getattr(exc,'code',type(exc).__name__)
+            LOG.warning('SHADOW_FEE_REFRESH_FAILED ticker=%s code=%s status=%s',
+                        ticker,code,getattr(exc,'status',None))
+            return False
+
+    async def fee_maintenance(self):
+        # Independent of the once-per-second UI/control loop. Four bounded
+        # verifiers share the data adapter's global request pacing/cooldown.
+        while not self.done.is_set():
+            now=time.time()
+            due=[t for t in set(self.selected.values()) if t in self.engine.markets and
+                 t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
+            if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
+            await asyncio.sleep(1)
 
     async def clock(self):
         while not self.done.is_set():
@@ -56,20 +82,28 @@ class HostedRun(ForwardRun):
             series=payload['market']['ticker'].split('-')[0]
             p=next(p for p in self.profiles if p['series']==series)
             payload['market'].update(bot_revision=p['revision'],strategy_version='convexity-'+str(p['revision']))
-        # Known scheduled fee changes are resolved at execution time, not merely
-        # at discovery; a missing or stale schedule blocks the affected book.
-        if source in ('clock','kalshi'):
-            now=time.time()
-            tickers=([payload.get('msg',{}).get('market_ticker')] if source=='kalshi' else list(self.selected.values()))
-            for ticker in tickers:
-                if not ticker or ticker not in self.engine.markets or ticker in self.engine.settled:continue
-                try:
-                    kind,m=self.verified_fees.schedule(ticker,now)
-                    self.engine.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else D(0))
-                except Exception:
-                    if ticker in self.engine.books and self.engine.books[ticker].valid:
-                        self.engine.data_gap(ticker,'current fee schedule unverified')
         await super().put(source,payload)
+
+    def prepare_fees(self,source,payload,now):
+        # Resolve policies in receipt order, inside the same audit transaction as
+        # simulated execution. In particular a replacement snapshot must never
+        # make a fee-blocked book tradable again.
+        blocked=set()
+        for ticker in self.engine.books:
+            if ticker in self.engine.settled:continue
+            try:
+                kind,m=self.verified_fees.schedule(ticker,now)
+                self.engine.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else D(0))
+            except Exception:
+                blocked.add(ticker)
+                if self.engine.books[ticker].valid:
+                    self.engine.data_gap(ticker,'current fee schedule unverified')
+        if source=='kalshi' and payload.get('msg',{}).get('market_ticker') in blocked and payload.get('type') in (
+                'orderbook_snapshot','orderbook_delta','trade'):
+            # Consume subscription sequence without applying unverified inputs.
+            # The invalid book must receive a fresh snapshot after fees recover.
+            payload=dict(payload,type='fee_blocked')
+        return payload
 
     async def consume(self):
         last=self.engine.now
@@ -79,6 +113,7 @@ class HostedRun(ForwardRun):
             if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
             last=now;self.audit.begin()
             try:
+                payload=self.prepare_fees(source,payload,now)
                 self.engine.handle(source,payload,now)
             except ValueError as exc:
                 self.reject_input(source,payload,exc)
@@ -112,18 +147,22 @@ class HostedRun(ForwardRun):
                 self.audit.command_key=row['idempotency_key']
                 self.engine.refill(D(command['amount_cents'])/100)
                 self.audit.command_key=None
-            # One bounded fee refresh at a time, outside the feed consumer.
             now=time.time()
-            due=[t for t in self.selected.values() if t in self.engine.markets and
-                 now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
-            if due and now>=self.fee_refresh_at:
-                self.fee_refresh_at=now+.25;ticker=min(due,key=lambda t:self.verified_fees.cache.get(t,{}).get('at',0))
-                try:
-                    market=await self.api.fetch('/markets/'+ticker)
-                    await self.fee_policy(market['market'],{})
-                except Exception:LOG.warning('Shadow fee refresh pending for %s',ticker)
-            books=[b for t,b in self.engine.books.items() if t not in self.engine.settled and b.valid]
-            state='ready' if books and self.engine.spot.ready(time.time()) else 'waiting'
+            active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
+            books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
+            fees_ready=0
+            for ticker in active:
+                try:self.verified_fees.schedule(ticker,now);fees_ready+=1
+                except Exception:pass
+            state='ready' if books and fees_ready==len(active) and self.engine.spot.ready(now) else 'waiting'
+            if time.monotonic()>=self.health_log_at:
+                self.health_log_at=time.monotonic()+30
+                print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
+                    valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
+                    awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
+                        self.engine.markets[t]['close']<=now and t not in self.engine.settled),
+                    spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
+                    real_orders_enabled=False)),flush=True)
             if time.monotonic()>=self.publish_at:
                 self.publish_at=time.monotonic()+5
                 self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['shadow_convexity_v1'],real_orders_enabled=False))
@@ -168,9 +207,15 @@ class HostedRun(ForwardRun):
             await asyncio.sleep(1)
 
     async def run(self):
+        # No restored book input may run against an empty fee cache.
+        restored=[t for t in set(self.selected.values()) if t in self.engine.markets and t not in self.engine.settled]
+        if restored:
+            results=await asyncio.gather(*(self.refresh_fee(t) for t in restored))
+            print(json.dumps(dict(event='shadow_fee_warmup',markets=len(restored),verified=sum(results),
+                                  real_orders_enabled=False)),flush=True)
         # Called from the trading thread; the process signal handler owns stop.
         workers=[asyncio.create_task(c) for c in (self.discover(),self.kalshi(),self.spot(),
-                                                  self.clock(),self.consume(),self.control())]
+                                                  self.clock(),self.consume(),self.control(),self.fee_maintenance())]
         waiter=asyncio.create_task(self.done.wait())
         clean_stop=False
         try:

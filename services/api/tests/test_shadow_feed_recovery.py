@@ -61,6 +61,7 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
         run=object.__new__(HostedRun)
         run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
         run.engine=Engine(Mock());run.engine.advance(1000)
+        run.verified_fees=Mock();run.verified_fees.schedule.return_value=('quadratic',1)
         for t in ('BTC','WTI'):
             run.engine.add_market(dict(ticker=t,close=1900),FeePolicy())
             run.engine.books[t].valid=True

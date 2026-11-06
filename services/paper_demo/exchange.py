@@ -1,5 +1,5 @@
 """Production GET-only data adapter; virtual portfolio routes never touch HTTP."""
-import re,time,json
+import re,time,json,threading
 from datetime import datetime
 from cryptography.fernet import Fernet
 import httpx
@@ -20,15 +20,20 @@ class ProductionData:
     def __init__(self,signer=None,client=None):
         self.signer=signer;self.client=client or httpx.Client(timeout=httpx.Timeout(8,connect=5),follow_redirects=False)
         self.reads=0;self.cooldown=0;self.next_read=0;self.before_read=None
+        self.read_gate=threading.Lock()
     def close(self):self.client.close()
     def call(self,method,path,params=None):
         if method!='GET' or not (path in ('/markets','/markets/trades','/series/fee_changes','/events/fee_changes','/exchange/status','/api_keys','/account/limits') or re.fullmatch(r'/(?:markets/[A-Za-z0-9-]{1,128}(?:/orderbook)?|series/[A-Za-z0-9-]{1,128})',path)):
             raise ExchangeFailure('paper_network_write_forbidden')
         if self.before_read:self.before_read()
-        if time.monotonic()<self.cooldown:raise ExchangeFailure('paper_data_rate_limited')
-        # Bound read pressure independently from virtual execution speed.
-        if time.monotonic()<self.next_read:time.sleep(min(.1,self.next_read-time.monotonic()))
-        self.next_read=time.monotonic()+.05;self.reads+=1
+        # Concurrent fee verifiers still share one global 20 reads/sec gate.
+        # Hold the lock only for pacing, never during network I/O.
+        with self.read_gate:
+            if time.monotonic()<self.cooldown:raise ExchangeFailure('paper_data_rate_limited')
+            remaining=self.next_read-time.monotonic()
+            if remaining>0:time.sleep(remaining)
+            if time.monotonic()<self.cooldown:raise ExchangeFailure('paper_data_rate_limited')
+            self.next_read=time.monotonic()+.05;self.reads+=1
         headers=self.signer.headers('GET',PATH+path) if self.signer else {}
         try:
             with self.client.stream('GET',PUBLIC_ACTIVITY_ROOT+PATH+path,params=params,headers=headers) as response:

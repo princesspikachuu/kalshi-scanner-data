@@ -104,6 +104,7 @@ class HostedFailureTests(unittest.IsolatedAsyncioTestCase):
         async def fail():raise RuntimeError('commit failed')
         async def wait():await asyncio.Event().wait()
         run.discover=fail
-        run.kalshi=run.spot=run.clock=run.consume=run.control=wait
+        run.kalshi=run.spot=run.clock=run.consume=run.control=run.fee_maintenance=wait
+        run.selected={};run.engine=Mock()
         with self.assertRaises(RuntimeError):await run.run()
         run.audit.checkpoint.assert_not_called()
