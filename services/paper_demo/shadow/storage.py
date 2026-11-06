@@ -7,12 +7,14 @@ from .state import encode
 
 KEY='demo/shadow/checkpoint'
 
-def put(c,key,parameters,progress):
-    c.execute("""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
+UPSERT="""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
       VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())
       ON CONFLICT(idempotency_key) DO UPDATE SET parameters=excluded.parameters,
-      progress=excluded.progress,finished_at=clock_timestamp()""",
-      (uuid4(),Jsonb(parameters),Jsonb(progress),key))
+      progress=excluded.progress,finished_at=clock_timestamp()"""
+
+def entry(key,parameters,progress):return (uuid4(),Jsonb(parameters),Jsonb(progress),key)
+
+def put(c,key,parameters,progress):c.execute(UPSERT,entry(key,parameters,progress))
 
 class HostedAudit:
     def __init__(self,store,guard):
@@ -36,17 +38,22 @@ class HostedAudit:
         if records:self.commit(records)
     def commit(self,records):
         self.guard();data=self.snapshot()
+        batch=[entry(KEY,{},data)]
+        commands=[]
+        for now,kind,fields in records:
+            event=json.loads(json.dumps(dict(time=now,event=kind,cash=str(self.engine.wallet.cash),**fields),default=str))
+            batch.append(entry('demo/shadow/event/'+str(uuid4()),dict(kind=kind,ticker=fields.get('ticker'),time=now),event))
+            if kind=='REFILL' and self.command_key:commands.append((Jsonb(dict(done=True,at=now)),self.command_key))
+            if kind=='CYCLE_REPORT':
+                report=json.loads(fields['details']);report['at']=now
+                report['bot_revision']=self.engine.markets[report['ticker']].get('bot_revision',1)
+                batch.append(entry('demo/shadow/report/'+report['ticker'],dict(time=now,bot_id=report.get('bot_id')),report))
         with self.store.pool.connection() as c:
-            put(c,KEY,{},data)
-            for now,kind,fields in records:
-                event=json.loads(json.dumps(dict(time=now,event=kind,cash=str(self.engine.wallet.cash),**fields),default=str))
-                put(c,'demo/shadow/event/'+str(uuid4()),dict(kind=kind,ticker=fields.get('ticker'),time=now),event)
-                if kind=='REFILL' and self.command_key:
-                    c.execute('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',(Jsonb(dict(done=True,at=now)),self.command_key))
-                if kind=='CYCLE_REPORT':
-                    report=json.loads(fields['details']);report['at']=now
-                    report['bot_revision']=self.engine.markets[report['ticker']].get('bot_revision',1)
-                    put(c,'demo/shadow/report/'+report['ticker'],dict(time=now,bot_id=report.get('bot_id')),report)
+            # Pipeline the event burst; wallet/checkpoint, all audit rows, reports
+            # and refill completion markers still commit in one transaction.
+            with c.cursor() as cur:
+                cur.executemany(UPSERT,batch)
+                if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
         self.last_snapshot=time.monotonic()
     def checkpoint(self):
         self.guard()

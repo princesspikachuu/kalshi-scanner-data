@@ -263,7 +263,13 @@ class ForwardRun:
                'settlement requires prior explicit WS settled event'}
         reason=str(exc) if str(exc) in known else 'malformed '+source+' event'
         ticker=payload.get('msg',{}).get('market_ticker') if source=='kalshi' else payload.get('ticker')
-        LOG.warning('SIMULATION_INPUT_REJECTED source=%s ticker=%s reason=%s',source,ticker,reason)
+        self.input_rejections=getattr(self,'input_rejections',0)+1
+        if not hasattr(self,'rejection_logs'):self.rejection_logs={}
+        key=(source,ticker,reason);at=time.monotonic()
+        if at-self.rejection_logs.get(key,-1e9)>=5:
+            self.rejection_logs[key]=at
+            LOG.warning('SIMULATION_INPUT_REJECTED source=%s ticker=%s reason=%s count=%s',
+                        source,ticker,reason,self.input_rejections)
         if ticker in self.engine.books:
             self.engine.data_gap(ticker,reason)
         else:

@@ -196,6 +196,11 @@ class HostedRun(ForwardRun):
                     awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
                         self.engine.markets[t]['close']<=now and t not in self.engine.settled),
                     spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
+                    input_rejections=getattr(self,'input_rejections',0),
+                    valid_cycles=sum(self.engine.wallet.stat(t).valid for t in active),
+                    resting_orders=sum(o.status=='resting' for o in self.engine.orders.values()),
+                    pending_orders=sum(o.status=='pending' for o in self.engine.orders.values()),
+                    open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                     real_orders_enabled=False)),flush=True)
             if time.monotonic()>=self.publish_at:
                 self.publish_at=time.monotonic()+5
@@ -227,7 +232,9 @@ class HostedRun(ForwardRun):
                 for bot in self.strategy.bots.values():
                     bot.phases.pop(ticker,None);bot.emergency.pop(ticker,None);bot.last_exit.pop(ticker,None)
                     bot.entered={k for k in bot.entered if k[0]!=ticker};bot.locked={k for k in bot.locked if k[0]!=ticker}
-            if retired:self.audit.checkpoint()
+            if retired:
+                self.rejection_logs={k:v for k,v in getattr(self,'rejection_logs',{}).items() if k[1] not in retired}
+                self.audit.checkpoint()
             if time.time()>=self.maintenance_at:
                 from services.demo.maintenance import maintenance
                 import os

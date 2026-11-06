@@ -78,6 +78,19 @@ class HostedPostgres(unittest.TestCase):
         self.assertEqual(self.client.post('/demo/shadow/funds',json=dict(request,amount_cents=5001)).status_code,409)
         shutil.rmtree(audit.path)
 
+    def test_burst_commit_preserves_every_audit_record_and_atomic_checkpoint(self):
+        self.seed()
+        audit=HostedAudit(self.demo,lambda:None);engine=Engine(audit);fleet=StrategyFleet(engine,profiles())
+        audit.engine,audit.fleet=engine,fleet;engine.advance(1000)
+        audit.begin()
+        for _ in range(54):engine.refill(D(1))
+        audit.flush()
+        with self.demo.pool.connection() as c:
+            count=c.execute("SELECT count(*) AS n FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz'").fetchone()['n']
+        self.assertEqual(count,54)
+        self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),104)
+        shutil.rmtree(audit.path)
+
     def test_controls_require_csrf_and_do_not_allow_real_routing(self):
         self.seed();self.client.headers.pop('x-csrf-token')
         self.assertEqual(self.client.post('/demo/shadow/bulk',json=dict(action='resume')).status_code,403)

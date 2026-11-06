@@ -400,7 +400,8 @@ class Engine:
 
     def cancel(self, ident: str):
         order = self.orders[ident]
-        if order.status in ('pending','resting'):
+        if order.status in ('pending','resting') and not any(
+                action=='cancel' and target==ident for _,_,action,target in self.pending):
             self.serial += 1
             heapq.heappush(self.pending, (self.now+self.latency, self.serial, 'cancel', ident))
             self.log('CANCEL_SUBMITTED', order)
@@ -569,14 +570,13 @@ class Engine:
 
     def data_gap(self, ticker: str, reason: str):
         if ticker in self.books:
-            duplicate=(not self.books[ticker].valid and not self.wallet.stat(ticker).valid
-                       and self.gap_reasons.get(ticker)==reason)
-            self.gap_reasons[ticker]=reason
+            seen=self.gap_reasons.setdefault(ticker,set())
+            duplicate=reason in seen
+            seen.add(reason)
             self.books[ticker].valid = False
             self.wallet.stat(ticker).valid = False
-            if not duplicate:
-                self.cancel_buys(ticker)
-                self.log('DATA_GAP', ticker=ticker, reason=reason)
+            self.cancel_buys(ticker)
+            if not duplicate:self.log('DATA_GAP', ticker=ticker, reason=reason)
 
     def report(self, ticker: str, final=False) -> dict:
         stat = self.wallet.stat(ticker)

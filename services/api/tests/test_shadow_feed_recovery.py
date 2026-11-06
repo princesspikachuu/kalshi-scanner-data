@@ -36,12 +36,26 @@ class InputRecoveryTests(unittest.TestCase):
         self.engine.audit.log.assert_not_called()
         self.assertEqual(self.engine.orders[order].remaining,1)
 
-    def test_gap_after_fresh_snapshot_is_logged_again_without_revalidating_cycle(self):
+    def test_repeated_gap_after_fresh_snapshot_does_not_repeat_audit_or_revalidate_cycle(self):
         self.engine.data_gap('BTC','negative depth')
         self.engine.books['BTC'].valid=True
         self.engine.audit.reset_mock()
         self.engine.data_gap('BTC','negative depth')
-        self.engine.audit.log.assert_called_once()
+        self.engine.audit.log.assert_not_called()
+        self.assertFalse(self.engine.wallet.stat('BTC').valid)
+
+    def test_resnapshot_outage_loop_has_bounded_gap_and_cancel_writes(self):
+        ident=self.engine.place('BTC','yes','buy',D(1),D('.1'))
+        self.engine.audit.reset_mock()
+        for i in range(1000):
+            self.engine.books['BTC'].valid=True
+            self.engine.data_gap('BTC','invalid/stale spot' if i%2 else 'market/spot data stale')
+        events=[call.args[1] for call in self.engine.audit.log.call_args_list]
+        self.assertEqual(events.count('DATA_GAP'),2)
+        self.assertEqual(events.count('CANCEL_SUBMITTED'),1)
+        self.assertEqual(sum(item[2]=='cancel' for item in self.engine.pending),1)
+        self.engine.advance(1001)
+        self.assertIn(self.engine.orders[ident].status,('cancelled','rejected'))
         self.assertFalse(self.engine.wallet.stat('BTC').valid)
 
     def test_spot_gap_explicitly_invalidates_shared_dependency(self):
