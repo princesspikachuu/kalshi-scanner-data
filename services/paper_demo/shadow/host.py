@@ -146,7 +146,7 @@ class HostedRun(ForwardRun):
         return payload
 
     async def consume(self):
-        last=self.engine.now
+        last=self.engine.now;processed=0
         while not self.done.is_set():
             source,payload,received=await self.queue.get()
             now=max(received,last)
@@ -176,6 +176,11 @@ class HostedRun(ForwardRun):
                 print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
                                       confirmation='production_rest',real_orders_enabled=False)),flush=True)
             self.queue.task_done()
+            processed+=1
+            if processed%32==0:
+                # queue.get() doesn't yield while a burst is buffered. Keep the
+                # socket readers/pongs running without changing receipt order.
+                await asyncio.sleep(0)
 
     async def control(self):
         while not self.done.is_set():
@@ -245,6 +250,7 @@ class HostedRun(ForwardRun):
                                for l in self.engine.wallet.lots]))
             # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
             # execution state in the hot checkpoint; never rewrite years of history.
+            self.engine.prune_terminal_orders()
             active=set(self.selected.values())
             pending_ids={item[3] for item in self.engine.pending}
             retired=[t for t,m in self.engine.markets.items() if m.get('paid') and t not in active and

@@ -71,6 +71,22 @@ class InputRecoveryTests(unittest.TestCase):
 
 
 class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_buffered_burst_yields_to_socket_task_without_reordering(self):
+        run=object.__new__(HostedRun)
+        run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
+        run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload
+        seen=[];socket_observed=[]
+        def handle(source,payload,now):
+            seen.append(payload['n'])
+            if len(seen)==96:run.done.set()
+        run.engine.handle=handle
+        for n in range(96):await run.queue.put(('clock',{'n':n},1000+n*.01))
+        async def socket_reader():socket_observed.append(len(seen))
+        reader=asyncio.create_task(socket_reader())
+        await run.consume();await reader
+        self.assertEqual(seen,list(range(96)))
+        self.assertLess(socket_observed[0],96)
+
     async def test_consumer_keeps_specific_error_and_only_affected_book(self):
         run=object.__new__(HostedRun)
         run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()

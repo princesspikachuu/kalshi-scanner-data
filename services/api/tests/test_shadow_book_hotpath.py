@@ -7,7 +7,39 @@ from decimal import Decimal as D
 from unittest.mock import Mock,patch
 from services.demo.exchange import ExchangeFailure
 from services.paper_demo.exchange import Fees
-from services.paper_demo.shadow.core import Book
+from services.paper_demo.shadow.core import Book,Engine,FeePolicy
+
+class ExecutionStateBoundsTests(unittest.TestCase):
+    def test_cancel_bursts_keep_live_orders_and_delayed_references_only(self):
+        e=Engine(Mock());e.advance(1000)
+        e.add_market(dict(ticker='BTC',close=1900),FeePolicy())
+        b=e.books['BTC'];b.valid=True;b.at=1000
+        b.levels={'yes':{D('.2'):D(100)},'no':{D('.6'):D(100)}}
+        for i in range(1000):
+            ident=e.place('BTC','yes','buy',D(1),D('.1'))
+            e.cancel(ident)
+            # Even a terminal order must survive until its scheduled events drain.
+            e.orders[ident].status='cancelled';e.orders[ident].reserved=D(0)
+            e.prune_terminal_orders();self.assertIn(ident,e.orders)
+            e.advance(e.now+.2);e.prune_terminal_orders()
+            self.assertEqual(len(e.orders),0)
+        b.at=e.now
+        live=e.place('BTC','yes','buy',D(1),D('.1'))
+        e.prune_terminal_orders();self.assertIn(live,e.orders)
+        self.assertEqual(e.wallet.cash,D(50));self.assertEqual(e.available(),D('49.9'))
+
+    def test_filled_order_cleanup_preserves_inventory_cash_and_journal(self):
+        e=Engine(Mock());e.advance(1000)
+        e.add_market(dict(ticker='BTC',close=1900),FeePolicy())
+        b=e.books['BTC'];b.valid=True;b.at=1000
+        b.levels={'yes':{D('.2'):D(100)},'no':{D('.6'):D(100)}}
+        ident=e.place('BTC','yes','buy',D(2),D('.1'))
+        e.advance(1000.2);e.fill(e.orders[ident],D(2),D('.1'),'TRADE_THROUGH')
+        e.prune_terminal_orders()
+        self.assertNotIn(ident,e.orders);self.assertNotIn(ident,e._recent_fills)
+        self.assertEqual(e.wallet.inventory('BTC','yes'),2)
+        self.assertEqual(e.wallet.cash,D('49.8'))
+        self.assertTrue(any(c.args[1]=='FILL' for c in e.audit.log.call_args_list))
 
 class BookHotpathTests(unittest.TestCase):
     def snapshot(self,book,yes=None,no=None):

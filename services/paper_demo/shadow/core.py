@@ -466,6 +466,16 @@ class Engine:
             if order.ticker == ticker and order.maker:
                 self.cancel(order.id)
 
+    def prune_terminal_orders(self):
+        # The durable journal owns history. Completed/cancelled orders are not
+        # execution state, unless a delayed action still refers to their ID.
+        referenced={item[3] for item in self.pending}
+        self.orders={ident:o for ident,o in self.orders.items()
+                     if o.status in ('pending','resting') or ident in referenced}
+        if hasattr(self,'_recent_fills'):
+            self._recent_fills={ident:rows for ident,rows in self._recent_fills.items()
+                                if ident in self.orders}
+
     def advance(self, now: float):
         if now < self.now:
             raise ValueError('non-monotonic replay clock')
