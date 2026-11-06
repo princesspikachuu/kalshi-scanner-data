@@ -12,18 +12,24 @@ class StateTests(unittest.TestCase):
         audit=Mock();engine=Engine(audit);fleet=StrategyFleet(engine,profiles())
         audit.log=Mock();engine.advance(1000)
         engine.add_market(dict(ticker='KXBTC15M-test',close=1900),FeePolicy())
-        engine.wallet.lots=[Lot('id','KXBTC15M-test','yes',D(3),D('.1'),D(0),1,True)]
+        engine.wallet.lots=[Lot('id','KXBTC15M-test','yes',D(3),D('.1'),D(0),1,True,acquired_at=999.5)]
         order=engine.place('KXBTC15M-test','yes','buy',D(2),D('.1'))
         data=json.loads(json.dumps(encode(engine,fleet),default=str))
         expected_random=engine.rng.random()
         new=Engine(Mock());new_fleet=StrategyFleet(new,profiles());restore(new,new_fleet,data)
         self.assertEqual(new.wallet.cash,engine.wallet.cash)
         self.assertTrue(new.wallet.lots[0].is_armed)
+        self.assertEqual(new.wallet.lots[0].acquired_at,999.5)
         self.assertEqual(new.orders[order].status,'cancelled')
         self.assertFalse(new.wallet.stat('KXBTC15M-test').valid)
         self.assertIn('KXBTC15M-test',new_fleet.halted)
         self.assertEqual(new.rng.random(),expected_random)
         self.assertEqual(new.pending,[])
+        # Existing checkpoints without entry timestamps retain their flags.
+        data['wallet']['lots'][0].pop('acquired_at')
+        old=Engine(Mock());old_fleet=StrategyFleet(old,profiles());restore(old,old_fleet,data)
+        self.assertTrue(old.wallet.lots[0].is_armed)
+        self.assertEqual(old.wallet.lots[0].acquired_at,0)
 
 @unittest.skipUnless(fixture.URL,'Disposable PostgreSQL is required')
 class HostedPostgres(unittest.TestCase):

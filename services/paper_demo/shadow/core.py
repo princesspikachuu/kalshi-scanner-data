@@ -167,6 +167,7 @@ class Lot:
     phase_origin: int
     is_armed: bool = False
     exit_requested: bool = False
+    acquired_at: float = 0.0
 
 
 @dataclass
@@ -199,7 +200,8 @@ class Wallet:
         return sum((l.quantity for l in self.lots if l.ticker == ticker and l.side == side), ZERO)
 
     def fill(self, ticker: str, side: str, action: str, quantity: D, price: D,
-             fee: D, origin: int, ident: str, targets: list[str] | None = None):
+             fee: D, origin: int, ident: str, targets: list[str] | None = None,
+             acquired_at: float = 0.0):
         if (quantity <= 0 or not quantity.is_finite() or not price.is_finite() or
                 not ZERO <= price <= 1 or not fee.is_finite() or fee < 0):
             raise ValueError('invalid virtual execution')
@@ -224,7 +226,8 @@ class Wallet:
                     remaining -= take
                     fee_left -= allocated
             if remaining:
-                self.lots.append(Lot(ident, ticker, side, remaining, price, fee_left, origin))
+                self.lots.append(Lot(ident, ticker, side, remaining, price, fee_left, origin,
+                                     acquired_at=acquired_at))
         else:
             eligible = [l for l in self.lots if l.ticker == ticker and l.side == side and
                         (targets is None or l.id in targets)]
@@ -564,7 +567,7 @@ class Engine:
         order.opposing_fill_race = (order.maker and self.wallet.inventory(order.ticker,
                                    'no' if order.side == 'yes' else 'yes') > 0)
         self.wallet.fill(order.ticker, order.side, order.action, quantity, price, fee,
-                         order.phase, f'{order.id}:{order.remaining}', order.targets)
+                         order.phase, f'{order.id}:{order.remaining}', order.targets,acquired_at=self.now)
         order.remaining -= quantity
         if order.maker:
             order.reserved = (order.remaining*order.price+
@@ -830,10 +833,15 @@ class ConvexityStrategy:
                 arm, stop = (D('.50'), D('.45')) if phase == 2 or lot.phase_origin==2 else (D('.40'),D('.30'))
                 bid = book.bid(lot.side) or ZERO
                 before=(lot.is_armed,lot.exit_requested)
-                lot.is_armed |= bid > arm
+                # A trade print may arrive before the depth updates it caused.
+                # A pre-entry quote must not arm a brand-new cheap fill.
+                if book.at>lot.acquired_at:lot.is_armed |= bid > arm
                 lot.exit_requested |= lot.is_armed and bid <= stop
                 if before != (lot.is_armed,lot.exit_requested):
-                    self.e.log('RISK_STATE',ticker=ticker,details=lot.id)
+                    self.e.log('RISK_STATE',ticker=ticker,side=lot.side,details=json.dumps(dict(
+                        lot_id=lot.id,bid=str(bid),quote_at=book.at,entry_at=lot.acquired_at,
+                        is_armed=lot.is_armed,exit_requested=lot.exit_requested,
+                        arm=str(arm),stop=str(stop),phase=phase)))
             pending_exit = any(o.ticker == ticker and not o.maker and o.status=='pending'
                                for o in self.e.orders.values())
             if not pending_exit and self.e.now-self.last_exit.get(ticker, -1e9) >= .5 and phase<4:

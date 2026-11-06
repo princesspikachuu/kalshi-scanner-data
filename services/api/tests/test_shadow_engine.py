@@ -251,6 +251,22 @@ class SimulationTests(unittest.TestCase):
             if not o.maker:
                 self.assertFalse(strategy.exit_allowed(o))
 
+    def test_pre_entry_quote_cannot_arm_a_new_fill(self):
+        self.snapshot(yes=[['.45','100']],no=[['.4','100']],at=1000,seq=2)
+        strategy=ConvexityStrategy(self.e,1,require_spot_warmup=False)
+        strategy.step();self.e.advance(1000.15)
+        self.trade(price='.09',qty='1',at=1000.2)
+        lot=self.e.wallet.lots[0]
+        self.assertEqual(lot.acquired_at,1000.2);self.assertFalse(lot.is_armed)
+        self.snapshot(yes=[['.2','100']],no=[['.7','100']],at=1000.3,seq=3)
+        self.assertFalse(lot.exit_requested)
+        self.assertFalse(any(not o.maker for o in self.e.orders.values()))
+        self.snapshot(yes=[['.41','100']],no=[['.5','100']],at=1000.4,seq=4)
+        self.assertTrue(lot.is_armed)
+        self.snapshot(yes=[['.3','100']],no=[['.6','100']],at=1000.5,seq=5)
+        self.assertTrue(lot.exit_requested)
+        self.assertTrue(any(not o.maker and o.status=='pending' for o in self.e.orders.values()))
+
 
 class AccountingTests(unittest.TestCase):
     def test_fee_count_and_rounding(self):
