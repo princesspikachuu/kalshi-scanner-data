@@ -3,7 +3,7 @@ import asyncio
 import json
 import unittest
 from decimal import Decimal as D
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 from services.paper_demo.shadow.core import Engine, FeePolicy
 from services.paper_demo.shadow.runner import ForwardRun
 from services.paper_demo.shadow.host import HostedRun
@@ -116,7 +116,7 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self,*args):pass
         async def put(source,payload):events.append((source,payload))
         run.put=put
-        with patch('services.paper_demo.shadow.runner.connect',return_value=Socket()),patch('services.paper_demo.shadow.runner.asyncio.sleep',new=Mock(return_value=asyncio.sleep(0))):
+        with patch('services.paper_demo.shadow.runner.connect',return_value=Socket()),patch('services.paper_demo.shadow.runner.asyncio.sleep',new=AsyncMock()):
             await run.kalshi()
         self.assertEqual([c['params']['channels'] for c in commands if c['cmd']=='subscribe'],
                          [['market_lifecycle_v2'],['orderbook_delta'],['trade']])
@@ -142,3 +142,26 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
             with self.assertLogs('shadow',level='WARNING') as logs:await run.kalshi()
         self.assertEqual(delays,[.25,.5,1])
         self.assertIn('code=11 request=1',logs.output[0])
+
+class NonblockingHeartbeatTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pong_wait_never_stops_draining_application_messages(self):
+        run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock()
+        run.engine=Engine(Mock());run.selected={};run.heartbeat_interval=0;seen=[]
+        class Socket:
+            def __init__(self):self.steps=0;self.pending=None
+            async def send(self,raw):pass
+            async def ping(self):
+                self.pending=asyncio.get_running_loop().create_future();return self.pending
+            async def recv(self):
+                self.steps+=1
+                if self.steps==1:return json.dumps(dict(type='subscribed',msg=dict(channel='orderbook_delta',sid=1)))
+                if self.pending and not self.pending.done():self.pending.set_result(.01)
+                if self.steps>=3:run.done.set()
+                return json.dumps(dict(type='ok'))
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+        async def put(source,payload):seen.append(source)
+        run.put=put
+        with patch('services.paper_demo.shadow.runner.connect',return_value=Socket()):
+            await asyncio.wait_for(run.kalshi(),.2)
+        self.assertIn('book_heartbeat',seen)

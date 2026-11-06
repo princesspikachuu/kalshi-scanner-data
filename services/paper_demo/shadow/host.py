@@ -33,7 +33,7 @@ class HostedRun(ForwardRun):
         if prior:
             self.prior_halts={t for b in prior['progress'].get('fleet',{}).values() for t in b.get('halted',[])}
         if prior:restore(self.engine,self.strategy,prior['progress'])
-        self.api=PublicData();self.signer=signer
+        self.api=PublicData(signer);self.signer=signer
         self.verified_data=ProductionData(signer);self.verified_fees=Fees(self.verified_data)
         self.queue=asyncio.Queue(maxsize=20000);self.done=asyncio.Event()
         self.selected={ticker.split('-')[0]:ticker for ticker,m in self.engine.markets.items() if not m.get('paid')}

@@ -88,3 +88,15 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(run.records),1)
         self.assertIsNone(run.records[0][1]['ticker'])
         self.assertTrue(run.engine.spot.ready(run.engine.now))
+
+class AuthenticatedDiscoveryTests(unittest.TestCase):
+    def test_public_market_reads_use_connected_read_key_when_available(self):
+        from services.paper_demo.shadow.runner import ProductionData
+        signer=Mock();signer.headers.return_value={'test-auth':'read-only-test'}
+        session=Mock();session.get.return_value.status_code=200;session.get.return_value.json.return_value={'markets':[]}
+        context=Mock();context.__enter__=Mock(return_value=session);context.__exit__=Mock(return_value=False)
+        with patch('services.paper_demo.shadow.runner.requests.Session',return_value=context),patch('services.paper_demo.shadow.runner.PRODUCTION_READS.wait'):
+            self.assertEqual(ProductionData(signer).get('/markets',{'limit':1}),{'markets':[]})
+        signer.headers.assert_called_once_with('GET','/trade-api/v2/markets')
+        self.assertEqual(session.get.call_args.kwargs['headers'],{'test-auth':'read-only-test'})
+        self.assertFalse(session.get.call_args.kwargs['allow_redirects'])

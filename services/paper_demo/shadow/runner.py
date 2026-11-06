@@ -17,6 +17,7 @@ import requests
 from websockets.asyncio.client import connect
 from .auth import Signer
 from services.paper_demo.read_budget import PRODUCTION_READS
+from services.demo.exchange import PATH,ExchangeFailure
 from .core import Audit, ConvexityStrategy, Engine, FeePolicy, StrategyFleet
 
 LOG = logging.getLogger('shadow')
@@ -31,6 +32,8 @@ def ts(value):
 
 class ProductionData:
     """Only three public GET routes are allowed. No account/order endpoints or mutation verb."""
+    def __init__(self,signer=None):self.signer=signer
+
     def get(self, path: str, params=None):
         if not (path in ('/markets', '/series/KXBTC15M') or
                 re.fullmatch(r'/markets/KX[A-Z0-9]+15M-[A-Za-z0-9-]+', path) or
@@ -40,10 +43,11 @@ class ProductionData:
         PRODUCTION_READS.wait()
         with requests.Session() as session:
             session.trust_env = False
-            response = session.get(BASE+path, params=params, timeout=(2,5), allow_redirects=False)
+            headers=self.signer.headers('GET',PATH+path) if self.signer else {}
+            response = session.get(BASE+path, params=params, headers=headers, timeout=(2,5), allow_redirects=False)
             if response.status_code==429:PRODUCTION_READS.reject()
             if response.status_code != 200:
-                raise RuntimeError(f'Public data HTTP {response.status_code}')
+                raise ExchangeFailure('paper_data_unavailable',status=response.status_code)
             return response.json()
 
     async def fetch(self, path, params=None):
@@ -67,6 +71,7 @@ class ForwardRun:
         self.api = ProductionData()
         self.signer = Signer(os.environ['KALSHI_API_KEY_ID'],
                             Path(os.environ['KALSHI_PRIVATE_KEY_PATH']).read_bytes())
+        self.api.signer=self.signer
         self.queue = asyncio.Queue(maxsize=20000)
         self.done = asyncio.Event()
         self.selected = {}
@@ -182,6 +187,7 @@ class ForwardRun:
     async def kalshi(self):
         delay = .25
         while not self.done.is_set():
+            pong=None
             try:
                 async with connect(WS, additional_headers=self.signer.headers('GET','/trade-api/ws/v2'),
                                    ping_interval=10, ping_timeout=5, max_queue=2048,
@@ -191,14 +197,20 @@ class ForwardRun:
                     subscribed, ident = set(), 2
                     book_sid=trade_sid=None
                     last_snapshot_request = 0.0
-                    last_heartbeat=time.monotonic()
+                    last_heartbeat=time.monotonic();ping_sent=0.
                     connected_at = time.monotonic()
                     while not self.done.is_set():
-                        if book_sid is not None and time.monotonic()-last_heartbeat>=1:
-                            pong=await ws.ping()
-                            await asyncio.wait_for(pong,self.engine.stale_seconds)
-                            await self.put('book_heartbeat',dict(sid=book_sid))
-                            last_heartbeat=time.monotonic()
+                        if pong is not None:
+                            if pong.done():
+                                pong.result()
+                                await self.put('book_heartbeat',dict(sid=book_sid))
+                                last_heartbeat=time.monotonic();pong=None
+                            elif time.monotonic()-ping_sent>self.engine.stale_seconds:
+                                raise TimeoutError('Kalshi heartbeat timeout')
+                        elif book_sid is not None and time.monotonic()-last_heartbeat>=getattr(self,'heartbeat_interval',1):
+                            # Keep draining application frames while awaiting the
+                            # pong: recv flow control can otherwise block its arrival.
+                            pong=await ws.ping();ping_sent=time.monotonic()
                         # Keep lifecycle subscription across rolls to avoid missing settlement events.
                         desired={t for t in self.selected.values() if t in self.engine.markets}
                         additions=desired-subscribed
@@ -246,8 +258,12 @@ class ForwardRun:
                 reason=str(exc) if isinstance(exc,ValueError) else type(exc).__name__
                 LOG.warning('KALSHI_DISCONNECTED %s', reason)
             finally:
+                if pong is not None:
+                    if pong.done() and not pong.cancelled():pong.exception()
+                    else:pong.cancel()
                 if not self.done.is_set():
                     await self.put('gap', {'reason':'Kalshi stream disconnected; resnapshot required'})
+            if self.done.is_set():return
             await asyncio.sleep(delay)
             delay = min(5, delay*2)
 
