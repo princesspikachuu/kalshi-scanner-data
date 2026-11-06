@@ -9,6 +9,26 @@ from services.api.demo_models import Policy
 
 MAX_OBJECT=4*1024*1024
 
+def failure_details(error,stage):
+    # SDK/SQL exception text may contain credentials or connection strings.
+    # Publish only fixed classifications and bounded protocol status fields.
+    known={'Backup chunk capacity reached':'backup_capacity',
+           'Archive chunk too large':'object_capacity',
+           'Archive verification failed':'checksum_mismatch',
+           'Archive restore validation failed':'roundtrip_mismatch',
+           'Restored object too large':'restore_capacity'}
+    result=dict(stage=stage,error_type=type(error).__name__,
+                reason_code=known.get(str(error),'operation_failed') if type(error) is ValueError else 'operation_failed')
+    response=getattr(error,'response',{})
+    status=response.get('ResponseMetadata',{}).get('HTTPStatusCode') if isinstance(response,dict) else None
+    if isinstance(status,int) and 100<=status<=599:result['http_status']=status
+    code=response.get('Error',{}).get('Code') if isinstance(response,dict) else None
+    if code in ('AccessDenied','NoSuchBucket','InvalidAccessKeyId','SignatureDoesNotMatch',
+                'PreconditionFailed','RequestTimeout','InternalError'):result['provider_code']=code
+    state=getattr(error,'sqlstate',None)
+    if isinstance(state,str) and len(state)==5 and state.isalnum():result['sqlstate']=state
+    return result
+
 def storage_measurement(size,policy,env,now,previous=None):
     # Render capacity is supplied as non-secret deployment configuration after
     # checking the provisioned database. The UI's editable value is a fallback.
@@ -134,17 +154,21 @@ def maintenance(store,env,stop):
     print(json.dumps(dict(event='database_storage_health',**measurement)),flush=True)
     if used>=policy['storage_warning_percent']:store.alert('storage',f'Database data uses {used:.1f}% of {measurement["provisioned_gb"]} GB capacity. Review storage and archiving thresholds.',used>=policy['storage_critical_percent'])
     else:store.clear_alert('storage')
-    objects=None
+    objects=None;stage='object_store'
     try:
         objects=object_store(env)
+        stage='archive'
         if policy['archive_enabled']:archive_events(store,objects,policy,used>=policy['storage_warning_percent'])
+        stage='restore'
         restore_requests(store,objects)
+        stage='backup'
         last=store.get('backup-health')
         if not last or time.time()-last['progress'].get('at',0)>policy['backup_hours']*3600:backup(store,objects)
         store.clear_alert('backup')
-    except Exception:
+    except Exception as error:
         store.alert('backup','Demo backup or archive verification failed. Original records are retained.',True)
-        print(json.dumps(dict(event='demo_backup_verification_failed',original_records_retained=True)),flush=True)
+        print(json.dumps(dict(event='demo_backup_verification_failed',original_records_retained=True,
+                              **failure_details(error,stage))),flush=True)
     finally:
         if objects:objects.client.close()
     try:emails(store,env,policy['critical_email'])
