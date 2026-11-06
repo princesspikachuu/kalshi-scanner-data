@@ -22,6 +22,7 @@ def install_demo(app,auth,mutate,pool):
         if not row:raise HTTPException(404,'Bot not found')
         return row
     def verify_config(config):
+        if store.get('shadow/installed'):raise HTTPException(409,'Previous bots are historical. Manage current bots in the shadow workspace.')
         config=config.model_dump();verified=[]
         config['column_maximum_cents']={} # Legacy configs remain readable; column limits are retired.
         square_caps=any(s.get('maximum_cents') is not None for s in config['squares'])
@@ -154,6 +155,7 @@ def install_demo(app,auth,mutate,pool):
         with pool.connection() as c:
             from services.trading.mode import require_demo,ModeConflict
             if body.action=='resume':
+                if store.get('shadow/installed'):raise HTTPException(409,'Resume current bots from the shadow workspace')
                 try:require_demo(c)
                 except ModeConflict as error:raise HTTPException(409,str(error)) from None
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
@@ -184,6 +186,7 @@ def install_demo(app,auth,mutate,pool):
         with pool.connection() as c:
             from services.trading.mode import require_demo,ModeConflict
             if body.action=='resume':
+                if store.get('shadow/installed'):raise HTTPException(409,'Resume current bots from the shadow workspace')
                 try:require_demo(c)
                 except ModeConflict as error:raise HTTPException(409,str(error)) from None
             c.execute('SELECT pg_advisory_xact_lock(723741930)')
@@ -370,6 +373,7 @@ def install_demo(app,auth,mutate,pool):
     @app.post('/demo/virtual-funds')
     def virtual_funds(body:VirtualFunds,request:Request):
         mutate(request);require_query(request)
+        if store.get('shadow/installed'):raise HTTPException(409,'Use the shadow workspace to add virtual funds')
         if not store.get('engine'):raise HTTPException(409,'Wait for the paper engine transition to finish')
         from services.paper_demo.ledger import Ledger,get,put
         from services.paper_demo.model import D,decimal

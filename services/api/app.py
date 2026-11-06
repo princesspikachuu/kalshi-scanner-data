@@ -168,6 +168,8 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
     install_history(app,current,settings,history_store or HistoryStore(getattr(store,'pool',None)))
     from .demo import install_demo
     install_demo(app,current,collection_mutation,getattr(store,'pool',None))
+    from .shadow import install_shadow
+    install_shadow(app,current,collection_mutation,getattr(store,'pool',None))
     from .live_bots import install_live_bots
     install_live_bots(app,current,collection_mutation,getattr(store,'pool',None))
     return app

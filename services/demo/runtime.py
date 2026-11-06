@@ -1665,6 +1665,8 @@ def run(stop):
                     owned=lock.execute("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND objid=%s) AS owned",(LOCK,)).fetchone()['owned'];lock.commit()
                     if not owned:raise RuntimeError('Trading fence lost')
                 migrate(store,os.environ,transition_guard)
+                from services.paper_demo.shadow.migrate import initialize as initialize_shadow
+                shadow_ready=initialize_shadow(store,transition_guard)
             else:undo_recent_incident(store)
             from .entry_policy import apply_entry_window_rollout
             apply_entry_window_rollout(store)
@@ -1682,6 +1684,9 @@ def run(stop):
                 lock.commit()
                 if not result['owned']:raise RuntimeError('Trading fence lost')
             try:
+                if paper_mode and shadow_ready:
+                    from services.paper_demo.shadow.host import run as run_shadow
+                    return run_shadow(stop,store,guard,os.environ)
                 next_maintenance=0;connection_notice=False
                 while not stop.is_set():
                     credential_loader=credentials

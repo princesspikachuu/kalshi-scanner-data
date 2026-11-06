@@ -109,6 +109,10 @@ async function loadTransactions(id,force=false){
 }
 async function control(id,action,button){const bot=workspace.bots.find(b=>b.key===id);button.disabled=true;try{await demoCall(`bots/${id}/control`,{action,revision:bot.revision});setMessage(action==='pause'?'Pause requested. Open bids will be canceled; filled entries remain protected.':'Resume requested. Entries wait for verified exchange state.');await load()}catch(error){setMessage(error.message)}finally{button.disabled=false}}
 async function load(){
+ if(!new URLSearchParams(location.search).has('history')){
+  try{const current=await demoCall('shadow/workspace');if(current.installed){location.replace('/shadow');return}}catch{}
+ }
+
  if(busy){refreshRequested=true;return}busy=true;
  const requestedVersion=analysisVersion;
  try{

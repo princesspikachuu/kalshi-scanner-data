@@ -5,7 +5,7 @@ const ROUTES=new Map([
 ]);
 const NAMES=new Set(['__Host-pocket_session','__Host-pocket_csrf','__Host-pocket_login','__Host-pocket_login_csrf']);
 const STATIC=new Set(['/','/index.html','/login.mjs','/auth-client.mjs','/login.css','/collection','/collection.html','/collection.mjs','/collection-client.mjs','/collection.css','/research-client.mjs','/report-view.mjs']);STATIC.add('/live-paper');STATIC.add('/live-paper.html');STATIC.add('/live-paper.mjs');STATIC.add('/live-paper-view.mjs');STATIC.add('/paper');STATIC.add('/paper.html');STATIC.add('/paper.mjs');STATIC.add('/paper-client.mjs');STATIC.add('/paper-activity.mjs');STATIC.add('/bet-overlay.mjs');
-for(const path of ['/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs','/order-detail.mjs','/activity-filters.mjs','/live-bots','/live-bots.html','/live-bots.mjs','/live-client.mjs','/live-onboarding.mjs'])STATIC.add(path);
+for(const path of ['/shadow','/shadow.html','/shadow.mjs','/bots','/bots.html','/bots.mjs','/money.css','/demo-client.mjs','/bot-builder.mjs','/bot-table.mjs','/activity','/activity.html','/activity.mjs','/demo-research.mjs','/order-detail.mjs','/activity-filters.mjs','/live-bots','/live-bots.html','/live-bots.mjs','/live-client.mjs','/live-onboarding.mjs'])STATIC.add(path);
 const BASE_HEADERS={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
 function problem(status,message){return new Response(JSON.stringify({detail:message}),{status,headers:{...BASE_HEADERS,'content-type':'application/json'}})}
 function origin(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null}catch{return null}}
@@ -78,7 +78,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:shadow\/(?:workspace|events|funds|bulk|bots\/[a-z0-9_]{1,40})|workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const liveBots=/^\/api\/live\/(?:workspace|budget|connection|onboarding|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
@@ -96,7 +96,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=liveBots?(url.pathname==='/api/live/workspace'?'GET':'POST'):demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance','/api/demo/legacy'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=liveBots?(url.pathname==='/api/live/workspace'?'GET':'POST'):demo?(['/api/demo/shadow/workspace','/api/demo/shadow/events','/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance','/api/demo/legacy'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(liveBots&&url.search)return problem(422,'Invalid filters');
  if(demo&&url.search){const query=[...url.searchParams];if(url.search.length>1024||new Set(query.map(([k])=>k)).size!==query.length||query.some(([k,v])=>![...['period','before','bot','ticker','kind','asset','start','end','version'],...(url.pathname==='/api/demo/performance'?['group','timezone']:[]),...(url.pathname==='/api/demo/orders'?['client_id','completed']:[])].includes(k)||v.length>256))return problem(422,'Invalid filters')}

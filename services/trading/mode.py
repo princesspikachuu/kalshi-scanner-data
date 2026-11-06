@@ -45,6 +45,7 @@ def request_live(pool,bot,revision,preflight_token=None):
                 or budget['progress'].get('trial_cap_cents')!=5000 or budget['progress'].get('loss_limit_cents')!=2500):
                 raise ModeConflict('Live preflight expired or settings changed; verify again')
         c.execute("UPDATE research_job SET progress=progress||'{\"desired\":\"paused\",\"state\":\"paused\"}'::jsonb WHERE idempotency_key>='demo/bot/' AND idempotency_key<'demo/bot/zzzz'")
+        c.execute("UPDATE research_job SET progress=progress||'{\"desired\":\"paused\"}'::jsonb WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'")
         c.execute("UPDATE research_job SET progress=progress||'{\"desired\":\"paused\",\"state\":\"paused\"}'::jsonb WHERE idempotency_key>='live/bot/' AND idempotency_key<'live/bot/zzzz'")
         write_mode(c,dict(mode='draining_demo',requested='live',drain_started_at=time.time(),pilot_bot=bot,pilot_contracts=1,message='Demo bots paused; waiting for verified Demo order cancellation and flat active markets.'))
 

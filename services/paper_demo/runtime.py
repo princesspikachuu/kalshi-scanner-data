@@ -27,6 +27,9 @@ class PaperWorker(Worker):
             except Exception:self.store.alert('paper-fees-'+ticker,'Paper fills paused for this market: current fees could not be verified.',False)
             else:self.store.clear_alert('paper-fees-'+ticker)
     def trade(self,allow_entries=True):
+        handover=self.store.get('alert/shadow-handover')
+        if handover and handover['progress'].get('active') and not self.exchange.ledger.positions():
+            raise RuntimeError('Shadow handover ready; restart fenced executor')
         self.poll_funding()
         return super().trade(allow_entries)
     def record(self,kind,order,message,**detail):

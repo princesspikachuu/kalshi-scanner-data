@@ -58,7 +58,7 @@ def read_verified(objects,reference):
 def archive_events(store,objects,policy,pressure):
     with store.pool.connection() as c:
         rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
-            WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz'
+            WHERE ((idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz') OR (idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz'))
             AND NOT(progress ? 'archive') AND coalesce((progress->>'restored_at')::numeric,0)<extract(epoch from clock_timestamp())-86400 AND created_at<clock_timestamp()-%s*interval '1 day'
             ORDER BY created_at LIMIT 200""",(7 if pressure else policy['archive_days'],)).fetchall()
     if not rows:return
@@ -91,6 +91,8 @@ def backup(store,objects):
         rows=c.execute("""SELECT id::text,idempotency_key,parameters,progress FROM research_job
             WHERE (idempotency_key>='demo/bot/' AND idempotency_key<'demo/bot/zzzz')
             OR (idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress->>'status' NOT IN ('closed','rejected'))
+            OR idempotency_key IN ('demo/shadow/checkpoint','demo/shadow/installed')
+            OR (idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz')
             OR idempotency_key='demo/paper/cash'
             OR (idempotency_key>='demo/paper/resting/' AND idempotency_key<'demo/paper/resting/zzzz' AND progress->>'status'='resting')
             OR (idempotency_key>='demo/paper/position/' AND idempotency_key<'demo/paper/position/zzzz' AND (progress->>'quantity')::numeric<>0)

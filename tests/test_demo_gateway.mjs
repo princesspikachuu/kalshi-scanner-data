@@ -3,7 +3,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {pro
 import gateway from '../apps/gateway/index.mjs';
 import {readFile} from 'node:fs/promises';
 test('Every page entrypoint and imported module is served through the real gateway allowlist',async()=>{
- const base=new URL('../apps/web/',import.meta.url),queue=['index.html','bots.html','activity.html','collection.html','paper.html','live-bots.html'],seen=new Set();
+ const base=new URL('../apps/web/',import.meta.url),queue=['index.html','shadow.html','bots.html','activity.html','collection.html','paper.html','live-bots.html'],seen=new Set();
  const environment={APP_ORIGIN:'https://app.test',ASSETS:{fetch:async request=>new Response(await readFile(new URL(new URL(request.url).pathname.slice(1),base),'utf8'),{headers:{'content-type':request.url.endsWith('.mjs')?'text/javascript':'text/html'}})}};
  while(queue.length){
   const path=queue.shift();if(seen.has(path))continue;seen.add(path);
@@ -479,4 +479,15 @@ test('production paper connection and virtual funding keep POST and owner bounda
  }
  assert.deepEqual(methods,['POST','POST']);
  const history=await proxyAuth(new Request('https://app.test/api/demo/legacy'),env,{fetcher});assert.equal(history.status,200);
+});
+
+test('Shadow workspace and controls retain authenticated gateway methods',async()=>{
+ for(const path of ['shadow/workspace?version=latest','shadow/events']){
+  const r=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,options());assert.equal(r.status,200,path);
+ }
+ for(const path of ['shadow/funds','shadow/bulk','shadow/bots/btc']){
+  const r=await proxyAuth(new Request('https://app.test/api/demo/'+path,{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json'},body:'{}'}),env,options());assert.equal(r.status,200,path);
+  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/'+path),env,options())).status,405);
+ }
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace?api_key=secret'),env,options())).status,422);
 });
