@@ -76,19 +76,33 @@ def read_verified(objects,reference):
     finally:stream.close()
 
 def archive_events(store,objects,policy,pressure):
+    # Keyset pages use the unique idempotency-key index. Do not sort/filter the
+    # entire event history (including large JSON payloads) every five minutes.
+    prefixes=('demo/event/','demo/shadow/event/')
+    saved=store.get('archive-scan');state=dict(saved['progress']) if saved else {}
+    which=state.get('next_prefix',0)%len(prefixes);prefix=prefixes[which]
+    cursors=dict(state.get('cursors',{}));after=cursors.get(prefix,prefix)
+    if not isinstance(after,str) or not after.startswith(prefix):after=prefix
     with store.pool.connection() as c:
-        rows=c.execute("""SELECT id::text,parameters,progress FROM research_job
-            WHERE ((idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz') OR (idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz'))
-            AND NOT(progress ? 'archive') AND coalesce((progress->>'restored_at')::numeric,0)<extract(epoch from clock_timestamp())-86400 AND created_at<clock_timestamp()-%s*interval '1 day'
-            ORDER BY created_at LIMIT 200""",(7 if pressure else policy['archive_days'],)).fetchall()
-    if not rows:return
-    reference=put_verified(objects,'events',rows)
-    # Verify bytes before replacing event detail with a searchable pointer.
-    with store.pool.connection() as c:
-        for row in rows:
-            c.execute("UPDATE research_job SET progress=%s WHERE id=%s AND NOT(progress ? 'archive')",
-                (Jsonb(dict(archive=reference,archived=True)),row['id']))
-    store.put('archive-health',dict(at=time.time(),last_count=len(rows),verified=True))
+        page=c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at
+            FROM research_job WHERE idempotency_key>%s AND idempotency_key<%s
+            ORDER BY idempotency_key LIMIT 200""",(after,prefix+'zzzz')).fetchall()
+    now=time.time();cutoff=now-(7 if pressure else policy['archive_days'])*86400
+    rows=[dict(id=r['id'],parameters=r['parameters'],progress=r['progress']) for r in page
+          if 'archive' not in r['progress'] and
+          float(r['progress'].get('restored_at',0))<now-86400 and r['created_at'].timestamp()<cutoff]
+    if rows:
+        reference=put_verified(objects,'events',rows)
+        # Only verified bytes may replace details with a searchable pointer.
+        with store.pool.connection() as c:
+            for row in rows:
+                c.execute("UPDATE research_job SET progress=%s WHERE id=%s AND NOT(progress ? 'archive')",
+                    (Jsonb(dict(archive=reference,archived=True)),row['id']))
+        store.put('archive-health',dict(at=time.time(),last_count=len(rows),verified=True))
+    cursors[prefix]=page[-1]['idempotency_key'] if len(page)==200 else prefix
+    store.put('archive-scan',dict(cursors=cursors,next_prefix=(which+1)%len(prefixes)))
+    print(json.dumps(dict(event='demo_archive_scan',scanned=len(page),archived=len(rows),bounded=True)),flush=True)
+
 
 def restore_requests(store,objects):
     for request in store.rows('restore/',5):
@@ -154,22 +168,28 @@ def maintenance(store,env,stop):
     print(json.dumps(dict(event='database_storage_health',**measurement)),flush=True)
     if used>=policy['storage_warning_percent']:store.alert('storage',f'Database data uses {used:.1f}% of {measurement["provisioned_gb"]} GB capacity. Review storage and archiving thresholds.',used>=policy['storage_critical_percent'])
     else:store.clear_alert('storage')
-    objects=None;stage='object_store'
-    try:
-        objects=object_store(env)
-        stage='archive'
-        if policy['archive_enabled']:archive_events(store,objects,policy,used>=policy['storage_warning_percent'])
-        stage='restore'
-        restore_requests(store,objects)
-        stage='backup'
-        last=store.get('backup-health')
-        if not last or time.time()-last['progress'].get('at',0)>policy['backup_hours']*3600:backup(store,objects)
-        store.clear_alert('backup')
-    except Exception as error:
-        store.alert('backup','Demo backup or archive verification failed. Original records are retained.',True)
+    objects=None;failed=False
+    def failure(error,stage):
+        nonlocal failed
+        failed=True
         print(json.dumps(dict(event='demo_backup_verification_failed',original_records_retained=True,
                               **failure_details(error,stage))),flush=True)
-    finally:
-        if objects:objects.client.close()
+    try:
+        objects=object_store(env)
+    except Exception as error:failure(error,'object_store')
+    if objects:
+        def due_backup():
+            last=store.get('backup-health')
+            if not last or time.time()-last['progress'].get('at',0)>policy['backup_hours']*3600:
+                backup(store,objects)
+        try:
+            for stage,operation in (
+                    ('archive',lambda:archive_events(store,objects,policy,used>=policy['storage_warning_percent']) if policy['archive_enabled'] else None),
+                    ('restore',lambda:restore_requests(store,objects)),('backup',due_backup)):
+                try:operation()
+                except Exception as error:failure(error,stage)
+        finally:objects.client.close()
+    if failed:store.alert('backup','Demo backup or archive verification failed. Original records are retained.',True)
+    else:store.clear_alert('backup')
     try:emails(store,env,policy['critical_email'])
     except Exception:store.put('email-health',dict(ready=False,message='Critical email delivery failed; review the in-app alerts'))

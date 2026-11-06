@@ -37,6 +37,31 @@ class HostedPostgres(unittest.TestCase):
     def seed(self):
         self.assertTrue(initialize(self.demo,lambda:None))
 
+    def test_archive_keyset_pages_cover_both_histories_without_dropping_events(self):
+        import io
+        from services.demo.maintenance import archive_events,read_verified
+        from services.paper_demo.shadow.storage import UPSERT,entry
+        class Objects:
+            bucket='private'
+            def __init__(self):self.client=self;self.objects={}
+            def put_object(self,**kw):self.objects[kw['Key']]=kw['Body']
+            def get_object(self,**kw):
+                body=self.objects[kw['Key']];return dict(ContentLength=len(body),Body=io.BytesIO(body))
+        records=[entry('demo/event/'+f'{i:04}',{},dict(original=i)) for i in range(201)]
+        records.append(entry('demo/shadow/event/one',{},dict(original='shadow')))
+        with self.demo.pool.connection() as c:
+            with c.cursor() as cur:cur.executemany(UPSERT,records)
+            c.execute("UPDATE research_job SET created_at=clock_timestamp()-interval '40 days'")
+        objects=Objects()
+        for _ in range(3):archive_events(self.demo,objects,{'archive_days':7},False)
+        with self.demo.pool.connection() as c:
+            archived=c.execute("SELECT progress FROM research_job WHERE progress ? 'archive'").fetchall()
+        self.assertEqual(len(archived),202)
+        references={r['progress']['archive']['key']:r['progress']['archive'] for r in archived}
+        restored=[row for ref in references.values() for row in read_verified(objects,ref)]
+        self.assertEqual(len(restored),202);self.assertEqual(len({r['id'] for r in restored}),202)
+        self.assertEqual(self.demo.get('archive-scan')['progress']['cursors']['demo/event/'],'demo/event/')
+
     def test_rollout_is_idempotent_and_preserves_old_history(self):
         from services.api.tests.test_demo_engine import config
         self.demo.put('bot/old',dict(desired='running'),parameters=dict(config=config(),revision=7))

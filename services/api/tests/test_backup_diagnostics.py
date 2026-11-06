@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 from unittest.mock import Mock,MagicMock,patch
-from services.demo.maintenance import failure_details,maintenance
+from services.demo.maintenance import failure_details,maintenance,archive_events
 
 class BackupDiagnosticsTests(unittest.TestCase):
     def test_known_capacity_reason_and_provider_status_are_safe(self):
@@ -37,3 +37,23 @@ class BackupDiagnosticsTests(unittest.TestCase):
         self.assertEqual(event['stage'],'backup');self.assertEqual(event['reason_code'],'backup_capacity')
         self.assertTrue(event['original_records_retained']);objects.client.close.assert_called_once()
         store.clear_alert.assert_called_once_with('storage')
+
+    def test_archive_failure_does_not_suppress_control_backup(self):
+        store=Mock();store.pool=MagicMock();store.get.return_value=None
+        store.pool.connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value={'size':1000}
+        with patch('services.demo.maintenance.object_store',return_value=Mock()),\
+             patch('services.demo.maintenance.archive_events',side_effect=RuntimeError('private SQL text')),\
+             patch('services.demo.maintenance.restore_requests'),\
+             patch('services.demo.maintenance.backup') as backup,\
+             patch('services.demo.maintenance.emails'),contextlib.redirect_stdout(io.StringIO()):
+            maintenance(store,{},Mock())
+        backup.assert_called_once();store.alert.assert_called_once()
+
+    def test_failed_object_verification_cannot_advance_archive_cursor(self):
+        from datetime import datetime,timezone
+        store=Mock();store.pool=MagicMock();store.get.return_value=None
+        store.pool.connection.return_value.__enter__.return_value.execute.return_value.fetchall.return_value=[
+            dict(id='one',idempotency_key='demo/event/one',parameters={},progress={},created_at=datetime(2000,1,1,tzinfo=timezone.utc))]
+        with patch('services.demo.maintenance.put_verified',side_effect=ValueError('Archive verification failed')):
+            with self.assertRaises(ValueError):archive_events(store,Mock(),{'archive_days':7},False)
+        store.put.assert_not_called()
