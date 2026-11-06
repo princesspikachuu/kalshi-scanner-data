@@ -251,6 +251,7 @@ class HostedRun(ForwardRun):
                 self.publish_at=time.monotonic()+5
                 money=money_snapshot(self.engine,self.profiles,time.time())
                 portfolio=money['portfolio']
+                orders=money.pop('orders');positions=money.pop('positions')
                 if time.monotonic()>=getattr(self,'accounting_log_at',0):
                     self.accounting_log_at=time.monotonic()+30
                     print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
@@ -262,7 +263,7 @@ class HostedRun(ForwardRun):
                     open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                     market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
                         book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
-                    orders=money['orders'],positions=money['positions']))
+                    orders=orders,positions=positions))
             # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
             # execution state in the hot checkpoint; never rewrite years of history.
             self.engine.prune_terminal_orders()

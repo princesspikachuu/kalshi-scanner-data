@@ -40,6 +40,7 @@ def install_shadow(app,auth,mutate,pool):
         health=store.get('health');status=store.get('shadow/status')
         status=status['progress'] if status else dict(virtual_cash='1000',available_cash='1000',positions=[],orders=[],market_states={})
         money=status.get('accounting')
+        status=dict(status);status.pop('accounting',None)
         current=money.get('current_cycles',{}) if money else {}
         snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
@@ -114,7 +115,8 @@ def install_shadow(app,auth,mutate,pool):
                     **money['quality'],real_orders_enabled=False)),flush=True)
         commands=store.rows('shadow/command/',100)
         return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
-            engine=marker['progress'],bots=bots,status=status,accounting=money,version=latest,
+            engine=marker['progress'],bots=bots,status=status,
+            accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
             pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done')))
