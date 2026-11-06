@@ -83,6 +83,8 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.market_api_activity={};self.market_api_next={};self.market_api_samples={}
         self.demo_trading_status=None;self.demo_status_next=0
         if isinstance(self.exchange,Exchange):self.exchange.before_read=self.drain_stream_during_read
+    def money_cents(self,value):
+        return round(value,6) if getattr(self.exchange,'paper',False) else round(value)
     def entry_diagnostics(self,now):
         from .engine import entry_price,side_quote,fair_budget_config
         running_count=max(1,sum(b['desired']=='running' and not b.get('archived') for b in self.bots))
@@ -507,7 +509,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         for row in rows:
             data,state=row['parameters'],row['progress'];raw=candidates.get(data.get('client_id'))
             if not raw or not needs_recovery(data,state,raw):continue
-            state=dict(state,exchange_id=raw['order_id'],filled=count(raw,'fill_count'),remaining=count(raw,'remaining_count'),fees=cents(raw.get('maker_fees_dollars',0))+cents(raw.get('taker_fees_dollars',0)))
+            state=dict(state,exchange_id=raw['order_id'],filled=count(raw,'fill_count'),remaining=count(raw,'remaining_count'),fees=self.money_cents(number(raw.get('maker_fees_dollars',0))*100)+self.money_cents(number(raw.get('taker_fees_dollars',0))*100))
             state['status']='resting' if raw['status']=='resting' else 'held' if data['kind']=='entry' and state['filled'] else 'closed'
             if state['status']!='closed':state.pop('closed_at',None)
             self.store.put('order/'+data['client_id'],state)
@@ -672,7 +674,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                 order['status']='uncertain';blocked.add(order['ticker']);self.save_order(order);continue
             previous=order.get('filled',0);prior_status=order.get('status')
             order.update(exchange_id=raw['order_id'],filled=count(raw,'fill_count'),remaining=count(raw,'remaining_count'),
-                fees=cents(raw.get('maker_fees_dollars',0))+cents(raw.get('taker_fees_dollars',0)))
+                fees=self.money_cents(number(raw.get('maker_fees_dollars',0))*100)+self.money_cents(number(raw.get('taker_fees_dollars',0))*100))
             order['status']='resting' if raw['status']=='resting' else 'held' if order['kind']=='entry' and order['filled'] else 'closed'
             if order['kind']=='exit' and raw['status'] in TERMINAL:order['status']='closed'
             if order['status']=='resting' and order.get('cancel_404_at') and now-order['cancel_404_at']<30:
@@ -717,7 +719,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                 order['sold']=round(sold.get(order['client_id'],0)+order.get('offset_quantity',0),2)
                 if order.get('filled',0)>0 and order['sold']>=order['filled'] and order.get('remaining',0)==0:
                     sale_total=sum(r['progress'].get('filled',0)*r['parameters']['price'] for r in exits if r['parameters'].get('parent')==order['client_id'])
-                    order['realized_cents']=round(sale_total+order.get('offset_credit_cents',0)-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
+                    order['realized_cents']=self.money_cents(sale_total+order.get('offset_credit_cents',0)-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
                     order['status']='closed';order['closed_at']=now;self.save_order(order)
                     self.record('realized',order,'Entry fully exited',realized_cents=order['realized_cents'])
                     self.rearm_cycle(order,now)
@@ -748,7 +750,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     if order['kind']=='entry' and order['ticker']==ticker and order.get('filled',0)>order.get('sold',0):
                         payout=100 if q.get('result')==order['side'] else 0
                         sale_total=sum(r['progress'].get('filled',0)*r['parameters']['price'] for r in exits if r['parameters'].get('parent')==order['client_id'])
-                        order['realized_cents']=round(sale_total+order.get('offset_credit_cents',0)+(order['filled']-order.get('sold',0))*payout-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
+                        order['realized_cents']=self.money_cents(sale_total+order.get('offset_credit_cents',0)+(order['filled']-order.get('sold',0))*payout-order['filled']*order['price']-order.get('fees',0)-exit_fees.get(order['client_id'],0))
                         order.update(status='closed',closed_at=now);self.save_order(order)
                         self.record('settlement',order,'Exchange-confirmed settlement',realized_cents=order['realized_cents'])
                 continue
@@ -934,7 +936,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
             except (OSError,TimeoutError,WebSocketException):raise ExchangeFailure('stream_connection_lost') from None
             self.socket=BufferedSocket(connection);self.stream_opened_at=time.time()
             self.socket.send(json.dumps(dict(id=1,cmd='subscribe',params=dict(channels=['orderbook_delta'],market_tickers=sorted(desired),update_interval_ms=0,use_yes_price=False))))
-            self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['fill','user_orders']))))
+            self.socket.send(json.dumps(dict(id=2,cmd='subscribe',params=dict(channels=['trade'],market_tickers=sorted(desired)) if getattr(self.exchange,'paper',False) else dict(channels=['fill','user_orders']))))
             self.subscription=desired;self.sequence={};self.recovered=False
         elif desired!=self.subscription and self.book_sid is not None:
             # Add/remove markets on the existing sequence instead of repeatedly
@@ -942,7 +944,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
             for action,markets in [('add_markets',desired-self.subscription),('delete_markets',self.subscription-desired)]:
                 if markets:
                     self.stream_command+=1
-                    self.socket.send(json.dumps(dict(id=self.stream_command,cmd='update_subscription',params=dict(sids=[self.book_sid],market_tickers=sorted(markets),action=action))))
+                    self.socket.send(json.dumps(dict(id=self.stream_command,cmd='update_subscription',params=dict(sids=[self.book_sid]+([self.paper_trade_sid] if getattr(self,'paper_trade_sid',None) is not None else []),market_tickers=sorted(markets),action=action))))
             self.subscription=desired
             self.books.books={t:b for t,b in self.books.books.items() if t in desired}
         want_lifecycle=any(b['desired']=='running' and b['config'].get('strategy')=='buy_low_sell_high' for b in self.bots)
@@ -973,12 +975,17 @@ class Worker(LateExitMixin,MarketActivityMixin):
             if message.get('type')=='subscribed':
                 if message.get('msg',{}).get('channel')=='orderbook_delta':self.book_sid=message['msg']['sid']
                 if message.get('msg',{}).get('channel')=='market_lifecycle_v2':self.lifecycle_sid=message['msg']['sid']
+                if message.get('msg',{}).get('channel')=='trade' and getattr(self.exchange,'paper',False):self.paper_trade_sid=message['msg']['sid']
                 continue
             if 'seq' in message and 'sid' in message:
                 sid=message['sid'];seq=message['seq']
                 if sid in self.sequence and seq!=self.sequence[sid]+1:raise ExchangeFailure('stream_gap')
                 self.sequence[sid]=seq
             raw=message.get('msg',{})
+            if message.get('type')=='trade' and getattr(self.exchange,'paper',False):
+                if self.exchange.observe_trade(raw,time.time()):
+                    self.stream_event_revision+=1;self.recovered=False;self.last_reconcile=0
+                    return
             if message.get('type')=='market_lifecycle_v2' and raw.get('event_type') in ('activated','created'):
                 ticker=raw.get('market_ticker','')
                 from services.research.reports import SERIES
@@ -1019,6 +1026,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     continue
                 ticker,observed=self.books.apply(message,getattr(self.socket,'received_at',None) or now)
                 self.quotes[ticker]=dict(old,**observed)
+                if getattr(self.exchange,'paper',False):self.exchange.observe_book(ticker,self.books.books[ticker],self.quotes[ticker],message['type']=='orderbook_snapshot')
                 # Yield on the first crossing instead of collapsing a burst of
                 # exchange changes into its last (potentially much lower) price.
                 if observed['book_ready'] and self.observe_exit_triggers(ticker,now,old):return
@@ -1027,6 +1035,8 @@ class Worker(LateExitMixin,MarketActivityMixin):
         if self.socket is not None and self.book_sid is None and self.stream_opened_at and time.time()-self.stream_opened_at>25:
             raise ExchangeFailure('stream_subscription')
     def close_stream(self):
+        if getattr(self.exchange,'paper',False):
+            self.exchange.invalidate();self.paper_trade_sid=None
         if self.socket:
             try:self.socket.close()
             except Exception:pass
@@ -1509,7 +1519,7 @@ class Worker(LateExitMixin,MarketActivityMixin):
         self.reset_controller=ResetController(self.store,self.exchange)
         self.restore_market_activity()
         bootstrap=os.environ.get('DEMO_RESET_REQUEST_JSON')
-        if bootstrap and not self.store.get('reset'):request_reset(self.store,ResetRequest.model_validate_json(bootstrap))
+        if bootstrap and not getattr(self.exchange,'paper',False) and not self.store.get('reset'):request_reset(self.store,ResetRequest.model_validate_json(bootstrap))
         next_reconcile=0;next_controls=0;maintenance_at=0;backoff=1;credential_check=0;credential_version=None;next_mode_check=0;mode=dict(mode='demo')
         try:
             while not self.stop.is_set():
@@ -1534,9 +1544,12 @@ class Worker(LateExitMixin,MarketActivityMixin):
                     if isinstance(self.exchange,Exchange) and time.monotonic()>=self.exchange.next_limits:
                         self.exchange.refresh_limits()
                     if now>=credential_check:
-                        credential_check=now+30;record=self.store.get('credentials');changed=record['progress'].get('changed_at') if record else None
+                        credential_check=now+30;record=self.store.get('paper-credentials' if getattr(self.exchange,'paper',False) else 'credentials');changed=record['progress'].get('changed_at') if record else None
                         if credential_version is not None and changed!=credential_version:
-                            signer=credentials(self.store,os.environ)
+                            credential_loader=credentials
+                            if getattr(self.exchange,'paper',False):
+                                from services.paper_demo.exchange import credentials as credential_loader
+                            signer=credential_loader(self.store,os.environ)
                             if signer:self.exchange.signer=signer;self.close_stream();self.recovered=False
                         credential_version=changed
                     self.stage='controls'
@@ -1643,7 +1656,16 @@ def run(stop):
             # copied bots are unused. This guard runs under the exclusive
             # worker fence and does not touch any exchange order or position.
             from .reset import undo_recent_incident
-            undo_recent_incident(store)
+            paper_mode=os.environ.get('DEMO_ENGINE','production_paper')=='production_paper'
+            if not paper_mode and store.get('engine'):raise RuntimeError('A paper ledger cannot be reused by the Kalshi Demo exchange')
+            if paper_mode:
+                from services.paper_demo.transition import migrate
+                def transition_guard():
+                    if lock.closed:raise RuntimeError('Trading fence lost')
+                    owned=lock.execute("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND objid=%s) AS owned",(LOCK,)).fetchone()['owned'];lock.commit()
+                    if not owned:raise RuntimeError('Trading fence lost')
+                migrate(store,os.environ,transition_guard)
+            else:undo_recent_incident(store)
             from .entry_policy import apply_entry_window_rollout
             apply_entry_window_rollout(store)
             print(json.dumps(dict(event='demo_worker_ready',environment='demo',max_connections=3,watch_limit=100)),flush=True)
@@ -1662,18 +1684,27 @@ def run(stop):
             try:
                 next_maintenance=0;connection_notice=False
                 while not stop.is_set():
-                    signer=credentials(store,os.environ)
+                    credential_loader=credentials
+                    if paper_mode:
+                        from services.paper_demo.exchange import credentials as credential_loader
+                    signer=credential_loader(store,os.environ)
                     if signer:break
                     if not connection_notice:
                         print(json.dumps(dict(event='demo_connection_required',trading_active=False)),flush=True);connection_notice=True
-                    store.put('health',dict(state='connection_required',message='Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1']))
+                    store.put('health',dict(state='connection_required',message='Connect a production Read API key for real-time paper market data' if paper_mode else 'Connect your Kalshi Demo API key to verify the account',at=time.time(),features=['square_bid_caps_v1','square_loss_prevention_v1','editable_rules_v1','buy_low_sell_high_v1','current_time_loss_v1']))
                     from .maintenance import maintenance
                     if time.time()>=next_maintenance:
                         maintenance(store,os.environ,stop);next_maintenance=time.time()+300
                     stop.wait(30)
                 if stop.is_set():return
-                exchange=Exchange(signer,guard=guard)
-                try:Worker(store,exchange,stop,guard).loop()
+                engine=Worker
+                if paper_mode:
+                    from services.paper_demo.exchange import PaperExchange
+                    from services.paper_demo.runtime import PaperWorker
+                    exchange=PaperExchange(store,signer,guard=guard);engine=PaperWorker
+                    marker=store.get('engine');exchange.ledger.initialize(marker['progress']['starting_cents'])
+                else:exchange=Exchange(signer,guard=guard)
+                try:engine(store,exchange,stop,guard).loop()
                 finally:exchange.close()
             finally:
                 if not lock.closed:lock.execute('SELECT pg_advisory_unlock(%s)',(LOCK,));lock.commit()

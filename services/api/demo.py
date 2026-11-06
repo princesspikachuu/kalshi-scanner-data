@@ -1,7 +1,9 @@
 """Owner-only Demo controls; browsers read durable snapshots, never poll Kalshi."""
 import os,time
+from datetime import datetime,timezone
 from uuid import UUID,uuid4
 from fastapi import Request,HTTPException
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel,ConfigDict,Field
 from .demo_models import BotConfig,Controls,Policy,PERIOD_HOURS
 from services.demo.store import DemoStore
@@ -94,10 +96,14 @@ def install_demo(app,auth,mutate,pool):
         for b in bots:
             if b.get('fresh_test') or analysis_version=='latest' and b.get('analysis_version_info'):metrics.setdefault(b['key'],dict(realized_cents=0,closed=0))
         account_change=values['equity_cents']-first['progress']['value'] if values and first else None
+        if account_change is not None:
+            with pool.connection() as c:
+                flows=c.execute("SELECT coalesce(sum((progress#>>'{details,amount_cents}')::numeric),0) AS cents FROM research_job WHERE idempotency_key>='demo/event/' AND idempotency_key<'demo/event/zzzz' AND parameters->>'kind'='virtual_funds' AND created_at>to_timestamp(%s)",(first['progress'].get('at',0),)).fetchone()['cents']
+            account_change-=int(flows)
         monitoring={r['idempotency_key'].split('/')[-1].split('-')[0]:r['progress'] for r in health_rows}
         return dict(contract='demo-v1',environment='demo',reset_mode='archive_copy',reset=({**reset['progress'],'request_id':reset['parameters']['request_id']} if reset else None),bots=bots[:100],capacity_reached=len(bots)>100,
             health=status,account=values,alerts=alerts,policy=policy['progress'] if policy else Policy().model_dump(),
-            connection_configured=bool(store.get('credentials') or os.environ.get('KALSHI_DEMO_API_KEY_ID')),
+            connection_configured=bool(store.get('paper-credentials')),engine=(store.get('engine') or {}).get('progress'),
             vault_ready=bool(os.environ.get('DEMO_VAULT_KEY')),monitoring=monitoring,metrics=metrics,summary_metrics=card_metrics,account_change_cents=account_change,period=period,analysis_version=analysis_version)
     @app.post('/demo/bots')
     def create(body:BotConfig,request:Request):
@@ -320,6 +326,7 @@ def install_demo(app,auth,mutate,pool):
         model_config=ConfigDict(extra='forbid')
         key_id:str=Field(min_length=1,max_length=128)
         private_key:str=Field(min_length=100,max_length=12000)
+    @app.post('/demo/paper-connection')
     @app.post('/demo/connection')
     def connect(body:Connection,request:Request):
         mutate(request);require_query(request)
@@ -329,8 +336,54 @@ def install_demo(app,auth,mutate,pool):
         try:encrypted=encrypt_credentials(key,body.key_id,body.private_key)
         except CredentialInputError as error:raise HTTPException(422,str(error)) from None
         except Exception:raise HTTPException(503,'The server could not securely save the connection. Your key has not been marked invalid; please retry shortly.') from None
-        store.put('credentials',dict(encrypted=encrypted,changed_at=time.time()))
-        store.event('connection_updated','Demo account credentials updated; verification pending')
+        from services.paper_demo.exchange import ProductionData
+        from services.demo.exchange import DemoSigner,ExchangeFailure
+        data=ProductionData(DemoSigner(body.key_id,body.private_key))
+        try:
+            keys=data.call('GET','/api_keys').get('api_keys')
+            matching=next((r for r in keys if r.get('api_key_id')==body.key_id),None) if isinstance(keys,list) else None
+            if not matching or not isinstance(matching.get('scopes'),list) or 'read' not in matching['scopes']:
+                raise HTTPException(422,'Use a production API key with Read permission. Paper execution never uses trading permission.')
+        except ExchangeFailure:raise HTTPException(503,'Production read access could not be verified. Use a real-account API key, not a Kalshi Demo key.') from None
+        finally:data.close()
+        store.put('paper-credentials',dict(encrypted=encrypted,changed_at=time.time()))
+        store.event('connection_updated','Production Read connection saved for paper market data; no real orders enabled')
+        return dict(contract='demo-v1',saved=True)
+    @app.get('/demo/legacy')
+    def legacy(request:Request):
+        auth(request);require_query(request,('before',))
+        before=request.query_params.get('before')
+        try:
+            if before:UUID(before)
+        except ValueError:raise HTTPException(422,'Invalid history cursor') from None
+        with pool.connection() as c:
+            records=c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at FROM research_job
+                WHERE ((idempotency_key>='kalshi-demo/event/' AND idempotency_key<'kalshi-demo/event/zzzz')
+                  OR (idempotency_key>='kalshi-demo/order/' AND idempotency_key<'kalshi-demo/order/zzzz')
+                  OR (idempotency_key>='kalshi-demo/bot/' AND idempotency_key<'kalshi-demo/bot/zzzz'))
+                  AND (%s::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM research_job WHERE id=%s::uuid))
+                ORDER BY created_at DESC,id DESC LIMIT 51""",(before,before)).fetchall()
+        return dict(contract='demo-v1',source='kalshi_demo',items=[dict(id=r['id'],record_type=r['idempotency_key'].split('/')[1],created_at=r['created_at'].isoformat(),parameters=r['parameters'],progress=r['progress']) for r in records[:50]],next_before=records[49]['id'] if len(records)>50 else None)
+    class VirtualFunds(BaseModel):
+        model_config=ConfigDict(extra='forbid',strict=True)
+        amount_cents:int=Field(ge=1,le=100000000)
+    @app.post('/demo/virtual-funds')
+    def virtual_funds(body:VirtualFunds,request:Request):
+        mutate(request);require_query(request)
+        if not store.get('engine'):raise HTTPException(409,'Wait for the paper engine transition to finish')
+        from services.paper_demo.ledger import Ledger,get,put
+        from services.paper_demo.model import D,decimal
+        with pool.connection() as c:
+            ledger=Ledger(store);ledger.transaction(c);cash=get(c,'cash')
+            if not cash:raise HTTPException(409,'Paper ledger is initializing')
+            cash['dollars']=str(decimal(cash['dollars'])+D(body.amount_cents)/100)
+            put(c,'cash',cash)
+            account=c.execute("SELECT progress FROM research_job WHERE idempotency_key='demo/account' FOR UPDATE").fetchone()
+            if account:
+                balance=dict(account['progress']);balance['cash_cents']+=body.amount_cents;balance['equity_cents']+=body.amount_cents;balance['at']=time.time()
+                c.execute("UPDATE research_job SET progress=%s WHERE idempotency_key='demo/account'",(Jsonb(balance),))
+            event=str(uuid4());summary='Virtual funds added to the paper ledger'
+            c.execute("INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at) VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())",(uuid4(),Jsonb(dict(kind='virtual_funds',summary=summary)),Jsonb(dict(kind='virtual_funds',message=summary,time=datetime.now(timezone.utc).isoformat(),details=dict(amount_cents=body.amount_cents,simulated=True))),'demo/event/'+event))
         return dict(contract='demo-v1',saved=True)
     @app.post('/demo/refresh')
     def refresh(request:Request):

@@ -94,9 +94,9 @@ test('Performance grids retain square axes, empty standard time bands and unknow
  const grid=squareGridMarkup({items:[{...metric,revision:1,square:0,condition:{asset:'btc',min_price:60,max_price:69,min_minutes:3,max_minutes:5}}]});
  assert.match(grid,/60–69¢/);assert.match(grid,/3–5 min/);assert.match(grid,/v1 · square 1/);
 });
-test('Activity market links stay in Kalshi Demo and cannot inject an arbitrary destination',()=>{
- assert.match(marketLink('KXBTC15M-26NOV011100-00'),/https:\/\/demo.kalshi.co\/markets\/kx\/m\/kxbtc15m-26nov011100/);
- assert.match(marketLink('KXBTC15M-26NOV011100-00',null),/demo.kalshi.co/);
+test('Paper activity market links use production and cannot inject an arbitrary destination',()=>{
+ assert.match(marketLink('KXBTC15M-26NOV011100-00'),/https:\/\/kalshi.com\/markets\/kx\/m\/kxbtc15m-26nov011100/);
+ assert.match(marketLink('KXBTC15M-26NOV011100-00',null),/kalshi.com/);
  assert.doesNotMatch(marketLink('javascript:alert(1)'),/href=/);
  assert.doesNotMatch(marketLink('T-ONE',{event_ticker:'https://evil.test'}),/href=/);
 });
@@ -466,4 +466,17 @@ test('guided LIVE setup gates every write and never repeats pending funding',asy
  assert.deepEqual(enabled({...state,subaccount:null}),['create']);
  assert.deepEqual(enabled({...state,subaccount:null,market_running:false}),[]);
  assert.deepEqual(enabled({...state,primary_market_cents:0,prepare_cents:5000,source_index:0}),['prepare']);
+});
+
+test('production paper connection and virtual funding keep POST and owner boundaries',async()=>{
+ const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'x'.repeat(32)};let methods=[];
+ const fetcher=async(url,options)=>{methods.push(options.method);return new Response(JSON.stringify({contract:'demo-v1',saved:true}),{headers:{'content-type':'application/json'}})};
+ for(const path of ['paper-connection','virtual-funds']){
+  const request=origin=>new Request('https://app.test/api/demo/'+path,{method:'POST',headers:{origin,'content-type':'application/json','x-csrf-token':'fake'},body:'{}'});
+  assert.equal((await proxyAuth(request('https://evil.test'),env,{fetcher})).status,403);
+  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher})).status,405);
+  assert.equal((await proxyAuth(request('https://app.test'),env,{fetcher})).status,200);
+ }
+ assert.deepEqual(methods,['POST','POST']);
+ const history=await proxyAuth(new Request('https://app.test/api/demo/legacy'),env,{fetcher});assert.equal(history.status,200);
 });

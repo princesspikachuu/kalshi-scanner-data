@@ -78,7 +78,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|bots|bulk|policy|connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const liveBots=/^\/api\/live\/(?:workspace|budget|connection|onboarding|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
@@ -96,7 +96,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   new RegExp('^/api/collection/campaigns/'+uuid+'/(?:pause|resume|remove)$').test(url.pathname)||
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
- const method=liveBots?(url.pathname==='/api/live/workspace'?'GET':'POST'):demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
+ const method=liveBots?(url.pathname==='/api/live/workspace'?'GET':'POST'):demo?(['/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance','/api/demo/legacy'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(liveBots&&url.search)return problem(422,'Invalid filters');
  if(demo&&url.search){const query=[...url.searchParams];if(url.search.length>1024||new Set(query.map(([k])=>k)).size!==query.length||query.some(([k,v])=>![...['period','before','bot','ticker','kind','asset','start','end','version'],...(url.pathname==='/api/demo/performance'?['group','timezone']:[]),...(url.pathname==='/api/demo/orders'?['client_id','completed']:[])].includes(k)||v.length>256))return problem(422,'Invalid filters')}
@@ -138,7 +138,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   if(Number(request.headers.get('content-length'))>20480)return problem(413,'Request too large');
   try{body=await boundedBody(request.body,20480)}catch{return problem(413,'Request too large')}
  }
- const readOnlySetup=liveBots&&['/api/live/connection','/api/live/preflight','/api/live/onboarding'].includes(url.pathname);
+ const readOnlySetup=demo&&['/api/demo/connection','/api/demo/paper-connection'].includes(url.pathname)||liveBots&&['/api/live/connection','/api/live/preflight','/api/live/onboarding'].includes(url.pathname);
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),readOnlySetup?Math.max(timeoutMs,30000):timeoutMs);
  try{
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});

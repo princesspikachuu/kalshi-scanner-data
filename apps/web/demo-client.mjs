@@ -127,8 +127,8 @@ export function marketLink(ticker,quote={},label=ticker){
  if(typeof ticker!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(ticker))return escapeHTML(ticker||'—');
  const event=quote?.event_ticker||ticker.split('-').slice(0,-1).join('-');
  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(event))return escapeHTML(ticker);
- const href='https://demo.kalshi.co/markets/kx/m/'+encodeURIComponent(event.toLowerCase());
- return `<a href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer" title="Open related market in Kalshi Demo">${escapeHTML(label)} ↗</a>`;
+ const href='https://kalshi.com/markets/kx/m/'+encodeURIComponent(event.toLowerCase());
+ return `<a href="${escapeHTML(href)}" target="_blank" rel="noopener noreferrer" title="Open production market in Kalshi">${escapeHTML(label)} ↗</a>`;
 }
 export function transactionBadge(item){
  const d=item.details||{};let label='',style='';
@@ -170,7 +170,7 @@ export function attentionInfo(bot,health,orders=[],now=Date.now()/1000){
    reason:manual?'Unowned exchange orders need verification.':uncertain?'Some orders have not been confirmed by Kalshi.':'Saved bot positions differ from the exchange position.',
    action:'This market is temporarily blocked until its combined YES/NO position is verified. Other markets continue trading. Expand the market details to see every involved bot and order.',control:'activity',phase:'Market ownership reconciliation'};
  }
- if(health.state==='connection_required')return {...base,reason:'A verified Kalshi Demo connection is required.',action:'Connect your Demo API key and private key. The worker will verify the account before trading.',control:'connection',phase:'Account connection'};
+ if(health.state==='connection_required')return {...base,reason:'A verified production Read connection is required.',action:'Connect a production Read API key. The worker verifies market data before simulating orders.',control:'connection',phase:'Account connection'};
  if(!health.at||now-health.at>90)return {...base,reason:'The trading worker has stopped checking in.',action:'New entries wait for worker recovery and order verification. Request verification or inspect Activity for the last successful check.',phase:'Worker recovery'};
  const issue=health.issue;
  if(issue)return {...base,reason:issue.summary,action:issue.action,control:issue.control,code:issue.code,httpStatus:issue.http_status,phase:({'controls':'Bot controls','discovery':'Market discovery','stream':'Market-price connection','reconciliation':'Order reconciliation','trade':'Order submission'})[issue.phase]||'Trading recovery',markets:issue.market?[issue.market]:[],orderId:issue.order_id};

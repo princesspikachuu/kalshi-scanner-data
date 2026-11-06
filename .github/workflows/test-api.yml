@@ -5,6 +5,7 @@ on:
       - 'services/api/**'
       - 'services/research/**'
       - 'services/paper/**'
+      - 'services/paper_demo/**'
       - 'services/demo/**'
       - 'services/live/**'
       - 'services/trading/**'
