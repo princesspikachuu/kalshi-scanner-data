@@ -74,6 +74,8 @@ class Fees:
     def schedule(self,ticker,at):
         saved=self.cache.get(ticker)
         if not saved or time.time()-saved['at']>60:raise ExchangeFailure('paper_fee_schedule_stale')
+        resolved=saved.get('resolved')
+        if resolved and resolved[0]<=at<resolved[1]:return resolved[2],resolved[3]
         def effective(rows):return sorted((r for r in rows if datetime.fromisoformat(r['scheduled_ts'].replace('Z','+00:00')).timestamp()<=at),key=lambda r:datetime.fromisoformat(r['scheduled_ts'].replace('Z','+00:00')).timestamp())
         kind,multiplier=saved['base']
         for r in effective(saved['changes']):kind,multiplier=r['fee_type'],r['fee_multiplier']
@@ -82,6 +84,9 @@ class Fees:
             if r.get('fee_type_override') is None and r.get('fee_multiplier_override') is None:kind,multiplier=base
             else:kind=r.get('fee_type_override') or base[0];multiplier=r.get('fee_multiplier_override') if r.get('fee_multiplier_override') is not None else base[1]
         charge('.5',1,kind,multiplier)
+        times=[datetime.fromisoformat(r['scheduled_ts'].replace('Z','+00:00')).timestamp() for r in saved['changes']+saved['events']]
+        saved['resolved']=(max((t for t in times if t<=at),default=float('-inf')),
+                           min((t for t in times if t>at),default=float('inf')),kind,multiplier)
         return kind,multiplier
 
 class PaperExchange:

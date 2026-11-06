@@ -2,7 +2,7 @@
 from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, InvalidOperation
 import csv
 import heapq
 import json
@@ -44,6 +44,33 @@ class FeePolicy:
         return (cost + raw).quantize(D('.0001'), rounding=ROUND_CEILING) - cost if rate else ZERO
 
 
+class PriceLevels(dict):
+    """Depth map with an incrementally maintained best bid."""
+    def __init__(self,values=()):
+        super().__init__(values);self.best=max(self,default=None)
+    def __setitem__(self,key,value):
+        super().__setitem__(key,value)
+        if self.best is None or key>self.best:self.best=key
+    def __delitem__(self,key):
+        super().__delitem__(key)
+        if key==self.best:self.best=max(self,default=None)
+    def pop(self,key,*default):
+        value=super().pop(key,*default)
+        if key==self.best:self.best=max(self,default=None)
+        return value
+    def popitem(self):
+        key,value=super().popitem()
+        if key==self.best:self.best=max(self,default=None)
+        return key,value
+    def clear(self):super().clear();self.best=None
+    def update(self,values=(),**kwargs):
+        for key,value in dict(values,**kwargs).items():self[key]=value
+    def setdefault(self,key,default=None):
+        if key not in self:self[key]=default
+        return self[key]
+    def __ior__(self,values):self.update(values);return self
+
+
 class Book:
     def __init__(self):
         self.levels = {'yes': {}, 'no': {}}
@@ -53,41 +80,63 @@ class Book:
         self.at = 0.0
         self.used = {'yes': {}, 'no': {}}
 
+    @property
+    def levels(self):return self._levels
+
+    @levels.setter
+    def levels(self,value):
+        self._levels={side:values if isinstance(values,PriceLevels) else PriceLevels(values) for side,values in value.items()}
+
     def apply(self, event: dict, now: float):
         msg = event['msg']
         if event['type'] == 'orderbook_snapshot':
-            for side in ('yes', 'no'):
-                self.levels[side] = {D(p): D(q) for p, q in msg.get(side+'_dollars_fp', []) if D(q) > 0}
-            self.used = {side: {p:q for p,q in self.used[side].items() if p in self.levels[side]}
-                         for side in ('yes','no')}
-            self.valid = True
+            levels={'yes':{},'no':{}}
+            try:
+                for side in ('yes','no'):
+                    for raw_price,raw_quantity in msg.get(side+'_dollars_fp',[]):
+                        price,quantity=D(raw_price),D(raw_quantity)
+                        if not price.is_finite() or not ZERO<price<1 or not quantity.is_finite() or quantity<0:
+                            raise ValueError('invalid binary book level')
+                        if quantity:levels[side][price]=quantity
+            except (InvalidOperation,ValueError,TypeError,KeyError):
+                self.valid=False
+                raise ValueError('invalid binary book level') from None
+            self.levels=levels
+            self.used={side:{p:q for p,q in self.used[side].items() if p in levels[side]} for side in ('yes','no')}
+            self.valid=True
         else:
-            if not self.valid or event['sid'] != self.sid or event['seq'] != self.seq+1:
-                self.valid = False
+            if not self.valid or self.seq is None or event.get('sid')!=self.sid or event.get('seq')!=self.seq+1:
+                self.valid=False
                 raise ValueError('book sequence gap')
-            side, price = msg['side'], D(msg['price_dollars'])
-            quantity = self.levels[side].get(price, ZERO) + D(msg['delta_fp'])
-            if quantity < 0:
-                self.valid = False
+            try:
+                side,price,delta=msg['side'],D(msg['price_dollars']),D(msg['delta_fp'])
+                if side not in ('yes','no') or not price.is_finite() or not ZERO<price<1 or not delta.is_finite():
+                    raise ValueError('invalid binary book level')
+                quantity=self.levels[side].get(price,ZERO)+delta
+                if not quantity.is_finite():raise ValueError('invalid binary book level')
+            except (InvalidOperation,ValueError,TypeError,KeyError):
+                self.valid=False
+                raise ValueError('invalid binary book level') from None
+            if quantity<0:
+                self.valid=False
                 raise ValueError('negative depth')
-            if quantity:
-                self.levels[side][price] = quantity
+            if quantity:self.levels[side][price]=quantity
             else:
-                self.levels[side].pop(price, None)
-                # A complete removal proves this displayed level epoch ended.
-                self.used[side].pop(price, None)
-            # A positive update does NOT automatically replenish hypothetical consumed depth.
-        self.seq, self.sid, self.at = event['seq'], event['sid'], now
-        for side in ('yes', 'no'):
-            if any(not (ZERO < p < 1) or not q.is_finite() for p,q in self.levels[side].items()):
-                self.valid = False
-                raise ValueError('invalid binary book level')
-        if self.bid('yes') is not None and self.bid('no') is not None and self.bid('yes')+self.bid('no') > 1:
-            self.valid = False
+                self.levels[side].pop(price,None)
+                self.used[side].pop(price,None)
+            # All unchanged levels were already validated by their snapshot or
+            # previous delta. Rechecking the entire depth on each tick is quadratic.
+        self.seq,self.sid,self.at=event['seq'],event['sid'],now
+        yes,no=self.bid('yes'),self.bid('no')
+        if yes is not None and no is not None and yes+no>1:
+            self.valid=False
             raise ValueError('crossed complementary book')
 
     def bid(self, side: str) -> D | None:
-        return max(self.levels[side], default=None)
+        levels=self.levels[side]
+        if not isinstance(levels,PriceLevels):
+            levels=self.levels[side]=PriceLevels(levels)
+        return levels.best
 
     def ask(self, side: str) -> D | None:
         bid = self.bid('no' if side == 'yes' else 'yes')
