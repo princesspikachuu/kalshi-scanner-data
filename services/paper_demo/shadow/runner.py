@@ -152,33 +152,35 @@ class ForwardRun:
                     subscribed, ident = set(), 2
                     book_sid=trade_sid=None
                     last_snapshot_request = 0.0
-                    delay = .25
+                    connected_at = time.monotonic()
                     while not self.done.is_set():
                         # Keep lifecycle subscription across rolls to avoid missing settlement events.
                         desired={t for t in self.selected.values() if t in self.engine.markets}
                         additions=desired-subscribed
                         removals=subscribed-desired
                         if removals and book_sid is not None and trade_sid is not None:
-                            await ws.send(json.dumps(dict(id=ident,cmd='update_subscription',params=dict(
-                                sids=[book_sid,trade_sid],market_tickers=sorted(removals),action='delete_markets'))))
-                            ident+=1
+                            for sid in (book_sid,trade_sid):
+                                await ws.send(json.dumps(dict(id=ident,cmd='update_subscription',params=dict(
+                                    sid=sid,market_tickers=sorted(removals),action='delete_markets'))))
+                                ident+=1
                             subscribed-=removals
                         if additions and (not subscribed or (book_sid is not None and trade_sid is not None)):
-                            if book_sid is None:
-                                command=dict(id=ident,cmd='subscribe',params=dict(
-                                    channels=['orderbook_delta','trade'],market_tickers=sorted(additions)))
-                            else:
-                                command=dict(id=ident,cmd='update_subscription',params=dict(
-                                    sids=[book_sid,trade_sid],market_tickers=sorted(additions),action='add_markets'))
-                            await ws.send(json.dumps(command))
-                            ident+=1
+                            for channel,sid in (('orderbook_delta',book_sid),('trade',trade_sid)):
+                                if sid is None:
+                                    command=dict(id=ident,cmd='subscribe',params=dict(
+                                        channels=[channel],market_tickers=sorted(additions)))
+                                else:
+                                    command=dict(id=ident,cmd='update_subscription',params=dict(
+                                        sid=sid,market_tickers=sorted(additions),action='add_markets'))
+                                await ws.send(json.dumps(command))
+                                ident+=1
                             subscribed.update(additions)
-                        if time.time()-last_snapshot_request>1:
+                        if book_sid is not None and time.time()-last_snapshot_request>1:
                             invalid=[(t,self.engine.books[t]) for t in desired if not self.engine.books[t].valid
-                                     and self.engine.books[t].sid is not None]
+                                     and self.engine.books[t].sid == book_sid]
                             if invalid:
                                 await ws.send(json.dumps(dict(id=ident,cmd='update_subscription',params=dict(
-                                    sids=[invalid[0][1].sid],market_tickers=[t for t,b in invalid],action='get_snapshot'))))
+                                    sid=book_sid,market_tickers=[t for t,b in invalid],action='get_snapshot'))))
                                 ident+=1
                                 last_snapshot_request=time.time()
                         try:
@@ -189,12 +191,15 @@ class ForwardRun:
                             if event.get('msg',{}).get('channel')=='orderbook_delta':book_sid=event['msg']['sid']
                             if event.get('msg',{}).get('channel')=='trade':trade_sid=event['msg']['sid']
                         if event.get('type') == 'error':
-                            raise ValueError('Kalshi subscription error')
+                            code=event.get('msg',{}).get('code')
+                            raise ValueError(f'Kalshi subscription rejected: code={code} request={event.get("id")}')
                         await self.put('kalshi', event)
+                        if time.monotonic()-connected_at>=30:delay=.25
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                LOG.warning('KALSHI_DISCONNECTED %s', type(exc).__name__)
+                reason=str(exc) if isinstance(exc,ValueError) else type(exc).__name__
+                LOG.warning('KALSHI_DISCONNECTED %s', reason)
             finally:
                 if not self.done.is_set():
                     await self.put('gap', {'reason':'Kalshi stream disconnected; resnapshot required'})
@@ -208,11 +213,12 @@ class ForwardRun:
                 async with connect(COINBASE, ping_interval=10, ping_timeout=5, open_timeout=5) as ws:
                     await ws.send(json.dumps(dict(type='subscribe', product_ids=['BTC-USD'],
                                                  channels=['matches','heartbeat'])))
-                    delay = .25
+                    connected_at = time.monotonic()
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get('type')=='error':
                             raise ValueError('Coinbase subscription error')
+                        if time.monotonic()-connected_at>=30:delay=.25
                         if event.get('type')=='match' and event.get('product_id')=='BTC-USD':
                             await self.put('spot', dict(price=event['price'], event_time=ts(event['time'])))
             except asyncio.CancelledError:
@@ -242,6 +248,23 @@ class ForwardRun:
                         await self.put('refill', json.loads(line))
             await asyncio.sleep(.05)
 
+    def reject_input(self,source,payload,exc):
+        # Never turn a malformed book for one market into 28 unrelated errors.
+        # No raw payloads, authentication headers, or provider bodies enter logs.
+        known={'stale book event','book sequence gap','negative depth',
+               'invalid binary book level','crossed complementary book',
+               'invalid/stale spot','non-monotonic replay clock',
+               'settlement requires prior explicit WS settled event'}
+        reason=str(exc) if str(exc) in known else 'malformed '+source+' event'
+        ticker=payload.get('msg',{}).get('market_ticker') if source=='kalshi' else payload.get('ticker')
+        LOG.warning('SIMULATION_INPUT_REJECTED source=%s ticker=%s reason=%s',source,ticker,reason)
+        if ticker in self.engine.books:
+            self.engine.data_gap(ticker,reason)
+        else:
+            if source=='spot':self.engine.spot=type(self.engine.spot)()
+            for affected in self.engine.books:
+                if affected not in self.engine.settled:self.engine.data_gap(affected,reason)
+
     async def consume(self):
         last_at = 0
         while not self.done.is_set():
@@ -257,13 +280,7 @@ class ForwardRun:
             try:
                 self.engine.handle(source, payload, now)
             except ValueError as exc:
-                LOG.error('SIMULATION_INPUT_REJECTED %s', str(exc))
-                if source not in ('gap',):
-                    for ticker in self.engine.books:
-                        if ticker not in self.engine.settled:
-                            self.engine.data_gap(ticker, 'invalid input')
-                # Force reconnection/resnapshot after a sequence gap rather than accepting later deltas.
-                # Current cycle stays invalid even after recovery.
+                self.reject_input(source,payload,exc)
             self.queue.task_done()
 
     async def run(self):

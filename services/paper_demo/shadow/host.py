@@ -80,9 +80,8 @@ class HostedRun(ForwardRun):
             last=now;self.audit.begin()
             try:
                 self.engine.handle(source,payload,now)
-            except ValueError:
-                for ticker in list(self.engine.books):
-                    if ticker not in self.engine.settled:self.engine.data_gap(ticker,'invalid input')
+            except ValueError as exc:
+                self.reject_input(source,payload,exc)
             except BaseException:
                 self.audit.abort();raise
             self.audit.flush();self.queue.task_done()

@@ -344,6 +344,7 @@ class Engine:
         self.fill_callback: Callable[[Order,D],None] | None = None
         self.closed_reports, self.settled = set(), set()
         self.strategy = None
+        self.gap_reasons = {}
 
     def log(self, kind: str, order: Order | None = None, **fields):
         if order:
@@ -568,10 +569,14 @@ class Engine:
 
     def data_gap(self, ticker: str, reason: str):
         if ticker in self.books:
+            duplicate=(not self.books[ticker].valid and not self.wallet.stat(ticker).valid
+                       and self.gap_reasons.get(ticker)==reason)
+            self.gap_reasons[ticker]=reason
             self.books[ticker].valid = False
             self.wallet.stat(ticker).valid = False
-            self.cancel_buys(ticker)
-            self.log('DATA_GAP', ticker=ticker, reason=reason)
+            if not duplicate:
+                self.cancel_buys(ticker)
+                self.log('DATA_GAP', ticker=ticker, reason=reason)
 
     def report(self, ticker: str, final=False) -> dict:
         stat = self.wallet.stat(ticker)
