@@ -12,6 +12,18 @@ from services.api.tests import test_demo_postgres as fixtures
 from services.api.tests.test_demo_engine import config
 
 class PaperRules(unittest.TestCase):
+    def test_decimal_strike_market_reads_are_allowed_without_widening_write_access(self):
+        seen=[]
+        client=httpx.Client(transport=httpx.MockTransport(lambda r:(seen.append(str(r.url)),httpx.Response(200,json={}))[1]),trust_env=False)
+        data=ProductionData(client=client)
+        for ticker in ('KXTEMPMIAH-26NOV0702-T76.99','KXBTCD-26NOV0717-T85749.99'):
+            data.call('GET','/markets/'+ticker)
+            data.call('GET','/markets/'+ticker+'/orderbook')
+            for method in ('POST','PATCH','PUT','DELETE'):
+                with self.assertRaises(ExchangeFailure):data.call(method,'/markets/'+ticker)
+        for path in ('/markets/../portfolio/balance','/markets/..','/markets/.','/markets/x?escape=1','/portfolio/orders'):
+            with self.assertRaises(ExchangeFailure):data.call('GET',path)
+        self.assertEqual(len(seen),4);data.close()
     def test_fee_rounding_uses_current_centicent_formula_and_verified_maker_schedule(self):
         self.assertEqual(charge('.5',1,'quadratic',1),(D('.5'),D('0')))
         self.assertEqual(charge('.5',1,'quadratic_with_maker_fees',1),(D('.5'),D('.0044')))

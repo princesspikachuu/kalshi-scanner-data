@@ -36,5 +36,5 @@ async def discover_hourly(host):
     while not host.done.is_set():
         try:await hourly_once(host)
         except asyncio.CancelledError:raise
-        except Exception as exc:print(json.dumps(dict(event='paper_hourly_retry',error=type(exc).__name__,real_orders_enabled=False)),flush=True)
+        except Exception as exc:print(json.dumps(dict(event='paper_hourly_retry',error=type(exc).__name__,code=getattr(exc,'code',None),real_orders_enabled=False)),flush=True)
         await asyncio.sleep(15)

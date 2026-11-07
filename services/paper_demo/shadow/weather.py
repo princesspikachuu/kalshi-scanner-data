@@ -74,5 +74,5 @@ async def discover_weather(host):
         try:await weather_once(host)
         except asyncio.CancelledError:raise
         except Exception as exc:
-            print(json.dumps(dict(event='paper_weather_retry',error=type(exc).__name__,real_orders_enabled=False)),flush=True)
+            print(json.dumps(dict(event='paper_weather_retry',error=type(exc).__name__,code=getattr(exc,'code',None),real_orders_enabled=False)),flush=True)
         await asyncio.sleep(15)
