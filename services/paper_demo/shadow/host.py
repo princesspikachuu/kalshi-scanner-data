@@ -14,6 +14,7 @@ from .folders import initialize_folders
 from .experiments import ExperimentSuite
 from .set_discovery import discover_sets
 from .weather import initialize_weather,discover_weather
+from .performance import record_balances
 
 LOG=logging.getLogger('shadow-host')
 
@@ -282,13 +283,17 @@ class HostedRun(ForwardRun):
                     print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
                                           real_orders_enabled=False)),flush=True)
                 self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
+                experiment_snapshot=self.experiments.snapshot(time.time())
+                if int(now//60)!=getattr(self,'balance_history_minute',None):
+                    record_balances(self.store,dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()}),now)
+                    self.balance_history_minute=int(now//60)
                 self.store.put('shadow/status',dict(at=time.time(),selected=self.selected,
                     equity=portfolio['equity'],accounting=money,
                     virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
                     open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                     market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
                         book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
-                    orders=orders,positions=positions,experiments=self.experiments.snapshot(time.time())))
+                    orders=orders,positions=positions,experiments=experiment_snapshot))
             # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
             # execution state in the hot checkpoint; never rewrite years of history.
             self.engine.prune_terminal_orders()

@@ -6,6 +6,7 @@ from fastapi import Request,HTTPException
 from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
+from services.paper_demo.shadow.performance import folder_performance
 from services.trading.mode import require_demo,ModeConflict
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
@@ -135,6 +136,7 @@ def install_shadow(app,auth,mutate,pool):
             if f['id'] in experiments:f.update(experiments[f['id']])
             elif f['id']=='convexity':f['accounting']=money
             folders.append(f)
+        folder_performance(pool,folders,snapshot_at)
         commands=store.rows('shadow/command/',100)
         return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,

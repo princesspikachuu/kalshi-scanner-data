@@ -53,3 +53,19 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  ${Math.abs(Number(a.reconciliation_difference||0))>.005?`<p class="account-warning">${e(dollars(a.reconciliation_difference))} of account P/L is not assigned to the current bot cards. Account totals come from the wallet ledger.</p>`:''}
  <p class="small">${e(String(q.verified_cycles||0))} verified cycle reports · ${e(String(q.gap_cycles||0))} with data gaps · Accounting updated ${e(new Date(account.at*1000).toLocaleTimeString())}</p>`;
 }
+
+export const folderPeriods={all:'All', '1H':'1h', '6H':'6h', '24H':'24h', '7D':'7d', '30D':'30d'};
+export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
+ if(!Object.hasOwn(folderPeriods,period))period='all';
+ const controls=Object.entries(folderPeriods).map(([key,label])=>`<button class="secondary" data-folder-period="${key}" aria-pressed="${period===key}">${label}</button>`).join('');
+ const rows=folders.map(f=>{
+  const account=f.accounting,a=account?.portfolio,positions=account?.positions||[];
+  const value=finite(a?.equity)?{low:Number(a.equity),high:Number(a.equity),unpriced:0}:shifted(valueBounds(a,positions),a?.cash);
+  const result=f.performance?.[period];
+  const pnl=period==='all'?accountPnl(a,positions):{text:result?.pnl===null||result?.pnl===undefined?'—':dollars(result.pnl),className:pnlClass(result?.pnl)};
+  const since=result?.since?new Date(result.since*1000).toLocaleString():'';
+  const detail=period==='all'?'Current session':result?.missing_history||!result?'Waiting for balance history':result.partial?'Tracked since '+since:'Rolling '+folderPeriods[period]+' · minute snapshots';
+  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td><strong class="${value?.unpriced?'value-range':''}">${e(rangeText(value))}</strong><small>Cash ${e(dollars(a?.cash))}${account&&now-account.at>30?' · snapshot stale':''}</small></td><td><strong class="${pnl.className||''}">${period!=='all'&&result?.pnl!=null?'≈ ':''}${e(pnl.text)}</strong><small>${e(detail)}</small></td></tr>`;
+ }).join('');
+ return `<div class="row between"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${controls}</div></div><div class="table-scroll"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Balance now</th><th>P/L · ${e(folderPeriods[period])}</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">Balance is cash plus estimated position value. P/L includes realized and unrealized changes after paid fees, excluding added funds. Periods use minute snapshots within the current reset session; shorter tracking coverage is shown per folder.</p>`;
+}

@@ -1,8 +1,10 @@
 import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferences} from './demo-client.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl} from './shadow-view.mjs';
+import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,folderOverviewMarkup,folderPeriods} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences();
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null;
+let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
+if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
 const note=value=>$('message').textContent=value;
 function botCard(bot,status){
   const selected=bot.strategy&&bot.strategy!=='convexity'?'all':periods[bot.id]||'all',metrics=(bot.financial_metrics||bot.metrics)[selected],ticker=status.selected?.[bot.series];
@@ -18,7 +20,8 @@ function botCard(bot,status){
 function draw(){
  const status=data.status||{},health=data.health||{};
  $('health').textContent=health.message||'Waiting for worker';
- $('accountSummary').innerHTML=data.folders?.length?'<p>Choose a strategy folder below to view its independent $1,000 paper account.</p>':accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
+ $('accountSummary').innerHTML=data.folders?.length?folderOverviewMarkup(data.folders,folderPeriod):accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
+ for(const b of document.querySelectorAll('[data-folder-period]'))b.onclick=()=>{folderPeriod=b.dataset.folderPeriod;try{localStorage.setItem('moneytree-folder-period',folderPeriod)}catch{}draw()};
  $('connect').textContent=data.connection_configured?'Manage production data key':'Connect production Read key';
  const find=$('find').value.toLowerCase();
  const folders=data.folders?.length?data.folders:[{id:'convexity',name:'Convexity',description:'',accounting:data.accounting}];
@@ -26,7 +29,7 @@ function draw(){
   const bots=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id&&(b.name+' '+b.series).toLowerCase().includes(find));
   const money=folder.accounting,local=folder.id==='convexity'?status:{...status,positions:money?.positions||[],orders:money?.orders||[]};
   const running=bots.filter(b=>b.desired==='running').length;
-  return `<details class="strategy-folder panel" ${folder.id==='convexity'?'':'open'} data-folder="${e(folder.id)}"><summary><span class="folder-name">${e(folder.name)}</span><span class="badge">${bots.length} bots · ${running} running</span></summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div></details>`;
+  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${folder.id==='convexity'?'':'open'} data-folder="${e(folder.id)}"><summary><span class="folder-name">${e(folder.name)}</span><span class="badge">${bots.length} bots · ${running} running</span></summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div></details>`;
  }).join('');
  for(const b of document.querySelectorAll('[data-folder-pause]'))b.onclick=()=>folderControl(b.dataset.folderPause,'pause');
  for(const b of document.querySelectorAll('[data-folder-resume]'))b.onclick=()=>folderControl(b.dataset.folderResume,'resume');
