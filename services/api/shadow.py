@@ -212,7 +212,13 @@ def install_shadow(app,auth,mutate,pool):
             previous=c.execute('SELECT parameters FROM research_job WHERE idempotency_key=%s FOR UPDATE',(key,)).fetchone()
             command=dict(action='reset',folder_id=folder)
             if previous and previous['parameters']!=command:raise HTTPException(409,'Request ID already used')
-            if not previous:put(c,key,command,dict(done=False))
+            if not previous:
+                from psycopg.types.json import Jsonb
+                c.execute("""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
+                    VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())
+                    ON CONFLICT(idempotency_key) DO NOTHING""",(uuid4(),Jsonb(command),Jsonb(dict(done=False)),key))
+                existing=c.execute('SELECT parameters FROM research_job WHERE idempotency_key=%s',(key,)).fetchone()
+                if existing['parameters']!=command:raise HTTPException(409,'Request ID already used')
         return dict(contract='demo-v1',queued=True,real_orders_enabled=False)
 
     @app.get('/demo/shadow/sessions')
