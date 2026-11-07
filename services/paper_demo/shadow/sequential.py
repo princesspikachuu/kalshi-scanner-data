@@ -92,13 +92,20 @@ class SequentialStrategy(ConvexityStrategy):
                     continue
                 opposite='no' if lot.side=='yes' else 'yes';price=D(a['no'] if opposite=='no' else a['yes'])
                 ask=book.ask(opposite)
-                if ask and price<ask:self.e.place(ticker,opposite,'buy',qty,price,expiry=a['completion_deadline'])
+                if ask:
+                    if price<ask:self.e.place(ticker,opposite,'buy',qty,price,expiry=a['completion_deadline'])
+                    else:
+                        fee=self.e.fees[ticker].charge(qty,ask,False)
+                        entry=sum((l.quantity*l.price+l.entry_fee for l in lots),ZERO)
+                        if entry+qty*ask+fee<qty:
+                            self.e.place(ticker,opposite,'buy',qty,ask,maker=False,expiry=a['completion_deadline'])
                 continue
             if (not self.enabled or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
                 not self.e.book_fresh(ticker) or remaining<180 or now<m.get('open',m['close']-900) or now<self.e.safety_until):continue
             y,n=book.bid('yes'),book.bid('no')
             if y is None or n is None:continue
-            h=self.history.setdefault(ticker,deque(maxlen=120));h.append((now,float((y+1-n)/2)))
+            h=self.history.setdefault(ticker,deque(maxlen=120))
+            if not h or now-h[-1][0]>=1:h.append((now,float((y+1-n)/2)))
             while h and now-h[0][0]>60:h.popleft()
             if not h or now-h[0][0]<20:continue
             movement=h[-1][1]-h[0][1]

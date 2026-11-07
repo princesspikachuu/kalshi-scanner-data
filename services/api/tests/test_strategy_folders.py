@@ -250,3 +250,19 @@ class CompleteRetirementTests(SuiteTests):
         e.wallet.settle('B',D(0));e.markets['B']['paid']=True
         suite.maintain();self.assertFalse(e.markets);self.assertFalse(b.groups)
         self.assertEqual(suite.snapshot(201)['complete_set']['bots']['set_scanner']['net_realized_pnl'],'0.2')
+
+class SequentialTimingTests(unittest.TestCase):
+    def test_high_frequency_ticks_do_not_prevent_twenty_second_warmup(self):
+        e=Engine(QuietAudit(),cash='1000');e.now=200;market(e)
+        b=SequentialStrategy(e,profile(),PairModel())
+        for i in range(451):
+            e.now=200+i*.05;e.books['KXBTC15M-test'].at=e.now;b.step()
+        self.assertIn('KXBTC15M-test',b.attempts)
+    def test_marketable_profitable_hedge_uses_taker_with_fees(self):
+        e=Engine(QuietAudit(),cash='1000');e.now=200;market(e,yes='.60',no='.39')
+        b=SequentialStrategy(e,profile(),PairModel())
+        e.wallet.fill('KXBTC15M-test','yes','buy',D(1),D('.45'),D(0),1,'entry')
+        b.attempts['KXBTC15M-test']=dict(first=True,recorded=False,yes='.45',no='.45',quantity='1',loss_budget='5',completion_deadline=970,entry_deadline=260)
+        b.step();o=next(iter(e.orders.values()))
+        self.assertEqual(o.action,'buy');self.assertEqual(o.side,'no');self.assertFalse(o.maker)
+        self.assertEqual(o.price,D('.40'))
