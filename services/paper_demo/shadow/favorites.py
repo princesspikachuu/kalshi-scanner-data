@@ -80,7 +80,7 @@ class FavoritesStrategy(ConvexityStrategy):
                     elif not active:
                         self.submit_entry(ticker,a,q)
                 continue
-            if (not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
+            if (m.get('entry_parked') or not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
                 not self.e.book_fresh(ticker) or m['close']-now<60):continue
             book=self.e.books[ticker];quotes=[(book.bid(side),side) for side in ('yes','no') if book.bid(side) is not None]
             if not quotes:continue

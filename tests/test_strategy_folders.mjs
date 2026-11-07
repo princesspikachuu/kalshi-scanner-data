@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup} from '../apps/web/shadow-view.mjs';
+import {folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -121,4 +121,10 @@ test('short-period unpriced P/L is a range with realized results, never a blank 
  assert.ok(html.includes('-$4.25 to $8.50'));assert.ok(html.includes('Realized $2.10'));
  assert.ok(html.includes('range includes unpriced positions'));assert.ok(html.includes('Tracked since'));
  assert.ok(html.includes('data-label="Balance now"'));assert.ok(html.includes('data-label="P/L · 1h"'));
+});
+
+test('monitoring status distinguishes protected subscriptions, entry search and overload',()=>{
+ const html=monitoringMarkup({subscribed_markets:20,position_and_exit_markets:12,entry_markets:8,total:32,entry_candidates:12,per_category:2,backlog:300,lag_p95_seconds:2.2,rotated_markets:5,categories:{hourly:2},reason:'Discovery paused: processing lag or read cooldown'});
+ for(const text of ['20 watched','8 entry candidates','Protected monitoring','Discovery paused','2.20s','positions stay monitored','5 candidates rotated'])assert.ok(html.toLowerCase().includes(text.toLowerCase()),text);
+ assert.ok(!html.includes('<table'));assert.ok(!html.includes('NaN'));
 });

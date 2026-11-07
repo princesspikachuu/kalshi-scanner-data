@@ -13,7 +13,7 @@ class WeatherSuite(unittest.TestCase):
         suite,rows=existing.SuiteTests().suite()
         rows += [dict(parameters=dict(p,revision=1),progress=dict(desired='running')) for p in weather_profiles()]
         suite.host.engine.markets={}
-        return ExperimentSuite(suite.host,rows),rows
+        return existing.ready_suite(suite.host,rows),rows
     def test_weather_profiles_cover_hourly_and_daily_without_duplicate_ids(self):
         ps=weather_profiles()
         self.assertEqual(len(ps),15);self.assertEqual(len({p['id'] for p in ps}),15)

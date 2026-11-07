@@ -1,6 +1,6 @@
 import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferences} from './demo-client.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup} from './shadow-view.mjs';
+import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences();
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null;
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
@@ -24,7 +24,7 @@ function botCard(bot,status){
 function draw(){
  const status=data.status||{},health=data.health||{};
  $('health').textContent=health.message||'Waiting for worker';
- $('accountSummary').innerHTML=data.folders?.length?folderOverviewMarkup(data.folders,folderPeriod)+sequentialComparisonMarkup(data.folders):accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
+ $('accountSummary').innerHTML=data.folders?.length?folderOverviewMarkup(data.folders,folderPeriod)+sequentialComparisonMarkup(data.folders)+monitoringMarkup(status.monitoring):accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
  for(const b of document.querySelectorAll('[data-folder-period]'))b.onclick=()=>{folderPeriod=b.dataset.folderPeriod;for(const id of Object.keys(folderSummaryPeriods))delete folderSummaryPeriods[id];saveFolderViews();try{localStorage.setItem('moneytree-folder-period',folderPeriod)}catch{}draw()};
  $('connect').textContent=data.connection_configured?'Manage production data key':'Connect production Read key';
  const find=$('find').value.toLowerCase();

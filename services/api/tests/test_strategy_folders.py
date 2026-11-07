@@ -22,6 +22,13 @@ def market(e,t='KXBTC15M-test',yes='.49',no='.49',close=1000,qty='100'):
     b=e.books[t];b.levels={'yes':{D(yes):D(qty)},'no':{D(no):D(qty)}};b.valid=True;b.at=e.now
     return b
 
+def ready_suite(host,rows,previous=None):
+    suite=ExperimentSuite(host,rows,previous)
+    suite.monitoring.limits=lambda now:dict(total=48,entry_candidates=20,per_category=4,admitting=True,level=2,
+        reason='Test load measurements',backlog=0,lag_p95_seconds=0,processing_p95_ms=0,read_cooldown_seconds=0)
+    if not isinstance(host.engine.markets,dict):host.engine.markets={}
+    return suite
+
 class StrategyTests(unittest.TestCase):
     def engine(self):return Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
     def test_fresh_model_does_not_invent_probabilities(self):
@@ -181,7 +188,7 @@ class SuiteTests(unittest.TestCase):
               dict(parameters=profile(id='fav_btc',strategy='favorites'),progress=dict(desired='running')),
               dict(parameters=profile('ALL','set_scanner','complete_set'),progress=dict(desired='running'))]
         host=Mock();host.audit=QuietAudit();host.verified_fees.schedule.return_value=('quadratic',1)
-        return ExperimentSuite(host,rows),rows
+        return ready_suite(host,rows),rows
     def test_all_new_portfolios_start_with_independent_thousand(self):
         suite,rows=self.suite()
         for e,f,ps in suite.portfolios.values():self.assertEqual(e.wallet.cash,D(1000))

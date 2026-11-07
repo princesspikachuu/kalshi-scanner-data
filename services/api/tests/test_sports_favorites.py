@@ -59,7 +59,7 @@ class SportsDiscovery(unittest.IsolatedAsyncioTestCase):
     async def test_verified_late_game_uses_read_only_milestone_and_live_endpoints(self):
         suite,rows=weather.WeatherSuite().suite()
         rows += [dict(parameters=dict(p,revision=1),progress=dict(desired='running')) for p in sports_profiles()]
-        suite=ExperimentSuite(suite.host,rows);host=Mock();host.experiments=suite;host.engine.markets={}
+        suite=weather.existing.ready_suite(suite.host,rows);host=Mock();host.experiments=suite;host.engine.markets={}
         host.put=AsyncMock();host.fee_policy=AsyncMock(return_value=Mock(taker_multiplier=D(1),maker_multiplier=D(0)))
         now=time.time();date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
         def call(method,path,query=None):
