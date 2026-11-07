@@ -2,6 +2,7 @@
 import asyncio,json,time,math
 from uuid import uuid4
 from .runner import ts
+from .discovery_budget import candidate_markets,next_profile
 from .storage import put
 from services.research.reports import SERIES
 
@@ -80,7 +81,10 @@ async def sports_once(host):
     if not suite.search_capacity('sports',now):return
     choices=suite.enabled_profiles('sports')
     if not choices:return
-    index=suite.sports_cursor%len(choices);p=choices[index];suite.sports_cursor=index+1
+    active=candidate_markets(suite,markets,'sports',now)
+    p,cursor=next_profile(suite,choices,active,suite.sports_cursor)
+    if not p:return
+    suite.sports_cursor=cursor
     result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],limit=1000,cursor=suite.sports_pages.get(p['series'],'')))
     suite.sports_pages[p['series']]=result.get('cursor','')
     rows=[r for r in result.get('markets',[]) if r.get('ticker','').startswith(p['series']+'-') and r.get('status')=='active'

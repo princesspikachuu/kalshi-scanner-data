@@ -10,6 +10,7 @@ from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
 from .monitoring import MonitoringBudget,protected,category as market_category
+from .discovery_budget import CATEGORY_LIMITS
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
 
@@ -122,7 +123,7 @@ class ExperimentSuite:
             rotated_markets=len(self.rotation_exclusions))
     def search_capacity(self,category,now,slots=1):
         stats=self.monitoring_snapshot(now)
-        return (stats['admitting'] and stats['categories'].get(category,0)+slots<=(4 if category=='complete_set' else stats['per_category']) and
+        return (stats['admitting'] and stats['categories'].get(category,0)+slots<=(4 if category=='complete_set' else min(CATEGORY_LIMITS.get(category,stats['per_category']),stats['per_category'])) and
             stats['entry_markets']+slots<=stats['entry_candidates'] and stats['subscribed_markets']+slots<=stats['total'])
     def extra_capacity(self,tickers,now):
         additions=set(tickers)-set(self.extra)
@@ -146,8 +147,11 @@ class ExperimentSuite:
                 e.markets[t]['entry_parked']=True;e.books[t].valid=False
             self.extra.pop(t,None)
     def prepare(self,e,source,payload,now):
-        for ticker in list(e.books):
-            if ticker in e.settled:continue
+        targets={e.orders[item[3]].ticker for item in e.pending if item[0]<=now}
+        if source=='clock':targets.update(e.books)
+        elif source=='kalshi':targets.add(payload.get('msg',{}).get('market_ticker'))
+        for ticker in targets:
+            if ticker not in e.books or ticker in e.settled:continue
             try:
                 kind,m=self.host.verified_fees.schedule(ticker,now)
                 e.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else ZERO)
@@ -341,5 +345,7 @@ class ExperimentSuite:
             if hasattr(b,'scans'):b.scans=0;b.profitable=0
             if hasattr(b,'last_reason'):b.last_reason='Fresh paper session · waiting for eligible markets'
         f.halted.update(t for t,m in e.markets.items() if not m.get('paid'))
-        for ticker,m in e.markets.items():e.wallet.stat(ticker)
+        for ticker,m in e.markets.items():
+            m.pop('entry_recovery_halt',None)
+            e.wallet.stat(ticker)
         e.log('SESSION_RESET',reason='New $1,000 virtual account; previous session archived')

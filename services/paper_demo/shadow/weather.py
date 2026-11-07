@@ -3,6 +3,7 @@ import asyncio,json,time
 from uuid import uuid4
 from .runner import ts
 from .storage import put
+from .discovery_budget import candidate_markets,next_profile
 from services.research.reports import SERIES
 
 WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets with evidence-based exits. Favorite bias remains a hypothesis.'
@@ -46,8 +47,10 @@ async def weather_once(host):
         if not suite.search_capacity(category,now):continue
         choices=suite.enabled_profiles(category)
         if not choices:continue
-        index=suite.weather_cursor.get(category,0)%len(choices);p=choices[index]
-        suite.weather_cursor[category]=index+1
+        active=candidate_markets(suite,markets,category,now)
+        p,cursor=next_profile(suite,choices,active,suite.weather_cursor.get(category,0))
+        if not p:continue
+        suite.weather_cursor[category]=cursor
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],
             min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=suite.weather_pages.get(p['series'],'')))
         suite.weather_pages[p['series']]=result.get('cursor','')

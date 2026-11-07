@@ -66,7 +66,9 @@ def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
     price = price.quantize(TICK, rounding=ROUND_FLOOR)
     if not D('.70') <= price <= D('.95'):
         return None
-    quantity = min(quantity, (engine.available()*D('.05')/price).to_integral_value(rounding=ROUND_FLOOR))
+    available = engine.available()+sum((o.reserved for o in engine.orders.values()
+        if o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')),D(0))
+    quantity = min(quantity, (available*D('.05')/price).to_integral_value(rounding=ROUND_FLOOR))
     if quantity < 1:
         return None
     fee = engine.fees[ticker].charge(quantity, price, True)
@@ -77,7 +79,7 @@ def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
             fee = engine.fees[ticker].charge(quantity, price, True)
         if price < D('.70'):
             return None
-    if quantity*price+fee > engine.available():
+    if quantity*price+fee > available:
         return None
     return dict(price=price, quantity=quantity, fee=fee, mode=mode,
                 estimate=value, key=key, ceiling=str(ceiling))

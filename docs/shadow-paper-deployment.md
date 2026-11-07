@@ -59,3 +59,26 @@ quantity again; these are execution diagnostics, not a profitability estimate.
 Each fill audit carries its purpose and modeled latency. No per-tick history or
 new market-data requests are introduced. New market strategy labels identify
 convexity-recovery-v2 separately from earlier cycles.
+Favorites activity/recovery update: valid maker bids now retain their queue
+position. Each fresh value/fee/eligibility check renews a maximum 30-second safety
+lease, bounded by the final-minute cutoff and current sports verification. If
+checks stop, the lease expires. Cancelled/expired unfilled attempts can retry when
+conditions recover, beyond the former one-minute lifetime; replacements retain
+the original price ceiling. Any fill still ends entry accumulation for that market.
+
+A fresh full book snapshot may restore current entry eligibility after a gap;
+previous gap flags, cash flows and exclusions remain unchanged, and gap-affected
+history is not used to train entry estimates. Restart-only halts may be cleared
+after verification, while explicit halts, pause state and session-reset guards
+remain effective. An ordinary delta or heartbeat cannot restore eligibility.
+
+Shared discovery supports up to 12 hourly-price, 8 hourly-weather, 7 daily-weather
+and 4 sports candidates. Owned markets retain subscriptions without consuming
+candidate slots. Discovery prioritizes unrepresented series; idle unfilled
+candidates rotate after two minutes while active maker orders keep their queue.
+Admission uses the shared adaptive monitoring budget: 32–48 total subscriptions
+and 12–20 entry candidates, growing only with sustained healthy processing. Requests
+still use the existing provider pacing, fee TTL and verified live-sports rules.
+Per-event fee checks cover only the affected market and due actions; clock sweeps
+retain the full check. The idle clock runs at 10 Hz instead of 20 Hz; incoming
+feed events still advance due actions in causal receipt order.
