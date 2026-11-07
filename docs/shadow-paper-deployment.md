@@ -95,3 +95,11 @@ until close. Legacy exclusions are clamped to that cooldown on restart. Explicit
 readmission clears the parked flag and reopens only unfilled attempts, preserving
 the original price ceiling and historical accounting; a replacement snapshot is
 still required. Completed hourly entries are not rearmed for repeated buying.
+
+Transport lifecycle filtering: the hosted worker drops only unsequenced
+market_lifecycle_v2 notices whose explicit ticker is absent from every portfolio's
+tracked markets. This happens before queue admission and does not alter public
+books, trade prints, sequenced/control frames, malformed/unknown envelopes,
+tracked-market settlements, clocks or gap signals. Discovery remains REST-based.
+A cumulative unrelated_lifecycle_dropped counter is logged and included in feed
+health so reduced input volume can be distinguished from additional buying.
