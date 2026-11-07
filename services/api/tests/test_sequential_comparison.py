@@ -132,4 +132,4 @@ class ComparisonMigration(unittest.TestCase):
         data=self.client.get('/demo/shadow/workspace').json();self.assertEqual(len(data['folders']),6);self.assertEqual(len(data['bots']),141)
         for folder in SEQUENTIAL_FOLDERS:
             self.assertEqual(self.client.post('/demo/shadow/bulk',json=dict(action='pause',folder_id=folder)).status_code,200)
-            self.assertEqual(self.client.post('/demo/shadow/folders/'+folder+'/reset',json=dict(request_id='comparison-reset-'+folder)).status_code,200)
+            self.assertEqual(self.client.post('/demo/shadow/folders/'+folder+'/reset',json=dict(request_id='comparison-reset-'+folder.replace('_','-'))).status_code,200)
