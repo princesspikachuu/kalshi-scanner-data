@@ -170,6 +170,8 @@ class FolderPostgres(unittest.TestCase):
         self.assertFalse(checkpoint['sequential']['engine']['wallet']['lots'])
         self.assertEqual(checkpoint['favorites']['engine']['wallet']['cash'],'990')
         self.assertTrue(self.demo.get('shadow/command/'+request_id)['progress']['done'])
+        self.client.post('/demo/shadow/folders/sequential/reset',json=dict(request_id=request_id))
+        self.assertTrue(self.demo.get('shadow/command/'+request_id)['progress']['done'])
         self.assertEqual(self.client.get('/demo/shadow/sessions').status_code,200)
 
 class SuiteTests(unittest.TestCase):
