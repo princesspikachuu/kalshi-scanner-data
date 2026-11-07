@@ -15,6 +15,7 @@ class FavoritesStrategy(ConvexityStrategy):
     def safety_cancel(self,ticker):pass
     def exit_allowed(self,order):return self.e.now<self.e.markets[order.ticker]['close']
     def entry_allowed(self,m,now):
+        if self.profile.get('retired') or self.series.endswith('15M'):return False
         return not m.get('sports') or (m.get('sports_live') is True and
             m.get('sports_start',float('inf'))<=now<m.get('sports_verified_until',0) and
             60<m.get('sports_expected_end',0)-now<=self.profile.get('late_game_hours',2)*3600)

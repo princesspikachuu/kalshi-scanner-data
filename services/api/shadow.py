@@ -160,6 +160,7 @@ def install_shadow(app,auth,mutate,pool):
             row=c.execute('SELECT parameters,progress FROM research_job WHERE idempotency_key=%s FOR UPDATE',('demo/shadow/bot/'+identifier,)).fetchone()
             if not row:raise HTTPException(404,'Shadow bot not found')
             p,state=row['parameters'],row['progress']
+            if p.get('retired') and body.desired=='running':raise HTTPException(409,'This 15-minute Favorites bot is retired; use its one-hour replacements')
             if p['revision']!=body.revision:raise HTTPException(409,'Bot changed elsewhere; reload first')
             if body.contracts is not None and body.contracts!=p['contracts']:
                 put(c,'demo/shadow/version/'+identifier+'/'+str(p['revision']),{},p)
@@ -198,7 +199,7 @@ def install_shadow(app,auth,mutate,pool):
                 try:require_demo(c)
                 except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
             desired='paused' if body.action=='pause' else 'running'
-            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s)",(desired,body.folder_id,body.folder_id))
+            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true')",(desired,body.folder_id,body.folder_id,desired))
         return dict(contract='demo-v1',saved=True,real_orders_enabled=False)
 
     class Reset(BaseModel):

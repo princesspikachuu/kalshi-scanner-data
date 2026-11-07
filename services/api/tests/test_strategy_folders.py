@@ -101,16 +101,16 @@ class FavoriteTests(unittest.TestCase):
     def test_only_high_price_passive_entries_are_submitted(self):
         from services.paper_demo.shadow.favorites import FavoritesStrategy
         e=Engine(QuietAudit(),cash='1000');e.advance(200)
-        b=FavoritesStrategy(e,profile(strategy='favorites'))
-        market(e,yes='.79',no='.19');b.step()
+        b=FavoritesStrategy(e,profile(series='KXBTCD',strategy='favorites'))
+        market(e,'KXBTCD-test',yes='.79',no='.19');b.step()
         order=next(iter(e.orders.values()))
         self.assertTrue(order.maker);self.assertEqual(order.side,'yes');self.assertEqual(order.price,D('.80'))
         self.assertTrue(b.exit_allowed(order))
     def test_middle_price_and_last_minute_are_not_favorite_entries(self):
         from services.paper_demo.shadow.favorites import FavoritesStrategy
         e=Engine(QuietAudit(),cash='1000');e.advance(200)
-        b=FavoritesStrategy(e,profile(strategy='favorites'));market(e);b.step();self.assertFalse(e.orders)
-        e.now=950;e.books['KXBTC15M-test'].at=950;e.books['KXBTC15M-test'].levels={'yes':{D('.79'):D(10)},'no':{D('.19'):D(10)}}
+        b=FavoritesStrategy(e,profile(series='KXBTCD',strategy='favorites'));market(e,'KXBTCD-test');b.step();self.assertFalse(e.orders)
+        e.now=950;e.books['KXBTCD-test'].at=950;e.books['KXBTCD-test'].levels={'yes':{D('.79'):D(10)},'no':{D('.19'):D(10)}}
         b.step();self.assertFalse(e.orders)
 
 @unittest.skipUnless(fixture.URL,'Disposable PostgreSQL required')

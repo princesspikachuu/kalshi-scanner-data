@@ -48,7 +48,7 @@ class ExperimentSuite:
             for p in ps:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
-        self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={}
+        self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.control(rows)
     def state(self):
         return dict(_summary=self.summary,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
@@ -59,9 +59,10 @@ class ExperimentSuite:
             for p in ps:
                 row=next((r for r in rows if r['parameters']['id']==p['id']),None)
                 if not row:continue
-                b=f.bots[p['series']];enabled=row['progress'].get('desired')=='running' and mode=='demo'
+                b=f.bots[p['series']];enabled=row['progress'].get('desired')=='running' and mode=='demo' and not row['parameters'].get('retired')
                 if not enabled and b.enabled:
-                    for t in e.markets:e.cancel_buys(t)
+                    for t in e.markets:
+                        if f.owner(t) is b:e.cancel_buys(t)
                 b.enabled=enabled;b.contracts=D(row['parameters']['contracts'])
     def add_set(self,payload,now):
         if not self.extra_capacity([p['market']['ticker'] for p in payload['markets']],now):return
@@ -71,9 +72,33 @@ class ExperimentSuite:
             if market['ticker'] not in e.markets:e.handle('market',dict(p,market=market),now)
             self.extra[market['ticker']]=market['ticker']
         f.bots[profile['series']].register(payload['event'],[p['market'] for p in payload['markets']])
+    def enabled_profiles(self,asset):
+        found={}
+        for e,f,ps in self.portfolios.values():
+            for p in ps:
+                if p.get('asset')==asset and f.bots[p['series']].enabled and not p.get('retired'):found.setdefault(p['series'],p)
+        return list(found.values())
+    def feed_markets(self):
+        return {t:m for e,f,ps in self.portfolios.values() for t,m in e.markets.items()
+                if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
+    def share_external_markets(self):
+        # A newly added strategy must join already subscribed weather/games;
+        # waiting for another discovery would strand it behind filled positions.
+        now=time.time()
+        for ticker,m in list(self.feed_markets().items()):
+            if m['close']<=now:continue
+            source=next(e for e,f,ps in self.portfolios.values() if ticker in e.markets)
+            for folder in ('sequential','favorites'):
+                e,f,ps=self.portfolios[folder]
+                if ticker in e.markets or folder=='sequential' and m.get('hourly_price'):continue
+                p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
+                if not p:continue
+                market=dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
+                            strategy_version=p.get('version',folder+'-1'),discovered_at=now)
+                e.add_market(market,source.fees[ticker])
     def extra_capacity(self,tickers,now):
         legacy=sum(m['close']>now for m in self.host.engine.markets.values())
-        return len(set(self.extra)|set(tickers))<=max(0,min(10,22-legacy))
+        return len(set(self.extra)|set(tickers))<=max(0,min(12,24-legacy))
     def prepare(self,e,source,payload,now):
         for ticker in list(e.books):
             if ticker in e.settled:continue
@@ -87,20 +112,22 @@ class ExperimentSuite:
     def handle(self,source,payload,now):
         if source=='set_markets':self.add_set(payload,now);return
         if source=='sports_status':
-            e,f,ps=self.portfolios['favorites'];ticker=payload['ticker']
-            if ticker in e.markets:
-                self.prepare(e,'clock',{},now)
-                e.advance(now);e.markets[ticker].update(payload['gate']);f.step(ticker)
+            ticker=payload['ticker']
+            for folder in ('sequential','favorites'):
+                e,f,ps=self.portfolios[folder]
+                if ticker in e.markets:
+                    self.prepare(e,'clock',{},now)
+                    e.advance(now);e.markets[ticker].update(payload['gate']);f.step(ticker)
             return
-        if source in ('weather_market','sports_market'):
+        if source in ('weather_market','sports_market','hourly_market'):
             if not self.extra_capacity([payload['market']['ticker']],now):return
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
         for folder,(e,f,ps) in self.portfolios.items():
             local=payload
-            if source in ('market','weather_market','sports_market'):
-                if folder not in ('sequential','favorites') or source in ('weather_market','sports_market') and folder!='favorites':continue
+            if source in ('market','weather_market','sports_market','hourly_market'):
+                if folder not in ('sequential','favorites') or source=='hourly_market' and folder!='favorites':continue
                 profile=next((p for p in ps if p['series']==payload['market']['ticker'].split('-')[0]),None)
-                if not profile:continue
+                if not profile or profile.get('retired'):continue
                 local=dict(payload,market=dict(payload['market'],bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile.get('version',folder+'-1'),bot_revision=profile['revision']))
             if source in ('refill','spot','metadata_retry'):continue
             if source in ('rest_settlement_confirmed','experiment_settlement'):
@@ -113,7 +140,7 @@ class ExperimentSuite:
             if source=='settlement':
                 if payload['ticker'] not in e.markets:continue
                 e.markets[payload['ticker']]['yes_payout_confirmed']=payload['yes_payout']
-            e.handle('market' if source in ('weather_market','sports_market') else source,self.prepare(e,source,local,now),now)
+            e.handle('market' if source in ('weather_market','sports_market','hourly_market') else source,self.prepare(e,source,local,now),now)
             # Complete-set markets are not in legacy discovery's settlement gate.
             if source=='kalshi' and payload.get('type')=='market_lifecycle_v2':
                 msg=payload.get('msg',{});t=msg.get('market_ticker')
@@ -158,13 +185,14 @@ class ExperimentSuite:
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
         # execution state plus constant-size cumulative totals.
         for folder,(e,f,ps) in self.portfolios.items():
-            if folder=='favorites':
+            if folder in ('favorites','sequential'):
                 for t,m in list(e.markets.items()):
-                    if not (m.get('weather_category') or m.get('sports')) or e.now-m.get('discovered_at',e.now)<300:continue
+                    if not (m.get('weather_category') or m.get('sports') or m.get('hourly_price')) or e.now-m.get('discovered_at',e.now)<300:continue
                     b=f.owner(t);a=b.attempts.get(t,{})
                     if a.get('first') or any(l.ticker==t for l in e.wallet.lots):continue
                     e.cancel_buys(t)
                     if any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
+                    if a and not a.get('recorded') and isinstance(b,SequentialStrategy):b.finish(t)
                     old=b.attempts.pop(t,None)
                     if old:
                         totals=self.summary.setdefault(folder,{}).setdefault(m['bot_id'],{})
@@ -172,6 +200,9 @@ class ExperimentSuite:
                         totals['cycles']=totals.get('cycles',0)+1
                     for mapping in (e.markets,e.books,e.fees,e.wallet.stats,e.gap_reasons):mapping.pop(t,None)
                     e.orders={i:o for i,o in e.orders.items() if o.ticker!=t}
+                    for name in ('history','decisions','exit_at'):
+                        mapping=getattr(b,name,None)
+                        if mapping is not None:mapping.pop(t,None)
                     f.halted.discard(t);self.extra.pop(t,None)
             retired=[t for t,m in e.markets.items() if m.get('paid') and not any(l.ticker==t for l in e.wallet.lots)]
             if folder=='complete_set':
@@ -218,8 +249,8 @@ class ExperimentSuite:
             e.prune_terminal_orders()
         # One ticker may belong to both a basket and a favorite. Retiring one
         # portfolio must not unsubscribe another portfolio's remaining position.
-        self.extra={t:t for folder in ('complete_set','favorites') for t,m in self.portfolios[folder][0].markets.items()
-                    if not m.get('paid') and (folder=='complete_set' or m.get('weather_category') or m.get('sports'))}
+        self.extra={t:t for t in self.feed_markets()}
+        self.extra.update({t:t for t,m in self.portfolios['complete_set'][0].markets.items() if not m.get('paid')})
 
     def reset(self,folder):
         e,f,ps=self.portfolios[folder]

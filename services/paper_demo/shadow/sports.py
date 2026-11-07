@@ -37,7 +37,7 @@ def expected_end(raw):
         return end if math.isfinite(end) and 0<end<=close else None
     except (KeyError,TypeError,ValueError):return None
 
-def live_gate(raw,milestone,live,now):
+def live_gate(raw,milestone,live,now,late_hours=2):
     """The final two scheduled hours are an estimate, not a known game clock."""
     try:
         event=raw['event_ticker'];mid=milestone['id'];d=live['live_data']['details']
@@ -51,7 +51,8 @@ def live_gate(raw,milestone,live,now):
         live_now=(str(d.get('status','')).lower()=='live' and d.get('live_data_delayed') is not True
                   and d.get('result_pending') is not True and not d.get('winner'))
         valid=(linked and milestone.get('category')=='Sports' and live['live_data'].get('milestone_id')==mid
-               and raw.get('status')=='active' and start<=now and end is not None and 60<end-now<=7200 and fresh and live_now)
+               and raw.get('status')=='active' and stamp(raw['close_time'])>now+60 and start<=now and end is not None and fresh and live_now
+               and ((end-now<=86400) if late_hours is None else 60<end-now<=late_hours*3600))
         return dict(sports=True,milestone_id=mid,sports_start=start,sports_expected_end=end,
             sports_live=bool(valid),sports_verified_until=min(now+30,at+45) if valid else now,
             sports_status=d.get('status','unknown'),sports_checked_at=now)
@@ -59,31 +60,31 @@ def live_gate(raw,milestone,live,now):
         return dict(sports=True,sports_live=False,sports_verified_until=now,sports_status='unverified',sports_checked_at=now)
 
 async def sports_once(host):
-    suite=host.experiments;e,f,ps=suite.portfolios['favorites'];now=time.time()
+    suite=host.experiments;now=time.time();markets=suite.feed_markets()
     # Update entry permissions even when the bot is paused or slots are full.
-    for ticker,m in list(e.markets.items()):
+    for ticker,m in list(markets.items()):
         if not m.get('sports') or m.get('paid'):continue
         if now>=m['sports_expected_end'] or m.get('sports_status') in ('closed','finished','final'):
             raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market']
             if raw.get('ticker')==ticker and raw.get('status') in ('settled','finalized') and raw.get('result') in ('yes','no'):
                 await host.put('experiment_settlement',dict(ticker=ticker,result=raw['result'],status=raw['status']))
-            continue
+                continue
         try:
             live=await asyncio.to_thread(host.verified_data.call,'GET','/live_data/milestone/'+m['milestone_id'])
             raw=dict(event_ticker=m['event_ticker'],status='active',expected_expiration_time=m['sports_expected_end'],close_time=m['close'])
             milestone=dict(id=m['milestone_id'],start_date=m['sports_start'],category='Sports',related_event_tickers=[m['event_ticker']])
-            gate=live_gate(raw,milestone,live,time.time())
+            gate=live_gate(raw,milestone,live,time.time(),late_hours=None)
         except Exception:gate=dict(sports_live=False,sports_verified_until=time.time(),sports_status='unverified')
         await host.put('sports_status',dict(ticker=ticker,gate=gate))
-    active=[t for t,m in e.markets.items() if m.get('sports') and not m.get('paid')]
+    active=[t for t,m in markets.items() if m.get('sports') and not m.get('paid')]
     if len(active)>=2 or not suite.extra_capacity(['sports-slot'],now):return
-    choices=[p for p in ps if p.get('asset')=='sports' and f.bots[p['series']].enabled]
+    choices=suite.enabled_profiles('sports')
     if not choices:return
     index=suite.sports_cursor%len(choices);p=choices[index];suite.sports_cursor=index+1
     result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],limit=1000,cursor=suite.sports_pages.get(p['series'],'')))
     suite.sports_pages[p['series']]=result.get('cursor','')
     rows=[r for r in result.get('markets',[]) if r.get('ticker','').startswith(p['series']+'-') and r.get('status')=='active'
-          and ts(r['open_time'])<=now and r['ticker'] not in e.markets and expected_end(r) is not None and 60<expected_end(r)-now<=7200]
+          and ts(r['open_time'])<=now and r['ticker'] not in markets and expected_end(r) is not None and -21600<expected_end(r)-now<=86400]
     seen=set()
     for raw in sorted(rows,key=lambda r:(expected_end(r),-float(r.get('volume_fp') or r.get('volume') or 0))):
         event=raw['event_ticker']
@@ -94,7 +95,7 @@ async def sports_once(host):
         for milestone in milestones:
             if milestone.get('category')!='Sports':continue
             live=await asyncio.to_thread(host.verified_data.call,'GET','/live_data/milestone/'+milestone['id'])
-            gate=live_gate(raw,milestone,live,time.time())
+            gate=live_gate(raw,milestone,live,time.time(),late_hours=None)
             if not gate['sports_live']:continue
             fee=await host.fee_policy(raw,{})
             await host.put('sports_market',dict(market=dict(ticker=raw['ticker'],event_ticker=event,series_ticker=p['series'],

@@ -59,6 +59,9 @@ class SequentialStrategy(ConvexityStrategy):
         if stat.valid:self.model.observe(a['key'],a['first'],complete,net/D(a['quantity']))
         a.update(recorded=True,completed=complete,net=str(net))
         self.e.log('PAIR_RESULT',ticker=ticker,details=__import__('json').dumps(a))
+    def entry_allowed(self,m,now):
+        return not m.get('sports') or (m.get('sports_live') is True and
+            m.get('sports_start',float('inf'))<=now<m.get('sports_verified_until',0))
     def step(self,changed_ticker=None):
         for ticker,m in list(self.e.markets.items()):
             if not ticker.startswith(self.series+'-') or changed_ticker and ticker!=changed_ticker:continue
@@ -72,7 +75,7 @@ class SequentialStrategy(ConvexityStrategy):
                 if m.get('paid') or (a['first'] and not lots and not orders):self.finish(ticker);continue
                 if remaining<=0:continue
                 if not a['first']:
-                    if now>=a['entry_deadline'] or not self.enabled or ticker in self.halted:
+                    if now>=a['entry_deadline'] or not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted:
                         self.e.cancel_buys(ticker)
                         if not orders:self.finish(ticker)
                     continue
@@ -100,7 +103,7 @@ class SequentialStrategy(ConvexityStrategy):
                         if entry+qty*ask+fee<qty:
                             self.e.place(ticker,opposite,'buy',qty,ask,maker=False,expiry=a['completion_deadline'])
                 continue
-            if (not self.enabled or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
+            if (not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
                 not self.e.book_fresh(ticker) or remaining<180 or now<m.get('open',m['close']-900) or now<self.e.safety_until):continue
             y,n=book.bid('yes'),book.bid('no')
             if y is None or n is None:continue
@@ -128,9 +131,13 @@ class SequentialStrategy(ConvexityStrategy):
                 quantity=D(1);mode='paper_exploration'
             required=quantity*(yes+no)+self.e.fees[ticker].charge(quantity,yes,True)+self.e.fees[ticker].charge(quantity,no,True)
             if required>self.e.available():continue
+            entry_deadline=min(now+60,m['close']-120)
+            if m.get('sports'):entry_deadline=min(entry_deadline,m['sports_verified_until'])
+            if entry_deadline<=now+self.e.latency:continue
+            completion_deadline=min(m['close']-30,now+3600) if m.get('sports') else m['close']-30
             a=dict(key=key,yes=str(yes),no=str(no),quantity=str(quantity),first=False,recorded=False,
                 baseline=str(self.e.wallet.stat(ticker).gross-self.e.wallet.stat(ticker).realized_fees),
-                entry_deadline=min(now+60,m['close']-120),completion_deadline=m['close']-30,
+                entry_deadline=entry_deadline,completion_deadline=completion_deadline,
                 mode=mode,estimate=estimate,started_at=now,loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
             self.attempts[ticker]=a;self.decisions[ticker]=a
             self.e.log('PAIR_DECISION',ticker=ticker,details=__import__('json').dumps(a))

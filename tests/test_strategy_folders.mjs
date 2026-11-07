@@ -56,3 +56,11 @@ test('unpriced balances remain ranges rather than silently becoming zero',()=>{
  const html=folderOverviewMarkup([{id:'favorites',name:'Favorites',accounting:{at:Date.now()/1000,portfolio:{equity:null,cash:'900',deposits:'1000',total_pnl:null,realized_pnl:'0',position_cost:'100',active_contracts:'200',pending_contracts:'0',position_value:null},positions:[]}}]);
  assert.ok(html.includes('$900.00 to $1,100.00'));assert.ok(html.includes('-$100.00 to $100.00'));
 });
+
+test('retired fifteen-minute favorites are collapsed and cannot be resumed from their card',()=>{
+ const data=fixture();const old={...data.bots.find(b=>b.id==='favorites'),id:'fav_old',name:'Old 15m favorite',retired:true,desired:'paused'};data.bots.push(old);
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ assert.ok(html.includes('Retired 15-minute bots · 1'));
+ assert.ok(html.includes('history and remaining exits'));
+ assert.ok(!html.includes('data-toggle="fav_old"'));assert.ok(!html.includes('data-save="fav_old"'));
+});
