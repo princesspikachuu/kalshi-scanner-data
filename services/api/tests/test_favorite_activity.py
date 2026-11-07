@@ -10,8 +10,9 @@ from services.paper_demo.shadow.core import Engine
 from services.paper_demo.shadow.state import encode,restore
 from services.paper_demo.shadow.experiments import ExperimentFleet
 from services.paper_demo.shadow.sequential import PairModel
-from services.paper_demo.shadow.discovery_budget import candidate_markets,next_profile,capacity
+from services.paper_demo.shadow.discovery_budget import candidate_markets,next_profile
 from services.paper_demo.shadow.weather import weather_once
+from services.paper_demo.shadow.monitoring import MonitoringBudget
 
 
 def snapshot(ticker,seq=1):
@@ -74,12 +75,14 @@ class Discovery(unittest.TestCase):
         self.assertNotIn(t,e.markets)
 
     def test_discovery_budget_expands_but_remains_bounded(self):
-        suite,_=weather_fixture.WeatherSuite().suite();self.assertEqual(capacity(suite,200),48)
-        suite.extra={str(i):str(i) for i in range(47)}
-        self.assertTrue(suite.extra_capacity(['last'],200))
-        self.assertFalse(suite.extra_capacity(['last','overflow'],200))
-        suite.host.engine.markets={str(i):dict(close=1000) for i in range(30)}
-        self.assertEqual(capacity(suite,200),34)
+        suite,_=weather_fixture.WeatherSuite().suite();suite.monitoring=MonitoringBudget()
+        for now in range(0,241,5):suite.monitoring.observe(now,0,.01,1)
+        self.assertEqual(suite.monitoring_snapshot(240)['total'],48)
+        suite.extra={str(i):str(i) for i in range(19)}
+        self.assertTrue(suite.extra_capacity(['last'],240))
+        self.assertFalse(suite.extra_capacity(['last','overflow'],240))
+        suite.monitoring.observe(245,300,.01,1)
+        self.assertFalse(suite.extra_capacity(['last'],245))
 
     def test_rotation_serves_unrepresented_series_first(self):
         choices=[dict(series='A'),dict(series='B'),dict(series='C')]
@@ -101,6 +104,7 @@ class Discovery(unittest.TestCase):
 class ExpandedDiscovery(unittest.IsolatedAsyncioTestCase):
     async def test_weather_discovers_a_third_series_instead_of_stopping_at_two(self):
         suite,_=weather_fixture.WeatherSuite().suite();e,f,ps=suite.portfolios['favorites'];now=time.time()
+        suite.monitoring.observe(now,0,.01,1)
         ps=[p for p in ps if p.get('asset')=='weather']
         for p in ps[:2]:
             t=p['series']+'-old';market(e,t,close=now+3600)

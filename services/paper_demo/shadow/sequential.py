@@ -148,7 +148,7 @@ class SequentialStrategy(ConvexityStrategy):
                         if entry+qty*ask+fee<qty:
                             self.e.place(ticker,opposite,'buy',qty,ask,maker=False,expiry=a['completion_deadline'])
                 continue
-            if (not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
+            if (m.get('entry_parked') or not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
                 not self.e.book_fresh(ticker) or remaining<180 or now<m.get('open',m['close']-900) or now<self.e.safety_until):continue
             y,n=book.bid('yes'),book.bid('no')
             if y is None or n is None:continue

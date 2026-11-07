@@ -1,7 +1,6 @@
 """Bounded, paginated GET-only discovery over the existing shared feed/read budget."""
 import asyncio,time
 from .runner import ts
-from .discovery_budget import capacity
 
 async def discover_sets(host):
     suite=host.experiments
@@ -9,9 +8,8 @@ async def discover_sets(host):
         e,f,ps=suite.portfolios['complete_set'];bot=next(iter(f.bots.values()))
         try:
             now=time.time()
-            cap=capacity(suite,now)
             set_count=sum(not m.get('paid') for m in e.markets.values())
-            if bot.enabled and set_count<4 and len(suite.extra)<cap:
+            if bot.enabled and suite.search_capacity('complete_set',now,2):
                 result=await asyncio.to_thread(host.verified_data.call,'GET','/events',
                     dict(status='open',with_nested_markets=True,limit=100,min_close_ts=int(now),cursor=suite.scanner_cursor))
                 suite.scanner_cursor=result.get('cursor','')
@@ -26,7 +24,7 @@ async def discover_sets(host):
                     # at-most-one-YES guarantee, even if the listing is incomplete.
                     if len(markets)<2:continue
                     markets=sorted(markets,key=lambda m:float(m.get('volume_fp') or m.get('volume') or 0),reverse=True)[:4]
-                    if set_count+len(markets)>4 or len(suite.extra)+len(markets)>cap:continue
+                    if not suite.search_capacity('complete_set',now,len(markets)) or not suite.extra_capacity([m['ticker'] for m in markets],now):continue
                     prepared=[]
                     for m in markets:
                         fee=await host.fee_policy(m,{})

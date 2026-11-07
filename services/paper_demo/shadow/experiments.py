@@ -9,7 +9,8 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
-from .discovery_budget import capacity
+from .monitoring import MonitoringBudget,protected,category as market_category
+from .discovery_budget import CATEGORY_LIMITS
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
 
@@ -35,6 +36,8 @@ class ExperimentSuite:
     def __init__(self,host,rows,previous=None):
         self.summary=(previous or {}).get('_summary',{})
         self.comparison=(previous or {}).get('_comparison',{})
+        self.monitoring=MonitoringBudget()
+        self.rotation_exclusions=(previous or {}).get('_rotation_exclusions',{})
         self.host=host;self.rows=rows;self.portfolios={};self.models={};self.extra={};self.scanner_cursor='';self.scanner_state={}
         for folder in EXPERIMENT_FOLDERS:
             ps=[r['parameters'] for r in rows if r['parameters'].get('folder_id')==folder]
@@ -59,7 +62,7 @@ class ExperimentSuite:
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.control(rows)
     def state(self):
-        return dict(_summary=self.summary,_comparison=self.comparison,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
+        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
             strategies={s:dict(attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
@@ -88,7 +91,7 @@ class ExperimentSuite:
         return list(found.values())
     def feed_markets(self):
         return {t:m for e,f,ps in self.portfolios.values() for t,m in e.markets.items()
-                if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
+                if not m.get('entry_parked') and not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
     def share_external_markets(self):
         # A newly added strategy must join already subscribed weather/games;
         # waiting for another discovery would strand it behind filled positions.
@@ -104,8 +107,45 @@ class ExperimentSuite:
                 market=dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
                             strategy_version=p.get('version',folder+'-1'),discovered_at=now)
                 e.add_market(market,source.fees[ticker])
+    def settlement_markets(self):
+        return {t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()
+                if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
+    def candidate_allowed(self,ticker,now):return self.rotation_exclusions.get(ticker,0)<=now
+    def monitoring_snapshot(self,now):
+        limits=self.monitoring.limits(now)
+        care={t for t in self.extra if protected(self,t,now)}
+        probes=set(self.extra)-care
+        markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
+        legacy=sum(m['close']>now for m in self.host.engine.markets.values())
+        return dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
+            subscribed_markets=len(self.extra)+legacy,legacy_markets=legacy,
+            categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set')},
+            rotated_markets=len(self.rotation_exclusions))
+    def search_capacity(self,category,now,slots=1):
+        stats=self.monitoring_snapshot(now)
+        return (stats['admitting'] and stats['categories'].get(category,0)+slots<=(4 if category=='complete_set' else min(CATEGORY_LIMITS.get(category,stats['per_category']),stats['per_category'])) and
+            stats['entry_markets']+slots<=stats['entry_candidates'] and stats['subscribed_markets']+slots<=stats['total'])
     def extra_capacity(self,tickers,now):
-        return len(set(self.extra)|set(tickers))<=capacity(self,now)
+        additions=set(tickers)-set(self.extra)
+        if not additions:return True
+        stats=self.monitoring_snapshot(now)
+        return (stats['admitting'] and all(self.candidate_allowed(t,now) for t in additions) and
+            stats['subscribed_markets']+len(additions)<=stats['total'] and
+            stats['entry_markets']+len(additions)<=stats['entry_candidates'])
+    def rotate_candidates(self,now):
+        self.rotation_exclusions={t:end for t,end in self.rotation_exclusions.items() if end>now}
+        for t,m in list(self.feed_markets().items()):
+            if now-m.get('discovered_at',now)<120 or protected(self,t,now):continue
+            if any(o.ticker==t and o.status in ('pending','resting') for e,_,_ in self.portfolios.values() for o in e.orders.values()):continue
+            self.rotation_exclusions[t]=m['close']
+            for folder,(e,f,ps) in self.portfolios.items():
+                if t not in e.markets or folder=='complete_set':continue
+                b=f.owner(t);a=b.attempts.get(t,{}) if b else {}
+                if a and not a.get('first') and not a.get('recorded'):
+                    if isinstance(b,SequentialStrategy):b.finish(t)
+                    else:a['recorded']=True
+                e.markets[t]['entry_parked']=True;e.books[t].valid=False
+            self.extra.pop(t,None)
     def prepare(self,e,source,payload,now):
         targets={e.orders[item[3]].ticker for item in e.pending if item[0]<=now}
         if source=='clock':targets.update(e.books)
@@ -216,21 +256,18 @@ class ExperimentSuite:
     def maintain(self):
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
         # execution state plus constant-size cumulative totals.
+        self.rotate_candidates(max((e.now for e,_,_ in self.portfolios.values()),default=0))
         for folder,(e,f,ps) in self.portfolios.items():
             if folder in ('favorites',*SEQUENTIAL_FOLDERS):
                 for t,m in list(e.markets.items()):
-                    if not (m.get('weather_category') or m.get('sports') or m.get('hourly_price')) or e.now-m.get('discovered_at',e.now)<300:continue
+                    if not (m.get('weather_category') or m.get('sports') or m.get('hourly_price')) or e.now-m.get('discovered_at',e.now)<(120 if m.get('entry_parked') else 300):continue
                     b=f.owner(t);a=b.attempts.get(t,{})
                     if a.get('first') or any(l.ticker==t for l in e.wallet.lots):continue
                     # Keep the shared view while another strategy owns inventory.
                     # In particular, late-only Favorites must still see a game
                     # that Sequential bought earlier in live play.
                     if any(l.ticker==t for other,_,_ in self.portfolios.values() if other is not e for l in other.wallet.lots):continue
-                    if a and not a.get('recorded') and e.now<a.get('entry_deadline',0):
-                        # Favorites may keep retrying until the entry cutoff.
-                        # Idle candidates still rotate after five minutes; a
-                        # live maker bid retains its place and subscription.
-                        if folder!='favorites' or any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
+                    if a and not a.get('recorded') and e.now<a.get('entry_deadline',0):continue
                     e.cancel_buys(t)
                     if any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
                     if a and not a.get('recorded') and isinstance(b,SequentialStrategy):b.finish(t)

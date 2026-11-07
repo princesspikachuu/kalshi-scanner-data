@@ -53,8 +53,9 @@ remain effective. An ordinary delta or heartbeat cannot restore eligibility.
 Shared discovery supports up to 12 hourly-price, 8 hourly-weather, 7 daily-weather
 and 4 sports candidates. Owned markets retain subscriptions without consuming
 candidate slots. Discovery prioritizes unrepresented series; idle unfilled
-candidates rotate after five minutes while active maker orders keep their queue.
-All experiments share a maximum 48 extra/64 total subscription budget. Requests
+candidates rotate after two minutes while active maker orders keep their queue.
+Admission uses the shared adaptive monitoring budget: 32–48 total subscriptions
+and 12–20 entry candidates, growing only with sustained healthy processing. Requests
 still use the existing provider pacing, fee TTL and verified live-sports rules.
 Per-event fee checks cover only the affected market and due actions; clock sweeps
 retain the full check. The idle clock runs at 10 Hz instead of 20 Hz; incoming

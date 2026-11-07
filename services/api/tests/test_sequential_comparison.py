@@ -91,7 +91,7 @@ class ComparisonSuiteTests(unittest.TestCase):
         rows=[dict(parameters=dict(profile(id=folder),folder_id=folder,variant=folder.removeprefix('sequential_'),comparison_started_at=100),progress=dict(desired='running')) for folder in SEQUENTIAL_FOLDERS]
         rows.append(dict(parameters=profile('ALL','set_scanner','complete_set'),progress=dict(desired='running')))
         host=Mock();host.audit=QuietAudit();host.verified_fees.schedule.return_value=('quadratic',1)
-        return ExperimentSuite(host,rows),host,rows
+        return fixture.ready_suite(host,rows),host,rows
     def test_shared_feed_and_restart_keep_three_wallets_and_models_isolated(self):
         suite,host,rows=self.suite()
         suite.handle('market',dict(market=dict(ticker=T,open=100,close=1000),taker_multiplier='1',maker_multiplier='0'),200)

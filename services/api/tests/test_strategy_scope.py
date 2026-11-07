@@ -21,7 +21,7 @@ class ScopeTests(unittest.TestCase):
         # distinct paper engines, rather than an accidental transfer of inventory.
         rows += [dict(parameters=dict(p,id='fav_'+p['series'].lower(),folder_id='favorites',strategy='favorites',revision=1),progress=dict(desired='running')) for p in sequential_profiles()]
         old.host.engine.markets={}
-        return ExperimentSuite(old.host,rows),rows
+        return fixture.ready_suite(old.host,rows),rows
     def test_weather_shared_feed_retains_independent_engines_and_ownership(self):
         s,rows=self.suite();t='KXHIGHNY-TEST'
         s.handle('weather_market',dict(market=dict(ticker=t,event_ticker='EVENT',open=100,close=10000,weather_category='weather_daily',discovered_at=200),taker_multiplier='1',maker_multiplier='0'),200)

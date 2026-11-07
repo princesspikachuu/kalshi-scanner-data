@@ -80,7 +80,7 @@ class FavoritesStrategy(ConvexityStrategy):
                         self.e.log('FAVORITE_RISK_EXIT',ticker=ticker,reason=a['exit_reason'])
                         self.e.place(ticker,a['side'],'sell',sum((l.quantity for l in lots),ZERO),D('.01'),maker=False,targets=[l.id for l in lots])
                 continue
-            if not self.enabled or not self.entry_allowed(m,now) or not self.entry_ready(ticker) or m['close']-now<=60:
+            if m.get('entry_parked') or not self.enabled or not self.entry_allowed(m,now) or not self.entry_ready(ticker) or m['close']-now<=60:
                 if a:self.cancel_entry(ticker,'Waiting: entry conditions or fresh verified book unavailable')
                 continue
             if a and now<a.get('retry_at',0):continue

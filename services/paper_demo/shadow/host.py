@@ -180,10 +180,11 @@ class HostedRun(ForwardRun):
         last=self.engine.now
         while not self.done.is_set():
             item=await self.queue.get()
-            self.audit.begin();completed=0;recovered=[];started=time.monotonic()
+            self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
             try:
                 while True:
                     source,payload,received=item
+                    max_lag=max(max_lag,max(0,time.time()-received))
                     now=max(received,last)
                     if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
                     last=now
@@ -213,6 +214,9 @@ class HostedRun(ForwardRun):
                         break
                     item=self.queue.get_nowait()
                 self.audit.flush()
+                if hasattr(self,'experiments'):
+                    self.experiments.monitoring.observe(time.time(),self.queue.qsize(),max_lag,
+                        (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining())
             except BaseException:
                 self.audit.abort();raise
             for ticker in recovered:
@@ -264,6 +268,7 @@ class HostedRun(ForwardRun):
             state='ready' if books and fees_ready==len(active) and self.engine.spot.ready(now) else 'waiting'
             if time.monotonic()>=self.health_log_at:
                 self.health_log_at=time.monotonic()+30
+                print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
                 print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
                 print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                     valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
@@ -302,7 +307,7 @@ class HostedRun(ForwardRun):
                     open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                     market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
                         book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
-                    orders=orders,positions=positions,experiments=experiment_snapshot))
+                    orders=orders,positions=positions,experiments=experiment_snapshot,monitoring=self.experiments.monitoring_snapshot(now)))
             # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
             # execution state in the hot checkpoint; never rewrite years of history.
             self.engine.prune_terminal_orders()

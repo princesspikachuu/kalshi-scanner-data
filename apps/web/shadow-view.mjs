@@ -55,6 +55,11 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
 }
 
 export const folderPeriods={all:'All', '1H':'1h', '6H':'6h', '24H':'24h', '7D':'7d', '30D':'30d'};
+export function monitoringMarkup(m){
+ if(!m)return '';
+ const names={weather:'Hourly weather',weather_daily:'Daily weather',hourly:'Hourly prices',sports:'Sports',complete_set:'Complete sets'};
+ return `<details class="sequential-comparison monitoring-status"><summary>Market monitoring · ${e(String(m.subscribed_markets))} watched · ${e(String(m.entry_markets))} entry candidates</summary><p class="small">${e(m.reason)}. Positions, protective exits and live games awaiting the Favorites window retain monitoring. Their subscriptions count toward the total limit, separately from entry candidates. Existing positions stay monitored if capacity is exceeded.</p><div class="money-grid"><div><span>Protected monitoring</span><strong>${e(String(m.position_and_exit_markets))}</strong></div><div><span>Entry candidates</span><strong>${e(String(m.entry_markets))} / ${e(String(m.entry_candidates))}</strong></div><div><span>Total admission ceiling</span><strong>${e(String(m.subscribed_markets))} / ${e(String(m.total))}</strong></div><div><span>Pending feed inputs</span><strong>${e(String(m.backlog))}</strong></div></div><p class="small">${Object.entries(names).map(([k,label])=>`${label}: ${e(String(m.categories?.[k]||0))}`).join(' · ')}. Entry slots per category: ${e(String(m.per_category))} (complete sets: 4).</p><p class="small">Recent 95th-percentile processing lag: ${finite(m.lag_p95_seconds)?Number(m.lag_p95_seconds).toFixed(2)+'s':'waiting'} · ${e(String(m.rotated_markets))} candidates rotated out until their market closes. Capacity grows after sustained healthy processing and pauses new discovery during overload.</p></details>`;
+}
 export function sequentialComparisonMarkup(folders){
  const rows=folders.filter(f=>f.comparison);
  if(!rows.length)return '';

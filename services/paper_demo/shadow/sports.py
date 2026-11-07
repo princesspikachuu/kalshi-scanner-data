@@ -2,7 +2,7 @@
 import asyncio,json,time,math
 from uuid import uuid4
 from .runner import ts
-from .discovery_budget import candidate_markets,next_profile,CATEGORY_LIMITS
+from .discovery_budget import candidate_markets,next_profile
 from .storage import put
 from services.research.reports import SERIES
 
@@ -63,7 +63,7 @@ def live_gate(raw,milestone,live,now,late_hours=2):
 async def sports_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     # Update entry permissions even when the bot is paused or slots are full.
-    for ticker,m in list(markets.items()):
+    for ticker,m in list(suite.settlement_markets().items()):
         if not m.get('sports') or m.get('paid'):continue
         if now>=m['sports_expected_end'] or m.get('sports_status') in ('closed','finished','final'):
             raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market']
@@ -77,17 +77,18 @@ async def sports_once(host):
             gate=live_gate(raw,milestone,live,time.time(),late_hours=None)
         except Exception:gate=dict(sports_live=False,sports_verified_until=time.time(),sports_status='unverified')
         await host.put('sports_status',dict(ticker=ticker,gate=gate))
-    active=candidate_markets(suite,markets,'sports',now)
-    if len(active)>=CATEGORY_LIMITS['sports'] or not suite.extra_capacity(['sports-slot'],now):return
+    active=[t for t,m in markets.items() if m.get('sports') and not m.get('paid')]
+    if not suite.search_capacity('sports',now):return
     choices=suite.enabled_profiles('sports')
     if not choices:return
+    active=candidate_markets(suite,markets,'sports',now)
     p,cursor=next_profile(suite,choices,active,suite.sports_cursor)
     if not p:return
     suite.sports_cursor=cursor
     result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],limit=1000,cursor=suite.sports_pages.get(p['series'],'')))
     suite.sports_pages[p['series']]=result.get('cursor','')
     rows=[r for r in result.get('markets',[]) if r.get('ticker','').startswith(p['series']+'-') and r.get('status')=='active'
-          and ts(r['open_time'])<=now and r['ticker'] not in markets and expected_end(r) is not None and -21600<expected_end(r)-now<=86400]
+          and ts(r['open_time'])<=now and r['ticker'] not in markets and suite.candidate_allowed(r['ticker'],now) and expected_end(r) is not None and -21600<expected_end(r)-now<=86400]
     seen=set()
     for raw in sorted(rows,key=lambda r:(expected_end(r),-float(r.get('volume_fp') or r.get('volume') or 0))):
         event=raw['event_ticker']
