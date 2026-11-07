@@ -34,3 +34,6 @@ def initialize_folders(store,guard):
             series='ALL_SAME_DAY',asset='all',contracts=10,revision=1,changed_at=now,
             folder_id='complete_set',strategy='complete_set',version='complete-set-1'),dict(desired='running'))
         put(c,'demo/shadow/folders-installed',{},dict(at=now,real_orders_enabled=False))
+
+    print(__import__('json').dumps(dict(event='paper_strategy_folders_initialized',folders=[f['name'] for f in FOLDERS],
+        paused_convexity_bots=28,sequential_bots=28,favorite_bots=28,complete_set_scanners=1,real_orders_enabled=False)),flush=True)

@@ -147,7 +147,16 @@ class ExperimentSuite:
             retired=[t for t,m in e.markets.items() if m.get('paid') and not any(l.ticker==t for l in e.wallet.lots)]
             if folder=='complete_set':
                 owner=next(iter(f.bots.values()))
-                retired=[t for t in retired if all(e.markets.get(other,{}).get('paid') for group in owner.groups.values() if t in group for other in group)]
+                # Rotate untraded candidates so a small fee-verification budget
+                # does not trap the scanner on the first few events all day.
+                for event,tickers in list(owner.groups.items()):
+                    if event not in owner.attempts and all(e.now-e.markets[t].get('discovered_at',e.now)>300 for t in tickers if t in e.markets):
+                        owner.groups.pop(event)
+                        for t in tickers:
+                            if t in e.markets and not any(l.ticker==t for l in e.wallet.lots):
+                                for mapping in (e.markets,e.books,e.fees,e.wallet.stats):mapping.pop(t,None)
+                                self.extra.pop(t,None)
+                retired=[t for t in retired if t in e.markets and all(e.markets.get(other,{}).get('paid') for group in owner.groups.values() if t in group for other in group)]
             for t in retired:
                 b=f.owner(t);p=e.markets[t];s=e.wallet.stat(t)
                 if b and folder!='complete_set':b.step(t)

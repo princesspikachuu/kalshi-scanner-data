@@ -8,7 +8,9 @@ async def discover_sets(host):
         e,f,ps=suite.portfolios['complete_set'];bot=next(iter(f.bots.values()))
         try:
             now=time.time()
-            if bot.enabled and len([t for t,m in e.markets.items() if m['close']>now])<80:
+            legacy_active=sum(m['close']>now for m in host.engine.markets.values())
+            cap=max(0,min(8,20-legacy_active))
+            if bot.enabled and len(suite.extra)<cap:
                 result=await asyncio.to_thread(host.verified_data.call,'GET','/events',
                     dict(status='open',with_nested_markets=True,limit=100,min_close_ts=int(now),cursor=suite.scanner_cursor))
                 suite.scanner_cursor=result.get('cursor','')
@@ -23,12 +25,12 @@ async def discover_sets(host):
                     # at-most-one-YES guarantee, even if the listing is incomplete.
                     if len(markets)<2:continue
                     markets=sorted(markets,key=lambda m:float(m.get('volume_fp') or m.get('volume') or 0),reverse=True)[:4]
-                    if len(suite.extra)+len(markets)>80:break
+                    if len(suite.extra)+len(markets)>cap:continue
                     prepared=[]
                     for m in markets:
                         fee=await host.fee_policy(m,{})
                         prepared.append(dict(market=dict(ticker=m['ticker'],event_ticker=event_id,
-                            close=ts(m['close_time']),open=ts(m['open_time']),series_ticker=event['series_ticker']),
+                            close=ts(m['close_time']),open=ts(m['open_time']),discovered_at=now,series_ticker=event['series_ticker']),
                             taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
                     await host.put('set_markets',dict(event=dict(event_ticker=event_id,mutually_exclusive=True),markets=prepared))
                     accepted+=1

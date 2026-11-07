@@ -28,8 +28,9 @@ be active and close within 24 hours. It checks depth, actual current fees and a
 1-cent-per-set execution margin. Purchases are simulated taker IOCs with 150ms
 latency and individual leg limits; this is not atomic basket execution. Incomplete
 packages attempt to unwind; all losses remain visible. Completed packages stay
-held until authoritatively settled. The scanner is bounded to 80 subscribed extra
-markets and at most two new event groups per discovery pass.
+held until authoritatively settled. The scanner is bounded to eight subscribed extra
+markets (reduced when the legacy feed consumes the verification budget), rotates
+untraded groups after five minutes and at most two new event groups per discovery pass.
 
 High-Probability Favorites posts passive entries between 70 and 95 cents with at
 least 60 seconds remaining, cancels unused quantity after a fill, and manages filled

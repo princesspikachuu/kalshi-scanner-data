@@ -251,6 +251,7 @@ class HostedRun(ForwardRun):
             state='ready' if books and fees_ready==len(active) and self.engine.spot.ready(now) else 'waiting'
             if time.monotonic()>=self.health_log_at:
                 self.health_log_at=time.monotonic()+30
+                print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
                 print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                     valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
                     mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
