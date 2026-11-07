@@ -1,6 +1,11 @@
 import {escapeHTML as e} from './demo-client.mjs';
 export const dollars=value=>value===null||value===undefined?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(value));
 export const pnlClass=value=>value===null||value===undefined?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
+export function executionMarkup(x){
+ if(!x||!x.measured)return '<p class="small">Execution measurements will appear with the next worker snapshot.</p>';
+ const rate=x.maker_fill_rate==null?'—':Number(x.maker_fill_rate).toFixed(1)+'%';
+ return `<details class="advanced"><summary>Execution quality · latest cycle${x.data_valid?'':' · data gap'}</summary><p class="small">${e(x.scope)}. Public queue position is estimated; simulated fills are not exchange executions. ${e(String(x.latency_ms))}ms modeled action latency.</p><div class="bot-stats">${[['Maker quantity filled / requested',`${x.maker_filled} / ${x.maker_requested} · ${rate}`],['Rejected / submitted orders',`${x.rejections} / ${x.orders}`],['Partial / attempted IOC sweeps',`${x.partial_iocs} / ${x.ioc_attempts}`],['IOC unfilled quantity',x.ioc_unfilled],['Partial-profit contracts sold',x.profit_contracts],['Net cash recovered by partial profits',dollars(x.profit_net_proceeds)],['Fees · entire cycle',dollars(x.cycle_fees)],['Taker slippage · entire cycle',dollars(x.cycle_taker_slippage)]].map(([k,v])=>`<div><span>${e(k)}</span><strong>${e(String(v))}</strong></div>`).join('')}</div><p class="small">Fill rate uses requested contract quantity, including rejected entries. Working bids remain in the denominator. Unfilled IOC quantities can include retries of the same position. Recovery proceeds include exit fees; they are cash receipts, not profit. Partial-profit target: ${(Number(x.partial_profit_price)*100).toFixed(0)}¢ or better, retaining at least one contract.</p></details>`;
+}
 const metric=(label,value,note='')=>`<div><span>${e(label)}</span><strong>${e(dollars(value))}</strong>${note?`<small>${e(note)}</small>`:''}</div>`;
 const finite=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
 export function valueBounds(a,positions=[],kind='position'){

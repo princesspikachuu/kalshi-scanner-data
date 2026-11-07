@@ -22,9 +22,10 @@ def restore(engine,fleet,data):
     def tuples(value):return tuple(tuples(v) for v in value) if isinstance(value,list) else value
     if 'rng_state' in data:engine.rng.setstate(tuples(data['rng_state']))
     w=data['wallet'];engine.wallet=Wallet(D(w['cash']));engine.wallet.deposits=D(w['deposits'])
-    engine.wallet.lots=[Lot(**dict(l,**{k:D(l[k]) for k in ('quantity','price','entry_fee')})) for l in w['lots']]
+    engine.wallet.lots=[Lot(**dict(l,**{k:D(l[k]) for k in
+        ('quantity','price','entry_fee','recovery_cost','recovery_proceeds') if k in l})) for l in w['lots']]
     decimal_stats=[k for k,v in asdict(Stats()).items() if isinstance(v,D)]
-    engine.wallet.stats={k:Stats(**dict(v,**{field:D(v[field]) for field in decimal_stats}))
+    engine.wallet.stats={k:Stats(**dict(v,**{field:D(v[field]) for field in decimal_stats if field in v}))
                          for k,v in w['stats'].items()}
     engine.safety_until=data.get('safety_until',0)
     engine.markets=data['markets'];engine.serial=data['serial'];engine.now=data['now']

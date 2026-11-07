@@ -346,7 +346,9 @@ class ReplayTests(unittest.TestCase):
                              (Path(root)/'b/events.csv').read_bytes())
             reports=(Path(root)/'a/reports.jsonl').read_text().splitlines()
             report=json.loads(reports[-1])
-            self.assertEqual(D(report['net_realized_pnl']),D('29.3067'))
+            # Cost recovery splits the old full stop into two IOC fills, each
+            # charged and rounded separately. Identical tapes remain deterministic.
+            self.assertEqual(D(report['net_realized_pnl']),D('29.3066'))
             self.assertTrue(report['final'])
             self.assertTrue(report['data_valid'])
 

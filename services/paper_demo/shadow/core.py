@@ -168,6 +168,8 @@ class Lot:
     is_armed: bool = False
     exit_requested: bool = False
     acquired_at: float = 0.0
+    recovery_cost: D = ZERO
+    recovery_proceeds: D = ZERO
 
 
 @dataclass
@@ -184,6 +186,17 @@ class Stats:
     taker_slippage_square: D = ZERO
     stress_fills: D = ZERO
     valid: bool = True
+    maker_requested: D = ZERO
+    maker_filled: D = ZERO
+    taker_requested: D = ZERO
+    ioc_unfilled: D = ZERO
+    profit_contracts: D = ZERO
+    profit_proceeds: D = ZERO
+    execution_orders: int = 0
+    rejected_orders: int = 0
+    ioc_attempts: int = 0
+    partial_iocs: int = 0
+    execution_measured: bool = False
 
 
 class Wallet:
@@ -221,13 +234,17 @@ class Wallet:
                 if lot.ticker == ticker and lot.side == opposite and remaining:
                     take = min(remaining, lot.quantity)
                     allocated = fee*take/quantity
+                    # Collateral released by netting closes that fraction's risk.
+                    fraction=(lot.quantity-take)/lot.quantity
+                    lot.recovery_cost*=fraction
+                    lot.recovery_proceeds*=fraction
                     self._close(lot, take, 1-price, allocated)
                     self.cash += take
                     remaining -= take
                     fee_left -= allocated
             if remaining:
                 self.lots.append(Lot(ident, ticker, side, remaining, price, fee_left, origin,
-                                     acquired_at=acquired_at))
+                                     acquired_at=acquired_at,recovery_cost=remaining*price+fee_left))
         else:
             eligible = [l for l in self.lots if l.ticker == ticker and l.side == side and
                         (targets is None or l.id in targets)]
@@ -285,6 +302,7 @@ class Order:
     reserved: D = ZERO
     stress_episode: int = -1
     opposing_fill_race: bool = False
+    purpose: str = 'strategy'
 
 
 class Audit:
@@ -430,7 +448,7 @@ class Engine:
                                     if o.status in ('pending','resting')), ZERO)
 
     def place(self, ticker: str, side: str, action: str, quantity: D, price: D,
-              maker=True, phase=1, expiry=None, targets=None) -> str:
+              maker=True, phase=1, expiry=None, targets=None, purpose='strategy') -> str:
         quantity, price = D(quantity), D(price)
         if (side not in ('yes','no') or action not in ('buy','sell') or quantity <= 0 or
                 not quantity.is_finite() or not ZERO < price < 1):
@@ -444,11 +462,17 @@ class Engine:
         reference = book.bid(side) if action == 'sell' else book.ask(side)
         order = Order(ident, ticker, side, action, quantity, price, maker, phase,
                       self.now, self.now+self.latency, expiry or market['close'], reference,
-                      targets=targets, remaining=quantity)
+                      targets=targets, remaining=quantity,purpose=purpose)
+        stat=self.wallet.stat(ticker)
+        stat.execution_measured=True
+        stat.execution_orders+=1
+        if maker:stat.maker_requested+=quantity
+        else:stat.taker_requested+=quantity
         if action == 'buy':
             order.reserved = quantity*price+self.fees[ticker].charge(quantity, price, maker)
             if order.reserved > self.available():
                 order.status, order.reserved = 'rejected', ZERO
+                stat.rejected_orders+=1
         self.orders[ident] = order
         if order.status == 'pending':
             heapq.heappush(self.pending, (order.arrives, self.serial, 'arrive', ident))
@@ -509,6 +533,7 @@ class Engine:
         if (not self.book_fresh(order.ticker) or
                 self.now >= market['close'] or order.ticker in self.settled):
             order.status, order.reserved = 'rejected', ZERO
+            self.wallet.stat(order.ticker).rejected_orders+=1
             self.log('ORDER_REJECTED', order, reason='stale/missing/closed book')
             return
         if not order.maker and self.strategy and not self.strategy.exit_allowed(order):
@@ -519,6 +544,7 @@ class Engine:
             ask = book.ask(order.side)
             if ask is not None and order.price >= ask:
                 order.status, order.reserved = 'rejected', ZERO
+                self.wallet.stat(order.ticker).rejected_orders+=1
                 self.log('ORDER_REJECTED', order, reason='post-only would cross at arrival')
                 return
             order.ahead = book.levels[order.side].get(order.price, ZERO) + sum((
@@ -551,6 +577,10 @@ class Engine:
                 self.fill(order, take, price, 'DEPTH_SWEEP', slip)
                 total, budget, slippage = total+take, budget-take, slippage+slip
         order.status, order.reserved = 'filled' if order.remaining == 0 else 'ioc_cancelled', ZERO
+        stat=self.wallet.stat(order.ticker)
+        stat.ioc_attempts+=1
+        stat.ioc_unfilled+=order.remaining
+        stat.partial_iocs+=int(total>0 and order.remaining>0)
         if total:
             stat = self.wallet.stat(order.ticker)
             stat.taker_orders += 1
@@ -564,6 +594,19 @@ class Engine:
 
     def fill(self, order: Order, quantity: D, price: D, reason: str, slippage=ZERO):
         fee = self.fees[order.ticker].charge(quantity, price, order.maker)
+        # Record net cash actually recovered, including each executed layer's fee.
+        # Targets use the same FIFO allocation as Wallet.fill; quotes are never proceeds.
+        if order.purpose=='partial_profit' and order.action=='sell':
+            left=quantity
+            for lot in self.wallet.lots:
+                if lot.ticker==order.ticker and lot.side==order.side and (order.targets is None or lot.id in order.targets):
+                    take=min(left,lot.quantity)
+                    lot.recovery_proceeds+=take*price-fee*take/quantity
+                    left-=take
+                    if not left:break
+            stat=self.wallet.stat(order.ticker)
+            stat.profit_contracts+=quantity
+            stat.profit_proceeds+=quantity*price-fee
         order.opposing_fill_race = (order.maker and self.wallet.inventory(order.ticker,
                                    'no' if order.side == 'yes' else 'yes') > 0)
         self.wallet.fill(order.ticker, order.side, order.action, quantity, price, fee,
@@ -573,6 +616,7 @@ class Engine:
             order.reserved = (order.remaining*order.price+
                               self.fees[order.ticker].charge(order.remaining, order.price, True))
         stat = self.wallet.stat(order.ticker)
+        if order.maker:stat.maker_filled+=quantity
         if not order.maker:
             stat.taker_slippage += slippage
             stat.taker_quantity += quantity
@@ -584,7 +628,8 @@ class Engine:
         if not order.remaining:
             order.status, order.reserved = 'filled', ZERO
         self.log('FILL', order, quantity=quantity, price=price, fee=fee,
-                 reference=order.reference, slippage=slippage, reason=reason)
+                 reference=order.reference, slippage=slippage, reason=reason,
+                 details=json.dumps(dict(purpose=order.purpose,latency_ms=self.latency*1000)))
         if self.fill_callback:
             self.fill_callback(order, quantity)
 
@@ -667,6 +712,8 @@ class Engine:
             stress_fill_contracts=str(stat.stress_fills), cash=str(self.wallet.cash),
             available_cash=str(self.available()), outstanding_orders=sum(1 for o in self.orders.values()
                 if o.ticker==ticker and o.status in ('pending','resting')))
+        from .profit_recovery import execution_report
+        report['execution']=execution_report(self,ticker)
         print(json.dumps(report, indent=2))
         self.log('CYCLE_REPORT', ticker=ticker, details=json.dumps(report))
         with open(self.audit.path/'reports.jsonl', 'a') as f:
@@ -812,6 +859,7 @@ class ConvexityStrategy:
 
     def exit_allowed(self, order: Order):
         phase = phase_at(self.e.markets[order.ticker]['close'], self.e.now)
+        if order.purpose=='partial_profit':return phase in (1,2)
         return phase in (1,2) or (phase == 3 and self.emergency.get(order.ticker) == order.side)
 
     def step(self,changed_ticker=None):
@@ -835,7 +883,8 @@ class ConvexityStrategy:
                 before=(lot.is_armed,lot.exit_requested)
                 # A trade print may arrive before the depth updates it caused.
                 # A pre-entry quote must not arm a brand-new cheap fill.
-                if book.at>lot.acquired_at:lot.is_armed |= bid > arm
+                depth=sum((q for p,q in book.depth(lot.side,'sell') if p>arm),ZERO)
+                if book.at>lot.acquired_at:lot.is_armed |= bid > arm and depth>=lot.quantity
                 lot.exit_requested |= lot.is_armed and bid <= stop
                 if before != (lot.is_armed,lot.exit_requested):
                     self.e.log('RISK_STATE',ticker=ticker,side=lot.side,details=json.dumps(dict(
@@ -853,6 +902,23 @@ class ConvexityStrategy:
                         self.last_exit[ticker] = self.e.now
                         self.e.place(ticker, side, 'sell', sum((l.quantity for l in targets), ZERO),
                                      D('.01'), maker=False, phase=phase, targets=[l.id for l in targets])
+                        pending_exit=True
+                        break
+                if not pending_exit and phase in (1,2):
+                    from .profit_recovery import recovery_order
+                    for lot in self.e.wallet.lots:
+                        if lot.ticker!=ticker or lot.exit_requested or book.at<=lot.acquired_at:continue
+                        price=D(market.get('partial_profit_price','.40'))
+                        quantity=recovery_order(lot,book,self.e.fees[ticker],price)
+                        if quantity:
+                            self.e.cancel_buys(ticker)
+                            self.last_exit[ticker]=self.e.now
+                            self.e.log('PARTIAL_PROFIT_REQUESTED',ticker=ticker,side=lot.side,
+                                quantity=quantity,price=price,details=json.dumps(dict(lot_id=lot.id,
+                                cost=str(lot.recovery_cost),recovered=str(lot.recovery_proceeds))))
+                            self.e.place(ticker,lot.side,'sell',quantity,price,maker=False,
+                                phase=phase,targets=[lot.id],purpose='partial_profit')
+                            break
             for key in tuple(self.safety_retries):
                 if key[0]!=ticker:continue
                 if key[1]!=phase or (ticker,phase) in self.locked:
