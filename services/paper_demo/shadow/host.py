@@ -78,7 +78,14 @@ class HostedRun(ForwardRun):
         self.audit.checkpoint()
 
     def subscription_books(self):
-        return {**self.engine.books,**{t:b for e,_,_ in self.experiments.portfolios.values() for t,b in e.books.items()}} if hasattr(self,'experiments') else self.engine.books
+        books=dict(self.engine.books)
+        if hasattr(self,'experiments'):
+            for e,_,_ in self.experiments.portfolios.values():
+                for ticker,book in e.books.items():
+                    # A healthy copy must not hide another portfolio's need for
+                    # a replacement snapshot on the shared subscription.
+                    if ticker not in books or not book.valid:books[ticker]=book
+        return books
 
     async def settlement_observed(self,ticker):
         if ticker in self.engine.settled:return True
