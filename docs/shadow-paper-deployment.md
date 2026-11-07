@@ -82,3 +82,16 @@ still use the existing provider pacing, fee TTL and verified live-sports rules.
 Per-event fee checks cover only the affected market and due actions; clock sweeps
 retain the full check. The idle clock runs at 10 Hz instead of 20 Hz; incoming
 feed events still advance due actions in causal receipt order.
+
+Hourly discovery refresh: scans up to three unrepresented series per pass with a
+five-second loop delay, caches declared frequency for 15 minutes, backs off empty
+listings for 60 seconds and listings without a 70–95¢ favorite for 15 seconds.
+Only currently listed 70–95¢ bids receive new hourly subscriptions; authoritative
+fee verification and shared read pacing remain unchanged. Structured scan logs
+report checked series, listed/eligible markets, admissions and capacity blocks.
+
+Idle rotation now uses a 60-second cooldown rather than excluding a candidate
+until close. Legacy exclusions are clamped to that cooldown on restart. Explicit
+readmission clears the parked flag and reopens only unfilled attempts, preserving
+the original price ceiling and historical accounting; a replacement snapshot is
+still required. Completed hourly entries are not rearmed for repeated buying.

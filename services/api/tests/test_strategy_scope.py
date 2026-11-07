@@ -80,6 +80,9 @@ class HourlyDiscovery(unittest.IsolatedAsyncioTestCase):
             return dict(markets=[dict(ticker=series+'-TEST',event_ticker='EVENT',status='active',open_time=date(now-100),close_time=date(now+1800),yes_bid=80)])
         host.verified_data.call.side_effect=call
         await hourly_once(host);host.put.assert_not_awaited()
+        s.hourly_metadata={};s.hourly_retry_at={}
+        original=s.enabled_profiles
+        s.enabled_profiles=lambda asset:original(asset)[:1]
         frequency='hourly';await hourly_once(host);host.put.assert_awaited_once()
         source,payload=host.put.await_args.args;self.assertEqual(source,'hourly_market')
         s.handle(source,payload,time.time());t=payload['market']['ticker']
