@@ -43,9 +43,9 @@ def candidates(rows,series,now):
 async def weather_once(host):
     suite=host.experiments;e,f,ps=suite.portfolios['favorites'];now=time.time()
     profiles=[p for p in ps if p.get('asset') in ('weather','weather_daily')]
-    # Two slots per category, within eight total extra subscriptions and twenty
+    # Two slots per category, within ten total extra subscriptions and twenty-two
     # total warm fee policies. Filled inventory always keeps its subscription.
-    cap=max(0,min(8,20-sum(m['close']>now for m in host.engine.markets.values())))
+    cap=max(0,min(10,22-sum(m['close']>now for m in host.engine.markets.values())))
     for category in ('weather','weather_daily'):
         active=[t for t,m in e.markets.items() if m.get('weather_category')==category and not m.get('paid')]
         if len(active)>=2 or len(suite.extra)>=cap:continue

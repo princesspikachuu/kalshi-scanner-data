@@ -15,6 +15,7 @@ from .experiments import ExperimentSuite
 from .set_discovery import discover_sets
 from .weather import initialize_weather,discover_weather
 from .performance import record_balances
+from .sports import initialize_sports,discover_sports
 
 LOG=logging.getLogger('shadow-host')
 
@@ -29,6 +30,7 @@ class HostedRun(ForwardRun):
         self.audit=HostedAudit(store,guard)
         initialize_folders(store,guard)
         initialize_weather(store,guard)
+        initialize_sports(store,guard)
         all_rows=store.rows('shadow/bot/',200)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
@@ -53,7 +55,7 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
         self.audit.experiments=self.experiments
-        self.experiments.extra.update({t:t for folder in ('complete_set','favorites') for t,m in self.experiments.portfolios[folder][0].markets.items() if not m.get('paid') and (folder=='complete_set' or m.get('weather_category'))})
+        self.experiments.extra.update({t:t for folder in ('complete_set','favorites') for t,m in self.experiments.portfolios[folder][0].markets.items() if not m.get('paid') and (folder=='complete_set' or m.get('weather_category') or m.get('sports'))})
         # Surface backup/archive failures soon after recovery, then use the
         # normal five-minute cadence without adding Kalshi REST requests.
         self.publish_at=0;self.maintenance_at=time.time()+60
@@ -193,7 +195,7 @@ class HostedRun(ForwardRun):
                                 self.engine.cancel_buys(ticker)
                                 self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
                                 recovered.append(ticker)
-                        elif source not in ('set_markets','weather_market','experiment_settlement'):self.engine.handle(source,payload,now)
+                        elif source not in ('set_markets','weather_market','sports_market','sports_status','experiment_settlement'):self.engine.handle(source,payload,now)
                         if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
                     except ValueError as exc:
                         self.reject_input(source,payload,exc)
@@ -255,7 +257,7 @@ class HostedRun(ForwardRun):
             state='ready' if books and fees_ready==len(active) and self.engine.spot.ready(now) else 'waiting'
             if time.monotonic()>=self.health_log_at:
                 self.health_log_at=time.monotonic()+30
-                print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category') or m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
                 print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                     valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
                     mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
@@ -360,7 +362,7 @@ class HostedRun(ForwardRun):
                                   real_orders_enabled=False)),flush=True)
         # Called from the trading thread; the process signal handler owns stop.
         coroutines=[self.discover(),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),self.fee_maintenance()]
-        if hasattr(self,'experiments'):coroutines.extend([discover_sets(self),discover_weather(self)])
+        if hasattr(self,'experiments'):coroutines.extend([discover_sets(self),discover_weather(self),discover_sports(self)])
         workers=[asyncio.create_task(c) for c in coroutines]
         waiter=asyncio.create_task(self.done.wait())
         clean_stop=False

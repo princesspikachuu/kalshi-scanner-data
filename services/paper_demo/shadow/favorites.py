@@ -7,20 +7,24 @@ class FavoritesStrategy(ConvexityStrategy):
     def __init__(self,engine,profile):
         super().__init__(engine,profile['contracts'],False,profile['series'],profile['name'])
         self.profile=profile;self.attempts={};self.decisions={};self.exit_evidence=ExitEvidence();self.exit_at={}
-        self.last_reason='Waiting for a 70–95¢ favorite · maker entry with evidence-based risk exits'
+        self.last_reason=('Waiting for verified live sport · final two estimated hours' if profile.get('asset')=='sports' else 'Waiting for a 70–95¢ favorite · maker entry with evidence-based risk exits')
     def on_fill(self,order,quantity):
         a=self.attempts.get(order.ticker)
         if a and order.action=='buy':a['first']=True
         self.e.cancel_buys(order.ticker)
     def safety_cancel(self,ticker):pass
     def exit_allowed(self,order):return self.e.now<self.e.markets[order.ticker]['close']
+    def entry_allowed(self,m,now):
+        return not m.get('sports') or (m.get('sports_live') is True and
+            m.get('sports_start',float('inf'))<=now<m.get('sports_verified_until',0) and
+            60<m.get('sports_expected_end',0)-now<=self.profile.get('late_game_hours',2)*3600)
     def step(self,changed_ticker=None):
         for ticker,m in list(self.e.markets.items()):
             if not ticker.startswith(self.series+'-') or changed_ticker and changed_ticker!=ticker:continue
             a=self.attempts.get(ticker);now=self.e.now
             if a:
                 if a.get('recorded'):continue
-                if not self.enabled:self.e.cancel_buys(ticker)
+                if not self.enabled or not self.entry_allowed(m,now):self.e.cancel_buys(ticker)
                 if m.get('paid'):
                     s=self.e.wallet.stat(ticker)
                     if s.valid and a['first']:
@@ -42,7 +46,7 @@ class FavoritesStrategy(ConvexityStrategy):
                     self.e.cancel_buys(ticker)
                     if not any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):a['recorded']=True
                 continue
-            if (not self.enabled or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
+            if (not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
                 not self.e.book_fresh(ticker) or m['close']-now<60):continue
             book=self.e.books[ticker];quotes=[(book.bid(side),side) for side in ('yes','no') if book.bid(side) is not None]
             if not quotes:continue
@@ -55,6 +59,8 @@ class FavoritesStrategy(ConvexityStrategy):
             fee=self.e.fees[ticker].charge(quantity,price,True)
             if quantity*price+fee>self.e.available():continue
             deadline=min(now+60,m['close']-30)
+            if m.get('sports'):deadline=min(deadline,m['sports_verified_until'],m['sports_expected_end']-60)
+            if deadline<=now+self.e.latency:continue
             a=dict(first=False,recorded=False,side=side,price=str(price),quantity=str(quantity),
                 entry_deadline=deadline,started_at=now,implied_probability=str(price),
                 loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))),breakeven_probability=str(price+fee/quantity),price_band='70–79¢' if price<D('.80') else '80–89¢' if price<D('.90') else '90–95¢')

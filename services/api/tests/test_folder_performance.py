@@ -23,7 +23,7 @@ class PerformancePostgres(unittest.TestCase):
     def test_minute_history_refills_reset_isolation_and_missing_older_history(self):
         self.seed();start=self.folders('1010');self.record(start,12000)
         end=self.folders('1120','1100');self.record(end,15600)
-        folder_performance(self.pool,end,15600)
+        folder_performance(self.demo.pool,end,15600)
         for f in end:
             self.assertEqual(f['performance']['1H']['pnl'],'10')
             self.assertFalse(f['performance']['1H']['partial'])
@@ -35,7 +35,7 @@ class PerformancePostgres(unittest.TestCase):
         row=self.demo.get('shadow/folder/favorites')
         self.demo.put('shadow/folder/favorites',dict(row['progress'],session='new-session',reset_at=15630))
         fresh=self.folders('1000');self.record(fresh,15660)
-        current=self.folders('998');folder_performance(self.pool,current,15720)
+        current=self.folders('998');folder_performance(self.demo.pool,current,15720)
         fav=next(f for f in current if f['id']=='favorites')
         self.assertEqual(fav['performance']['1H']['pnl'],'-2')
         self.assertTrue(fav['performance']['1H']['partial'])
@@ -47,5 +47,5 @@ class PerformancePostgres(unittest.TestCase):
         self.assertIsNone(self.demo.get(history_key(60)[5:]))
         for f in folders:f['accounting']['portfolio']['equity']=None
         self.record(folders,36*86400+60)
-        folder_performance(self.pool,folders,36*86400+60)
+        folder_performance(self.demo.pool,folders,36*86400+60)
         self.assertTrue(all(f['performance']['1H']['pnl'] is None for f in folders))

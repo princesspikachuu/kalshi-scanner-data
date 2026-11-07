@@ -9,7 +9,7 @@ async def discover_sets(host):
         try:
             now=time.time()
             legacy_active=sum(m['close']>now for m in host.engine.markets.values())
-            cap=max(0,min(8,20-legacy_active))
+            cap=max(0,min(10,22-legacy_active))
             set_count=sum(not m.get('paid') for m in e.markets.values())
             if bot.enabled and set_count<4 and len(suite.extra)<cap:
                 result=await asyncio.to_thread(host.verified_data.call,'GET','/events',
