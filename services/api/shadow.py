@@ -106,6 +106,9 @@ def install_shadow(app,auth,mutate,pool):
                 metrics={period:mapped.get((profile['id'],period),aggregate([])) for period in PERIODS},
                 financial_metrics={period:actual.get((profile['id'],period),aggregate([])) for period in PERIODS},
                 account=account,
+                execution=next((r.get('execution') for r in sorted(current.values(),key=lambda r:r.get('at',0),reverse=True)
+                    if r.get('bot_id')==profile['id'] and r.get('execution')),
+                    (reports.get(profile['id']) or {}).get('execution')),
                 latest_report=reports.get(profile['id'])))
         if money:
             money['quality']=dict(verified_cycles=sum(m['cycles'] for m in financial if m['period']=='account'),

@@ -37,6 +37,28 @@ evidence, the bot joins the bid with one clearly labeled demo contract; profile
 exits, settled history and paused controls are preserved. Evidence shares the
 existing durable checkpoint and is cleared by an explicit session reset.
 
+
+Convexity recovery v2: newly filled lots retain their original entry cash cost,
+including maker fees. During phases 1–2, a fresh post-entry book with sufficient
+available depth at 40¢ or better can trigger the smallest whole-contract IOC
+that recovers that cost after conservatively rounded taker fees. At least one
+contract remains. Actual net receipts, not the decision quote, reduce the target;
+partial IOC fills retry only the remaining cash target after the normal 500ms
+exit cooldown. Protective exits take precedence and final-phase freeze is checked
+again at delayed arrival. Stop arming requires depth above its existing arm price
+for the entire remaining lot. Existing pause controls and virtual balances persist.
+
+Recovery targets and receipts are checkpointed. Old checkpoints lacking original
+recovery targets retain their existing exit policy; targets are not fabricated
+from an already-reduced lot. Old reports lacking execution counters show no
+measurement coverage. New reports and current snapshots expose submitted/filled
+maker quantity, rejections, partial/unfilled IOC attempts, modeled latency,
+partial-profit receipts, and full-cycle fees/slippage. Counters begin with new
+orders in each cycle, include working/rejected submissions, and count retried IOC
+quantity again; these are execution diagnostics, not a profitability estimate.
+Each fill audit carries its purpose and modeled latency. No per-tick history or
+new market-data requests are introduced. New market strategy labels identify
+convexity-recovery-v2 separately from earlier cycles.
 Favorites activity/recovery update: valid maker bids now retain their queue
 position. Each fresh value/fee/eligibility check renews a maximum 30-second safety
 lease, bounded by the final-minute cutoff and current sports verification. If
