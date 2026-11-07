@@ -222,14 +222,16 @@ class HostedRun(ForwardRun):
                                 self.engine.cancel_buys(ticker)
                                 self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
                                 recovered.append(ticker)
-                        elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):self.engine.handle(source,payload,now)
+                        elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
+                            try:self.engine.handle(source,payload,now)
+                            except ValueError as exc:self.reject_input(source,payload,exc)
                         if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
                     except ValueError as exc:
                         self.reject_input(source,payload,exc)
                     completed+=1
                     # Preserve every event and its cash value, but avoid a DB
                     # round trip/checkpoint for each partial fill in a burst.
-                    if self.done.is_set() or self.queue.empty() or completed>=32 or time.monotonic()-started>=.005:
+                    if self.done.is_set() or self.queue.empty() or completed>=128 or time.monotonic()-started>=.020:
                         break
                     item=self.queue.get_nowait()
                 self.audit.flush()

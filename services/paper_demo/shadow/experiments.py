@@ -190,6 +190,7 @@ class ExperimentSuite:
         if source in ('weather_market','sports_market','hourly_market'):
             if not self.extra_capacity([payload['market']['ticker']],now):return
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
+        errors=[]
         for folder,(e,f,ps) in self.portfolios.items():
             local=payload
             if source in ('market','weather_market','sports_market','hourly_market'):
@@ -217,13 +218,21 @@ class ExperimentSuite:
             if source=='settlement':
                 if payload['ticker'] not in e.markets:continue
                 e.markets[payload['ticker']]['yes_payout_confirmed']=payload['yes_payout']
-            e.handle('market' if source in ('weather_market','sports_market','hourly_market') else source,self.prepare(e,source,local,now),now)
+            try:
+                e.handle('market' if source in ('weather_market','sports_market','hourly_market') else source,self.prepare(e,source,local,now),now)
+            except ValueError as exc:
+                # Every portfolio must consume the shared subscription sequence,
+                # even when another portfolio rejects this market's book.
+                ticker=local.get('msg',{}).get('market_ticker') if source=='kalshi' else local.get('ticker')
+                if ticker in e.books:e.data_gap(ticker,str(exc))
+                errors.append(exc);continue
             # Complete-set markets are not in legacy discovery's settlement gate.
             if source=='kalshi' and payload.get('type')=='market_lifecycle_v2':
                 msg=payload.get('msg',{});t=msg.get('market_ticker')
                 if t in e.markets and msg.get('event_type')=='settled' and msg.get('result') in ('yes','no'):
                     e.markets[t]['yes_payout_confirmed']='1' if msg['result']=='yes' else '0'
                     e.handle('settlement',dict(ticker=t,yes_payout=e.markets[t]['yes_payout_confirmed']),now)
+        if errors:raise errors[0]
     def comparison_snapshot(self,folder,e,f,money,now):
         bots=[b for b in f.bots.values() if isinstance(b,SequentialStrategy)]
         if not bots or not any(b.profile.get('comparison_started_at') for b in bots):return None
@@ -246,6 +255,16 @@ class ExperimentSuite:
             dollar_hours=totals['dollar_hours'],profit_per_dollar_hour=pnl/totals['dollar_hours'] if pnl is not None and totals['dollar_hours'] else None,
             max_drawdown=draw['max_drawdown'],drawdown_incomplete=draw['coverage_incomplete'],
             open_attempts=len(active),unpriced=unpriced,at=now)
+    def data_message(self,e,b,p,now):
+        current=[(t,m) for t,m in e.markets.items() if t.startswith(p['series']+'-') and m['close']>now and not m.get('paid') and not m.get('entry_parked')]
+        if current and not any(e.book_fresh(t) for t,m in current):
+            return 'Active market · waiting for fresh order-book data'
+        coverage=getattr(self,'hourly_coverage',{}).get(p['series'])
+        if not current and coverage:
+            if now-coverage['at']>120:return 'Market scan delayed · last checked more than 2 minutes ago'
+            return coverage['reason']
+        return getattr(b,'last_reason','Waiting for market data')
+
     def snapshot(self,now):
         result={}
         for folder,(e,f,ps) in self.portfolios.items():
@@ -275,7 +294,7 @@ class ExperimentSuite:
                     attempts=past.get('attempts',0)+len(attempts),completed=past.get('completed',0)+sum(bool(a.get('completed') or a.get('complete')) for a in attempts),
                     unmatched=sum(1 for a in attempts if not a.get('complete') and not a.get('finished')) if folder=='complete_set' else sum(1 for a in attempts if a.get('first') and not a.get('recorded')),
                     decision=list(b.decisions.values())[-1] if getattr(b,'decisions',{}) else None,
-                    message=getattr(b,'last_reason','Learning completion probabilities · 1-contract paper exploration'),
+                    message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scans=getattr(b,'scans',None),calibration=calibration)
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
                 assumptions=dict(latency_ms=150,independent_paper_portfolio=True,real_orders_enabled=False))

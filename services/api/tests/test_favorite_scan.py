@@ -39,11 +39,25 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(metadata),3) # Frequency cache never substitutes for live quotes/fees.
         self.assertEqual(host.fee_policy.await_count,2)
 
-    async def test_capacity_pause_makes_no_new_market_or_fee_requests(self):
+    async def test_capacity_pause_still_records_listing_coverage_without_subscribing(self):
         host,suite=self.setup_host();suite.search_capacity=lambda *args:False
-        await hourly_once(host)
-        host.verified_data.call.assert_not_called();host.fee_policy.assert_not_awaited()
-        self.assertEqual(suite.hourly_scan['reason'],'Admission paused by measured capacity')
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        def call(method,path,query=None):
+            if path.startswith('/series/'):return dict(series=dict(frequency='hourly'))
+            series=query['series_ticker']
+            return dict(markets=[dict(ticker=series+'-listed',event_ticker='event',status='active',open_time=date(100),
+                close_time=date(2800),yes_bid_dollars='.81',no_bid_dollars='.15')])
+        host.verified_data.call.side_effect=call
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000):await hourly_once(host)
+        host.fee_policy.assert_not_awaited();host.put.assert_not_awaited()
+        self.assertEqual(suite.hourly_scan['checked_series'],3)
+        self.assertEqual(suite.hourly_scan['subscribed'],0)
+        self.assertEqual(suite.hourly_coverage['KXBTCD']['active_markets'],1)
+        self.assertEqual(suite.hourly_coverage['KXBTCD']['eligible_markets'],1)
+        self.assertIn('capacity paused',suite.hourly_coverage['KXBTCD']['reason'])
+        e,f,ps=suite.portfolios['favorites'];p=next(p for p in ps if p['series']=='KXBTCD')
+        self.assertIn('capacity paused',suite.data_message(e,f.bots[p['series']],p,1000))
+        self.assertIn('scan delayed',suite.data_message(e,f.bots[p['series']],p,1201))
 
     async def test_existing_series_candidate_cannot_be_duplicated_within_batch(self):
         host,suite=self.setup_host();e=suite.portfolios['favorites'][0]
