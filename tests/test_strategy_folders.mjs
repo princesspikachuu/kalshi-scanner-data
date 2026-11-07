@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
+import {summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -45,7 +45,7 @@ test('top overview lists every folder with one shared set of period buttons',()=
  const {nodes}=setup(data),html=nodes.get('accountSummary').innerHTML;
  assert.equal((html.match(/data-folder-period=/g)||[]).length,6);
  for(const f of data.folders)assert.ok(html.includes(f.name));
- assert.ok(html.includes('Balance now'));assert.ok(html.includes('P/L · All'));
+ assert.ok(html.includes('Open bids'));assert.ok(html.includes('Open/pending positions'));assert.ok(html.includes('P/L · All'));
 });
 test('period overview uses deposit-adjusted history and labels incomplete coverage',()=>{
  const data=fixture();data.folders[0].performance={'1H':{pnl:'-2.50',partial:true,since:1700000000}};
@@ -54,9 +54,9 @@ test('period overview uses deposit-adjusted history and labels incomplete covera
  assert.ok(html.includes('Waiting for balance history'));
  assert.ok(html.includes('data-folder-period="1H" aria-pressed="true"'));
 });
-test('unpriced balances remain ranges rather than silently becoming zero',()=>{
+test('unpriced P/L remains a range while committed position cost stays known',()=>{
  const html=folderOverviewMarkup([{id:'favorites',name:'Favorites',accounting:{at:Date.now()/1000,portfolio:{equity:null,cash:'900',deposits:'1000',total_pnl:null,realized_pnl:'0',position_cost:'100',active_contracts:'200',pending_contracts:'0',position_value:null},positions:[]}}]);
- assert.ok(html.includes('$900.00 to $1,100.00'));assert.ok(html.includes('-$100.00 to $100.00'));
+ assert.ok(html.includes('Open/pending positions'));assert.ok(html.includes('$100.00'));assert.ok(html.includes('-$100.00 to $100.00'));assert.ok(!html.includes('$900.00 to $1,100.00'));
 });
 
 test('retired fifteen-minute favorites are collapsed and cannot be resumed from their card',()=>{
@@ -93,7 +93,7 @@ test('folders start closed with money and time controls in every summary',()=>{
  const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
  assert.equal((html.match(/data-folder-summary-period=/g)||[]).length,24);
  for(const f of data.folders){assert.ok(html.includes('id="folder-'+f.id+'"'));assert.ok(!html.includes('id="folder-'+f.id+'" open'));}
- assert.ok(html.includes('folder-card-values'));assert.ok(html.includes('Balance now'));
+ assert.ok(html.includes('folder-card-values'));assert.ok(html.includes('Open bids'));assert.ok(html.includes('Open/pending positions'));
 });
 test('folder open state survives polling and subsequent page initialization',()=>{
  const storage=new Map(),detail={dataset:{folder:'favorites'},open:false,isConnected:true};
@@ -120,7 +120,7 @@ test('short-period unpriced P/L is a range with realized results, never a blank 
  const html=folderOverviewMarkup(data.folders,'1H');
  assert.ok(html.includes('-$4.25 to $8.50'));assert.ok(html.includes('Realized $2.10'));
  assert.ok(html.includes('range includes unpriced positions'));assert.ok(html.includes('Tracked since'));
- assert.ok(html.includes('data-label="Balance now"'));assert.ok(html.includes('data-label="P/L · 1h"'));
+ assert.ok(html.includes('data-label="Open bids"'));assert.ok(html.includes('data-label="Total P/L · 1h"'));
 });
 
 test('monitoring status distinguishes protected subscriptions, entry search and overload',()=>{
@@ -215,4 +215,24 @@ test('summary pause targets only its folder without toggling it and reports pres
  assert.equal(storage.has('moneytree-folder-views'),false);
  assert.ok(nodes.get('message').textContent.includes('continues managing existing positions'));
  assert.ok(nodes.get('groups').innerHTML.includes('data-folder-resume="sequential"'));
+});
+
+
+test('overview, folder and bot headers separate current reserved bids from committed position costs',()=>{
+ const account={equity:'1000',cash:'993.5',total_pnl:'3',realized_pnl:'1',unrealized_pnl:'2',
+  unfilled_bids:'2',active_cost:'3',pending_cost:'1.5',position_cost:'4.5',active_value:'500',pending_value:'500'};
+ const folder={id:'favorites',name:'Favorites',accounting:{at:Date.now()/1000,portfolio:account},performance:{'1H':{pnl:'1',partial:false}}};
+ for(const html of [folderOverviewMarkup([folder],'1H'),folderCardSummaryMarkup(folder,'1H',{bots:1,running:1}),
+  botPnlMarkup({id:'fav',account,performance:{'1H':{pnl:'1',realized_pnl:'.5'}}},'1H')]){
+  for(const text of ['Total P/L','Open bids','Open/pending positions','$2.00','$4.50','Open $3.00 · pending $1.50','includes entry fees'])assert.ok(html.includes(text),text);
+  assert.ok(!html.includes('$1,000.00'));assert.ok(!html.includes('$500.00'));
+ }
+ assert.deepEqual(summaryExposure(account),{bids:2,active:3,pending:1.5,positions:4.5});
+});
+test('exposure summaries distinguish unknown amounts from known zero and support combined cost snapshots',()=>{
+ assert.deepEqual(summaryExposure(null),{bids:null,active:null,pending:null,positions:null});
+ assert.deepEqual(summaryExposure({unfilled_bids:'0',active_cost:'0',pending_cost:'0'}),{bids:0,active:0,pending:0,positions:0});
+ assert.equal(summaryExposure({position_cost:'7'}).positions,7);
+ const html=botPnlMarkup({id:'test',account:{unfilled_bids:'0'},performance:{}},'1H');
+ assert.ok(html.includes('$0.00'));assert.ok(html.includes('Waiting for balance history'));assert.ok(!html.includes('NaN'));
 });
