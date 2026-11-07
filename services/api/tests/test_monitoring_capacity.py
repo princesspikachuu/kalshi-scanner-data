@@ -56,10 +56,10 @@ class AllocationTests(unittest.TestCase):
         s=self.suite();t='KXHIGHNY-IDLE';self.add(s,t)
         s.rotate_candidates(250)
         self.assertNotIn(t,s.feed_markets());self.assertIn(t,s.settlement_markets())
-        self.assertFalse(s.candidate_allowed(t,500));self.assertTrue(s.candidate_allowed(t,10001))
+        self.assertFalse(s.candidate_allowed(t,300));self.assertTrue(s.candidate_allowed(t,311))
         state=json.loads(json.dumps(s.state(),default=str))
         restored=ExperimentSuite(s.host,s.rows,state)
-        self.assertFalse(restored.candidate_allowed(t,500))
+        self.assertFalse(restored.candidate_allowed(t,300));self.assertTrue(restored.candidate_allowed(t,311))
     def test_flat_completed_attempt_keeps_its_cash_and_evidence_after_parking(self):
         s=self.suite();t='KXHIGHNY-COMPLETE';self.add(s,t)
         e,f,_=s.portfolios['sequential'];b=f.owner(t)

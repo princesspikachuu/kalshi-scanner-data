@@ -37,7 +37,7 @@ class ExperimentSuite:
         self.summary=(previous or {}).get('_summary',{})
         self.comparison=(previous or {}).get('_comparison',{})
         self.monitoring=MonitoringBudget()
-        self.rotation_exclusions=(previous or {}).get('_rotation_exclusions',{})
+        self.rotation_exclusions={t:min(end,time.time()+60) for t,end in (previous or {}).get('_rotation_exclusions',{}).items()}
         self.host=host;self.rows=rows;self.portfolios={};self.models={};self.extra={};self.scanner_cursor='';self.scanner_state={}
         for folder in EXPERIMENT_FOLDERS:
             ps=[r['parameters'] for r in rows if r['parameters'].get('folder_id')==folder]
@@ -110,7 +110,11 @@ class ExperimentSuite:
     def settlement_markets(self):
         return {t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()
                 if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
-    def candidate_allowed(self,ticker,now):return self.rotation_exclusions.get(ticker,0)<=now
+    def candidate_allowed(self,ticker,now):
+        if self.rotation_exclusions.get(ticker,0)>now:return False
+        owners=[f.owner(ticker) for e,f,_ in self.portfolios.values() if ticker in e.markets]
+        owners=[b for b in owners if b and b.enabled]
+        return not owners or not all(b.attempts.get(ticker,{}).get('first') for b in owners)
     def monitoring_snapshot(self,now):
         limits=self.monitoring.limits(now)
         care={t for t in self.extra if protected(self,t,now)}
@@ -137,7 +141,7 @@ class ExperimentSuite:
         for t,m in list(self.feed_markets().items()):
             if now-m.get('discovered_at',now)<120 or protected(self,t,now):continue
             if any(o.ticker==t and o.status in ('pending','resting') for e,_,_ in self.portfolios.values() for o in e.orders.values()):continue
-            self.rotation_exclusions[t]=m['close']
+            self.rotation_exclusions[t]=min(m['close'],now+60)
             for folder,(e,f,ps) in self.portfolios.items():
                 if t not in e.markets or folder=='complete_set':continue
                 b=f.owner(t);a=b.attempts.get(t,{}) if b else {}
@@ -179,6 +183,15 @@ class ExperimentSuite:
                 profile=next((p for p in ps if p['series']==payload['market']['ticker'].split('-')[0]),None)
                 if not profile or profile.get('retired'):continue
                 local=dict(payload,market=dict(payload['market'],bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile.get('version',folder+'-1'),bot_revision=profile['revision']))
+                ticker=local['market']['ticker']
+                if e.markets.get(ticker,{}).get('entry_parked'):
+                    # Readmission is explicit and still needs a replacement full
+                    # snapshot. Keep inventory/history and the original bid cap.
+                    e.markets[ticker].update(local['market'],entry_parked=False)
+                    b=f.owner(ticker);a=b.attempts.get(ticker,{}) if b else {}
+                    if a and not a.get('first'):a.update(recorded=False,retry_at=0)
+                    e.books[ticker].valid=False
+
             if source in ('refill','spot','metadata_retry'):continue
             if source in ('rest_settlement_confirmed','experiment_settlement'):
                 ticker=payload['ticker']
