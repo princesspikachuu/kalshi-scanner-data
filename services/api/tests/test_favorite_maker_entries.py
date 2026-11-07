@@ -20,22 +20,22 @@ class MakerEntries(unittest.TestCase):
         return e,b,book
 
     def seed(self,b,n=200,wins=200):
-        key=entry_key('KXBTCD','yes',D('.79'),800)
+        key=('paper-data-v3|' if b.profile.get('paper_exploration',True) is not False else '')+entry_key('KXBTCD','yes',D('.79'),800)
         for i in range(n):observe(b.exit_evidence.cells,key,str(i),int(i<wins))
         return key
 
-    def test_unknown_probability_joins_bid_with_one_demo_contract(self):
+    def test_unknown_probability_uses_configured_size_and_competitive_maker_bid(self):
         e,b,book=self.setup_bot();b.step();o=next(iter(e.orders.values()))
-        self.assertEqual((o.price,o.quantity,o.maker,o.expiry),(D('.79'),D(1),True,230))
+        self.assertEqual((o.price,o.quantity,o.maker,o.expiry),(D('.80'),D(10),True,230))
         self.assertEqual(b.attempts[self.ticker]['entry_mode'],'paper_exploration')
-        self.assertIn('probability unknown',b.last_reason)
+        self.assertIn('10-contract maker data trial',b.last_reason)
         self.assertFalse(any(not x.maker for x in e.orders.values()))
 
     def test_exploration_can_be_disabled_without_inventing_an_edge(self):
         e,b,_=self.setup_bot(paper_exploration=False);b.step();self.assertFalse(e.orders)
 
     def test_supported_estimate_can_use_configured_size_after_all_costs(self):
-        e,b,_=self.setup_bot();self.seed(b)
+        e,b,_=self.setup_bot(paper_exploration=False);self.seed(b)
         e.fees[self.ticker]=FeePolicy(D(1),D(1));b.step()
         o=next(iter(e.orders.values()));a=b.attempts[self.ticker]
         self.assertEqual(o.quantity,D(10));self.assertTrue(o.maker)
@@ -43,11 +43,11 @@ class MakerEntries(unittest.TestCase):
         self.assertLessEqual(cost+D('.02'),D(str(a['entry_estimate']['lower'])))
 
     def test_weak_evidence_blocks_even_a_high_market_price(self):
-        e,b,_=self.setup_bot();self.seed(b,100,75);b.step()
+        e,b,_=self.setup_bot(paper_exploration=False);self.seed(b,100,75);b.step()
         self.assertFalse(e.orders)
 
     def test_series_fees_can_eliminate_the_entry(self):
-        e,b,_=self.setup_bot();self.seed(b);e.fees[self.ticker]=FeePolicy(D(1),D(100))
+        e,b,_=self.setup_bot(paper_exploration=False);self.seed(b);e.fees[self.ticker]=FeePolicy(D(1),D(100))
         b.step();self.assertFalse(e.orders)
 
     def test_maker_cannot_cross_after_submission_latency(self):
@@ -66,10 +66,10 @@ class MakerEntries(unittest.TestCase):
         old=next(iter(e.orders.values()));ahead=old.ahead;arrived=old.arrives
         for now in range(210,281,10):
             e.advance(now);book.at=now
-            book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+            book.levels={'yes':{D('.79'):D(100)},'no':{D('.19'):D(100)}}
             b.step()
         self.assertEqual(len(e.orders),1)
-        self.assertEqual((old.status,old.price,old.ahead,old.arrives),('resting',D('.79'),ahead,arrived))
+        self.assertEqual((old.status,old.price,old.ahead,old.arrives),('resting',D('.80'),ahead,arrived))
         self.assertEqual(old.expiry,310)
         self.assertFalse(b.attempts[self.ticker]['recorded'])
 
@@ -78,22 +78,23 @@ class MakerEntries(unittest.TestCase):
         e.advance(270);book.at=270;b.step()
         new=list(e.orders.values())[-1]
         self.assertEqual(old.status,'expired');self.assertNotEqual(new.id,old.id)
-        self.assertLessEqual(new.price,D('.79'))
+        self.assertLessEqual(new.price,D('.95'))
         e.advance(940);book.at=940;b.step()
         self.assertFalse(any(o.status in ('pending','resting') for o in e.orders.values()))
 
     def test_evidence_deterioration_cancels_without_stacking_replacement(self):
-        e,b,book=self.setup_bot();key=self.seed(b);b.step();e.advance(201)
+        e,b,book=self.setup_bot(paper_exploration=False);key=self.seed(b);b.step();e.advance(201)
         for i in range(200,500):observe(b.exit_evidence.cells,key,str(i),0)
         b.step();b.step();self.assertEqual(len(e.orders),1)
         e.advance(202);self.assertEqual(next(iter(e.orders.values())).status,'cancelled')
 
-    def test_partial_fill_stops_repricing_and_keeps_protective_exits(self):
+    def test_partial_fill_keeps_requested_remainder_without_duplicate_entries(self):
         e,b,book=self.setup_bot();self.seed(b);b.step();e.advance(201)
         o=next(iter(e.orders.values()));e.fill(o,D(1),o.price,'TEST');e.advance(202)
         book.at=202;b.step()
         self.assertTrue(b.attempts[self.ticker]['first'])
-        self.assertEqual(len(e.orders),1);self.assertEqual(o.status,'cancelled')
+        self.assertEqual(len(e.orders),1);self.assertEqual(o.status,'resting')
+        self.assertEqual(o.remaining,D(9))
         self.assertEqual(e.wallet.inventory(self.ticker,'yes'),D(1))
 
     def test_only_confirmed_settlement_teaches_entry_model_and_survives_json(self):

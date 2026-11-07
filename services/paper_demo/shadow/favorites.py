@@ -13,12 +13,29 @@ class FavoritesStrategy(ConvexityStrategy):
         self.last_reason=('Waiting for verified live sport · final two estimated hours' if profile.get('asset')=='sports' else 'Waiting for a 70–95¢ favorite · maker entry with evidence-based risk exits')
     def on_fill(self,order,quantity):
         a=self.attempts.get(order.ticker)
-        if a and order.action=='buy':a['first']=True
+        if a and order.action=='buy':
+            a['first']=True
+            if a.get('entry_policy')=='favorites-paper-data-v3':
+                for other in self.e.orders.values():
+                    if other.ticker==order.ticker and other.action=='buy' and other.id!=order.id:self.e.cancel(other.id)
+                return
         self.e.cancel_buys(order.ticker)
+    def retain_partial_entry(self,ticker,m,a,lots):
+        active=[o for o in self.e.orders.values() if o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')]
+        if not active:return
+        q=self.entry_quote(ticker,a['side']) if (self.enabled and self.entry_allowed(m,self.e.now)
+            and self.entry_ready(ticker) and m['close']-self.e.now>60 and not a.get('exit_reason')) else None
+        desired=max(ZERO,self.contracts-sum((l.quantity for l in lots),ZERO))
+        if not q or any(o.price>q['price'] or o.remaining>min(desired,q['quantity']) for o in active):
+            self.e.cancel_buys(ticker);return
+        canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
+        for order in active:
+            if order.id not in canceling:order.expiry=min(self.e.now+30,self.entry_deadline(m,self.e.now))
     def safety_cancel(self,ticker):pass
     def exit_allowed(self,order):return self.e.now<self.e.markets[order.ticker]['close']
     def entry_quote(self,ticker,side,max_price=None):
-        return quote(self.e,self.profile,self.contracts,ticker,side,self.exit_evidence.cells,max_price)
+        return quote(self.e,self.profile,self.contracts,ticker,side,self.exit_evidence.cells,
+            None if self.profile.get('paper_exploration',True) is not False else max_price)
     def cancel_entry(self,ticker,reason):
         self.e.cancel_buys(ticker)
         self.last_reason=reason
@@ -28,13 +45,17 @@ class FavoritesStrategy(ConvexityStrategy):
         expiry=min(self.e.now+30,a['entry_deadline'])
         if expiry<=self.e.now+self.e.latency:return
         a.update(price=str(q['price']),quantity=str(q['quantity']),entry_key=q['key'],
-            entry_mode=q['mode'],entry_estimate=q['estimate'],last_submit=self.e.now,
+            entry_mode=q['mode'],entry_estimate=q['estimate'],entry_policy=q['policy'],last_submit=self.e.now,
             price_band='70–79¢' if q['price']<D('.80') else '80–89¢' if q['price']<D('.90') else '90–95¢',
             breakeven_probability=str(q['price']+q['fee']/q['quantity']))
-        self.last_reason=(f"1-contract maker demo trial at {q['price']*100:.0f}¢ · probability unknown" if q['mode']=='paper_exploration' else
+        self.last_reason=(f"{q['quantity']:f}-contract maker data trial at {q['price']*100:.0f}¢ · collecting outcomes" if q['mode']=='paper_exploration' else
             f"Value-qualified maker at {q['price']*100:.0f}¢ · {q['estimate']['samples']} settled events")
-        self.e.log('FAVORITE_ENTRY_DECISION',ticker=ticker,reason=self.last_reason,details=json.dumps(dict(mode=q['mode'],estimate=q['estimate'],ceiling=q['ceiling'])))
-        self.e.place(ticker,a['side'],'buy',q['quantity'],q['price'],maker=True,expiry=expiry)
+        ident=self.e.place(ticker,a['side'],'buy',q['quantity'],q['price'],maker=True,expiry=expiry)
+        self.e.log('FAVORITE_ENTRY_DECISION',ticker=ticker,order_id=ident,reason=self.last_reason,details=json.dumps(dict(
+            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),estimate=q['estimate'],ceiling=q['ceiling'])))
+        if q['mode']=='paper_exploration':
+            print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
+                price=str(q['price']),policy=q['policy'],maker=True,real_orders_enabled=False)),flush=True)
     def entry_allowed(self,m,now):
         if self.profile.get('retired') or self.series.endswith('15M'):return False
         return not m.get('sports') or (m.get('sports_live') is True and
@@ -70,11 +91,12 @@ class FavoritesStrategy(ConvexityStrategy):
                 self.last_reason='Favorite trial settled; result includes all fees'
                 continue
             if a and a.get('first'):
-                self.e.cancel_buys(ticker)
                 lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
+                if a.get('entry_policy')=='favorites-paper-data-v3':self.retain_partial_entry(ticker,m,a,lots)
+                else:self.e.cancel_buys(ticker)
                 if lots and self.e.book_fresh(ticker):
                     reason=assess(self.e,ticker,lots,a,self.exit_evidence)
-                    if reason:a['exit_reason']=reason
+                    if reason:a['exit_reason']=reason;self.e.cancel_buys(ticker)
                     if a.get('exit_reason') and now-self.exit_at.get(ticker,0)>=1 and not any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):
                         self.exit_at[ticker]=now
                         self.e.log('FAVORITE_RISK_EXIT',ticker=ticker,reason=a['exit_reason'])
@@ -109,8 +131,11 @@ class FavoritesStrategy(ConvexityStrategy):
                     loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
                 self.attempts[ticker]=a
             a.update(recorded=False,entry_deadline=deadline)
-            if any(o.price>q['price'] or o.quantity>q['quantity'] or (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in active):
-                self.cancel_entry(ticker,'Maker entry cancelled: value or fee conditions changed')
+            reprice_for_data=q['mode']=='paper_exploration' and now-a.get('last_submit',0)>=10
+            if any(o.price>q['price'] or o.quantity!=q['quantity'] or
+                    (reprice_for_data and q['price']-o.price>=D('.02')) or
+                    (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in active):
+                self.cancel_entry(ticker,'Maker entry refreshed: current price, configured size or fee conditions changed')
                 a['retry_at']=now+1
             elif active:
                 # Extend the safety lease only after full revalidation. Keep the
