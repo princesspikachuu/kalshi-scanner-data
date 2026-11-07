@@ -46,7 +46,7 @@ class SportsGates(unittest.TestCase):
         existing.market(e,ticker,yes='.79',no='.19',close=200000)
         e.markets[ticker].update(live_gate(*inputs(),10000));b.step()
         order=next(iter(e.orders.values()))
-        self.assertEqual(order.expiry,10030)
+        self.assertEqual(order.expiry,10015)
         e.advance(10031);b.step();self.assertEqual(order.status,'expired')
     def test_early_game_cannot_enter_even_with_a_fresh_book(self):
         e=existing.Engine(existing.QuietAudit(),cash='1000');e.advance(10000)
