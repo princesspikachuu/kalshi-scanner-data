@@ -78,7 +78,14 @@ class HostedRun(ForwardRun):
         self.audit.checkpoint()
 
     def subscription_books(self):
-        return {**self.engine.books,**{t:b for e,_,_ in self.experiments.portfolios.values() for t,b in e.books.items()}} if hasattr(self,'experiments') else self.engine.books
+        books=dict(self.engine.books)
+        if hasattr(self,'experiments'):
+            for e,_,_ in self.experiments.portfolios.values():
+                for ticker,book in e.books.items():
+                    # A healthy copy must not hide another portfolio's need for
+                    # a replacement snapshot on the shared subscription.
+                    if ticker not in books or not book.valid:books[ticker]=book
+        return books
 
     async def settlement_observed(self,ticker):
         if ticker in self.engine.settled:return True
@@ -222,14 +229,16 @@ class HostedRun(ForwardRun):
                                 self.engine.cancel_buys(ticker)
                                 self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
                                 recovered.append(ticker)
-                        elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):self.engine.handle(source,payload,now)
+                        elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
+                            try:self.engine.handle(source,payload,now)
+                            except ValueError as exc:self.reject_input(source,payload,exc)
                         if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
                     except ValueError as exc:
                         self.reject_input(source,payload,exc)
                     completed+=1
                     # Preserve every event and its cash value, but avoid a DB
                     # round trip/checkpoint for each partial fill in a burst.
-                    if self.done.is_set() or self.queue.empty() or completed>=32 or time.monotonic()-started>=.005:
+                    if self.done.is_set() or self.queue.empty() or completed>=128 or time.monotonic()-started>=.020:
                         break
                     item=self.queue.get_nowait()
                 self.audit.flush()

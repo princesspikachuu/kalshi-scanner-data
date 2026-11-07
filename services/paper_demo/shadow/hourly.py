@@ -20,6 +20,7 @@ def favorite_bid(m):
 async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     if not hasattr(suite,'hourly_metadata'):suite.hourly_metadata={};suite.hourly_retry_at={}
+    if not hasattr(suite,'hourly_coverage'):suite.hourly_coverage={}
     active=candidate_markets(suite,markets,'hourly',now)
     ps=suite.enabled_profiles('hourly');staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
@@ -27,8 +28,6 @@ async def hourly_once(host):
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
     # series back off; stable frequency metadata is cached independently of fees.
     for _ in range(min(3,len(ps))):
-        if not suite.search_capacity('hourly',time.time(),staged+1):
-            scan['reason']='Admission paused by measured capacity';break
         blocked=active+[p['series']+'-cooldown' for p in ps if suite.hourly_retry_at.get(p['series'],0)>now]
         p,cursor=next_profile(suite,ps,blocked,suite.hourly_cursor)
         if not p:break
@@ -39,6 +38,7 @@ async def hourly_once(host):
             metadata=dict(at=now,frequency=raw.get('series',{}).get('frequency'))
             suite.hourly_metadata[series]=metadata;scan['metadata_checks']+=1
         if metadata['frequency']!='hourly':
+            suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,reason='Series is not hourly · excluded from hourly test')
             suite.hourly_retry_at[series]=now+900;continue
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=series,
             min_close_ts=int(now+60),max_close_ts=int(now+3600),limit=1000,cursor=suite.hourly_pages.get(series,'')))
@@ -48,8 +48,16 @@ async def hourly_once(host):
         scan['listed_markets']+=len(listed)
         rows=[m for m in listed if m['ticker'] not in markets and suite.candidate_allowed(m['ticker'],now) and favorite_bid(m) is not None]
         scan['eligible_markets']+=len(rows)
+        capacity=suite.search_capacity('hourly',time.time(),staged+1)
+        reason=('No active markets closing within one hour' if not listed else
+            'Active markets found · no 70–95¢ maker entry' if not rows else
+            'Active qualifying markets · feed capacity paused' if not capacity else
+            'Active qualifying market · subscribing to order book')
+        suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),eligible_markets=len(rows),reason=reason)
         suite.hourly_retry_at[series]=now+(15 if listed else 60)
         if not rows:continue
+        if not capacity:
+            scan['reason']='Active candidates found; admission paused by measured capacity';continue
         raw=min(rows,key=lambda m:(ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0)))
         fee=await host.fee_policy(raw,{})
         await host.put('hourly_market',dict(market=dict(ticker=raw['ticker'],event_ticker=raw['event_ticker'],series_ticker=series,

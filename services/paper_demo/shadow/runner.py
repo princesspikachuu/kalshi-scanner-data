@@ -333,7 +333,7 @@ class ForwardRun:
                         source,ticker,reason,self.input_rejections)
         if ticker in self.engine.books:
             self.engine.data_gap(ticker,reason)
-        else:
+        elif not ticker:
             if source=='spot':self.engine.spot=type(self.engine.spot)()
             for affected in self.engine.books:
                 if affected not in self.engine.settled:self.engine.data_gap(affected,reason)
