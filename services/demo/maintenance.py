@@ -125,7 +125,7 @@ def backup(store,objects):
         rows=c.execute("""SELECT id::text,idempotency_key,parameters,progress FROM research_job
             WHERE (idempotency_key>='demo/bot/' AND idempotency_key<'demo/bot/zzzz')
             OR (idempotency_key>='demo/order/' AND idempotency_key<'demo/order/zzzz' AND progress->>'status' NOT IN ('closed','rejected'))
-            OR idempotency_key IN ('demo/shadow/checkpoint','demo/shadow/installed','demo/shadow/folders-installed')
+            OR idempotency_key IN ('demo/shadow/checkpoint','demo/shadow/installed','demo/shadow/strategy-layout')
             OR (idempotency_key>='demo/shadow/folder/' AND idempotency_key<'demo/shadow/folder/zzzz')
             OR (idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz')
             OR idempotency_key='demo/paper/cash'

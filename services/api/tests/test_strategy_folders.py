@@ -146,6 +146,32 @@ class FolderPostgres(unittest.TestCase):
         data=r.json();self.assertEqual(len(data['bots']),85);self.assertEqual(len(data['folders']),4)
         self.assertFalse(data['real_orders_enabled'])
 
+    def test_worker_reset_archives_and_checkpoints_one_session_atomically(self):
+        from services.paper_demo.shadow.host import HostedRun
+        from services.paper_demo.shadow.storage import HostedAudit
+        from services.paper_demo.shadow.core import StrategyFleet
+        from services.paper_demo.shadow.migrate import profiles
+        self.seed();w=HostedRun.__new__(HostedRun);w.store=self.demo
+        w.audit=HostedAudit(self.demo,lambda:None);w.engine=Engine(w.audit,cash='1000')
+        w.strategy=StrategyFleet(w.engine,profiles());w.audit.engine=w.engine;w.audit.fleet=w.strategy
+        w.experiments=ExperimentSuite(w,self.demo.rows('shadow/bot/',100));w.audit.experiments=w.experiments
+        e=w.experiments.portfolios['sequential'][0];e.now=200;market(e)
+        e.wallet.fill('KXBTC15M-test','yes','buy',D(1),D('.45'),D(0),1,'before-reset')
+        other=w.experiments.portfolios['favorites'][0];other.wallet.cash=D(990)
+        session=self.demo.get('shadow/folder/sequential')['progress']['session']
+        request_id='worker-reset-idempotent-123'
+        self.client.post('/demo/shadow/folders/sequential/reset',json=dict(request_id=request_id))
+        w.audit.command_key='demo/shadow/command/'+request_id
+        w.reset_folder('sequential')
+        archived=self.demo.get('shadow/session/sequential/'+session)
+        self.assertEqual(archived['progress']['engine']['wallet']['cash'],'999.55')
+        checkpoint=self.demo.get('shadow/checkpoint')['progress']['experiments']
+        self.assertEqual(checkpoint['sequential']['engine']['wallet']['cash'],'1000')
+        self.assertFalse(checkpoint['sequential']['engine']['wallet']['lots'])
+        self.assertEqual(checkpoint['favorites']['engine']['wallet']['cash'],'990')
+        self.assertTrue(self.demo.get('shadow/command/'+request_id)['progress']['done'])
+        self.assertEqual(self.client.get('/demo/shadow/sessions').status_code,200)
+
 class SuiteTests(unittest.TestCase):
     def suite(self):
         rows=[dict(parameters=profile(strategy='sequential'),progress=dict(desired='running')),

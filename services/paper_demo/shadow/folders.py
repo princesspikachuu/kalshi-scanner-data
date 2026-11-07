@@ -12,11 +12,11 @@ FOLDERS=(
 )
 
 def initialize_folders(store,guard):
-    if store.get('shadow/folders-installed'):return
+    if store.get('shadow/strategy-layout'):return
     guard();now=time.time()
     with store.pool.connection() as c:
         c.execute('SELECT pg_advisory_xact_lock(%s)',(73820193,))
-        if c.execute("SELECT 1 FROM research_job WHERE idempotency_key='demo/shadow/folders-installed'").fetchone():return
+        if c.execute("SELECT 1 FROM research_job WHERE idempotency_key='demo/shadow/strategy-layout'").fetchone():return
         for f in FOLDERS:
             put(c,'demo/shadow/folder/'+f['id'],dict(f),dict(session=str(uuid4()),created_at=now))
         rows=c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' FOR UPDATE").fetchall()
@@ -33,7 +33,7 @@ def initialize_folders(store,guard):
         put(c,'demo/shadow/bot/set_scanner',dict(id='set_scanner',key=str(uuid4()),name='Complete-set scanner',
             series='ALL_SAME_DAY',asset='all',contracts=10,revision=1,changed_at=now,
             folder_id='complete_set',strategy='complete_set',version='complete-set-1'),dict(desired='running'))
-        put(c,'demo/shadow/folders-installed',{},dict(at=now,real_orders_enabled=False))
+        put(c,'demo/shadow/strategy-layout',{},dict(at=now,real_orders_enabled=False))
 
     print(__import__('json').dumps(dict(event='paper_strategy_folders_initialized',folders=[f['name'] for f in FOLDERS],
         paused_convexity_bots=28,sequential_bots=28,favorite_bots=28,complete_set_scanners=1,real_orders_enabled=False)),flush=True)
