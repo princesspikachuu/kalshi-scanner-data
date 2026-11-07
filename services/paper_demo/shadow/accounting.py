@@ -41,7 +41,7 @@ def snapshot(engine,profiles,now):
                 row['reserved_fees']+=order.reserved-principal;row['unfilled_contracts']+=order.remaining
         orders.append(dict(id=order.id,bot_id=owner(order.ticker),ticker=order.ticker,side=order.side,action=order.action,
             quantity=order.remaining,price=order.price,status=order.status,maker=order.maker,
-            reserved=order.reserved,principal=principal))
+            reserved=order.reserved,principal=principal,purpose=order.purpose))
     for lot in engine.wallet.lots:
         market=engine.markets[lot.ticker];pending=now>=market['close']
         cost=lot.quantity*lot.price+lot.entry_fee;book=engine.books.get(lot.ticker)
@@ -67,6 +67,7 @@ def snapshot(engine,profiles,now):
             quantity=lot.quantity,price=lot.price,entry_fee=lot.entry_fee,cost=cost,
             value=value,mark_price=mark,valuation_source=source,quote_at=book.at if book else None,
             state=kind,is_armed=lot.is_armed,phase_origin=lot.phase_origin,
+            recovery_cost=lot.recovery_cost,recovery_proceeds=lot.recovery_proceeds,
             bot_revision=market.get('bot_revision',1)))
     total=finish(total);groups={k:finish(v) for k,v in groups.items()}
     # Open cost includes the remaining entry fees. This identity includes ALL
@@ -85,5 +86,7 @@ def snapshot(engine,profiles,now):
             gross_profit=stat.gross,total_fees_paid=stat.fees_paid,
             net_realized_pnl=stat.gross-stat.realized_fees,
             closed_contracts=stat.closed,winning_contracts=stat.won)
+        from .profit_recovery import execution_report
+        cycles[ticker]['execution']=execution_report(engine,ticker)
     return strings(dict(schema=1,at=now,portfolio=total,bots=groups,
                         positions=positions,orders=orders,current_cycles=cycles))

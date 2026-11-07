@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup} from '../apps/web/shadow-view.mjs';
+import {executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -127,4 +127,18 @@ test('monitoring status distinguishes protected subscriptions, entry search and 
  const html=monitoringMarkup({subscribed_markets:20,position_and_exit_markets:12,entry_markets:8,total:32,entry_candidates:12,per_category:2,backlog:300,lag_p95_seconds:2.2,rotated_markets:5,categories:{hourly:2},reason:'Discovery paused: processing lag or read cooldown'});
  for(const text of ['20 watched','8 entry candidates','Protected monitoring','Discovery paused','2.20s','positions stay monitored','5 candidates rotated'])assert.ok(html.toLowerCase().includes(text.toLowerCase()),text);
  assert.ok(!html.includes('<table'));assert.ok(!html.includes('NaN'));
+});
+
+test('execution quality shows actual recovery receipts and missing legacy coverage honestly',()=>{
+ assert.ok(executionMarkup(null).includes('next worker snapshot'));
+ assert.ok(executionMarkup({measured:false}).includes('next worker snapshot'));
+ const html=executionMarkup({measured:true,scope:'<script>bad</script>',data_valid:false,latency_ms:150,
+  maker_fill_rate:'12.5',maker_filled:'25',maker_requested:'200',rejections:1,orders:3,
+  partial_iocs:1,ioc_attempts:2,ioc_unfilled:'17',profit_contracts:'27',profit_net_proceeds:'10.3464',
+  cycle_fees:'.4536',cycle_taker_slippage:'.01',partial_profit_price:'.40'});
+ assert.ok(html.includes('25 / 200 · 12.5%'));
+ assert.ok(html.includes('$10.35'));
+ assert.ok(html.includes('data gap'));
+ assert.ok(html.includes('cash receipts, not profit'));
+ assert.ok(!html.includes('<script>'));
 });

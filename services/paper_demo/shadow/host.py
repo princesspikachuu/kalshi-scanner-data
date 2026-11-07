@@ -146,7 +146,8 @@ class HostedRun(ForwardRun):
         if source=='market':
             series=payload['market']['ticker'].split('-')[0]
             p=next(p for p in self.profiles if p['series']==series)
-            payload['market'].update(bot_revision=p['revision'],strategy_version='convexity-'+str(p['revision']))
+            payload['market'].update(bot_revision=p['revision'],strategy_version='convexity-recovery-v2-'+str(p['revision']),
+                partial_profit_price='.40')
         await super().put(source,payload)
 
     def prepare_fees(self,source,payload,now):
