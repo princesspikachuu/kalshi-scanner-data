@@ -15,3 +15,24 @@ Known modeling assumptions: 150ms configured action latency; FIFO estimated from
 Owner-authenticated API paths `/demo/shadow/workspace`, `/events`, `/bots/{asset}`, `/bulk`, and `/funds` retain the existing gateway and CSRF controls. Settings changes increment the bot revision and stop new entries in the current cycle; existing inventory continues its original policy. Lifetime, 1h, 6h and 24h buttons require no dropdown. Prior versions remain available via the full-history checkbox. Virtual refill request IDs are idempotent and commit with wallet state.
 
 Validation includes the existing API/browser suites plus pure execution/replay tests and actual-PostgreSQL rollout, metrics, refill and authorization cases. Deployment must follow a passing hosted PostgreSQL run. Verify API readiness and worker fence acquisition after Render reports live, and retain the real-source frontend deployment receipt. Do not enter keys or activate real trading during deployment verification.
+
+Favorites maker entry policy (v2): initial purchases remain strictly post-only;
+there is no automatic taker fallback. Each bid expires within 15 seconds and is
+reassessed inside the original maximum 60-second entry window, with earlier
+sports-verification and market-close cutoffs. Replacements wait for the previous
+order to become terminal, never bid above the original entry ceiling, and stop
+after any fill. Stale/invalid data, ineligible live status, changed fees or an
+insufficient value estimate cancel the outstanding entry. Cancellation still has
+modeled latency, so fills racing a cancellation remain possible and accounted for.
+
+Entry evidence is learned only from filled trials with confirmed settlement and
+valid data, separately by series, side, 5-cent bid bucket and remaining-time band.
+At most 500 recent event outcomes are retained per cell; correlated thresholds
+from one event count once, keeping the adverse outcome if they disagree. Starting
+at 30 distinct events, a Wilson lower estimate must cover actual maker fees plus
+a default 2-cent uncertainty buffer. This is an exploratory historical estimate,
+not an independent forecast or an out-of-sample proof of profitability. With less
+evidence, the bot joins the bid with one clearly labeled demo contract; profile
+`paper_exploration: false` disables these trials. Existing balances, inventory,
+exits, settled history and paused controls are preserved. Evidence shares the
+existing durable checkpoint and is cleared by an explicit session reset.

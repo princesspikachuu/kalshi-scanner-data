@@ -104,7 +104,8 @@ class FavoriteTests(unittest.TestCase):
         b=FavoritesStrategy(e,profile(series='KXBTCD',strategy='favorites'))
         market(e,'KXBTCD-test',yes='.79',no='.19');b.step()
         order=next(iter(e.orders.values()))
-        self.assertTrue(order.maker);self.assertEqual(order.side,'yes');self.assertEqual(order.price,D('.80'))
+        self.assertTrue(order.maker);self.assertEqual(order.side,'yes');self.assertEqual(order.price,D('.79'))
+        self.assertEqual(order.quantity,D(1))
         self.assertTrue(b.exit_allowed(order))
     def test_middle_price_and_last_minute_are_not_favorite_entries(self):
         from services.paper_demo.shadow.favorites import FavoritesStrategy
