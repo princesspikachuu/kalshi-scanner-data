@@ -30,3 +30,9 @@ test('untrained sequential estimates are labeled exploration rather than fabrica
  const data=fixture();data.bots.find(b=>b.id==='sequential').experiment.decision={yes:'.45',no:'.45',mode:'paper_exploration',estimate:{samples:0,completion_probability:null}};
  const {nodes}=setup(data);assert.ok(nodes.get('groups').innerHTML.includes('Exploration: probabilities not established'));
 });
+test('frontend upgrade hides unsupported folder controls until the worker migration is present',()=>{
+ const data=fixture();data.folders=[];data.bots=data.bots.filter(b=>b.id==='convexity');
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ assert.ok(html.includes('waiting for the paper worker upgrade'));
+ assert.ok(!html.includes('data-folder-reset='));assert.ok(!html.includes('data-folder-pause='));
+});
