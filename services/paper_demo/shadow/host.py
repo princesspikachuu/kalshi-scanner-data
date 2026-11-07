@@ -138,6 +138,21 @@ class HostedRun(ForwardRun):
             await asyncio.sleep(.1)
 
     async def put(self,source,payload):
+        if (source=='kalshi' and payload.get('type')=='market_lifecycle_v2'
+                and payload.get('seq') is None):
+            # Lifecycle is an exchange-wide stream. Ignore unsequenced notices
+            # for markets no portfolio owns or watches before they enter the
+            # durable trading queue. Sequenced frames always remain intact.
+            ticker=payload.get('msg',{}).get('market_ticker')
+            engines=[self.engine]+([v[0] for v in self.experiments.portfolios.values()] if getattr(self,'experiments',None) else [])
+            if isinstance(ticker,str) and ticker and not any(ticker in e.markets for e in engines):
+                self.lifecycle_dropped=getattr(self,'lifecycle_dropped',0)+1
+                now=time.monotonic()
+                if now>=getattr(self,'lifecycle_drop_log_at',0):
+                    self.lifecycle_drop_log_at=now+30
+                    print(json.dumps(dict(event='shadow_transport_filter',unrelated_lifecycle_dropped=self.lifecycle_dropped,
+                        real_orders_enabled=False)),flush=True)
+                return
         if source=='kalshi' and payload.get('type')=='orderbook_snapshot' and not getattr(self,'snapshot_schema_logged',False):
             self.snapshot_schema_logged=True;msg=payload.get('msg',{})
             print(json.dumps(dict(event='shadow_book_schema',yes_fp_levels=len(msg.get('yes_dollars_fp',[])),
@@ -283,6 +298,7 @@ class HostedRun(ForwardRun):
                         self.engine.markets[t]['close']<=now and t not in self.engine.settled),
                     spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
                     input_rejections=getattr(self,'input_rejections',0),
+                    unrelated_lifecycle_dropped=getattr(self,'lifecycle_dropped',0),
                     valid_cycles=sum(self.engine.wallet.stat(t).valid for t in active),
                     resting_orders=sum(o.status=='resting' for o in self.engine.orders.values()),
                     pending_orders=sum(o.status=='pending' for o in self.engine.orders.values()),
