@@ -6,6 +6,7 @@ let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
 if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
 let folderViews={open:[],periods:{}};try{folderViews=JSON.parse(localStorage.getItem('moneytree-folder-views')||'{}')}catch{}
+const pendingFolders=new Set();
 const openFolders=new Set(Array.isArray(folderViews?.open)?folderViews.open:[]);
 const folderSummaryPeriods=Object.fromEntries(Object.entries(folderViews?.periods||{}).filter(([,period])=>Object.hasOwn(folderPeriods,period)));
 function saveFolderViews(){try{localStorage.setItem('moneytree-folder-views',JSON.stringify({open:[...openFolders],periods:folderSummaryPeriods}))}catch{}}
@@ -39,13 +40,13 @@ function draw(){
   const bots=matching.filter(b=>!b.retired),retired=matching.filter(b=>b.retired);
   const money=folder.accounting,local=folder.id==='convexity'?status:{...status,positions:money?.positions||[],orders:money?.orders||[]};
   const running=activeFolderBots.filter(b=>b.desired==='running').length;
-  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div>${retired.length?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary><div class="bot-list">${retired.map(b=>botCard(b,local)).join('')}</div></details>`:''}</details>`;
+  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div>${retired.length?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary><div class="bot-list">${retired.map(b=>botCard(b,local)).join('')}</div></details>`:''}</details>`;
  }).join('');
  for(const detail of document.querySelectorAll('details[data-market]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false)return;const id=detail.dataset.market;if(detail.open)openMarkets.add(id);else openMarkets.delete(id);saveMarketViews()};
  for(const detail of document.querySelectorAll('details[data-folder]'))detail.ontoggle=()=>{if(detail.isConnected===false)return;const id=detail.dataset.folder;if(detail.open)openFolders.add(id);else openFolders.delete(id);saveFolderViews()};
  for(const b of document.querySelectorAll('[data-folder-summary-period]'))b.onclick=event=>{event.preventDefault();event.stopPropagation();folderSummaryPeriods[b.dataset.summaryFolder]=b.dataset.folderSummaryPeriod;saveFolderViews();draw()};
- for(const b of document.querySelectorAll('[data-folder-pause]'))b.onclick=()=>folderControl(b.dataset.folderPause,'pause');
- for(const b of document.querySelectorAll('[data-folder-resume]'))b.onclick=()=>folderControl(b.dataset.folderResume,'resume');
+ for(const b of document.querySelectorAll('[data-folder-pause]')){b.disabled=pendingFolders.has(b.dataset.folderPause);b.onclick=event=>{event?.preventDefault();event?.stopPropagation();return folderControl(b.dataset.folderPause,'pause')}}
+ for(const b of document.querySelectorAll('[data-folder-resume]')){b.disabled=pendingFolders.has(b.dataset.folderResume);b.onclick=event=>{event?.preventDefault();event?.stopPropagation();return folderControl(b.dataset.folderResume,'resume')}}
  for(const b of document.querySelectorAll('[data-folder-reset]'))b.onclick=()=>{
   resetFolder=b.dataset.folderReset;resetRequest=null;
   $('resetName').textContent=data.folders?.find(f=>f.id===resetFolder)?.name||resetFolder;
@@ -73,7 +74,12 @@ $('csv').onclick=()=>{const cols=['time','folder_id','ticker','event','order_id'
 $('signOut').onclick=async()=>{await createAuthClient().signOut();location.replace('/')};
 load();
 
-async function folderControl(folder_id,action){try{await demoCall('shadow/bulk',{action,folder_id});await load()}catch(error){note(error.message)}}
+async function folderControl(folder_id,action){
+ if(pendingFolders.has(folder_id))return;
+ pendingFolders.add(folder_id);draw();
+ try{await demoCall('shadow/bulk',{action,folder_id});note((data.folders?.find(f=>f.id===folder_id)?.name||folder_id)+(action==='pause'?': paused. The worker cancels pending buys and continues managing existing positions.':': resumed. New entries follow the worker’s next verified update.'));await load()}
+ catch(error){note(error.message)}finally{pendingFolders.delete(folder_id);draw()}
+}
 $('confirmReset').onclick=async()=>{const b=$('confirmReset');b.disabled=true;try{
  resetRequest=resetRequest||crypto.randomUUID();await demoCall('shadow/folders/'+resetFolder+'/reset',{request_id:resetRequest});
  $('resetDialog').close();note('Reset queued. The worker will archive this session and start a fresh $1,000 account with zero P/L.');await load();

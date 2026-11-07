@@ -166,3 +166,32 @@ test('individual market state persists across polling and refresh, independently
  card.open=true;card.isConnected=false;card.ontoggle({target:card});
  assert.deepEqual(JSON.parse(storage.get('moneytree-market-views')),[]);
 });
+
+test('closed folder summaries offer pause for running bots and resume for paused folders',()=>{
+ const folder=fixture().folders.find(f=>f.id==='sequential');
+ const running=folderCardSummaryMarkup(folder,'all',{bots:3,running:1});
+ assert.ok(running.includes('data-folder-pause="sequential"'));
+ assert.ok(running.includes('Pause all bots in Sequential Spread Trading'));
+ assert.ok(folderCardSummaryMarkup(folder,'all',{bots:3,running:0}).includes('data-folder-resume="sequential"'));
+ assert.ok(folderCardSummaryMarkup(folder,'all',{bots:3,running:1,pending:true}).includes('disabled>Saving…'));
+ assert.ok(!folderCardSummaryMarkup(folder,'all',{bots:3,running:1,controls:false}).includes('data-folder-pause'));
+});
+test('summary pause targets only its folder without toggling it and reports preserved position management',async()=>{
+ const button={dataset:{folderPause:'sequential'},disabled:false},storage=new Map(),calls=[];
+ const {context,nodes}=setup(fixture(),{storage,queries:{'[data-folder-pause]':[button]}});
+ context.demoCall=async(path,body)=>{
+  calls.push({path,body});
+  if(path==='shadow/bulk')return {saved:true};
+  if(path.startsWith('shadow/workspace')){const next=fixture();next.installed=true;next.bots.find(b=>b.id==='sequential').desired='paused';return next}
+  return {items:[]};
+ };
+ let prevented=0,stopped=0;
+ await button.onclick({preventDefault(){prevented++},stopPropagation(){stopped++}});
+ const mutations=calls.filter(c=>c.body);
+ assert.equal(mutations.length,1);
+ assert.deepEqual(JSON.parse(JSON.stringify(mutations[0])),{path:'shadow/bulk',body:{action:'pause',folder_id:'sequential'}});
+ assert.equal(prevented,1);assert.equal(stopped,1);
+ assert.equal(storage.has('moneytree-folder-views'),false);
+ assert.ok(nodes.get('message').textContent.includes('continues managing existing positions'));
+ assert.ok(nodes.get('groups').innerHTML.includes('data-folder-resume="sequential"'));
+});

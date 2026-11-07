@@ -71,3 +71,5 @@
  .market-card>summary .badge{grid-column:2;grid-row:2;justify-self:end;max-width:100%;margin:0}
  .market-card-body{padding:0 15px 15px}
 }
+
+.folder-run-control{flex:0 0 auto;min-height:43px;font-size:12px}.folder-run-control:disabled{cursor:default}
