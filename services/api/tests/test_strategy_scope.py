@@ -77,7 +77,7 @@ class HourlyDiscovery(unittest.IsolatedAsyncioTestCase):
         def call(method,path,query=None):
             if path.startswith('/series/'):return dict(series=dict(frequency=frequency))
             series=query['series_ticker']
-            return dict(markets=[dict(ticker=series+'-TEST',event_ticker='EVENT',status='active',open_time=date(now-100),close_time=date(now+1800),yes_bid=80)])
+            return dict(markets=[dict(ticker=series+'-TEST',event_ticker='EVENT',status='active',open_time=date(now-100),close_time=date(now+1800),yes_bid=80,no_bid=18)])
         host.verified_data.call.side_effect=call
         await hourly_once(host);host.put.assert_not_awaited()
         s.hourly_metadata={};s.hourly_retry_at={}

@@ -54,7 +54,7 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         host.put.assert_not_awaited()
 
 class Revisit(unittest.TestCase):
-    def test_readmission_waits_for_snapshot_and_preserves_original_bid_cap(self):
+    def test_readmission_waits_for_snapshot_and_uses_exploration_policy(self):
         suite,_=scope.ScopeTests().suite();e,f,_=suite.portfolios['favorites'];e.now=200
         t='KXHIGHNY-retry';market(e,t,close=10000)
         e.markets[t].update(weather_category='weather_daily',discovered_at=100,bot_id='fav_kxhighny')
@@ -70,7 +70,8 @@ class Revisit(unittest.TestCase):
         b.step();self.assertFalse(e.orders)
         suite.handle('kalshi',dict(type='orderbook_snapshot',sid=1,seq=1,msg=dict(market_ticker=t,
             yes_dollars_fp=[['.85','100']],no_dollars_fp=[['.13','100']])),312)
-        self.assertTrue(e.orders);self.assertTrue(all(o.price<=D('.79') for o in e.orders.values()))
+        self.assertTrue(e.orders);self.assertTrue(all(o.price<=D('.95') for o in e.orders.values()))
+        self.assertTrue(all(o.quantity==D(10) for o in e.orders.values()))
 
     def test_completed_hourly_entry_is_not_rearmed_after_cooldown(self):
         suite,_=scope.ScopeTests().suite();e,f,_=suite.portfolios['favorites'];t='KXSOLD-done'

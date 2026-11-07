@@ -103,3 +103,35 @@ books, trade prints, sequenced/control frames, malformed/unknown envelopes,
 tracked-market settlements, clocks or gap signals. Discovery remains REST-based.
 A cumulative unrelated_lifecycle_dropped counter is logged and included in feed
 health so reduced input volume can be distinguished from additional buying.
+
+Paper data collection v3: Favorites now uses the saved contracts/order setting
+for exploratory entries rather than forcing one contract or limiting an order to
+5% of available virtual cash. Actual available cash, reservations and verified
+fees still constrain simulated execution. Exploration continues for unknown or
+weak probability estimates so the dataset is not restricted to apparently good
+cells. `paper_exploration: false` retains the value-filtered comparison policy.
+
+Data-mode buys improve the bid by one tick when the spread permits, remain
+strictly post-only, and stay within 70–95¢ and the existing category/time rules.
+An unfilled bid that falls at least two ticks behind can refresh after ten
+seconds; unchanged competitive bids retain queue priority. Partial fills may keep
+the original remainder working toward the configured quantity while entry
+conditions remain valid. They never create duplicate full-size orders. Risk exits
+still cancel outstanding entry quantity before liquidating acquired lots.
+
+Each entry decision links to its virtual order and records configured quantity,
+price, estimate and `favorites-paper-data-v3` policy. Calibration observations
+use a separate paper-data-v3 cohort; larger contract counts do not manufacture
+independent event samples. Existing cash/history and earlier positions persist.
+Production data is read-only and all orders/positions in this executor remain
+virtual. Queue, depth, latency, fee and slippage modeling are not bypassed to
+manufacture additional fills.
+
+15-minute Favorites restoration: a one-time guarded migration un-retires the
+original 28 Favorites rows, preserving bot IDs, keys, configured sizes, revisions,
+wallets, checkpoints and historical results. They join the paper-data-v3 policy.
+They resume when the existing Favorites cohort is running; a current folder-wide
+pause remains effective. The marker prevents subsequent restarts from undoing
+later pauses. Existing legacy public-feed selections are shared into restored
+portfolios before feed startup, with their own bot attribution and a required
+fresh snapshot; no additional subscription is needed for the same ticker.

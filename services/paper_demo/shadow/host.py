@@ -17,7 +17,7 @@ from .weather import initialize_weather,discover_weather
 from .performance import record_balances
 from .bot_performance import record_bot_balances
 from .sports import initialize_sports,discover_sports
-from .scope import initialize_scope
+from .scope import initialize_scope,initialize_restored_favorites
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
 
@@ -36,6 +36,7 @@ class HostedRun(ForwardRun):
         initialize_weather(store,guard)
         initialize_sports(store,guard)
         initialize_scope(store,guard)
+        initialize_restored_favorites(store,guard)
         initialize_comparison(store,guard)
         all_rows=store.rows('shadow/bot/',BOT_LIMIT)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
@@ -61,6 +62,7 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
         self.experiments.share_external_markets()
+        self.experiments.share_legacy_markets()
         self.audit.experiments=self.experiments
         self.experiments.extra.update({t:t for t in self.experiments.feed_markets()})
         self.experiments.extra.update({t:t for t,m in self.experiments.portfolios['complete_set'][0].markets.items() if not m.get('paid')})

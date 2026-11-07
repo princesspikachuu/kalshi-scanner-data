@@ -1,13 +1,20 @@
 """Verified hourly-series favorites; bounded fast scans on the shared read budget."""
 import asyncio,json,time
+from decimal import Decimal as D,ROUND_FLOOR
 from .runner import ts
 from .discovery_budget import candidate_markets,next_profile
 
 
 def favorite_bid(m):
-    bids=[float(m.get(k) or 0) for k in ('yes_bid_dollars','no_bid_dollars')]
-    if not any(bids):bids=[float(m.get(k) or 0)/100 for k in ('yes_bid','no_bid')]
-    return max((b for b in bids if .70<=b<=.95),default=None)
+    bids=[D(str(m.get(k) or 0)) for k in ('yes_bid_dollars','no_bid_dollars')]
+    if not any(bids):bids=[D(str(m.get(k) or 0))/100 for k in ('yes_bid','no_bid')]
+    prices=[]
+    for i,bid in enumerate(bids):
+        opposite=bids[1-i]
+        if bid<=0 or opposite<=0:continue
+        price=min(bid+D('.01'),D(1)-opposite-D('.01'),D('.95')).quantize(D('.01'),rounding=ROUND_FLOOR)
+        if D('.70')<=price<=D('.95'):prices.append(price)
+    return max(prices,default=None)
 
 
 async def hourly_once(host):
