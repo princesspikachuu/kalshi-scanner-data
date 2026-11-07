@@ -73,3 +73,8 @@ policy. These estimates are policy/regime-dependent, are not proven optimal,
 and remain unknown during cold start. All monetary losses remain in accounting.
 Complete sets already acquired in full retain coverage; only incomplete
 packages are unwound. Session resets clear the evidence models as well as P/L.
+
+## Weather favorites
+High-Probability Favorites also includes eight hourly-weather series and seven daily-high-temperature series from the existing weather inventory. They share its current $1,000 session, contract sizing and 70–95¢ maker-entry / risk-exit rules; adding them does not reset the portfolio. Each series has its own bot, pause and size controls and outcome calibration. No forecast model or assumed favorite edge is introduced.
+
+Weather discovery rotates through those series and their API pages, selecting active contracts closing within 24 hours. At most two hourly and two daily weather contracts are subscribed concurrently, alongside up to four complete-set legs, with twenty total active fee policies as the shared ceiling. Unfilled weather candidates rotate after five minutes; filled inventory remains managed until confirmed exchange settlement. Individual threshold contracts may have multiple winning outcomes across an event, so weather favorites never treats a collection of thresholds as a guaranteed complete set.

@@ -44,7 +44,7 @@ def install_shadow(app,auth,mutate,pool):
         current=money.get('current_cycles',{}) if money else {}
         snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
-        all_profiles=sorted(store.rows('shadow/bot/',100),key=lambda r:r['parameters']['name'])
+        all_profiles=sorted(store.rows('shadow/bot/',200),key=lambda r:r['parameters']['name'])
         profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
         folder_rows=store.rows('shadow/folder/',10)
         reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
