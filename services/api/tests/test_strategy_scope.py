@@ -39,6 +39,14 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(seq.markets[t]['bot_id'],'seq_kxhighny')
         self.assertFalse(seq.books[t].valid);self.assertFalse(seq.wallet.lots)
         self.assertEqual(fav.wallet.cash,cash)
+    def test_unfilled_favorite_keeps_shared_game_view_when_sequential_holds_it(self):
+        s,rows=self.suite();t='KXNBAGAME-TEST'
+        s.handle('sports_market',dict(market=dict(ticker=t,event_ticker='EVENT',open=100,close=10000,
+            discovered_at=100,sports=True,sports_live=False),taker_multiplier='1',maker_multiplier='0'),200)
+        seq=s.portfolios['sequential'][0];fav=s.portfolios['favorites'][0]
+        seq.wallet.fill(t,'yes','buy',D(1),D('.45'),D(0),1,'test')
+        seq.now=fav.now=1000;s.maintain()
+        self.assertIn(t,fav.markets);self.assertIn(t,s.extra)
     def test_sequential_allows_early_live_and_overtime_while_favorites_blocks_both(self):
         for end in (18000,9900):
             raw,m,l=inputs();raw['expected_expiration_time']=end

@@ -190,6 +190,11 @@ class ExperimentSuite:
                     if not (m.get('weather_category') or m.get('sports') or m.get('hourly_price')) or e.now-m.get('discovered_at',e.now)<300:continue
                     b=f.owner(t);a=b.attempts.get(t,{})
                     if a.get('first') or any(l.ticker==t for l in e.wallet.lots):continue
+                    # Keep the shared view while another strategy owns inventory.
+                    # In particular, late-only Favorites must still see a game
+                    # that Sequential bought earlier in live play.
+                    if any(l.ticker==t for other,_,_ in self.portfolios.values() if other is not e for l in other.wallet.lots):continue
+                    if a and not a.get('recorded') and e.now<a.get('entry_deadline',0):continue
                     e.cancel_buys(t)
                     if any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
                     if a and not a.get('recorded') and isinstance(b,SequentialStrategy):b.finish(t)
