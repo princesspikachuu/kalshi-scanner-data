@@ -209,7 +209,7 @@ def install_shadow(app,auth,mutate,pool):
                 try:require_demo(c)
                 except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
             desired='paused' if body.action=='pause' else 'running'
-            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true')",(desired,body.folder_id,body.folder_id,desired))
+            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true')",(desired,body.folder_id,body.folder_id,desired))
         return dict(contract='demo-v1',saved=True,real_orders_enabled=False)
 
     class Reset(BaseModel):

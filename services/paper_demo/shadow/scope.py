@@ -29,7 +29,7 @@ def initialize_scope(store,guard):
         # Keep their identifiers, closed results and owned inventory for exits.
         c.execute("""UPDATE research_job SET parameters=parameters||'{"retired":true}'::jsonb,
             progress=progress||'{"desired":"paused"}'::jsonb
-            WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'
+            WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/')
             AND parameters->>'folder_id'='favorites' AND parameters->>'series' LIKE '%15M'""")
         for p in hourly_profiles()+sequential_profiles():
             key='demo/shadow/bot/'+p['id']

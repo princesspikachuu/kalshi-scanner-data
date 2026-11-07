@@ -51,3 +51,16 @@ class BotWindows(unittest.TestCase):
         row=self.demo.get(key(12000)[5:]);saved=unpack(row['progress']['snapshot'])
         self.assertEqual(saved['bots']['bot']['realized_pnl'],'9')
         self.assertEqual(saved['bots']['bot']['equity'],'9')
+    def test_bot_scan_excludes_history_keys_with_production_style_collation(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        from services.demo.store import DemoStore
+        with self.demo.pool.connection() as c:
+            if not c.execute("SELECT 1 FROM pg_collation WHERE collname='en-US-x-icu'").fetchone():self.skipTest('ICU English collation unavailable')
+            c.execute('''CREATE TEMP TABLE research_job(id uuid,asset text,parameters jsonb,progress jsonb,
+                idempotency_key text COLLATE "en-US-x-icu" UNIQUE,status text,finished_at timestamptz,created_at timestamptz DEFAULT now()) ON COMMIT DROP''')
+            store=DemoStore(SimpleNamespace(connection=lambda:nullcontext(c)))
+            store.put('shadow/bot/valid',dict(desired='paused'),parameters=dict(id='valid',name='Valid',series='KXBTC15M'))
+            store.put('shadow/bot-performance-history/123',dict(snapshot='compressed-history'))
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'").fetchone()['n'],2)
+            self.assertEqual([r['parameters']['id'] for r in store.rows('shadow/bot/',400)],['valid'])
