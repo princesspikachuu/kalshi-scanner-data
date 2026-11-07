@@ -1,5 +1,6 @@
 """Independent paper portfolios over one read-only feed, durably checkpointed together."""
 import json,time
+from copy import deepcopy
 from decimal import Decimal as D
 from dataclasses import asdict
 from .core import Engine,StrategyFleet,FeePolicy,Wallet,ZERO
@@ -8,6 +9,8 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
+from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
+from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
 
 class ExperimentAudit:
     def __init__(self,parent,folder):self.parent,self.folder=parent,folder;self.path=parent.path
@@ -18,7 +21,7 @@ class ExperimentFleet(StrategyFleet):
     def __init__(self,engine,profiles,model,complete=False):
         self.e=engine;self.halted=set();self.bots={};self.complete=complete
         for p in profiles:
-            b=CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else SequentialStrategy(engine,p,model)
+            b=CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
             b.halted=self.halted;self.bots[p['series']]=b
         engine.fill_callback=self.on_fill;engine.strategy=self
     def owner(self,ticker):return next(iter(self.bots.values()),None) if self.complete else super().owner(ticker)
@@ -30,10 +33,13 @@ class ExperimentFleet(StrategyFleet):
 class ExperimentSuite:
     def __init__(self,host,rows,previous=None):
         self.summary=(previous or {}).get('_summary',{})
+        self.comparison=(previous or {}).get('_comparison',{})
         self.host=host;self.rows=rows;self.portfolios={};self.models={};self.extra={};self.scanner_cursor='';self.scanner_state={}
-        for folder in ('sequential','complete_set','favorites'):
+        for folder in EXPERIMENT_FOLDERS:
             ps=[r['parameters'] for r in rows if r['parameters'].get('folder_id')==folder]
-            model=PairModel((previous or {}).get(folder,{}).get('model'))
+            model_data=(previous or {}).get(folder,{}).get('model')
+            if model_data is None and folder=='sequential_flexible':model_data=deepcopy((previous or {}).get('sequential',{}).get('model'))
+            model=(AdaptivePairModel if folder=='sequential_adaptive' else PairModel)(model_data)
             e=Engine(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
             f=ExperimentFleet(e,ps,model,folder=='complete_set')
             state=(previous or {}).get(folder)
@@ -44,6 +50,7 @@ class ExperimentSuite:
                     b=f.bots[series]
                     b.attempts=info.get('attempts',{})
                     if hasattr(b,'exit_evidence'):b.exit_evidence.cells=info.get('exit_evidence',{})
+                    if isinstance(b,SequentialStrategy):b.trial=info.get('trial',b.trial)
                     if folder=='complete_set':b.groups=info.get('groups',{})
             for p in ps:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
@@ -51,8 +58,8 @@ class ExperimentSuite:
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.control(rows)
     def state(self):
-        return dict(_summary=self.summary,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
-            strategies={s:dict(attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {}) for s,b in f.bots.items()})
+        return dict(_summary=self.summary,_comparison=self.comparison,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
+            strategies={s:dict(attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
         for folder,(e,f,ps) in self.portfolios.items():
@@ -88,9 +95,9 @@ class ExperimentSuite:
         for ticker,m in list(self.feed_markets().items()):
             if m['close']<=now:continue
             source=next(e for e,f,ps in self.portfolios.values() if ticker in e.markets)
-            for folder in ('sequential','favorites'):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites'):
                 e,f,ps=self.portfolios[folder]
-                if ticker in e.markets or folder=='sequential' and m.get('hourly_price'):continue
+                if ticker in e.markets or folder in SEQUENTIAL_FOLDERS and m.get('hourly_price'):continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
                 if not p:continue
                 market=dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
@@ -113,7 +120,7 @@ class ExperimentSuite:
         if source=='set_markets':self.add_set(payload,now);return
         if source=='sports_status':
             ticker=payload['ticker']
-            for folder in ('sequential','favorites'):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites'):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets:
                     self.prepare(e,'clock',{},now)
@@ -125,7 +132,7 @@ class ExperimentSuite:
         for folder,(e,f,ps) in self.portfolios.items():
             local=payload
             if source in ('market','weather_market','sports_market','hourly_market'):
-                if folder not in ('sequential','favorites') or source=='hourly_market' and folder!='favorites':continue
+                if folder not in (*SEQUENTIAL_FOLDERS,'favorites') or source=='hourly_market' and folder!='favorites':continue
                 profile=next((p for p in ps if p['series']==payload['market']['ticker'].split('-')[0]),None)
                 if not profile or profile.get('retired'):continue
                 local=dict(payload,market=dict(payload['market'],bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile.get('version',folder+'-1'),bot_revision=profile['revision']))
@@ -147,6 +154,28 @@ class ExperimentSuite:
                 if t in e.markets and msg.get('event_type')=='settled' and msg.get('result') in ('yes','no'):
                     e.markets[t]['yes_payout_confirmed']='1' if msg['result']=='yes' else '0'
                     e.handle('settlement',dict(ticker=t,yes_payout=e.markets[t]['yes_payout_confirmed']),now)
+    def comparison_snapshot(self,folder,e,f,money,now):
+        bots=[b for b in f.bots.values() if isinstance(b,SequentialStrategy)]
+        if not bots or not any(b.profile.get('comparison_started_at') for b in bots):return None
+        totals={k:sum(float(b.trial.get(k,0)) for b in bots) for k in
+            ('attempts','first_fills','completed','net','unmatched_losses','completion_seconds','dollar_hours')}
+        active={t:a for b in bots for t,a in b.attempts.items() if b.trial_attempt(a) and not a.get('recorded')}
+        realized=totals['net']+sum(float(e.wallet.stat(t).gross-e.wallet.stat(t).realized_fees-D(a['baseline'])) for t,a in active.items())
+        positions=[p for p in money['positions'] if p['ticker'] in active]
+        unpriced=any(p['value'] is None for p in positions)
+        pnl=None if unpriced else realized+sum(float(D(p['value'])-D(p['cost'])) for p in positions)
+        draw=self.comparison.setdefault(folder,dict(peak=0.,max_drawdown=0.,coverage_incomplete=False))
+        if pnl is None:draw['coverage_incomplete']=True
+        else:
+            draw['peak']=max(draw['peak'],pnl);draw['max_drawdown']=max(draw['max_drawdown'],draw['peak']-pnl)
+        return dict(started_at=min(b.trial['started_at'] for b in bots),variant=bots[0].profile.get('variant','baseline'),
+            attempts=int(totals['attempts']),first_fills=int(totals['first_fills']),completed=int(totals['completed']),
+            completion_rate=totals['completed']/totals['first_fills'] if totals['first_fills'] else None,
+            realized_pnl=realized,net_pnl=pnl,unmatched_losses=totals['unmatched_losses'],
+            average_completion_seconds=totals['completion_seconds']/totals['completed'] if totals['completed'] else None,
+            dollar_hours=totals['dollar_hours'],profit_per_dollar_hour=pnl/totals['dollar_hours'] if pnl is not None and totals['dollar_hours'] else None,
+            max_drawdown=draw['max_drawdown'],drawdown_incomplete=draw['coverage_incomplete'],
+            open_attempts=len(active),unpriced=unpriced,at=now)
     def snapshot(self,now):
         result={}
         for folder,(e,f,ps) in self.portfolios.items():
@@ -178,14 +207,14 @@ class ExperimentSuite:
                     decision=list(b.decisions.values())[-1] if getattr(b,'decisions',{}) else None,
                     message=getattr(b,'last_reason','Learning completion probabilities · 1-contract paper exploration'),
                     scans=getattr(b,'scans',None),calibration=calibration)
-            result[folder]=dict(accounting=money,bots=bots,scanner=self.scanner_state if folder=='complete_set' else None,
+            result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
                 assumptions=dict(latency_ms=150,independent_paper_portfolio=True,real_orders_enabled=False))
         return result
     def maintain(self):
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
         # execution state plus constant-size cumulative totals.
         for folder,(e,f,ps) in self.portfolios.items():
-            if folder in ('favorites','sequential'):
+            if folder in ('favorites',*SEQUENTIAL_FOLDERS):
                 for t,m in list(e.markets.items()):
                     if not (m.get('weather_category') or m.get('sports') or m.get('hourly_price')) or e.now-m.get('discovered_at',e.now)<300:continue
                     b=f.owner(t);a=b.attempts.get(t,{})
@@ -262,11 +291,13 @@ class ExperimentSuite:
         # Clearing synthetic open inventory is a session reset, not a sale or profit.
         self.models[folder].cells={}
         self.summary.pop(folder,None)
+        self.comparison.pop(folder,None)
         e.wallet=Wallet(D(1000));e.orders={};e.pending=[];e.closed_reports=set();e.trade_ids=set()
         for b in f.bots.values():
             b.attempts={};b.history={} if hasattr(b,'history') else None
             if hasattr(b,'decisions'):b.decisions={}
             if hasattr(b,'exit_evidence'):b.exit_evidence.cells={}
+            if isinstance(b,SequentialStrategy):b.reset_trial()
             if hasattr(b,'scans'):b.scans=0;b.profitable=0
             if hasattr(b,'last_reason'):b.last_reason='Fresh paper session · waiting for eligible markets'
         f.halted.update(t for t,m in e.markets.items() if not m.get('paid'))

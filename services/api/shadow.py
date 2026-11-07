@@ -9,6 +9,8 @@ from services.paper_demo.shadow.storage import put
 from services.paper_demo.shadow.performance import folder_performance
 from services.trading.mode import require_demo,ModeConflict
 
+from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIAL_FOLDERS
+
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
 
@@ -45,7 +47,7 @@ def install_shadow(app,auth,mutate,pool):
         current=money.get('current_cycles',{}) if money else {}
         snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
-        all_profiles=sorted(store.rows('shadow/bot/',200),key=lambda r:r['parameters']['name'])
+        all_profiles=sorted(store.rows('shadow/bot/',BOT_LIMIT),key=lambda r:r['parameters']['name'])
         profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
         folder_rows=store.rows('shadow/folder/',10)
         reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
@@ -190,7 +192,7 @@ def install_shadow(app,auth,mutate,pool):
     class Bulk(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
-        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|favorites)$')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites)$')
     @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
@@ -208,7 +210,7 @@ def install_shadow(app,auth,mutate,pool):
     @app.post('/demo/shadow/folders/{folder}/reset')
     def reset_folder(folder:str,body:Reset,request:Request):
         mutate(request);query(request)
-        if folder not in ('convexity','complete_set','sequential','favorites') or not store.get('shadow/folder/'+folder):
+        if folder not in ('convexity','complete_set','favorites',*SEQUENTIAL_FOLDERS) or not store.get('shadow/folder/'+folder):
             raise HTTPException(404,'Bot folder not found')
         with pool.connection() as c:
             key='demo/shadow/command/'+body.request_id

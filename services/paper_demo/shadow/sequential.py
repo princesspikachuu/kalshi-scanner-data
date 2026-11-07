@@ -30,12 +30,47 @@ class SequentialStrategy(ConvexityStrategy):
         self.profile,self.model=profile,model
         self.exit_evidence=ExitEvidence()
         self.attempts={};self.history={};self.decisions={};self.exit_at={}
+        self.reset_trial()
+    def reset_trial(self):
+        self.trial=dict(started_at=max(self.e.now,self.profile.get('comparison_started_at',0)),attempts=0,first_fills=0,completed=0,
+            net=0.,unmatched_losses=0.,completion_seconds=0.,dollar_hours=0.)
+    def trial_attempt(self,a):return a.get('started_at',0)>=self.trial['started_at']
+    def track_capital(self,a,now):
+        last=a.get('capital_at',now)
+        if self.trial_attempt(a):self.trial['dollar_hours']+=float(a.get('capital_cost',0))*max(0,now-last)/3600
+        a['capital_at']=now
+        a['capital_cost']=str(sum((l.quantity*l.price+l.entry_fee for l in self.e.wallet.lots if l.ticker==a.get('ticker')),ZERO)+sum((o.reserved for o in self._open(a.get('ticker')) if o.action=='buy'),ZERO))
+    def deadline(self,m,now,movement):return min(m['close']-30,now+3600) if m.get('sports') else m['close']-30
+    def candidates(self,book):return CANDIDATES
+    def choice_key(self,m,remaining,movement,prices):return self.model.key(self.series,remaining,movement,prices)
+    def candidate_estimate(self,key):return self.model.estimate(key)
+    def continuation(self,ticker,lots,a):return None
+    def flexible_completion(self,ticker,lots,a,orders):
+        if self.profile.get('variant') not in ('flexible','adaptive'):return False
+        qty=sum((l.quantity for l in lots),ZERO);side='no' if lots[0].side=='yes' else 'yes'
+        cost=sum((l.quantity*l.price+l.entry_fee for l in lots),ZERO)
+        # An explicit 2 cent/contract net target, identical in both new variants.
+        # Limit protects acquisition cost after modeled latency; depth must cover
+        # the entire residual before submission. Partial IOC fills remain at risk.
+        limit=next((D(p)/100 for p in range(99,0,-1) if
+            cost+qty*D(p)/100+self.e.fees[ticker].charge(qty,D(p)/100,False)<=qty*D('.98')),None)
+        if limit is None:return False
+        depth=sum((q for p,q in self.e.books[ticker].depth(side,'buy') if p<=limit),ZERO)
+        if depth<qty:return False
+        a['completion_limit']=str(limit)
+        if orders:
+            if all(o.action=='buy' and o.maker for o in orders):self.e.cancel_buys(ticker)
+            return True  # Reconcile cancellation/IOC fills before placing again.
+        ident=self.e.place(ticker,side,'buy',qty,limit,maker=False,expiry=a['completion_deadline'])
+        if ident:a['completion_method']='flexible_taker'
+        return bool(ident)
     def safety_cancel(self,ticker):pass
     def exit_allowed(self,order):return self.e.now<self.e.markets[order.ticker]['close']
     def on_fill(self,order,quantity):
         a=self.attempts.get(order.ticker)
         if not a:return
-        if order.action=='sell':return
+        if order.action=='sell':
+            self.track_capital(a,self.e.now);return
         if not a['first']:a.update(first_side=order.side,first_quantity='0',first_cost='0')
         a['first']=True
         if order.side==a.get('first_side'):
@@ -44,6 +79,7 @@ class SequentialStrategy(ConvexityStrategy):
         # Cancel the original pair before replacing with the exact residual hedge.
         # Cancellation has latency; outstanding quantities are reconciled in step().
         self.e.cancel_buys(order.ticker)
+        self.track_capital(a,self.e.now)
     def _open(self,ticker):
         return [o for o in self.e.orders.values() if o.ticker==ticker and o.status in ('pending','resting')]
     def finish(self,ticker):
@@ -57,6 +93,12 @@ class SequentialStrategy(ConvexityStrategy):
             recovery=(net+D(a['first_cost']))/D(a['first_quantity'])
             for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,recovery)
         if stat.valid:self.model.observe(a['key'],a['first'],complete,net/D(a['quantity']))
+        self.track_capital(a,self.e.now)
+        if self.trial_attempt(a):
+            self.trial['attempts']+=1;self.trial['first_fills']+=int(a['first']);self.trial['completed']+=int(complete)
+            self.trial['net']+=float(net)
+            if a['first'] and not complete:self.trial['unmatched_losses']+=max(0.,-float(net))
+            if complete:self.trial['completion_seconds']+=self.e.now-a['started_at']
         a.update(recorded=True,completed=complete,net=str(net))
         self.e.log('PAIR_RESULT',ticker=ticker,details=__import__('json').dumps(a))
     def entry_allowed(self,m,now):
@@ -71,6 +113,7 @@ class SequentialStrategy(ConvexityStrategy):
                 lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
                 orders=self._open(ticker)
                 if a.get('recorded'):continue
+                self.track_capital(a,now)
                 if m.get('paid') and a['first']:a['failed']=True
                 if m.get('paid') or (a['first'] and not lots and not orders):self.finish(ticker);continue
                 if remaining<=0:continue
@@ -84,7 +127,9 @@ class SequentialStrategy(ConvexityStrategy):
                 # quantities are replaced, and only after cancellations acknowledge.
                 if not self.e.book_fresh(ticker):continue
                 lot=lots[0];qty=sum((l.quantity for l in lots if l.side==lot.side),ZERO)
-                reason=assess(self.e,ticker,lots,a,self.exit_evidence)
+                if remaining>30 and now<a['completion_deadline'] and not a.get('failed') and self.flexible_completion(ticker,lots,a,orders):continue
+                continuation_reason=self.continuation(ticker,lots,a)
+                reason=continuation_reason or assess(self.e,ticker,lots,a,self.exit_evidence)
                 if reason:a['failed']=True;a['exit_reason']=reason;self.e.cancel_buys(ticker)
                 if orders:continue
                 if remaining<=30 or now>=a['completion_deadline'] or a.get('failed'):
@@ -113,12 +158,12 @@ class SequentialStrategy(ConvexityStrategy):
             if not h or now-h[0][0]<20:continue
             movement=h[-1][1]-h[0][1]
             choices=[]
-            for yp,np in CANDIDATES:
+            for yp,np in self.candidates(book):
                 yes,no=D(yp)/100,D(np)/100
                 if yes>=book.ask('yes') or no>=book.ask('no'):continue
                 fee=self.e.fees[ticker].charge(D(1),yes,True)+self.e.fees[ticker].charge(D(1),no,True)
                 if 1-yes-no-fee<=0:continue
-                key=self.model.key(self.series,remaining,movement,(yp,np));estimate=self.model.estimate(key)
+                key=self.choice_key(m,remaining,movement,(yp,np));estimate=self.candidate_estimate(key)
                 choices.append((estimate,key,yes,no))
             if not choices:continue
             supported=[c for c in choices if c[0]['lower_net'] is not None and c[0]['lower_net']>0]
@@ -134,8 +179,8 @@ class SequentialStrategy(ConvexityStrategy):
             entry_deadline=min(now+60,m['close']-120)
             if m.get('sports'):entry_deadline=min(entry_deadline,m['sports_verified_until'])
             if entry_deadline<=now+self.e.latency:continue
-            completion_deadline=min(m['close']-30,now+3600) if m.get('sports') else m['close']-30
-            a=dict(key=key,yes=str(yes),no=str(no),quantity=str(quantity),first=False,recorded=False,
+            completion_deadline=self.deadline(m,now,movement)
+            a=dict(ticker=ticker,key=key,yes=str(yes),no=str(no),quantity=str(quantity),first=False,recorded=False,
                 baseline=str(self.e.wallet.stat(ticker).gross-self.e.wallet.stat(ticker).realized_fees),
                 entry_deadline=entry_deadline,completion_deadline=completion_deadline,
                 mode=mode,estimate=estimate,started_at=now,loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
@@ -143,3 +188,4 @@ class SequentialStrategy(ConvexityStrategy):
             self.e.log('PAIR_DECISION',ticker=ticker,details=__import__('json').dumps(a))
             self.e.place(ticker,'yes','buy',quantity,yes,expiry=a['entry_deadline'])
             self.e.place(ticker,'no','buy',quantity,no,expiry=a['entry_deadline'])
+            self.track_capital(a,now)

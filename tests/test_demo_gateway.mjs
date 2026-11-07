@@ -27,9 +27,15 @@ test('expanded shadow workspace passes the gateway with active and retired bots'
  assert.equal(response.status,200);const data=await response.json();assert.equal(data.bots.length,154);assert.equal(data.folders.length,4);
 });
 test('shadow bot capacity stays bounded and does not widen other workspace limits',async()=>{
- for(const [path,count,status] of [['shadow/workspace',200,200],['shadow/workspace',201,502],['workspace',101,502],['workspace',100,200]]){
+ for(const [path,count,status] of [['shadow/workspace',400,200],['shadow/workspace',401,502],['workspace',101,502],['workspace',100,200]]){
   const fetcher=async()=>new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:Array.from({length:count},()=>({id:'bot'}))}),{headers:{'content-type':'application/json'}});
   assert.equal((await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher})).status,status,`${path}: ${count}`);
+ }
+});
+test('sequential variant resets pass the existing owner mutation boundary',async()=>{
+ for(const folder of ['sequential_flexible','sequential_adaptive']){
+  const request=new Request('https://app.test/api/demo/shadow/folders/'+folder+'/reset',{method:'POST',headers:{origin:'https://app.test','content-type':'application/json'},body:JSON.stringify({request_id:'comparison-reset-test'})});
+  assert.equal((await proxyAuth(request,env,options())).status,200);
  }
 });
 test('Demo routes preserve owner gateway and correct method',async()=>{

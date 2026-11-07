@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup} from '../apps/web/shadow-view.mjs';
+import {folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -68,7 +68,7 @@ test('retired fifteen-minute favorites are collapsed and cannot be resumed from 
 });
 test('dashboard load renders the expanded workspace through the actual gateway contract',async()=>{
  const data={...fixture(),contract:'demo-v1',environment:'demo',installed:true};
- data.bots=Array.from({length:154},(_,i)=>({...data.bots[i%4],id:'bot-'+i,retired:i<28}));
+ data.bots=Array.from({length:254},(_,i)=>({...data.bots[i%4],id:'bot-'+i,retired:i<28}));
  const {context,nodes}=setup(data);nodes.get('groups').innerHTML='';
  const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
  context.demoCall=async path=>{
@@ -79,6 +79,13 @@ test('dashboard load renders the expanded workspace through the actual gateway c
  for(const folder of data.folders)assert.ok(nodes.get('groups').innerHTML.includes(folder.name));
  assert.ok(nodes.get('accountSummary').innerHTML.includes('At a glance'));
  assert.equal(nodes.get('message')?.textContent||'','');
+});
+test('sequential comparison renders independent metrics and missing quote labels without a wide table',()=>{
+ const comparison={started_at:100,attempts:10,first_fills:8,completed:7,completion_rate:7/8,realized_pnl:.2,net_pnl:null,unmatched_losses:.5,
+  average_completion_seconds:120,dollar_hours:2,profit_per_dollar_hour:null,max_drawdown:.5,drawdown_incomplete:true,open_attempts:1,unpriced:true};
+ const html=sequentialComparisonMarkup(['Baseline','Flexible','Adaptive'].map(name=>({name,comparison})));
+ for(const name of ['Baseline','Flexible','Adaptive','earlier baseline history is excluded','quotes missing','unmatched attempts','dollar-hours'])assert.ok(html.includes(name),name);
+ assert.ok(!html.includes('<table'));assert.ok(!html.includes('NaN'));assert.ok(!html.includes('Infinity'));
 });
 
 test('folders start closed with money and time controls in every summary',()=>{

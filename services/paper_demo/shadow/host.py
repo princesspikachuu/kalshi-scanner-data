@@ -17,6 +17,7 @@ from .weather import initialize_weather,discover_weather
 from .performance import record_balances
 from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope
+from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
 
 LOG=logging.getLogger('shadow-host')
@@ -34,7 +35,8 @@ class HostedRun(ForwardRun):
         initialize_weather(store,guard)
         initialize_sports(store,guard)
         initialize_scope(store,guard)
-        all_rows=store.rows('shadow/bot/',200)
+        initialize_comparison(store,guard)
+        all_rows=store.rows('shadow/bot/',BOT_LIMIT)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
@@ -73,7 +75,7 @@ class HostedRun(ForwardRun):
         self.audit.checkpoint()
 
     def subscription_books(self):
-        return {**self.engine.books,**self.experiments.portfolios['complete_set'][0].books,**self.experiments.portfolios['favorites'][0].books,**self.experiments.portfolios['sequential'][0].books} if hasattr(self,'experiments') else self.engine.books
+        return {**self.engine.books,**{t:b for e,_,_ in self.experiments.portfolios.values() for t,b in e.books.items()}} if hasattr(self,'experiments') else self.engine.books
 
     async def settlement_observed(self,ticker):
         if ticker in self.engine.settled:return True
@@ -225,7 +227,7 @@ class HostedRun(ForwardRun):
         while not self.done.is_set():
             if self.outer_stop.is_set():self.done.set();return
             self.guard();mode=read_mode(self.store.pool).get('mode','demo')
-            all_rows=self.store.rows('shadow/bot/',200)
+            all_rows=self.store.rows('shadow/bot/',BOT_LIMIT)
             self.experiments.control(all_rows,mode)
             self.experiments.maintain()
             rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']

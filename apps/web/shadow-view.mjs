@@ -55,6 +55,12 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
 }
 
 export const folderPeriods={all:'All', '1H':'1h', '6H':'6h', '24H':'24h', '7D':'7d', '30D':'30d'};
+export function sequentialComparisonMarkup(folders){
+ const rows=folders.filter(f=>f.comparison);
+ if(!rows.length)return '';
+ const number=(v,suffix='')=>finite(v)?Number(v).toFixed(2)+suffix:'—';
+ return `<details class="sequential-comparison"><summary>Sequential strategy comparison · ${rows.length} variants</summary><p class="small">New attempts since each comparison start; earlier baseline history is excluded here. Wallet summaries retain full history. Results include failed attempts and data gaps. These experiments are not proven profitable. Comparison figures use their own full test window.</p><div class="comparison-grid">${rows.map(f=>{const c=f.comparison;return `<article class="comparison-card"><h3>${e(f.name)}</h3><p class="small">Since ${e(new Date(c.started_at*1000).toLocaleString())}</p><dl><dt>Net P/L · marked positions included</dt><dd>${e(dollars(c.net_pnl))}${c.unpriced?' · quotes missing':''}</dd><dt>Realized P/L</dt><dd>${e(dollars(c.realized_pnl))}</dd><dt>Completed / first-filled finished attempts</dt><dd>${e(String(c.completed))} / ${e(String(c.first_fills))} · ${finite(c.completion_rate)?number(c.completion_rate*100,'%'):'—'}</dd><dt>Losses on unmatched attempts</dt><dd>${e(dollars(c.unmatched_losses))}</dd><dt>Maximum observed drawdown</dt><dd>${e(dollars(c.max_drawdown))}${c.drawdown_incomplete?' · incomplete quotes':''}</dd><dt>Average start-to-completion time</dt><dd>${number(finite(c.average_completion_seconds)?c.average_completion_seconds/60:null,' min')}</dd><dt>Capital committed × hours</dt><dd>${number(c.dollar_hours,' dollar-hours')}</dd><dt>Net profit / dollar-hour</dt><dd>${number(finite(c.profit_per_dollar_hour)?c.profit_per_dollar_hour*100:null,'¢')}</dd></dl><p class="small">${e(String(c.attempts))} finished attempts · ${e(String(c.open_attempts))} open. Drawdown uses observed snapshots; capital time includes bids and positions.</p></article>`}).join('')}</div></details>`;
+}
 export function folderSummaryValues(f,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
  const account=f.accounting,a=account?.portfolio,positions=account?.positions||[];
