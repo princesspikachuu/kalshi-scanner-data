@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {folderOverviewMarkup,folderPeriods} from '../apps/web/shadow-view.mjs';
+import {folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -13,12 +13,13 @@ function fixture(){
   bots:ids.map(id=>({id,folder_id:id,strategy:id,series:id==='complete_set'?'ALL_SAME_DAY':'KXBTC15M',name:id,desired:id==='convexity'?'paused':'running',revision:1,contracts:10,changed_at:0,metrics:{all:empty},account:{},
    experiment:id==='convexity'?undefined:{attempts:0,completed:0,unmatched:0,message:'Collecting evidence',calibration:id==='favorites'?[{band:'70–79¢',contracts:'0',win_rate:null,breakeven:null,net:'0'}]:[]}}))};
 }
-function setup(data){
+function setup(data,{storage=new Map(),queries={}}={}){
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:true,textContent:'',innerHTML:'',showModal(){this.open=true},close(){this.open=false},files:[]});return nodes.get(id)};
- const context={document:{getElementById:node,querySelectorAll:()=>[]},fixture:data,setTimeout:()=>0,clearTimeout:()=>{},Date,Number,String,JSON,crypto:{randomUUID:()=> 'test-request-unique'},
+ const context={document:{getElementById:node,querySelectorAll:selector=>queries[selector]||[]},fixture:data,setTimeout:()=>0,clearTimeout:()=>{},Date,Number,String,JSON,crypto:{randomUUID:()=> 'test-request-unique'},
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
-  folderOverviewMarkup,folderPeriods,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
+  folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -78,4 +79,39 @@ test('dashboard load renders the expanded workspace through the actual gateway c
  for(const folder of data.folders)assert.ok(nodes.get('groups').innerHTML.includes(folder.name));
  assert.ok(nodes.get('accountSummary').innerHTML.includes('At a glance'));
  assert.equal(nodes.get('message')?.textContent||'','');
+});
+
+test('folders start closed with money and time controls in every summary',()=>{
+ const data=fixture();for(const f of data.folders)f.accounting.portfolio={cash:'1000',equity:'1000',total_pnl:'0'};
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ assert.equal((html.match(/data-folder-summary-period=/g)||[]).length,24);
+ for(const f of data.folders){assert.ok(html.includes('id="folder-'+f.id+'"'));assert.ok(!html.includes('id="folder-'+f.id+'" open'));}
+ assert.ok(html.includes('folder-card-values'));assert.ok(html.includes('Balance now'));
+});
+test('folder open state survives polling and subsequent page initialization',()=>{
+ const storage=new Map(),detail={dataset:{folder:'favorites'},open:false,isConnected:true};
+ const data=fixture(),{context,nodes}=setup(data,{storage,queries:{'details[data-folder]':[detail]}});
+ detail.open=true;detail.ontoggle();vm.runInContext('draw()',context);
+ assert.match(nodes.get('groups').innerHTML,/id="folder-favorites" open data-folder/);
+ assert.match(setup(data,{storage}).nodes.get('groups').innerHTML,/id="folder-favorites" open data-folder/);
+ detail.open=false;detail.ontoggle();vm.runInContext('draw()',context);
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/id="folder-favorites" open data-folder/);
+});
+test('per-folder time controls do not open the folder and master controls reset all periods',()=>{
+ const button={dataset:{summaryFolder:'favorites',folderSummaryPeriod:'1H'}},master={dataset:{folderPeriod:'6H'}},storage=new Map();
+ const {context,nodes}=setup(fixture(),{storage,queries:{'[data-folder-summary-period]':[button],'[data-folder-period]':[master]}});
+ let prevented=false,stopped=false;button.onclick({preventDefault(){prevented=true},stopPropagation(){stopped=true}});
+ assert.ok(prevented&&stopped);assert.equal(JSON.parse(storage.get('moneytree-folder-views')).periods.favorites,'1H');
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/id="folder-favorites" open data-folder/);
+ assert.ok(nodes.get('groups').innerHTML.includes('P/L · 1h'));
+ assert.ok(nodes.get('accountSummary').innerHTML.includes('P/L · All'));
+ master.onclick();assert.deepEqual(JSON.parse(storage.get('moneytree-folder-views')).periods,{});
+ assert.ok(nodes.get('groups').innerHTML.includes('P/L · 6h'));
+});
+test('short-period unpriced P/L is a range with realized results, never a blank zero',()=>{
+ const data=fixture();data.folders[0].performance={'1H':{pnl:null,pnl_low:'-4.25',pnl_high:'8.50',unpriced:true,realized_pnl:'2.10',partial:true,since:1700000000}};
+ const html=folderOverviewMarkup(data.folders,'1H');
+ assert.ok(html.includes('-$4.25 to $8.50'));assert.ok(html.includes('Realized $2.10'));
+ assert.ok(html.includes('range includes unpriced positions'));assert.ok(html.includes('Tracked since'));
+ assert.ok(html.includes('data-label="Balance now"'));assert.ok(html.includes('data-label="P/L · 1h"'));
 });

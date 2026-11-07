@@ -1,10 +1,14 @@
 import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferences} from './demo-client.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,folderOverviewMarkup,folderPeriods} from './shadow-view.mjs';
+import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences();
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null;
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
 if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
+let folderViews={open:[],periods:{}};try{folderViews=JSON.parse(localStorage.getItem('moneytree-folder-views')||'{}')}catch{}
+const openFolders=new Set(Array.isArray(folderViews?.open)?folderViews.open:[]);
+const folderSummaryPeriods=Object.fromEntries(Object.entries(folderViews?.periods||{}).filter(([,period])=>Object.hasOwn(folderPeriods,period)));
+function saveFolderViews(){try{localStorage.setItem('moneytree-folder-views',JSON.stringify({open:[...openFolders],periods:folderSummaryPeriods}))}catch{}}
 const note=value=>$('message').textContent=value;
 function botCard(bot,status){
   const selected=bot.strategy&&bot.strategy!=='convexity'?'all':periods[bot.id]||'all',metrics=(bot.financial_metrics||bot.metrics)[selected],ticker=status.selected?.[bot.series];
@@ -21,17 +25,21 @@ function draw(){
  const status=data.status||{},health=data.health||{};
  $('health').textContent=health.message||'Waiting for worker';
  $('accountSummary').innerHTML=data.folders?.length?folderOverviewMarkup(data.folders,folderPeriod):accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
- for(const b of document.querySelectorAll('[data-folder-period]'))b.onclick=()=>{folderPeriod=b.dataset.folderPeriod;try{localStorage.setItem('moneytree-folder-period',folderPeriod)}catch{}draw()};
+ for(const b of document.querySelectorAll('[data-folder-period]'))b.onclick=()=>{folderPeriod=b.dataset.folderPeriod;for(const id of Object.keys(folderSummaryPeriods))delete folderSummaryPeriods[id];saveFolderViews();try{localStorage.setItem('moneytree-folder-period',folderPeriod)}catch{}draw()};
  $('connect').textContent=data.connection_configured?'Manage production data key':'Connect production Read key';
  const find=$('find').value.toLowerCase();
  const folders=data.folders?.length?data.folders:[{id:'convexity',name:'Convexity',description:'',accounting:data.accounting}];
  $('groups').innerHTML=folders.map(folder=>{
-  const matching=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id&&(b.name+' '+b.series).toLowerCase().includes(find));
+  const folderBots=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id);
+  const activeFolderBots=folderBots.filter(b=>!b.retired);
+  const matching=folderBots.filter(b=>(b.name+' '+b.series).toLowerCase().includes(find));
   const bots=matching.filter(b=>!b.retired),retired=matching.filter(b=>b.retired);
   const money=folder.accounting,local=folder.id==='convexity'?status:{...status,positions:money?.positions||[],orders:money?.orders||[]};
-  const running=bots.filter(b=>b.desired==='running').length;
-  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${folder.id==='convexity'?'':'open'} data-folder="${e(folder.id)}"><summary><span class="folder-name">${e(folder.name)}</span><span class="badge">${bots.length} bots · ${running} running</span></summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div>${retired.length?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary><div class="bot-list">${retired.map(b=>botCard(b,local)).join('')}</div></details>`:''}</details>`;
+  const running=activeFolderBots.filter(b=>b.desired==='running').length;
+  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div>${retired.length?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary><div class="bot-list">${retired.map(b=>botCard(b,local)).join('')}</div></details>`:''}</details>`;
  }).join('');
+ for(const detail of document.querySelectorAll('details[data-folder]'))detail.ontoggle=()=>{if(detail.isConnected===false)return;const id=detail.dataset.folder;if(detail.open)openFolders.add(id);else openFolders.delete(id);saveFolderViews()};
+ for(const b of document.querySelectorAll('[data-folder-summary-period]'))b.onclick=event=>{event.preventDefault();event.stopPropagation();folderSummaryPeriods[b.dataset.summaryFolder]=b.dataset.folderSummaryPeriod;saveFolderViews();draw()};
  for(const b of document.querySelectorAll('[data-folder-pause]'))b.onclick=()=>folderControl(b.dataset.folderPause,'pause');
  for(const b of document.querySelectorAll('[data-folder-resume]'))b.onclick=()=>folderControl(b.dataset.folderResume,'resume');
  for(const b of document.querySelectorAll('[data-folder-reset]'))b.onclick=()=>{

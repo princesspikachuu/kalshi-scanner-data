@@ -1,5 +1,6 @@
 import unittest
-from services.paper_demo.shadow.performance import change,record_balances,folder_performance,history_key
+from decimal import Decimal as D
+from services.paper_demo.shadow.performance import change,record_balances,folder_performance,history_key,equity_bounds,period_change
 from services.api.tests import test_strategy_folders as existing
 from services.api.tests import test_demo_postgres as fixture
 
@@ -9,6 +10,21 @@ class Returns(unittest.TestCase):
     def test_missing_valuation_never_becomes_zero(self):
         self.assertIsNone(change(dict(equity=None,deposits='1000'),dict(equity='1000',deposits='1000')))
         self.assertIsNone(change(dict(equity='1000',deposits='1000'),dict(equity=None,deposits='1000')))
+    def test_period_pnl_keeps_known_prices_and_bounds_only_unpriced_contracts(self):
+        current=dict(equity=None,cash='970',deposits='1000',active_contracts='30',pending_contracts='20',realized_pnl='4')
+        positions=[dict(quantity='10',value='8'),dict(quantity='20',value=None),dict(quantity='20',value=None)]
+        self.assertEqual(equity_bounds(current,positions),(D('978'),D('1018')))
+        result=period_change(current,dict(equity='1000',deposits='1000',realized_pnl='1'),positions)
+        self.assertEqual((result['pnl_low'],result['pnl_high']),('-22','18'))
+        self.assertIsNone(result['pnl']);self.assertTrue(result['unpriced']);self.assertEqual(result['realized_pnl'],'3')
+    def test_bounds_on_both_snapshots_exclude_added_funds(self):
+        a=dict(equity=None,equity_low='1015',equity_high='1025',deposits='1005')
+        b=dict(equity=None,equity_low='1000',equity_high='1010',deposits='1000')
+        result=period_change(a,b);self.assertEqual((result['pnl_low'],result['pnl_high']),('0','20'))
+        self.assertIsNone(equity_bounds(dict(equity=None,cash='900',deposits='1000')))
+    def test_exact_period_returns_remain_exact(self):
+        result=period_change(dict(equity='1120',deposits='1100'),dict(equity='1010',deposits='1000'))
+        self.assertEqual(result['pnl'],'10');self.assertFalse(result['unpriced'])
 
 @unittest.skipUnless(fixture.URL,'Disposable PostgreSQL required')
 class PerformancePostgres(unittest.TestCase):
@@ -49,3 +65,21 @@ class PerformancePostgres(unittest.TestCase):
         self.record(folders,36*86400+60)
         folder_performance(self.demo.pool,folders,36*86400+60)
         self.assertTrue(all(f['performance']['1H']['pnl'] is None for f in folders))
+    def test_unpriced_favorites_period_uses_saved_bounds_and_preserves_session(self):
+        self.seed();folders=self.folders()
+        for f in folders:
+            f['accounting']['portfolio'].update(equity=None,cash='970',active_contracts='50',pending_contracts='0',realized_pnl='0')
+            f['accounting']['positions']=[dict(quantity='50',value=None)]
+        before={f['id']:f['session'] for f in folders};self.record(folders,12000)
+        # A legacy, unpriced minute sample did not record sufficient position
+        # information. Use the new bounded origin with honest shorter coverage.
+        from services.paper_demo.shadow.storage import put
+        with self.demo.pool.connection() as c:
+            put(c,history_key(11900),{},dict(at=11900,folders={f['id']:dict(session=f['session'],equity=None,cash='970',deposits='1000') for f in folders}))
+        for f in folders:f['accounting']['portfolio'].update(cash='975',realized_pnl='5')
+        folder_performance(self.demo.pool,folders,15500)
+        for f in folders:
+            p=f['performance']['1H'];self.assertEqual((p['pnl_low'],p['pnl_high']),('-45','55'))
+            self.assertEqual(p['realized_pnl'],'5');self.assertFalse(p['missing_history']);self.assertTrue(p['partial'])
+            self.assertEqual(f['session'],before[f['id']])
+        self.assertEqual(len(self.demo.rows('shadow/balance-range-origin/',10)),4)

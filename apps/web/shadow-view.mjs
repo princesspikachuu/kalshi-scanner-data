@@ -55,17 +55,34 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
 }
 
 export const folderPeriods={all:'All', '1H':'1h', '6H':'6h', '24H':'24h', '7D':'7d', '30D':'30d'};
+export function folderSummaryValues(f,period='all',now=Date.now()/1000){
+ if(!Object.hasOwn(folderPeriods,period))period='all';
+ const account=f.accounting,a=account?.portfolio,positions=account?.positions||[];
+ const balance=finite(a?.equity)?{low:Number(a.equity),high:Number(a.equity),unpriced:0}:shifted(valueBounds(a,positions),a?.cash);
+ const result=f.performance?.[period];
+ let pnl=accountPnl(a,positions);
+ if(period!=='all'){
+  const range=finite(result?.pnl)?{low:Number(result.pnl),high:Number(result.pnl),unpriced:0}:finite(result?.pnl_low)&&finite(result?.pnl_high)?{low:Number(result.pnl_low),high:Number(result.pnl_high),unpriced:result.unpriced?1:0}:null;
+  pnl={text:rangeText(range),className:rangeClass(range),uncertain:!!range?.unpriced,available:!!range};
+ }
+ const since=result?.since?new Date(result.since*1000).toLocaleString():'';
+ let detail=period==='all'?'Current session':result?.missing_history||!result?'Waiting for balance history':result.partial?'Tracked since '+since:'Rolling '+folderPeriods[period]+' · minute snapshots';
+ if(pnl.uncertain)detail+=' · range includes unpriced positions';
+ return {period,balance:rangeText(balance),balanceUncertain:!!balance?.unpriced,cash:dollars(a?.cash),pnl,detail,
+  realized:result?.realized_pnl!=null?dollars(result.realized_pnl):null,stale:!!account&&now-account.at>30};
+}
+export function folderPeriodButtons(period,folderId=null){
+ return Object.entries(folderPeriods).map(([key,label])=>`<button type="button" class="secondary" ${folderId?`data-folder-summary-period="${key}" data-summary-folder="${e(folderId)}"`:`data-folder-period="${key}"`} aria-pressed="${period===key}">${label}</button>`).join('');
+}
+export function folderCardSummaryMarkup(folder,period='all',counts={},now=Date.now()/1000){
+ const v=folderSummaryValues(folder,period,now);
+ return `<span class="folder-summary-heading"><span class="folder-name">${e(folder.name)}</span><span class="badge">${counts.bots||0} bots · ${counts.running||0} running</span><span class="folder-disclosure" aria-hidden="true"></span></span><span class="folder-card-values"><span><span class="folder-card-label">Balance now</span><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash ${e(v.cash)}${v.stale?' · snapshot stale':''}</small></span><span><span class="folder-card-label">P/L · ${e(folderPeriods[v.period])}</span><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${v.period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</span></span><span class="folder-summary-periods" role="group" aria-label="P/L period for ${e(folder.name)}">${folderPeriodButtons(v.period,folder.id)}</span>`;
+}
 export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
- const controls=Object.entries(folderPeriods).map(([key,label])=>`<button class="secondary" data-folder-period="${key}" aria-pressed="${period===key}">${label}</button>`).join('');
  const rows=folders.map(f=>{
-  const account=f.accounting,a=account?.portfolio,positions=account?.positions||[];
-  const value=finite(a?.equity)?{low:Number(a.equity),high:Number(a.equity),unpriced:0}:shifted(valueBounds(a,positions),a?.cash);
-  const result=f.performance?.[period];
-  const pnl=period==='all'?accountPnl(a,positions):{text:result?.pnl===null||result?.pnl===undefined?'—':dollars(result.pnl),className:pnlClass(result?.pnl)};
-  const since=result?.since?new Date(result.since*1000).toLocaleString():'';
-  const detail=period==='all'?'Current session':result?.missing_history||!result?'Waiting for balance history':result.partial?'Tracked since '+since:'Rolling '+folderPeriods[period]+' · minute snapshots';
-  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td><strong class="${value?.unpriced?'value-range':''}">${e(rangeText(value))}</strong><small>Cash ${e(dollars(a?.cash))}${account&&now-account.at>30?' · snapshot stale':''}</small></td><td><strong class="${pnl.className||''}">${period!=='all'&&result?.pnl!=null?'≈ ':''}${e(pnl.text)}</strong><small>${e(detail)}</small></td></tr>`;
+  const v=folderSummaryValues(f,period,now);
+  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td data-label="Balance now"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash ${e(v.cash)}${v.stale?' · snapshot stale':''}</small></td><td data-label="P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td></tr>`;
  }).join('');
- return `<div class="row between"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${controls}</div></div><div class="table-scroll"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Balance now</th><th>P/L · ${e(folderPeriods[period])}</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">Balance is cash plus estimated position value. P/L includes realized and unrealized changes after paid fees, excluding added funds. Periods use minute snapshots within the current reset session; shorter tracking coverage is shown per folder.</p>`;
+ return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Balance now</th><th>P/L · ${e(folderPeriods[period])}</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">Balance is cash plus estimated position value. P/L includes realized and unrealized changes after paid fees, excluding added funds. Ranges include positions without quotes. Periods use minute snapshots in the current reset session; shorter tracking coverage is shown per folder.</p>`;
 }
