@@ -51,4 +51,7 @@ def restore(engine,fleet,data):
     for ticker in engine.markets:
         if ticker not in engine.settled:
             engine.wallet.stat(ticker).valid=False
+            owner=fleet.owner(ticker)
+            if getattr(owner,'recover_fresh_entries',False) and ticker not in fleet.halted:
+                engine.markets[ticker]['entry_recovery_halt']=True
             fleet.halted.add(ticker)

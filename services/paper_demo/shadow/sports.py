@@ -2,6 +2,7 @@
 import asyncio,json,time,math
 from uuid import uuid4
 from .runner import ts
+from .discovery_budget import candidate_markets,next_profile,CATEGORY_LIMITS
 from .storage import put
 from services.research.reports import SERIES
 
@@ -76,11 +77,13 @@ async def sports_once(host):
             gate=live_gate(raw,milestone,live,time.time(),late_hours=None)
         except Exception:gate=dict(sports_live=False,sports_verified_until=time.time(),sports_status='unverified')
         await host.put('sports_status',dict(ticker=ticker,gate=gate))
-    active=[t for t,m in markets.items() if m.get('sports') and not m.get('paid')]
-    if len(active)>=2 or not suite.extra_capacity(['sports-slot'],now):return
+    active=candidate_markets(suite,markets,'sports',now)
+    if len(active)>=CATEGORY_LIMITS['sports'] or not suite.extra_capacity(['sports-slot'],now):return
     choices=suite.enabled_profiles('sports')
     if not choices:return
-    index=suite.sports_cursor%len(choices);p=choices[index];suite.sports_cursor=index+1
+    p,cursor=next_profile(suite,choices,active,suite.sports_cursor)
+    if not p:return
+    suite.sports_cursor=cursor
     result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],limit=1000,cursor=suite.sports_pages.get(p['series'],'')))
     suite.sports_pages[p['series']]=result.get('cursor','')
     rows=[r for r in result.get('markets',[]) if r.get('ticker','').startswith(p['series']+'-') and r.get('status')=='active'

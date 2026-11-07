@@ -26,7 +26,7 @@ class MakerEntries(unittest.TestCase):
 
     def test_unknown_probability_joins_bid_with_one_demo_contract(self):
         e,b,book=self.setup_bot();b.step();o=next(iter(e.orders.values()))
-        self.assertEqual((o.price,o.quantity,o.maker,o.expiry),(D('.79'),D(1),True,215))
+        self.assertEqual((o.price,o.quantity,o.maker,o.expiry),(D('.79'),D(1),True,230))
         self.assertEqual(b.attempts[self.ticker]['entry_mode'],'paper_exploration')
         self.assertIn('probability unknown',b.last_reason)
         self.assertFalse(any(not x.maker for x in e.orders.values()))
@@ -61,15 +61,25 @@ class MakerEntries(unittest.TestCase):
         o=next(iter(e.orders.values()));book.valid=False;b.step();e.advance(202)
         self.assertEqual(o.status,'cancelled');self.assertFalse(e.wallet.lots)
 
-    def test_expiry_rechecks_but_does_not_chase_a_higher_bid(self):
+    def test_valid_bid_keeps_its_queue_beyond_the_first_minute(self):
+        e,b,book=self.setup_bot();b.step();e.advance(201)
+        old=next(iter(e.orders.values()));ahead=old.ahead;arrived=old.arrives
+        for now in range(210,281,10):
+            e.advance(now);book.at=now
+            book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+            b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual((old.status,old.price,old.ahead,old.arrives),('resting',D('.79'),ahead,arrived))
+        self.assertEqual(old.expiry,310)
+        self.assertFalse(b.attempts[self.ticker]['recorded'])
+
+    def test_expired_unfilled_bid_can_retry_after_one_minute(self):
         e,b,book=self.setup_bot();b.step();old=next(iter(e.orders.values()))
-        e.advance(215);book.at=215
-        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
-        b.step();new=list(e.orders.values())[-1]
-        self.assertEqual(old.status,'expired');self.assertLessEqual(new.price,D('.79'))
-        self.assertEqual(new.expiry,230)
-        e.advance(260);book.at=260;b.step()
-        self.assertTrue(b.attempts[self.ticker]['recorded'])
+        e.advance(270);book.at=270;b.step()
+        new=list(e.orders.values())[-1]
+        self.assertEqual(old.status,'expired');self.assertNotEqual(new.id,old.id)
+        self.assertLessEqual(new.price,D('.79'))
+        e.advance(940);book.at=940;b.step()
         self.assertFalse(any(o.status in ('pending','resting') for o in e.orders.values()))
 
     def test_evidence_deterioration_cancels_without_stacking_replacement(self):

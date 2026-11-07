@@ -6,6 +6,7 @@ from .risk import ExitEvidence,assess
 from .favorite_entries import quote,observe
 
 class FavoritesStrategy(ConvexityStrategy):
+    recover_fresh_entries=True
     def __init__(self,engine,profile):
         super().__init__(engine,profile['contracts'],False,profile['series'],profile['name'])
         self.profile=profile;self.attempts={};self.decisions={};self.exit_evidence=ExitEvidence();self.exit_at={}
@@ -24,7 +25,7 @@ class FavoritesStrategy(ConvexityStrategy):
     def submit_entry(self,ticker,a,q):
         # Never stack a replacement on an outstanding cancellation or partial fill.
         if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):return
-        expiry=min(self.e.now+15,a['entry_deadline'])
+        expiry=min(self.e.now+30,a['entry_deadline'])
         if expiry<=self.e.now+self.e.latency:return
         a.update(price=str(q['price']),quantity=str(q['quantity']),entry_key=q['key'],
             entry_mode=q['mode'],entry_estimate=q['estimate'],last_submit=self.e.now,
@@ -39,63 +40,82 @@ class FavoritesStrategy(ConvexityStrategy):
         return not m.get('sports') or (m.get('sports_live') is True and
             m.get('sports_start',float('inf'))<=now<m.get('sports_verified_until',0) and
             60<m.get('sports_expected_end',0)-now<=self.profile.get('late_game_hours',2)*3600)
+    def entry_deadline(self,m,now):
+        deadline=m['close']-60
+        if m.get('sports'):deadline=min(deadline,m.get('sports_verified_until',now),m.get('sports_expected_end',now)-60)
+        return deadline
+    def entry_ready(self,ticker):
+        book=self.e.books[ticker];m=self.e.markets[ticker]
+        if not self.e.book_fresh(ticker):return False
+        # A new verified snapshot establishes present execution state. Earlier
+        # missing data stays excluded from historical metrics and model training.
+        recovered=getattr(book,'snapshot_at',0)>0
+        if recovered and m.pop('entry_recovery_halt',False):
+            self.halted.discard(ticker)
+            self.e.log('FAVORITE_ENTRY_RECOVERED',ticker=ticker,reason='Fresh full snapshot; earlier gap remains excluded')
+        return ticker not in self.halted and (self.e.wallet.stat(ticker).valid or recovered)
     def step(self,changed_ticker=None):
-        for ticker,m in list(self.e.markets.items()):
-            if not ticker.startswith(self.series+'-') or changed_ticker and changed_ticker!=ticker:continue
+        markets=([(changed_ticker,self.e.markets[changed_ticker])] if changed_ticker in self.e.markets else []) if changed_ticker is not None else list(self.e.markets.items())
+        for ticker,m in markets:
+            if not ticker.startswith(self.series+'-'):continue
             a=self.attempts.get(ticker);now=self.e.now
-            if a:
-                if a.get('recorded'):continue
-                if not self.enabled or not self.entry_allowed(m,now):self.e.cancel_buys(ticker)
-                if m.get('paid'):
-                    s=self.e.wallet.stat(ticker)
-                    if s.valid and a['first']:
-                        payout=1 if m.get('yes_payout_confirmed')==('1' if a['side']=='yes' else '0') else 0
-                        if m.get('yes_payout_confirmed') in ('0','1'):
-                            for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
-                            if a.get('entry_key'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout)
-                    a.update(recorded=True,completed=a['first'],net=str(s.gross-s.realized_fees))
-                    self.last_reason='Favorite trial settled; result includes all fees'
-                elif a['first']:
-                    lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
-                    if lots and self.e.book_fresh(ticker):
-                        reason=assess(self.e,ticker,lots,a,self.exit_evidence)
-                        if reason:a['exit_reason']=reason;self.e.cancel_buys(ticker)
-                        if a.get('exit_reason') and now-self.exit_at.get(ticker,0)>=1 and not any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):
-                            self.exit_at[ticker]=now
-                            self.e.log('FAVORITE_RISK_EXIT',ticker=ticker,reason=a['exit_reason'])
-                            self.e.place(ticker,a['side'],'sell',sum((l.quantity for l in lots),ZERO),D('.01'),maker=False,targets=[l.id for l in lots])
-                elif not a['first'] and now>=a['entry_deadline']:
-                    self.e.cancel_buys(ticker)
-                    if not any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):a['recorded']=True
-                elif not a['first']:
-                    if not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or not self.e.book_fresh(ticker) or m['close']-now<60:
-                        self.cancel_entry(ticker,'Maker entry cancelled: conditions or fresh data no longer valid')
-                        continue
-                    q=self.entry_quote(ticker,a['side'],a.get('initial_ceiling',a['price']))
-                    active=[o for o in self.e.orders.values() if o.ticker==ticker and o.status in ('pending','resting')]
-                    if not q:
-                        self.cancel_entry(ticker,'Maker entry cancelled: no value-qualified bid')
-                    elif any(o.price>q['price'] or o.quantity>q['quantity'] or (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in active):
-                        self.cancel_entry(ticker,'Maker entry cancelled: value or fee conditions changed')
-                    elif not active:
-                        self.submit_entry(ticker,a,q)
+            if m.get('paid'):
+                if not a or a.get('recorded'):continue
+                s=self.e.wallet.stat(ticker)
+                if s.valid and a['first'] and m.get('yes_payout_confirmed') in ('0','1'):
+                    payout=int(m['yes_payout_confirmed']==('1' if a['side']=='yes' else '0'))
+                    for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
+                    if a.get('entry_key'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout)
+                a.update(recorded=True,completed=a['first'],net=str(s.gross-s.realized_fees))
+                self.last_reason='Favorite trial settled; result includes all fees'
                 continue
-            if (not self.enabled or not self.entry_allowed(m,now) or ticker in self.halted or not self.e.wallet.stat(ticker).valid or
-                not self.e.book_fresh(ticker) or m['close']-now<60):continue
-            book=self.e.books[ticker];quotes=[(book.bid(side),side) for side in ('yes','no') if book.bid(side) is not None]
-            if not quotes:continue
-            bid,side=max(quotes);ask=book.ask(side)
-            if not ask:continue
-            q=self.entry_quote(ticker,side)
+            if a and a.get('first'):
+                self.e.cancel_buys(ticker)
+                lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
+                if lots and self.e.book_fresh(ticker):
+                    reason=assess(self.e,ticker,lots,a,self.exit_evidence)
+                    if reason:a['exit_reason']=reason
+                    if a.get('exit_reason') and now-self.exit_at.get(ticker,0)>=1 and not any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):
+                        self.exit_at[ticker]=now
+                        self.e.log('FAVORITE_RISK_EXIT',ticker=ticker,reason=a['exit_reason'])
+                        self.e.place(ticker,a['side'],'sell',sum((l.quantity for l in lots),ZERO),D('.01'),maker=False,targets=[l.id for l in lots])
+                continue
+            if not self.enabled or not self.entry_allowed(m,now) or not self.entry_ready(ticker) or m['close']-now<=60:
+                if a:self.cancel_entry(ticker,'Waiting: entry conditions or fresh verified book unavailable')
+                continue
+            if a and now<a.get('retry_at',0):continue
+            deadline=self.entry_deadline(m,now)
+            if deadline<=now+self.e.latency:
+                if a:self.cancel_entry(ticker,'Waiting for renewed live verification')
+                continue
+            if not a:
+                book=self.e.books[ticker]
+                quotes=[(book.bid(side),side) for side in ('yes','no') if book.bid(side) is not None]
+                if not quotes:continue
+                _,side=max(quotes)
+            else:side=a['side']
+            q=self.entry_quote(ticker,side,a.get('initial_ceiling',a['price']) if a else None)
+            active=[o for o in self.e.orders.values() if o.ticker==ticker and o.status in ('pending','resting')]
             if not q:
-                self.last_reason='Waiting for a maker bid with sufficient value after fees'
+                if a:
+                    self.cancel_entry(ticker,'Waiting for a maker bid with sufficient value after fees')
+                    a['retry_at']=now+2
+                else:self.last_reason='Waiting for a maker bid with sufficient value after fees'
                 continue
-            price,quantity,fee=q['price'],q['quantity'],q['fee']
-            deadline=min(now+60,m['close']-30)
-            if m.get('sports'):deadline=min(deadline,m['sports_verified_until'],m['sports_expected_end']-60)
-            if deadline<=now+self.e.latency:continue
-            a=dict(first=False,recorded=False,side=side,price=str(price),quantity=str(quantity),
-                entry_deadline=deadline,started_at=now,implied_probability=str(price),initial_ceiling=str(price),
-                loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))),breakeven_probability=str(price+fee/quantity),price_band='70–79¢' if price<D('.80') else '80–89¢' if price<D('.90') else '90–95¢')
-            self.attempts[ticker]=a
-            self.submit_entry(ticker,a,q)
+            if not a:
+                price,quantity,fee=q['price'],q['quantity'],q['fee']
+                a=dict(first=False,recorded=False,side=side,price=str(price),quantity=str(quantity),
+                    entry_deadline=deadline,started_at=now,implied_probability=str(price),initial_ceiling=str(price),
+                    loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
+                self.attempts[ticker]=a
+            a.update(recorded=False,entry_deadline=deadline)
+            if any(o.price>q['price'] or o.quantity>q['quantity'] or (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in active):
+                self.cancel_entry(ticker,'Maker entry cancelled: value or fee conditions changed')
+                a['retry_at']=now+1
+            elif active:
+                # Extend the safety lease only after full revalidation. Keep the
+                # original arrival/queue position and never revive a cancellation.
+                canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
+                for order in active:
+                    if order.id not in canceling:order.expiry=min(now+30,deadline)
+            else:self.submit_entry(ticker,a,q)

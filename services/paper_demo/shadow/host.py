@@ -135,7 +135,7 @@ class HostedRun(ForwardRun):
     async def clock(self):
         while not self.done.is_set():
             await self.put('clock',{})
-            await asyncio.sleep(.05)
+            await asyncio.sleep(.1)
 
     async def put(self,source,payload):
         if source=='kalshi' and payload.get('type')=='orderbook_snapshot' and not getattr(self,'snapshot_schema_logged',False):

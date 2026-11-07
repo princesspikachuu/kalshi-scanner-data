@@ -3,6 +3,7 @@ import asyncio,json,time
 from uuid import uuid4
 from .runner import ts
 from .storage import put
+from .discovery_budget import capacity,candidate_markets,next_profile,CATEGORY_LIMITS
 from services.research.reports import SERIES
 
 WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets with evidence-based exits. Favorite bias remains a hypothesis.'
@@ -42,25 +43,26 @@ def candidates(rows,series,now):
 
 async def weather_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
-    # Two slots per category, within twelve total extra subscriptions and twenty-four
-    # total warm fee policies. Filled inventory always keeps its subscription.
-    cap=max(0,min(12,24-sum(m['close']>now for m in host.engine.markets.values())))
+    cap=capacity(suite,now)
+    pending=set(suite.extra)|set(markets)
     for category in ('weather','weather_daily'):
-        active=[t for t,m in markets.items() if m.get('weather_category')==category and not m.get('paid')]
-        if len(active)>=2 or len(suite.extra)>=cap:continue
+        active=candidate_markets(suite,markets,category,now)
+        if len(active)>=CATEGORY_LIMITS[category] or len(pending)>=cap:continue
         choices=suite.enabled_profiles(category)
         if not choices:continue
-        index=suite.weather_cursor.get(category,0)%len(choices);p=choices[index]
-        suite.weather_cursor[category]=index+1
+        p,cursor=next_profile(suite,choices,active,suite.weather_cursor.get(category,0))
+        if not p:continue
+        suite.weather_cursor[category]=cursor
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],
             min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=suite.weather_pages.get(p['series'],'')))
         suite.weather_pages[p['series']]=result.get('cursor','')
         for m in candidates(result.get('markets',[]),p['series'],now):
-            if m['ticker'] in markets:continue
+            if m['ticker'] in pending:continue
             fee=await host.fee_policy(m,{})
             await host.put('weather_market',dict(market=dict(ticker=m['ticker'],event_ticker=m['event_ticker'],
                 series_ticker=p['series'],close=ts(m['close_time']),open=ts(m['open_time']),discovered_at=now,weather_category=category),
                 taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
+            pending.add(m['ticker'])
             break
     # Settlement requires the exchange result, even after the daily close.
     due=[t for t,m in markets.items() if m.get('weather_category') and not m.get('paid') and m['close']<=now]

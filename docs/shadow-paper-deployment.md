@@ -36,3 +36,26 @@ evidence, the bot joins the bid with one clearly labeled demo contract; profile
 `paper_exploration: false` disables these trials. Existing balances, inventory,
 exits, settled history and paused controls are preserved. Evidence shares the
 existing durable checkpoint and is cleared by an explicit session reset.
+
+Favorites activity/recovery update: valid maker bids now retain their queue
+position. Each fresh value/fee/eligibility check renews a maximum 30-second safety
+lease, bounded by the final-minute cutoff and current sports verification. If
+checks stop, the lease expires. Cancelled/expired unfilled attempts can retry when
+conditions recover, beyond the former one-minute lifetime; replacements retain
+the original price ceiling. Any fill still ends entry accumulation for that market.
+
+A fresh full book snapshot may restore current entry eligibility after a gap;
+previous gap flags, cash flows and exclusions remain unchanged, and gap-affected
+history is not used to train entry estimates. Restart-only halts may be cleared
+after verification, while explicit halts, pause state and session-reset guards
+remain effective. An ordinary delta or heartbeat cannot restore eligibility.
+
+Shared discovery supports up to 12 hourly-price, 8 hourly-weather, 7 daily-weather
+and 4 sports candidates. Owned markets retain subscriptions without consuming
+candidate slots. Discovery prioritizes unrepresented series; idle unfilled
+candidates rotate after five minutes while active maker orders keep their queue.
+All experiments share a maximum 48 extra/64 total subscription budget. Requests
+still use the existing provider pacing, fee TTL and verified live-sports rules.
+Per-event fee checks cover only the affected market and due actions; clock sweeps
+retain the full check. The idle clock runs at 10 Hz instead of 20 Hz; incoming
+feed events still advance due actions in causal receipt order.

@@ -1,6 +1,7 @@
 """Bounded, paginated GET-only discovery over the existing shared feed/read budget."""
 import asyncio,time
 from .runner import ts
+from .discovery_budget import capacity
 
 async def discover_sets(host):
     suite=host.experiments
@@ -8,8 +9,7 @@ async def discover_sets(host):
         e,f,ps=suite.portfolios['complete_set'];bot=next(iter(f.bots.values()))
         try:
             now=time.time()
-            legacy_active=sum(m['close']>now for m in host.engine.markets.values())
-            cap=max(0,min(12,24-legacy_active))
+            cap=capacity(suite,now)
             set_count=sum(not m.get('paid') for m in e.markets.values())
             if bot.enabled and set_count<4 and len(suite.extra)<cap:
                 result=await asyncio.to_thread(host.verified_data.call,'GET','/events',

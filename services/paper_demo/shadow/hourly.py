@@ -1,14 +1,17 @@
 """Verified hourly-series favorites; separate from the 15-minute feed."""
 import asyncio,json,time
 from .runner import ts
+from .discovery_budget import candidate_markets,next_profile,CATEGORY_LIMITS
 
 async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     existing=[t for t,m in markets.items() if m.get('hourly_price')]
-    if len(existing)<2 and suite.extra_capacity(['hourly-slot'],now):
+    active=candidate_markets(suite,markets,'hourly',now)
+    if len(active)<CATEGORY_LIMITS['hourly'] and suite.extra_capacity(['hourly-slot'],now):
         ps=suite.enabled_profiles('hourly')
-        if ps:
-            p=ps[suite.hourly_cursor%len(ps)];suite.hourly_cursor+=1;series=p['series']
+        p,cursor=next_profile(suite,ps,active,suite.hourly_cursor)
+        if p:
+            suite.hourly_cursor=cursor;series=p['series']
             # Verify the exchange's declared frequency, never guess from a name.
             metadata=await asyncio.to_thread(host.verified_data.call,'GET','/series/'+series)
             if metadata.get('series',{}).get('frequency')=='hourly':

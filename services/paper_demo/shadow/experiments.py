@@ -9,6 +9,7 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
+from .discovery_budget import capacity
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
 
@@ -104,11 +105,13 @@ class ExperimentSuite:
                             strategy_version=p.get('version',folder+'-1'),discovered_at=now)
                 e.add_market(market,source.fees[ticker])
     def extra_capacity(self,tickers,now):
-        legacy=sum(m['close']>now for m in self.host.engine.markets.values())
-        return len(set(self.extra)|set(tickers))<=max(0,min(12,24-legacy))
+        return len(set(self.extra)|set(tickers))<=capacity(self,now)
     def prepare(self,e,source,payload,now):
-        for ticker in list(e.books):
-            if ticker in e.settled:continue
+        targets={e.orders[item[3]].ticker for item in e.pending if item[0]<=now}
+        if source=='clock':targets.update(e.books)
+        elif source=='kalshi':targets.add(payload.get('msg',{}).get('market_ticker'))
+        for ticker in targets:
+            if ticker not in e.books or ticker in e.settled:continue
             try:
                 kind,m=self.host.verified_fees.schedule(ticker,now)
                 e.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else ZERO)
@@ -223,7 +226,11 @@ class ExperimentSuite:
                     # In particular, late-only Favorites must still see a game
                     # that Sequential bought earlier in live play.
                     if any(l.ticker==t for other,_,_ in self.portfolios.values() if other is not e for l in other.wallet.lots):continue
-                    if a and not a.get('recorded') and e.now<a.get('entry_deadline',0):continue
+                    if a and not a.get('recorded') and e.now<a.get('entry_deadline',0):
+                        # Favorites may keep retrying until the entry cutoff.
+                        # Idle candidates still rotate after five minutes; a
+                        # live maker bid retains its place and subscription.
+                        if folder!='favorites' or any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
                     e.cancel_buys(t)
                     if any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
                     if a and not a.get('recorded') and isinstance(b,SequentialStrategy):b.finish(t)
@@ -301,5 +308,7 @@ class ExperimentSuite:
             if hasattr(b,'scans'):b.scans=0;b.profitable=0
             if hasattr(b,'last_reason'):b.last_reason='Fresh paper session · waiting for eligible markets'
         f.halted.update(t for t,m in e.markets.items() if not m.get('paid'))
-        for ticker,m in e.markets.items():e.wallet.stat(ticker)
+        for ticker,m in e.markets.items():
+            m.pop('entry_recovery_halt',None)
+            e.wallet.stat(ticker)
         e.log('SESSION_RESET',reason='New $1,000 virtual account; previous session archived')

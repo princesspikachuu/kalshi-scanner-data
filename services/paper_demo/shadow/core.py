@@ -78,6 +78,7 @@ class Book:
         self.sid = None
         self.valid = False
         self.at = 0.0
+        self.snapshot_at = 0.0
         self.used = {'yes': {}, 'no': {}}
 
     @property
@@ -104,6 +105,7 @@ class Book:
             self.levels=levels
             self.used={side:{p:q for p,q in self.used[side].items() if p in levels[side]} for side in ('yes','no')}
             self.valid=True
+            self.snapshot_at=now
         else:
             if not self.valid or self.seq is None or event.get('sid')!=self.sid or event.get('seq')!=self.seq+1:
                 self.valid=False
@@ -642,6 +644,7 @@ class Engine:
             duplicate=reason in seen
             seen.add(reason)
             self.books[ticker].valid = False
+            self.books[ticker].snapshot_at = 0.0
             self.wallet.stat(ticker).valid = False
             self.cancel_buys(ticker)
             if not duplicate:self.log('DATA_GAP', ticker=ticker, reason=reason)
