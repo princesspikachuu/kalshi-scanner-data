@@ -126,3 +126,12 @@ independent event samples. Existing cash/history and earlier positions persist.
 Production data is read-only and all orders/positions in this executor remain
 virtual. Queue, depth, latency, fee and slippage modeling are not bypassed to
 manufacture additional fills.
+
+15-minute Favorites restoration: a one-time guarded migration un-retires the
+original 28 Favorites rows, preserving bot IDs, keys, configured sizes, revisions,
+wallets, checkpoints and historical results. They join the paper-data-v3 policy.
+They resume when the existing Favorites cohort is running; a current folder-wide
+pause remains effective. The marker prevents subsequent restarts from undoing
+later pauses. Existing legacy public-feed selections are shared into restored
+portfolios before feed startup, with their own bot attribution and a required
+fresh snapshot; no additional subscription is needed for the same ticker.

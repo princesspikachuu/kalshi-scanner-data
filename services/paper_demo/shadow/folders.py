@@ -19,7 +19,7 @@ def initialize_folders(store,guard):
         if c.execute("SELECT 1 FROM research_job WHERE idempotency_key='demo/shadow/strategy-layout'").fetchone():return
         for f in FOLDERS:
             put(c,'demo/shadow/folder/'+f['id'],dict(f),dict(session=str(uuid4()),created_at=now))
-        rows=c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' FOR UPDATE").fetchall()
+        rows=c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') FOR UPDATE").fetchall()
         for r in rows:
             put(c,r['idempotency_key'],dict(r['parameters'],folder_id='convexity',strategy='convexity'),dict(r['progress'],desired='paused'))
         for p in profiles():

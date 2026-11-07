@@ -15,8 +15,9 @@ from .experiments import ExperimentSuite
 from .set_discovery import discover_sets
 from .weather import initialize_weather,discover_weather
 from .performance import record_balances
+from .bot_performance import record_bot_balances
 from .sports import initialize_sports,discover_sports
-from .scope import initialize_scope
+from .scope import initialize_scope,initialize_restored_favorites
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
 
@@ -35,6 +36,7 @@ class HostedRun(ForwardRun):
         initialize_weather(store,guard)
         initialize_sports(store,guard)
         initialize_scope(store,guard)
+        initialize_restored_favorites(store,guard)
         initialize_comparison(store,guard)
         all_rows=store.rows('shadow/bot/',BOT_LIMIT)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
@@ -60,6 +62,7 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
         self.experiments.share_external_markets()
+        self.experiments.share_legacy_markets()
         self.audit.experiments=self.experiments
         self.experiments.extra.update({t:t for t in self.experiments.feed_markets()})
         self.experiments.extra.update({t:t for t,m in self.experiments.portfolios['complete_set'][0].markets.items() if not m.get('paid')})
@@ -316,7 +319,9 @@ class HostedRun(ForwardRun):
                 self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
                 experiment_snapshot=self.experiments.snapshot(time.time())
                 if int(now//60)!=getattr(self,'balance_history_minute',None):
-                    record_balances(self.store,dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()}),now)
+                    accounts=dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()})
+                    record_balances(self.store,accounts,now)
+                    record_bot_balances(self.store,accounts,experiment_snapshot,now,positions)
                     self.balance_history_minute=int(now//60)
                 self.store.put('shadow/status',dict(at=time.time(),selected=self.selected,
                     equity=portfolio['equity'],accounting=money,

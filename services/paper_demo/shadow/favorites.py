@@ -57,7 +57,7 @@ class FavoritesStrategy(ConvexityStrategy):
             print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
                 price=str(q['price']),policy=q['policy'],maker=True,real_orders_enabled=False)),flush=True)
     def entry_allowed(self,m,now):
-        if self.profile.get('retired') or self.series.endswith('15M'):return False
+        if self.profile.get('retired'):return False
         return not m.get('sports') or (m.get('sports_live') is True and
             m.get('sports_start',float('inf'))<=now<m.get('sports_verified_until',0) and
             60<m.get('sports_expected_end',0)-now<=self.profile.get('late_game_hours',2)*3600)

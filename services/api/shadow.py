@@ -7,6 +7,7 @@ from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
 from services.paper_demo.shadow.performance import folder_performance
+from services.paper_demo.shadow.bot_performance import bot_performance
 from services.trading.mode import require_demo,ModeConflict
 
 from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIAL_FOLDERS
@@ -47,7 +48,10 @@ def install_shadow(app,auth,mutate,pool):
         current=money.get('current_cycles',{}) if money else {}
         snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
-        all_profiles=sorted(store.rows('shadow/bot/',BOT_LIMIT),key=lambda r:r['parameters']['name'])
+        all_profiles=store.rows('shadow/bot/',BOT_LIMIT)
+        for row in all_profiles:
+            p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
+        all_profiles.sort(key=lambda r:r['parameters']['name'])
         profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
         folder_rows=store.rows('shadow/folder/',10)
         reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
@@ -142,6 +146,7 @@ def install_shadow(app,auth,mutate,pool):
             elif f['id']=='convexity':f['accounting']=money
             folders.append(f)
         folder_performance(pool,folders,snapshot_at)
+        bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
         commands=store.rows('shadow/command/',100)
         return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,
@@ -204,7 +209,7 @@ def install_shadow(app,auth,mutate,pool):
                 try:require_demo(c)
                 except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
             desired='paused' if body.action=='pause' else 'running'
-            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true')",(desired,body.folder_id,body.folder_id,desired))
+            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true')",(desired,body.folder_id,body.folder_id,desired))
         return dict(contract='demo-v1',saved=True,real_orders_enabled=False)
 
     class Reset(BaseModel):

@@ -13,7 +13,7 @@ def initialize_comparison(store,guard):
     with store.pool.connection() as c:
         c.execute('SELECT pg_advisory_xact_lock(%s)',(73820193,))
         if c.execute("SELECT 1 FROM research_job WHERE idempotency_key='demo/shadow/sequential-comparison-v1'").fetchone():return
-        rows=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND parameters->>'folder_id'='sequential'").fetchall()
+        rows=c.execute("SELECT parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND parameters->>'folder_id'='sequential'").fetchall()
         # Baseline identifiers, wallet, desired states and historical attempts survive.
         c.execute("UPDATE research_job SET parameters=parameters||%s::jsonb WHERE idempotency_key='demo/shadow/folder/sequential'",
             (json.dumps(dict(name='Sequential Spread · Baseline',comparison_started_at=now,variant='baseline')),))

@@ -107,6 +107,20 @@ class ExperimentSuite:
                 market=dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
                             strategy_version=p.get('version',folder+'-1'),discovered_at=now)
                 e.add_market(market,source.fees[ticker])
+    def share_legacy_markets(self,now=None):
+        # Re-enabled 15m bots join the already selected public feed immediately;
+        # they must not wait for the next quarter-hour rollover to discover it.
+        now=time.time() if now is None else now
+        for ticker,m in list(self.host.engine.markets.items()):
+            if m.get('paid') or m['close']<=now:continue
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites'):
+                e,f,ps=self.portfolios[folder]
+                if ticker in e.markets:continue
+                p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
+                if not p:continue
+                e.add_market(dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
+                    strategy_version=p.get('version',folder+'-1'),discovered_at=now),self.host.engine.fees[ticker])
+
     def settlement_markets(self):
         return {t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()
                 if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}

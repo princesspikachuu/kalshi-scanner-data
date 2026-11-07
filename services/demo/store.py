@@ -20,8 +20,8 @@ class DemoStore:
         with self.pool.connection() as c:
             return c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at,finished_at
                 FROM research_job WHERE idempotency_key >= %s AND idempotency_key < %s
-                AND (%s::uuid IS NULL OR id < %s::uuid) ORDER BY id DESC LIMIT %s""",
-                (self.namespace+'/'+prefix,self.namespace+'/'+prefix+'zzzz',before,before,limit)).fetchall()
+                AND starts_with(idempotency_key,%s) AND (%s::uuid IS NULL OR id < %s::uuid) ORDER BY id DESC LIMIT %s""",
+                (self.namespace+'/'+prefix,self.namespace+'/'+prefix+'zzzz',self.namespace+'/'+prefix,before,before,limit)).fetchall()
     def event(self,kind,message,*,bot=None,ticker=None,details=None,event_id=None,critical=False):
         from datetime import datetime,timezone
         now=datetime.now(timezone.utc).isoformat()
