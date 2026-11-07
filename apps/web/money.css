@@ -47,3 +47,27 @@
 @media(max-width:360px){.folder-overview tr,.folder-card-values{grid-template-columns:minmax(0,1fr)}.folder-summary-periods{grid-template-columns:repeat(3,minmax(0,1fr))}}
 
 .sequential-comparison{margin-top:18px}.sequential-comparison>summary{cursor:pointer;font-weight:700}.comparison-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}.comparison-card{min-width:0;border:1px solid var(--line);border-radius:9px;padding:14px}.comparison-card h3{overflow-wrap:anywhere}.comparison-card dl{margin:12px 0}.comparison-card dt{color:var(--muted);font-size:12px;margin-top:12px}.comparison-card dd{margin:4px 0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+
+/* Individual market cards retain their summary inside the folder disclosure. */
+.shadow-workspace .market-card{padding:0;min-width:0}
+.shadow-workspace .market-card>summary{display:grid;grid-template-columns:minmax(0,1fr) auto auto 18px;align-items:start;gap:14px;cursor:pointer;padding:18px;list-style:none;border-radius:12px}
+.market-card>summary::-webkit-details-marker{display:none}
+.market-card>summary .market-heading{min-width:0}
+.market-card>summary .bot-name{overflow-wrap:anywhere;margin-bottom:0}
+.market-card>summary .badge{white-space:normal;overflow-wrap:anywhere;max-width:240px}
+.market-card>summary .bot-account-total{min-width:0}
+.market-card>summary .bot-account-total strong{overflow-wrap:anywhere}
+.market-disclosure{color:var(--muted);text-align:right}
+.market-disclosure:after{content:'▾'}
+.market-card[open]>summary .market-disclosure:after{content:'▴'}
+.market-card:not([open])>summary .market-description{display:none}
+.market-card-body{padding:0 18px 18px;min-width:0}
+@media(max-width:700px){
+ .shadow-workspace .market-card>summary{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:15px}
+ .market-card>summary .market-heading{grid-column:1/-1;grid-row:1;padding-right:24px}
+ .market-card>summary .market-disclosure{grid-column:2;grid-row:1;justify-self:end}
+ .market-card>summary .bot-account-total{grid-column:1;grid-row:2;text-align:left;margin:0}
+ .market-card>summary .bot-account-total strong{font-size:22px}
+ .market-card>summary .badge{grid-column:2;grid-row:2;justify-self:end;max-width:100%;margin:0}
+ .market-card-body{padding:0 15px 15px}
+}

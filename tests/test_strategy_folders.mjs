@@ -142,3 +142,27 @@ test('execution quality shows actual recovery receipts and missing legacy covera
  assert.ok(html.includes('cash receipts, not profit'));
  assert.ok(!html.includes('<script>'));
 });
+
+test('individual market cards start collapsed with name, P/L and state in their summary',()=>{
+ const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
+ assert.equal((html.match(/class="bot-card market-card"/g)||[]).length,4);
+ assert.ok(html.includes('data-market="sequential" ><summary class="bot-top">'));
+ assert.ok(html.includes('market-disclosure'));
+ assert.ok(html.includes('Account P/L'));
+ assert.ok(html.includes('data-toggle="sequential"')); // Controls remain available inside the expanded body.
+});
+test('individual market state persists across polling and refresh, independently of its folder',()=>{
+ const storage=new Map(),card={dataset:{market:'sequential'},open:true,isConnected:true};
+ const {context}=setup(fixture(),{storage,queries:{'details[data-market]':[card]}});
+ card.ontoggle({target:card});
+ assert.deepEqual(JSON.parse(storage.get('moneytree-market-views')),['sequential']);
+ assert.equal(storage.has('moneytree-folder-views'),false);
+ vm.runInContext('draw()',context);
+ const refreshed=setup(fixture(),{storage});
+ assert.ok(refreshed.nodes.get('groups').innerHTML.includes('data-market="sequential" open'));
+ assert.ok(refreshed.nodes.get('groups').innerHTML.includes('data-market="favorites" >'));
+ card.open=false;card.ontoggle({target:card});
+ assert.deepEqual(JSON.parse(storage.get('moneytree-market-views')),[]);
+ card.open=true;card.isConnected=false;card.ontoggle({target:card});
+ assert.deepEqual(JSON.parse(storage.get('moneytree-market-views')),[]);
+});
