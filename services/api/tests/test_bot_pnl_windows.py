@@ -62,5 +62,7 @@ class BotWindows(unittest.TestCase):
             store=DemoStore(SimpleNamespace(connection=lambda:nullcontext(c)))
             store.put('shadow/bot/valid',dict(desired='paused'),parameters=dict(id='valid',name='Valid',series='KXBTC15M'))
             store.put('shadow/bot-performance-history/123',dict(snapshot='compressed-history'))
-            self.assertEqual(c.execute("SELECT count(*) AS n FROM research_job WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'").fetchone()['n'],2)
+            # ICU versions differ in punctuation ordering; the control scan
+            # must exclude history regardless of the range-only result.
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM research_job").fetchone()['n'],2)
             self.assertEqual([r['parameters']['id'] for r in store.rows('shadow/bot/',400)],['valid'])

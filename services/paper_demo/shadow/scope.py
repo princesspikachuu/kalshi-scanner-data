@@ -55,7 +55,7 @@ def initialize_restored_favorites(store,guard):
         # A folder-wide pause made during rollout still takes precedence. The
         # retirement itself paused these rows, so look at the active cohort.
         running=bool(c.execute("""SELECT 1 FROM research_job WHERE idempotency_key>='demo/shadow/bot/'
-            AND idempotency_key<'demo/shadow/bot/zzzz' AND parameters->>'folder_id'='favorites'
+            AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND parameters->>'folder_id'='favorites'
             AND parameters->>'retired' IS DISTINCT FROM 'true' AND progress->>'desired'='running' LIMIT 1""").fetchone())
         rows=c.execute("""SELECT idempotency_key,parameters,progress FROM research_job
             WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'
