@@ -31,11 +31,14 @@ export async function loadDemoSnapshots(call=demoCall,period='24H',version=null)
 }
 
 export const BOT_SUMMARY_PERIODS=[['all','Lifetime'],['1H','1h'],['6H','6h'],['24H','24h']];
-export function botSummaryPeriodMarkup(botId,selected='all'){
- return `<div class="bot-summary-periods" role="group" aria-label="Summary period">${BOT_SUMMARY_PERIODS.map(([value,label])=>`<button type="button" data-bot-summary="${escapeHTML(botId)}" data-summary-period="${value}" aria-pressed="${selected===value}">${label}</button>`).join('')}</div>`;
+export function botSummaryPeriodMarkup(botId,selected='all',extended=false){
+ const choices=extended?[['all','All'],...BOT_SUMMARY_PERIODS.slice(1),['7D','7d'],['30D','30d']]:BOT_SUMMARY_PERIODS;
+ return `<div class="bot-summary-periods" role="group" aria-label="Summary period">${choices.map(([value,label])=>`<button type="button" data-bot-summary="${escapeHTML(botId)}" data-summary-period="${value}" aria-pressed="${selected===value}">${label}</button>`).join('')}</div>`;
 }
-export function botSummaryPeriodPreferences(value){
- try{if(value)localStorage.setItem('money-bot-summary-periods',JSON.stringify(value));const stored=JSON.parse(localStorage.getItem('money-bot-summary-periods')||'{}');return Object.fromEntries(Object.entries(stored).filter(([key,period])=>key.length<=80&&BOT_SUMMARY_PERIODS.some(([p])=>p===period)))}catch{return value||{}}
+export function botSummaryPeriodPreferences(value,extended=false){
+ const choices=extended?[...BOT_SUMMARY_PERIODS,['7D','7d'],['30D','30d']]:BOT_SUMMARY_PERIODS;
+ const storageKey=extended?'money-shadow-bot-periods':'money-bot-summary-periods';
+ try{if(value)localStorage.setItem(storageKey,JSON.stringify(value));const stored=JSON.parse(localStorage.getItem(storageKey)||'{}');return Object.fromEntries(Object.entries(stored).filter(([key,period])=>key.length<=80&&choices.some(([p])=>p===period)))}catch{return value||{}}
 }
 export function analysisVersionPreference(value){
  try{if(value)localStorage.setItem('money-analysis-version',value);return localStorage.getItem('money-analysis-version')==='full'?'full':'latest'}catch{return value||'latest'}

@@ -7,6 +7,7 @@ from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
 from services.paper_demo.shadow.performance import folder_performance
+from services.paper_demo.shadow.bot_performance import bot_performance
 from services.trading.mode import require_demo,ModeConflict
 
 from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIAL_FOLDERS
@@ -142,6 +143,7 @@ def install_shadow(app,auth,mutate,pool):
             elif f['id']=='convexity':f['accounting']=money
             folders.append(f)
         folder_performance(pool,folders,snapshot_at)
+        bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
         commands=store.rows('shadow/command/',100)
         return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,

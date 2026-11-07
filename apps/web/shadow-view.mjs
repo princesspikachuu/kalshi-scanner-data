@@ -1,4 +1,4 @@
-import {escapeHTML as e} from './demo-client.mjs';
+import {escapeHTML as e,botSummaryPeriodMarkup} from './demo-client.mjs';
 export const dollars=value=>value===null||value===undefined?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(value));
 export const pnlClass=value=>value===null||value===undefined?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
 export function executionMarkup(x){
@@ -103,4 +103,16 @@ export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
   return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td data-label="Balance now"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash ${e(v.cash)}${v.stale?' · snapshot stale':''}</small></td><td data-label="P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td></tr>`;
  }).join('');
  return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Balance now</th><th>P/L · ${e(folderPeriods[period])}</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">Balance is cash plus estimated position value. P/L includes realized and unrealized changes after paid fees, excluding added funds. Ranges include positions without quotes. Periods use minute snapshots in the current reset session; shorter tracking coverage is shown per folder.</p>`;
+}
+
+export function botPnlMarkup(bot,period='all',positions=[]){
+ if(!Object.hasOwn(folderPeriods,period))period='all';
+ const r=bot.performance?.[period],all=period==='all';
+ const fallback=accountPnl(bot.account,positions);
+ const total=finite(r?.pnl)?{low:Number(r.pnl),high:Number(r.pnl)}:finite(r?.pnl_low)&&finite(r?.pnl_high)?{low:Number(r.pnl_low),high:Number(r.pnl_high)}:null;
+ const realized=finite(r?.realized_pnl)?Number(r.realized_pnl):all&&finite(bot.account?.realized_pnl)?Number(bot.account.realized_pnl):null;
+ const unreal=total&&realized!==null?{low:total.low-realized,high:total.high-realized}:null;
+ const text=total?rangeText(total):all?fallback.text:'—';
+ const coverage=all?'Current session · all versions':r?.missing_history||!r?'Waiting for balance history':r.partial?`Partial window · tracked since ${new Date(r.since*1000).toLocaleString()}`:`Last ${folderPeriods[period]} · sampled to the minute`;
+ return `<div class="bot-pnl-panel"><div class="bot-pnl-values"><div><span>Total P/L${all?'':' change'}</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong></div><div><span>Realized P/L${all?'':' change'}</span><strong class="${pnlClass(realized)}">${e(dollars(realized))}</strong></div><div><span>${all?'Unrealized P/L':'Change in unrealized P/L'}</span><strong>${e(unreal?rangeText(unreal):all?dollars(bot.account?.unrealized_pnl):'—')}</strong></div></div>${botSummaryPeriodMarkup(bot.id,period,true)}<p class="small">${e(coverage)} · after fees${r?.unpriced?' · range includes unpriced positions':''}. Total P/L includes open-position value changes. Closed trades and confirmed settlements contribute to realized P/L.</p></div>`;
 }

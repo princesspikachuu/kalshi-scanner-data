@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup} from '../apps/web/shadow-view.mjs';
+import {executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,14 +19,14 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
  const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
  for(const name of ['Complete-Set Arbitrage','Sequential Spread Trading','High-Probability Favorites','Convexity · Paused'])assert.ok(html.includes(name));
  assert.equal((html.match(/data-folder-reset=/g)||[]).length,4);
- assert.ok(html.includes('Outcome win rate'));assert.ok(html.includes('Current paper session'));
+ assert.ok(html.includes('Outcome win rate'));assert.ok(html.includes('Current session'));
  assert.ok(!html.includes('Estimated completion: NaN'));
 });
 test('untrained sequential estimates are labeled exploration rather than fabricated probabilities',()=>{
@@ -148,8 +148,29 @@ test('individual market cards start collapsed with name, P/L and state in their 
  assert.equal((html.match(/class="bot-card market-card"/g)||[]).length,4);
  assert.ok(html.includes('data-market="sequential" ><summary class="bot-top">'));
  assert.ok(html.includes('market-disclosure'));
- assert.ok(html.includes('Account P/L'));
+ assert.ok(html.includes('Total P/L'));
  assert.ok(html.includes('data-toggle="sequential"')); // Controls remain available inside the expanded body.
+});
+test('each bot including experiments has six P/L windows visible while collapsed',()=>{
+ const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
+ for(const id of ['complete_set','sequential','favorites','convexity']){
+  for(const p of ['all','1H','6H','24H','7D','30D'])assert.ok(html.includes(`data-bot-summary="${id}" data-summary-period="${p}"`),`${id} ${p}`);
+ }
+});
+test('bot P/L separates total, realized and unrealized changes with honest coverage',()=>{
+ const bot={id:'fav',account:{},performance:{'1H':{pnl:'2.5',realized_pnl:'1',partial:true,since:100}}};
+ const html=botPnlMarkup(bot,'1H');
+ for(const text of ['Total P/L change','Realized P/L change','Change in unrealized P/L','$2.50','$1.00','$1.50','Partial window'])assert.ok(html.includes(text),text);
+ const missing=botPnlMarkup(bot,'7D');assert.ok(missing.includes('Waiting for balance history'));assert.ok(!missing.includes('NaN'));
+});
+test('experiment bot time selection changes its summary without opening its market',()=>{
+ const button={dataset:{botSummary:'favorites',summaryPeriod:'6H'}},data=fixture();
+ data.bots.find(b=>b.id==='favorites').performance={'6H':{pnl:'3',realized_pnl:'2',partial:false}};
+ const {context,nodes}=setup(data,{queries:{'[data-bot-summary]':[button]}});let prevented=false,stopped=false;
+ button.onclick({preventDefault(){prevented=true},stopPropagation(){stopped=true}});
+ assert.ok(prevented&&stopped);assert.equal(vm.runInContext('periods.favorites',context),'6H');
+ assert.ok(nodes.get('groups').innerHTML.includes('Last 6h'));assert.ok(nodes.get('groups').innerHTML.includes('$3.00'));
+ assert.ok(nodes.get('groups').innerHTML.includes('data-market="favorites" ><summary'));
 });
 test('individual market state persists across polling and refresh, independently of its folder',()=>{
  const storage=new Map(),card={dataset:{market:'sequential'},open:true,isConnected:true};

@@ -54,6 +54,7 @@ def record_balances(store,accounts,now):
                     entry('demo/shadow/'+prefix+'/'+folder+'/'+sample['session'],{},dict(at=now,**sample)))
         if int(now//60)%60==0:
             c.execute('DELETE FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s',(PREFIX,history_key(now-35*86400)))
+            c.execute('DELETE FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s',('demo/shadow/bot-performance-history/','demo/shadow/bot-performance-history/'+f'{int((now-35*86400)//60):012d}'))
 
     print(json.dumps(dict(event='paper_folder_balances_sampled',at=now,folders=len(samples),bounded_folders=sum(equity_bounds(s) is not None for s in samples.values()),unpriced_folders=sum(s['equity'] is None and equity_bounds(s) is not None for s in samples.values()),real_orders_enabled=False)),flush=True)
 

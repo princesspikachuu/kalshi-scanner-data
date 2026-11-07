@@ -15,6 +15,7 @@ from .experiments import ExperimentSuite
 from .set_discovery import discover_sets
 from .weather import initialize_weather,discover_weather
 from .performance import record_balances
+from .bot_performance import record_bot_balances
 from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
@@ -316,7 +317,9 @@ class HostedRun(ForwardRun):
                 self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
                 experiment_snapshot=self.experiments.snapshot(time.time())
                 if int(now//60)!=getattr(self,'balance_history_minute',None):
-                    record_balances(self.store,dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()}),now)
+                    accounts=dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()})
+                    record_balances(self.store,accounts,now)
+                    record_bot_balances(self.store,accounts,experiment_snapshot,now,positions)
                     self.balance_history_minute=int(now//60)
                 self.store.put('shadow/status',dict(at=time.time(),selected=self.selected,
                     equity=portfolio['equity'],accounting=money,
