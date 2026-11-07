@@ -216,7 +216,9 @@ class ForwardRun:
                             # pong: recv flow control can otherwise block its arrival.
                             pong=await ws.ping();ping_sent=time.monotonic()
                         # Keep lifecycle subscription across rolls to avoid missing settlement events.
-                        desired={t for t in self.selected.values() if t in self.engine.markets}
+                        books=self.subscription_books() if hasattr(self,'subscription_books') else self.engine.books
+                        desired=({t for t in self.selected.values() if t in self.engine.markets} |
+                                 set(getattr(getattr(self,'experiments',None),'extra',{})))
                         additions=desired-subscribed
                         removals=subscribed-desired
                         if removals and book_sid is not None and trade_sid is not None:
@@ -237,8 +239,8 @@ class ForwardRun:
                                 ident+=1
                             subscribed.update(additions)
                         if book_sid is not None and time.time()-last_snapshot_request>1:
-                            invalid=[(t,self.engine.books[t]) for t in desired if not self.engine.books[t].valid
-                                     and self.engine.books[t].sid == book_sid and self.resnapshot_allowed(t)]
+                            invalid=[(t,books[t]) for t in desired if t in books and not books[t].valid
+                                     and books[t].sid == book_sid and self.resnapshot_allowed(t)]
                             if invalid:
                                 await ws.send(json.dumps(dict(id=ident,cmd='update_subscription',params=dict(
                                     sid=book_sid,market_tickers=[t for t,b in invalid],action='get_snapshot'))))

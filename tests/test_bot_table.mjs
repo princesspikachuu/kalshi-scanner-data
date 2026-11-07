@@ -184,3 +184,6 @@ test('shadow accounting freshness is visible when the worker snapshot stops upda
  assert.ok(!accountMarkup(data,1029).includes('may be stale'));
  assert.match(accountMarkup(data,1031),/31 seconds old/);
 });
+
+// Execute strategy-folder rendering checks in the existing frontend CI job.
+await import('./test_strategy_folders.mjs');

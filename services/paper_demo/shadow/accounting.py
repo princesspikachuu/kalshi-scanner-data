@@ -39,7 +39,7 @@ def snapshot(engine,profiles,now):
             for row in buckets(order.ticker):
                 row['unfilled_bids']+=order.reserved;row['unfilled_principal']+=principal
                 row['reserved_fees']+=order.reserved-principal;row['unfilled_contracts']+=order.remaining
-        orders.append(dict(id=order.id,ticker=order.ticker,side=order.side,action=order.action,
+        orders.append(dict(id=order.id,bot_id=owner(order.ticker),ticker=order.ticker,side=order.side,action=order.action,
             quantity=order.remaining,price=order.price,status=order.status,maker=order.maker,
             reserved=order.reserved,principal=principal))
     for lot in engine.wallet.lots:

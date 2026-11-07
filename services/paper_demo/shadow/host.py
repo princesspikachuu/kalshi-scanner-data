@@ -10,6 +10,9 @@ from .runner import ForwardRun,ProductionData as PublicData
 from .storage import HostedAudit,put
 from .state import restore
 from .accounting import snapshot as money_snapshot
+from .folders import initialize_folders
+from .experiments import ExperimentSuite
+from .set_discovery import discover_sets
 
 LOG=logging.getLogger('shadow-host')
 
@@ -22,7 +25,9 @@ class HostedRun(ForwardRun):
     def __init__(self,store,guard,stop,signer):
         self.store,self.guard,self.outer_stop=store,guard,stop
         self.audit=HostedAudit(store,guard)
-        rows=store.rows('shadow/bot/',100)
+        initialize_folders(store,guard)
+        all_rows=store.rows('shadow/bot/',100)
+        rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
         self.allow_rest_settlement_recovery=True  # Approved fallback for missed WS settlement notifications.
@@ -43,12 +48,22 @@ class HostedRun(ForwardRun):
         self.revisions={p['id']:p['revision'] for p in self.profiles}
         self.fee_slots=asyncio.Semaphore(4);self.fee_locks={}
         self.status={};self.data_versions={};self.health_log_at=0
+        self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        self.audit.experiments=self.experiments
+        self.experiments.extra.update({t:t for t,m in self.experiments.portfolios['complete_set'][0].markets.items() if not m.get('paid')})
         # Surface backup/archive failures soon after recovery, then use the
         # normal five-minute cadence without adding Kalshi REST requests.
         self.publish_at=0;self.maintenance_at=time.time()+60
         for p in self.profiles:
             self.strategy.bots[p['series']].enabled=next(r['progress'].get('desired')=='running' for r in rows if r['parameters']['id']==p['id'])
+        # Honor the migration immediately, including restored resting entries.
+        for order in self.engine.orders.values():
+            owner=self.strategy.owner(order.ticker)
+            if owner and not owner.enabled and order.maker:self.engine.cancel(order.id)
         self.audit.checkpoint()
+
+    def subscription_books(self):
+        return dict(self.engine.books,**self.experiments.portfolios['complete_set'][0].books) if hasattr(self,'experiments') else self.engine.books
 
     async def settlement_observed(self,ticker):
         if ticker in self.engine.settled:return True
@@ -85,7 +100,7 @@ class HostedRun(ForwardRun):
         try:
             # Fee resolution needs the event/series identifiers already saved in
             # the market checkpoint; another /markets request only adds latency.
-            await self.fee_policy(dict(self.engine.markets[ticker],ticker=ticker),{})
+            await self.fee_policy(dict(self.engine.markets.get(ticker) or self.experiments.portfolios['complete_set'][0].markets[ticker],ticker=ticker),{})
             return True
         except Exception as exc:
             await self.metadata_unavailable('fee_refresh',exc,ticker=ticker,series=ticker.split('-')[0])
@@ -99,7 +114,7 @@ class HostedRun(ForwardRun):
             if remaining:
                 await asyncio.sleep(min(5,remaining));continue
             now=time.time()
-            due=[t for t in set(self.selected.values()) if t in self.engine.markets and
+            due=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and
                  t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
             if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
             await asyncio.sleep(1)
@@ -174,7 +189,8 @@ class HostedRun(ForwardRun):
                                 self.engine.cancel_buys(ticker)
                                 self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
                                 recovered.append(ticker)
-                        else:self.engine.handle(source,payload,now)
+                        elif source not in ('set_markets','experiment_settlement'):self.engine.handle(source,payload,now)
+                        if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
                     except ValueError as exc:
                         self.reject_input(source,payload,exc)
                     completed+=1
@@ -198,7 +214,10 @@ class HostedRun(ForwardRun):
         while not self.done.is_set():
             if self.outer_stop.is_set():self.done.set();return
             self.guard();mode=read_mode(self.store.pool).get('mode','demo')
-            rows=self.store.rows('shadow/bot/',100)
+            all_rows=self.store.rows('shadow/bot/',100)
+            self.experiments.control(all_rows,mode)
+            self.experiments.maintain()
+            rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
             for row in rows:
                 p=row['parameters'];bot=self.strategy.bots[p['series']]
                 enabled=row['progress'].get('desired')=='running' and mode=='demo'
@@ -218,7 +237,9 @@ class HostedRun(ForwardRun):
             for row in commands:
                 command=row['parameters']
                 self.audit.command_key=row['idempotency_key']
-                self.engine.refill(D(command['amount_cents'])/100)
+                if command.get('action')=='reset':
+                    self.reset_folder(command['folder_id'])
+                else:self.engine.refill(D(command['amount_cents'])/100)
                 self.audit.command_key=None
             now=time.time()
             active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
@@ -256,14 +277,14 @@ class HostedRun(ForwardRun):
                     self.accounting_log_at=time.monotonic()+30
                     print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
                                           real_orders_enabled=False)),flush=True)
-                self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['shadow_convexity_v1'],real_orders_enabled=False))
+                self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
                 self.store.put('shadow/status',dict(at=time.time(),selected=self.selected,
                     equity=portfolio['equity'],accounting=money,
                     virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
                     open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                     market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
                         book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
-                    orders=orders,positions=positions))
+                    orders=orders,positions=positions,experiments=self.experiments.snapshot(time.time())))
             # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
             # execution state in the hot checkpoint; never rewrite years of history.
             self.engine.prune_terminal_orders()
@@ -292,7 +313,7 @@ class HostedRun(ForwardRun):
                 import os
                 self.maintenance_at=time.time()+300
                 await asyncio.to_thread(maintenance,self.store,os.environ,self.outer_stop)
-            if mode=='draining_demo' and not self.engine.wallet.lots and not any(o.status in ('pending','resting') for o in self.engine.orders.values()):
+            if mode=='draining_demo' and not self.engine.wallet.lots and not any(e.wallet.lots for e,f,p in self.experiments.portfolios.values()) and not any(o.status in ('pending','resting') for o in self.engine.orders.values()):
                 with self.store.pool.connection() as c:
                     c.execute('SELECT pg_advisory_xact_lock(%s)',(MODE_LOCK,))
                     current=c.execute("SELECT progress FROM research_job WHERE idempotency_key='trading/mode'").fetchone()
@@ -301,16 +322,37 @@ class HostedRun(ForwardRun):
                 self.done.set();return
             await asyncio.sleep(1)
 
+    def reset_folder(self,folder):
+        from uuid import uuid4
+        from .storage import entry
+        from .core import Wallet
+        row=self.store.get('shadow/folder/'+folder)
+        if not row:raise ValueError('Unknown bot folder')
+        archive=self.audit.snapshot() if folder=='convexity' else json.loads(json.dumps(self.experiments.state()[folder],default=str))
+        if folder=='convexity':archive.pop('experiments',None)
+        self.audit.extra_writes=[entry('demo/shadow/session/'+folder+'/'+row['progress']['session'],
+            dict(folder_id=folder,ended_at=time.time()),archive)]
+        state=dict(row['progress'],session=str(uuid4()),reset_at=time.time())
+        self.audit.extra_writes.append(entry('demo/shadow/folder/'+folder,row['parameters'],state))
+        self.audit.begin()
+        if folder=='convexity':
+            self.engine.wallet=Wallet(D(1000));self.engine.orders={};self.engine.pending=[]
+            self.strategy.halted.update(t for t,m in self.engine.markets.items() if not m.get('paid'))
+            self.engine.log('SESSION_RESET',reason='Fresh $1,000 paper session; previous results archived')
+        else:self.experiments.reset(folder)
+        self.audit.flush()
+
     async def run(self):
         # No restored book input may run against an empty fee cache.
-        restored=[t for t in set(self.selected.values()) if t in self.engine.markets and t not in self.engine.settled]
+        restored=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and t not in self.engine.settled]
         if restored:
             results=await asyncio.gather(*(self.refresh_fee(t) for t in restored))
             print(json.dumps(dict(event='shadow_fee_warmup',markets=len(restored),verified=sum(results),
                                   real_orders_enabled=False)),flush=True)
         # Called from the trading thread; the process signal handler owns stop.
-        workers=[asyncio.create_task(c) for c in (self.discover(),self.kalshi(),self.spot(),
-                                                  self.clock(),self.consume(),self.control(),self.fee_maintenance())]
+        coroutines=[self.discover(),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),self.fee_maintenance()]
+        if hasattr(self,'experiments'):coroutines.append(discover_sets(self))
+        workers=[asyncio.create_task(c) for c in coroutines]
         waiter=asyncio.create_task(self.done.wait())
         clean_stop=False
         try:
@@ -335,7 +377,7 @@ def run(stop,store,guard,env):
         signer=credentials(store,env)
         if signer:
             asyncio.run(HostedRun(store,guard,stop,signer).run());return
-        store.put('health',dict(state='connection_required',message='28 shadow bots ready. Connect a production Read key for market data; no real orders are enabled.',at=time.time(),features=['shadow_convexity_v1'],real_orders_enabled=False))
+        store.put('health',dict(state='connection_required',message='28 shadow bots ready. Connect a production Read key for market data; no real orders are enabled.',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
         print(json.dumps(dict(event='shadow_connection_required',bots=28,real_orders_enabled=False)),flush=True)
         if time.time()>=maintenance_at:
             from services.demo.maintenance import maintenance

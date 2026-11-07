@@ -25,7 +25,9 @@ class HostedAudit:
         self.last_snapshot=0
         self.command_key=None
     def snapshot(self):
-        return json.loads(json.dumps(encode(self.engine,self.fleet),default=str))
+        data=encode(self.engine,self.fleet)
+        if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
+        return json.loads(json.dumps(data,default=str))
     def begin(self):self.buffer=[]
     def abort(self):self.buffer=None
     def log(self,now,kind,wallet,**fields):
@@ -39,14 +41,20 @@ class HostedAudit:
         if records:self.commit(records)
     def commit(self,records):
         self.guard();data=self.snapshot()
-        batch=[entry(KEY,{},data)]
+        batch=[entry(KEY,{},data)]+getattr(self,'extra_writes',[])
+        self.extra_writes=[]
         commands=[];written_events=[]
         for now,kind,fields in records:
             event=json.loads(json.dumps(dict(time=now,event=kind,**fields),default=str))
             event.setdefault('cash',str(self.engine.wallet.cash))
+            if kind=='EXPERIMENT':event['event']=fields['experiment_kind']
             written_events.append(event)
             batch.append(entry('demo/shadow/event/'+str(uuid4()),dict(kind=kind,ticker=fields.get('ticker'),time=now),event))
-            if kind=='REFILL' and self.command_key:commands.append((Jsonb(dict(done=True,at=now)),self.command_key))
+            if kind in ('REFILL','SESSION_RESET','EXPERIMENT') and self.command_key:commands.append((Jsonb(dict(done=True,at=now)),self.command_key))
+            if kind=='EXPERIMENT' and fields.get('experiment_kind')=='CYCLE_REPORT':
+                report=json.loads(fields['details']);report['at']=now
+                folder=fields['folder_id']
+                batch.append(entry('demo/experiment/report/'+folder+'/'+report['ticker'],{},report))
             if kind=='CYCLE_REPORT':
                 report=json.loads(fields['details']);report['at']=now
                 report['bot_revision']=self.engine.markets[report['ticker']].get('bot_revision',1)

@@ -44,12 +44,15 @@ def install_shadow(app,auth,mutate,pool):
         current=money.get('current_cycles',{}) if money else {}
         snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
-        profiles=sorted(store.rows('shadow/bot/',100),key=lambda r:r['parameters']['name'])
+        all_profiles=sorted(store.rows('shadow/bot/',100),key=lambda r:r['parameters']['name'])
+        profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
+        folder_rows=store.rows('shadow/folder/',10)
+        reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
         revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
         now=time.time()
-        scope="(%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
+        scope="(progress->>'at')::numeric>=%s AND (%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
         with pool.connection() as c:
-            latest_rows=c.execute("SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(latest=='full',Jsonb(revisions))).fetchall()
+            latest_rows=c.execute("SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(reset_at,latest=='full',Jsonb(revisions))).fetchall()
             metrics=c.execute("""WITH r AS (
                 SELECT progress AS p FROM research_job WHERE idempotency_key>='demo/shadow/report/'
                 AND idempotency_key<'demo/shadow/report/zzzz' AND """+scope+"""),
@@ -63,14 +66,14 @@ def install_shadow(app,auth,mutate,pool):
                 (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean)/
                 nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0))::text AS win_rate
                 FROM r CROSS JOIN windows WHERE seconds IS NULL OR (p->>'at')::numeric>=%s-seconds
-                GROUP BY p->>'bot_id',period""",(latest=='full',Jsonb(revisions),now)).fetchall()
+                GROUP BY p->>'bot_id',period""",(reset_at,latest=='full',Jsonb(revisions),now)).fetchall()
             # Financial results include every paper trade. Data quality is a
             # separate count; it must never make a real simulated loss disappear.
             financial=c.execute("""WITH history AS (
                 SELECT progress AS p,true AS reported FROM research_job
                 WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz'
                 AND NOT ((progress->>'ticker')=ANY(%s::text[]))
-                AND (progress->>'at')::numeric<=%s),
+                AND (progress->>'at')::numeric<=%s AND (progress->>'at')::numeric>=%s),
                 r AS (SELECT * FROM history UNION ALL SELECT value,false FROM jsonb_each(%s::jsonb)),
                 windows(period,seconds,full_history) AS (VALUES ('account',NULL::integer,true),
                     ('all',NULL::integer,false),('1H',3600,false),('6H',21600,false),('24H',86400,false))
@@ -84,7 +87,7 @@ def install_shadow(app,auth,mutate,pool):
                 FROM r CROSS JOIN windows
                 WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
                 AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
-                GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
+                GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,reset_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
         mapped={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in metrics}
         actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in financial}
         reports={r['progress'].get('bot_id'):r['progress'] for r in latest_rows}
@@ -113,9 +116,28 @@ def install_shadow(app,auth,mutate,pool):
                     realized_pnl=money['portfolio']['realized_pnl'],total_pnl=money['portfolio']['total_pnl'],
                     difference=money['portfolio']['reconciliation_difference'],
                     **money['quality'],real_orders_enabled=False)),flush=True)
+        experiments=status.get('experiments',{})
+        for row in all_profiles:
+            profile=row['parameters'];folder=profile.get('folder_id','convexity')
+            if folder=='convexity':continue
+            exp=experiments.get(folder,{})
+            metric=exp.get('bots',{}).get(profile['id'],aggregate([]))
+            account=exp.get('accounting',{}).get('bots',{}).get(profile['id'])
+            if account is not None:
+                account=dict(account,realized_pnl=metric['net_realized_pnl'])
+                account['total_pnl']=str(D(account['realized_pnl'])+D(account['unrealized_pnl'])) if account.get('unrealized_pnl') is not None else None
+            bots.append(dict(profile,desired=row['progress']['desired'],account=account,
+                metrics={period:metric for period in PERIODS},financial_metrics={period:metric for period in PERIODS},
+                experiment=metric,metrics_scope='current_session',latest_report=None))
+        folders=[]
+        for row in sorted(folder_rows,key=lambda r:r['parameters']['order']):
+            f=dict(row['parameters'],**row['progress'])
+            if f['id'] in experiments:f.update(experiments[f['id']])
+            elif f['id']=='convexity':f['accounting']=money
+            folders.append(f)
         commands=store.rows('shadow/command/',100)
         return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
-            engine=marker['progress'],bots=bots,status=status,
+            engine=marker['progress'],bots=bots,status=status,folders=folders,
             accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
@@ -165,6 +187,7 @@ def install_shadow(app,auth,mutate,pool):
     class Bulk(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|favorites)$')
     @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
@@ -173,8 +196,41 @@ def install_shadow(app,auth,mutate,pool):
                 try:require_demo(c)
                 except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
             desired='paused' if body.action=='pause' else 'running'
-            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'",(desired,))
+            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s)",(desired,body.folder_id,body.folder_id))
         return dict(contract='demo-v1',saved=True,real_orders_enabled=False)
+
+    class Reset(BaseModel):
+        model_config=ConfigDict(extra='forbid',strict=True)
+        request_id:str=Field(min_length=16,max_length=80,pattern='^[A-Za-z0-9-]+$')
+    @app.post('/demo/shadow/folders/{folder}/reset')
+    def reset_folder(folder:str,body:Reset,request:Request):
+        mutate(request);query(request)
+        if folder not in ('convexity','complete_set','sequential','favorites') or not store.get('shadow/folder/'+folder):
+            raise HTTPException(404,'Bot folder not found')
+        with pool.connection() as c:
+            key='demo/shadow/command/'+body.request_id
+            previous=c.execute('SELECT parameters FROM research_job WHERE idempotency_key=%s FOR UPDATE',(key,)).fetchone()
+            command=dict(action='reset',folder_id=folder)
+            if previous and previous['parameters']!=command:raise HTTPException(409,'Request ID already used')
+            if not previous:put(c,key,command,dict(done=False))
+        return dict(contract='demo-v1',queued=True,real_orders_enabled=False)
+
+    @app.get('/demo/shadow/sessions')
+    def sessions(request:Request):
+        auth(request);query(request)
+        rows=store.rows('shadow/session/',100)
+        return dict(contract='demo-v1',items=[dict(r['parameters'],key=r['id']) for r in rows],real_orders_enabled=False)
+
+    @app.get('/demo/shadow/sessions/{identifier}')
+    def session(identifier:str,request:Request):
+        auth(request);query(request)
+        from uuid import UUID
+        try:UUID(identifier)
+        except ValueError:raise HTTPException(422,'Invalid session') from None
+        with pool.connection() as c:
+            row=c.execute("SELECT progress FROM research_job WHERE id=%s AND idempotency_key>='demo/shadow/session/' AND idempotency_key<'demo/shadow/session/zzzz'",(identifier,)).fetchone()
+        if not row:raise HTTPException(404,'Session not found')
+        return dict(contract='demo-v1',session=row['progress'],real_orders_enabled=False)
 
     @app.get('/demo/shadow/events')
     def events(request:Request):

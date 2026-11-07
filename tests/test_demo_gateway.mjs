@@ -491,3 +491,12 @@ test('Shadow workspace and controls retain authenticated gateway methods',async(
  }
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace?api_key=secret'),env,options())).status,422);
 });
+
+test('strategy folder reset and archived sessions retain owner-only methods',async()=>{
+ const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',POCKET_PROXY_SECRET:'x'.repeat(32)};
+ const options={fetcher:async()=>new Response(JSON.stringify({contract:'demo-v1',real_orders_enabled:false,queued:true}),{headers:{'content-type':'application/json'}})};
+ const post=new Request('https://app.test/api/demo/shadow/folders/sequential/reset',{method:'POST',headers:{origin:'https://app.test','content-type':'application/json'},body:JSON.stringify({request_id:'unique-request-id-123'})});
+ assert.notEqual((await proxyAuth(post,env,options)).status,404);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/folders/sequential/reset'),env,options)).status,405);
+ assert.notEqual((await proxyAuth(new Request('https://app.test/api/demo/shadow/sessions/12345678-1234-1234-1234-123456789012'),env,options)).status,404);
+});
