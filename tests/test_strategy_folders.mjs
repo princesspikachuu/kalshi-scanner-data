@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
 import {folderOverviewMarkup,folderPeriods} from '../apps/web/shadow-view.mjs';
+import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
  const empty={gross_profit:'0',fees:'0',net_realized_pnl:'0',win_rate:null,cycles:0,excluded_cycles:0};
@@ -63,4 +64,18 @@ test('retired fifteen-minute favorites are collapsed and cannot be resumed from 
  assert.ok(html.includes('Retired 15-minute bots · 1'));
  assert.ok(html.includes('history and remaining exits'));
  assert.ok(!html.includes('data-toggle="fav_old"'));assert.ok(!html.includes('data-save="fav_old"'));
+});
+test('dashboard load renders the expanded workspace through the actual gateway contract',async()=>{
+ const data={...fixture(),contract:'demo-v1',environment:'demo',installed:true};
+ data.bots=Array.from({length:154},(_,i)=>({...data.bots[i%4],id:'bot-'+i,retired:i<28}));
+ const {context,nodes}=setup(data);nodes.get('groups').innerHTML='';
+ const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
+ context.demoCall=async path=>{
+  const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response(JSON.stringify(path.startsWith('shadow/events')?{contract:'demo-v1',items:[]}:data),{headers:{'content-type':'application/json'}})});
+  const body=await response.json();if(!response.ok)throw Error(body.detail);return body;
+ };
+ await vm.runInContext('load()',context);
+ for(const folder of data.folders)assert.ok(nodes.get('groups').innerHTML.includes(folder.name));
+ assert.ok(nodes.get('accountSummary').innerHTML.includes('At a glance'));
+ assert.equal(nodes.get('message')?.textContent||'','');
 });

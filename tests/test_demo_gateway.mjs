@@ -20,6 +20,18 @@ test('Every page entrypoint and imported module is served through the real gatew
 });
 const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
+test('expanded shadow workspace passes the gateway with active and retired bots',async()=>{
+ const bots=Array.from({length:154},(_,i)=>({id:'bot-'+i,retired:i<28}));
+ const fetcher=async()=>new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots,folders:[{id:'favorites'},{id:'sequential'},{id:'complete_set'},{id:'convexity'}]}),{headers:{'content-type':'application/json'}});
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace?version=latest'),env,{fetcher});
+ assert.equal(response.status,200);const data=await response.json();assert.equal(data.bots.length,154);assert.equal(data.folders.length,4);
+});
+test('shadow bot capacity stays bounded and does not widen other workspace limits',async()=>{
+ for(const [path,count,status] of [['shadow/workspace',200,200],['shadow/workspace',201,502],['workspace',101,502],['workspace',100,200]]){
+  const fetcher=async()=>new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:Array.from({length:count},()=>({id:'bot'}))}),{headers:{'content-type':'application/json'}});
+  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher})).status,status,`${path}: ${count}`);
+ }
+});
 test('Demo routes preserve owner gateway and correct method',async()=>{
  for(const path of ['performance?bot=00000000-0000-0000-0000-000000000001','performance?bot=00000000-0000-0000-0000-000000000001&group=hour&period=7D&timezone=America%2FLos_Angeles','workspace','orders','activity?kind=fill','chart?period=7D','research?asset=btc&start=2026-10-01&end=2026-10-30']){
   const r=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,options());assert.equal(r.status,200,path);

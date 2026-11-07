@@ -64,7 +64,7 @@ function collectionBody(data){
  }
  return data;
 }
-function demoBody(data){if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||(data.items&&(!Array.isArray(data.items)||data.items.length>500))||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100)))throw Error('Invalid demo contract');return data;}
+function demoBody(data,path){const maxBots=path==='/api/demo/shadow/workspace'?200:100;if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||(data.items&&(!Array.isArray(data.items)||data.items.length>500))||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>maxBots)))throw Error('Invalid demo contract');return data;}
 function liveBotsBody(data){if(data.contract!=='live-bots-v2'||data.environment!=='live'||typeof data.execution_enabled!=='boolean'||(data.execution_enabled&&data.worker_mode?.mode!=='live')||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100||data.bots.some(b=>!['paused','running'].includes(b.desired)))))throw Error('Invalid live workspace');return data;}
 function paperBody(data){if(data.contract!=='paper-v1'||data.live_trading_enabled!==false)throw Error('invalid paper workspace');if(data.runs&&(!Array.isArray(data.runs)||data.runs.length>20))throw Error('invalid paper runs');return data;}
 function responseCookies(headers){
@@ -162,7 +162,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
    const text=new TextDecoder().decode(await boundedBody(upstream.body,(demo||liveBots)?2097152:(research||collection||paper)?262144:32768));
-   response=new Response(JSON.stringify(liveBots?liveBotsBody(JSON.parse(text)):demo?demoBody(JSON.parse(text)):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   response=new Response(JSON.stringify(liveBots?liveBotsBody(JSON.parse(text)):demo?demoBody(JSON.parse(text),url.pathname):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;
