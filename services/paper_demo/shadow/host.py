@@ -22,7 +22,7 @@ from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
 from .scalper_install import initialize_scalper,initialize_scalper_upgrade
 from .scalper import SCALPER_FOLDERS
-from .market_maker import MM_FOLDERS
+from .market_maker import MM_FOLDERS,quote_diagnostics
 from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 
@@ -418,6 +418,7 @@ class HostedRun(ForwardRun):
                             entry_fills=sum(v['entry_fills'] for v in totals),completed=sum(v['completed'] for v in totals),
                             carryovers=sum(v['settlement_carryovers'] for v in totals),
                             reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets} or folder in MM_FOLDERS and any(m.get('bot_id')==b.profile['id'] for m in se.markets.values())}),
+                            quotes=quote_diagnostics(se,now) if folder in MM_FOLDERS else [],
                             real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                         valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),

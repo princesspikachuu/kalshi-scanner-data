@@ -9,7 +9,7 @@ import statistics
 from itertools import islice
 from collections import deque
 from .microstructure import MarketTape
-from .execution import choose as execution_choice,size as position_size,tick_size,depth_quote,committed
+from .execution import choose as execution_choice,size as position_size,tick_size,depth_quote,committed,passive_entry_price
 from decimal import Decimal as D, ROUND_FLOOR
 from .core import ConvexityStrategy, Engine, ZERO
 
@@ -378,7 +378,10 @@ class VolatilityScalper(ConvexityStrategy):
                     if not adverse and ticker in self.history:
                         fresh=self.features(ticker,old.side)
                         adverse=fresh is None or self.decision(fresh)[1] or fresh.get('depth_withdrawal',0)>.5
-                    moved=current is not None and abs(current-old.price)>=tick_size(m,old.price)*D(str(c['reprice_ticks']))
+                    desired=current
+                    if not adverse and c['approach']=='market_maker':
+                        desired=passive_entry_price(m,current,e.books[ticker].ask(old.side),{},c)
+                    moved=desired is not None and abs(desired-old.price)>=tick_size(m,old.price)*D(str(c['reprice_ticks']))
                     if adverse or now-old.created>=c['reprice_seconds'] and (moved or m['close']-now<=c['restrict_entries']):
                         before=len(e.pending);e.cancel(old.id)
                         if len(e.pending)>before:

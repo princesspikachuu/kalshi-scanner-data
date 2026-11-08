@@ -7,6 +7,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 from .state import encode
 from .checkpoint_codec import pack_checkpoint
+from .checkpoint_segments import CheckpointSegments
 
 KEY='demo/shadow/checkpoint'
 
@@ -36,11 +37,12 @@ class HostedAudit:
         data=encode(self.engine,self.fleet)
         if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
         if hasattr(self,'_frozen_discovery'):data['experiments']['_maker_discovery']=self._frozen_discovery
-        payload=pack_checkpoint(data,binary=True)
+        if not hasattr(self,'checkpoint_segments'):self.checkpoint_segments=CheckpointSegments()
+        payload=pack_checkpoint(data,binary=True,segments=self.checkpoint_segments)
         if payload.get('checkpoint_encoding') and time.monotonic()>=getattr(self,'codec_log_at',0):
             self.codec_log_at=time.monotonic()+30
             print(json.dumps(dict(event='shadow_checkpoint_size',encoding=payload['checkpoint_encoding'],
-                decoded_bytes=payload['bytes'],stored_bytes=len(payload['data']),real_orders_enabled=False)),flush=True)
+                decoded_bytes=payload['bytes'],stored_bytes=len(payload['data']),segment_cache=self.checkpoint_segments.metrics(),real_orders_enabled=False)),flush=True)
         return payload
     def begin(self):self.buffer=[]
     def abort(self):self.buffer=None

@@ -10,6 +10,27 @@ from .maker_opportunities import turnover_score,ranked_rows,retry_verified
 MM_FOLDERS=('market_maker','maker_competitive')
 CATEGORIES={'politics':'Politics','economics':'Economics / Finance','sports_futures':'Sports Futures','entertainment':'Entertainment / Culture'}
 
+def quote_diagnostics(engine,now):
+    result=[]
+    for order in engine.orders.values():
+        if order.status not in ('pending','resting'):continue
+        resting=order.side if order.action=='buy' else ('no' if order.side=='yes' else 'yes')
+        limit=float(order.price if order.action=='buy' else 1-order.price)
+        sample=[t for t in engine.tape.markets.get(order.ticker,{}).get('trades',()) if order.arrives<=t[0]<=now]
+        matching=[t for t in sample if ('no' if t[3]>0 else 'yes')==resting and
+            (t[1] if resting=='yes' else 1-t[1])<=limit+1e-9]
+        book=engine.books[order.ticker]
+        result.append(dict(ticker=order.ticker,order_id=order.id,side=order.side,action=order.action,
+            status=order.status,price=str(order.price),remaining=str(order.remaining),queue_ahead=str(order.ahead),
+            age_seconds=max(0,now-order.created),seconds_to_expiry=max(0,order.expiry-now),
+            public_bid=str(book.bid(order.side)) if book.bid(order.side) is not None else None,
+            public_ask=str(book.ask(order.side)) if book.ask(order.side) is not None else None,
+            recent_trade_count=len(sample),recent_executable_trade_count=len(matching),
+            recent_executable_volume=sum(t[2] for t in matching),sample_first_at=sample[0][0] if sample else None,
+            sample_basis='bounded live tape since arrival; diagnostic only'))
+        if len(result)>=8:break
+    return result
+
 def activity_deadline(engine,ticker,market):
     # Slow makers need an observation window matched to actual trade cadence.
     # Discovery prints are activity metadata only; never replay them as fills.
