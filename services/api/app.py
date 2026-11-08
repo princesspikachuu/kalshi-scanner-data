@@ -77,7 +77,7 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
             if not secrets.compare_digest(supplied.encode(),settings.proxy_secret.encode()):
                 return JSONResponse({'detail':'Request rejected'},status_code=403,headers={'Cache-Control':'no-store'})
         response=await call_next(request)
-        response.headers['Cache-Control']='no-store'
+        response.headers['Cache-Control']='no-store, no-transform' if request.url.path=='/demo/shadow/workspace' else 'no-store'
         response.headers['X-Content-Type-Options']='nosniff'
         return response
 

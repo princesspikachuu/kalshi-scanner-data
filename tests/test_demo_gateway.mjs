@@ -328,7 +328,7 @@ test('the real dashboard renders bots and balances when orders fail, retries, an
    requested.push(url);
    if(url.includes('/orders')&&orderFails)throw Error('Orders unavailable');
    if(url.includes('/workspace')&&workspaceFails)throw Error('Workspace unavailable');
-   return {ok:true,status:200,json:async()=>url.includes('/workspace')?workspace:{contract:'demo-v1',items:[]}};
+   return new Response(JSON.stringify(url.includes('/workspace')?workspace:{contract:'demo-v1',items:[]}),{headers:{'content-type':'application/json'}});
   };
   await import('../apps/web/bots.mjs?partial-load-test');
   for(let i=0;i<8;i++)await new Promise(setImmediate);
@@ -558,4 +558,26 @@ test('the streaming marker cannot bypass authentication errors or other route va
   const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response('{"contract":"invalid"}',{status,headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1'}})});
   assert.equal(response.status,status===401?401:502);
  }
+});
+
+test('large fragmented dashboard JSON is byte-identical and verifies in the browser client',async()=>{
+ const {readDemoResponse}=await import('../apps/web/demo-client.mjs');
+ const payload={contract:'demo-v1',bots:[],research:Array.from({length:20000},(_,i)=>({id:i,label:'Price "quoted" · 🌱',net:'-0.005'}))};
+ const bytes=new TextEncoder().encode(JSON.stringify(payload));
+ const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+ // Split inside strings, punctuation, and multibyte UTF-8, including past 1 MB.
+ assert.ok(bytes.byteLength>1100000);
+ let offset=0;
+ const source=new ReadableStream({pull(c){if(offset===bytes.length){c.close();return}const end=Math.min(offset+997,bytes.length);c.enqueue(bytes.slice(offset,end));offset=end}});
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher:async()=>new Response(source,{headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1','x-pocket-workspace-sha256':digest,'x-pocket-workspace-bytes':String(bytes.length)}})});
+ assert.equal(response.headers.get('cache-control'),'no-store, no-transform');
+ assert.deepEqual(await readDemoResponse(response),payload);
+});
+test('dashboard reports transport damage without exposing a raw JSON parser exception',async()=>{
+ const {readDemoResponse}=await import('../apps/web/demo-client.mjs');
+ const good='{"contract":"demo-v1","bots":[]}';
+ const bytes=new TextEncoder().encode(good),digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+ const bad=new Response(good.replace('"bots"',' bots '),{headers:{'x-pocket-workspace-sha256':digest,'x-pocket-workspace-bytes':String(bytes.length)}});
+ await assert.rejects(()=>readDemoResponse(bad),/changed in transit/);
+ await assert.rejects(()=>readDemoResponse(new Response('{"contract":"demo-v1",}')),/incomplete or invalid data/);
 });

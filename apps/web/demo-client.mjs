@@ -10,6 +10,19 @@ export function demoError(detail,status){
  }
  return status===429?'Please wait before trying again.':'Unable to complete the request.';
 }
+export async function readDemoResponse(response){
+ const digest=response.headers.get('x-pocket-workspace-sha256');
+ const bytes=await response.arrayBuffer();
+ if(digest){
+  const actual=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+  if(actual!==digest||String(bytes.byteLength)!==response.headers.get('x-pocket-workspace-bytes')){
+   const error=Error('Dashboard response was interrupted or changed in transit. Please use Reload data.');error.retryable=true;throw error;
+  }
+ }
+ try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))}
+ catch{const error=Error('Dashboard returned an incomplete or invalid data response. Please use Reload data.');error.retryable=true;throw error}
+}
+
 export async function demoCall(path,body){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),body===undefined&&/^shadow\/workspace(?:\?|$)/.test(path)?50000:15000);
  const headers={accept:'application/json'};if(body!==undefined){headers['content-type']='application/json';headers['x-csrf-token']=cookieValue(document.cookie,'__Host-pocket_csrf')||''}
@@ -17,7 +30,7 @@ export async function demoCall(path,body){
   const response=await fetch('/api/demo/'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store',signal:controller.signal});
   if(response.status===401){location.replace('/');throw Error('Sign in to continue')}
   if(!response.ok){let detail;try{detail=(await response.json()).detail}catch{}throw Error(demoError(detail,response.status))}
-  const data=await response.json();if(data.contract!=='demo-v1')throw Error('Unexpected workspace response');return data;
+  const data=await (/^shadow\/workspace(?:\?|$)/.test(path)?readDemoResponse(response):response.json());if(data.contract!=='demo-v1')throw Error('Unexpected workspace response');return data;
  }catch(error){if(controller.signal.aborted)throw Error('Dashboard data request timed out. Use Reload data to retry.');throw error}
  finally{clearTimeout(timer)}
 }

@@ -152,6 +152,10 @@ class FolderPostgres(unittest.TestCase):
     def test_workspace_returns_strategy_folders_without_losing_legacy_bots(self):
         self.seed();r=self.client.get('/demo/shadow/workspace');self.assertEqual(r.status_code,200)
         self.assertEqual(r.headers['x-pocket-workspace-contract'],'demo-v1')
+        import hashlib
+        self.assertEqual(r.headers['x-pocket-workspace-sha256'],hashlib.sha256(r.content).hexdigest())
+        self.assertEqual(r.headers['x-pocket-workspace-bytes'],str(len(r.content)))
+        self.assertEqual(r.headers['cache-control'],'no-store, no-transform')
         data=r.json();self.assertEqual(len(data['bots']),85);self.assertEqual(len(data['folders']),4)
         self.assertFalse(data['real_orders_enabled'])
 

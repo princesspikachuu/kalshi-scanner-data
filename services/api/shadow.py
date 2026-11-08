@@ -1,8 +1,9 @@
 """Owner-authenticated shadow controls and durable results; virtual money only."""
-import csv,io,json,time
+import csv,io,json,time,hashlib
 from uuid import uuid4
 from decimal import Decimal as D
 from fastapi import Request,Response,HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
@@ -14,6 +15,26 @@ from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIA
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
+
+
+def workspace_response(payload):
+    # These copies are used to build the bot cards but are not read by the UI.
+    # Keep the durable worker snapshot intact and send each accounting view once.
+    status=dict(payload['status']);status.pop('experiments',None)
+    folders=[]
+    for folder in payload['folders']:
+        folder=dict(folder)
+        account=folder.get('accounting')
+        if account:
+            folder['accounting']={k:v for k,v in account.items() if k not in ('current_cycles','bots')}
+        folder.pop('bots',None)
+        folders.append(folder)
+    result=JSONResponse(dict(payload,status=status,folders=folders))
+    result.headers['x-pocket-workspace-contract']='demo-v1'
+    result.headers['x-pocket-workspace-sha256']=hashlib.sha256(result.body).hexdigest()
+    result.headers['x-pocket-workspace-bytes']=str(len(result.body))
+    result.headers['cache-control']='no-store, no-transform'
+    return result
 
 
 def aggregate(reports):
@@ -149,12 +170,12 @@ def install_shadow(app,auth,mutate,pool):
         folder_performance(pool,folders,snapshot_at)
         bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
         commands=store.rows('shadow/command/',100)
-        return dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
+        return workspace_response(dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,
             accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
-            pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done')))
+            pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done'))))
 
     class Change(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
