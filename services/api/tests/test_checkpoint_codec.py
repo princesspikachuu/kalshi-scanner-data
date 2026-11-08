@@ -2,7 +2,7 @@
 import base64,gzip,json,unittest
 from decimal import Decimal as D
 from unittest.mock import Mock
-from services.paper_demo.shadow.checkpoint_codec import pack_checkpoint,unpack_checkpoint
+from services.paper_demo.shadow.checkpoint_codec import pack_checkpoint,unpack_checkpoint,BINARY_ENCODING
 from services.paper_demo.shadow.core import Engine,StrategyFleet,FeePolicy
 from services.paper_demo.shadow.state import restore
 from services.paper_demo.shadow.storage import HostedAudit
@@ -10,6 +10,40 @@ from services.paper_demo.shadow.migrate import profiles
 from services.api.tests import test_demo_postgres as fixture
 
 class CheckpointCodecTests(unittest.TestCase):
+    def test_binary_research_and_precise_money_equal_legacy_json_after_restore(self):
+        import random
+        r=random.Random(7)
+        value=dict(schema=1,wallet=dict(cash=D('123.45678901234567890123456789')),
+            research=[dict(net=r.random(),quantity=D('2.87'),label='Quoted "text" · 🌱',values=(1,True,None,1.25)) for _ in range(2000)])
+        packed=pack_checkpoint(value,binary=True)
+        self.assertEqual(packed['checkpoint_encoding'],BINARY_ENCODING)
+        self.assertEqual(unpack_checkpoint(packed),json.loads(json.dumps(value,default=str)))
+        for change in (dict(sha256='0'*64),dict(bytes=packed['bytes']-1)):
+            with self.assertRaises(ValueError):unpack_checkpoint(dict(packed,**change))
+        with self.assertRaises(ValueError):unpack_checkpoint(packed,max_bytes=1000)
+
+    def test_binary_direct_engine_restore_preserves_wallet_and_pending_risk(self):
+        from services.paper_demo.shadow.state import encode
+        e=Engine(Mock(),cash='123.4567');f=StrategyFleet(e,profiles());f.halted.add('preserved')
+        packed=pack_checkpoint(encode(e,f),threshold=0,binary=True)
+        new=Engine(Mock());nf=StrategyFleet(new,profiles());restore(new,nf,packed)
+        self.assertEqual(new.wallet.cash,e.wallet.cash);self.assertEqual(nf.halted,f.halted)
+        self.assertEqual(new.rng.random(),e.rng.random())
+
+    def test_binary_invalid_or_non_object_payloads_fail_closed(self):
+        import msgpack
+        for raw in (b'\xc1',msgpack.packb(['not a state']),msgpack.packb({'bad':b'binary is not part of the state schema'})):
+            packed=dict(checkpoint_encoding=BINARY_ENCODING,bytes=len(raw),sha256=__import__('hashlib').sha256(raw).hexdigest(),
+                data=base64.b64encode(gzip.compress(raw)).decode())
+            with self.assertRaises(ValueError):unpack_checkpoint(packed)
+
+    def test_all_experiment_checkpoint_fields_round_trip_in_both_encodings(self):
+        from services.api.tests.test_flat_experiment_feed import FlatExperimentFeedTests
+        fixture=FlatExperimentFeedTests();suite=fixture.suite();fixture.book(suite,200.1,1)
+        suite.maker_discovery=dict(candidates={'t':dict(score=.123,prices=['.1','.2'])},cursor='preserved')
+        value=suite.state()
+        expected=json.loads(json.dumps(value,default=str))
+        for binary in (False,True):self.assertEqual(unpack_checkpoint(pack_checkpoint(value,threshold=0,binary=binary)),expected)
     def test_legacy_checkpoint_is_unchanged(self):
         value=dict(schema=1,wallet=dict(cash='12.3456'))
         self.assertIs(unpack_checkpoint(value),value)
@@ -81,7 +115,7 @@ class CheckpointPostgresTests(unittest.TestCase):
         with self.demo.pool.connection() as c:
             raw=c.execute("SELECT progress FROM research_job WHERE idempotency_key='demo/shadow/checkpoint'").fetchone()['progress']
             count=c.execute("SELECT count(*) AS n FROM research_job WHERE starts_with(idempotency_key,'demo/shadow/event/')").fetchone()['n']
-        self.assertEqual(raw['checkpoint_encoding'],'shadow-checkpoint-gzip-v1');self.assertEqual(count,1)
+        self.assertEqual(raw['checkpoint_encoding'],BINARY_ENCODING);self.assertEqual(count,1)
         decoded=self.demo.get('shadow/checkpoint')['progress']
         self.assertEqual(D(decoded['wallet']['cash']),before+D('5.1234'))
         self.assertEqual(decoded['markets']['KXBTC15M-test']['metadata'],'x'*100000)
