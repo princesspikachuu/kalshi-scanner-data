@@ -88,3 +88,14 @@
  .bot-pnl-values strong{font-size:22px}
 }
 @media(max-width:360px){.folder-card-values,.bot-pnl-values{grid-template-columns:minmax(0,1fr)}}
+
+.market-type-folder{border:1px solid var(--line);border-radius:10px;padding:0 14px 14px;margin:14px 0;min-width:0;background:#151922}
+.market-type-folder:not([open]){padding-bottom:0}
+.market-type-folder>summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;list-style:none;padding:14px 0;min-height:48px}
+.market-type-folder>summary::-webkit-details-marker{display:none}
+.market-type-name{font-size:15px;font-weight:650;overflow-wrap:anywhere}
+.market-type-disclosure{margin-left:auto;color:var(--muted)}
+.market-type-disclosure:after{content:'▾'}
+.market-type-folder[open]>summary .market-type-disclosure:after{content:'▴'}
+.market-type-folder .bot-list{margin-top:10px}
+@media(max-width:650px){.market-type-folder{padding-left:10px;padding-right:10px}.market-type-folder>summary{gap:8px}.market-type-name{flex:1 1 170px}}

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  marketTypeGroups,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -235,4 +235,36 @@ test('exposure summaries distinguish unknown amounts from known zero and support
  assert.equal(summaryExposure({position_cost:'7'}).positions,7);
  const html=botPnlMarkup({id:'test',account:{unfilled_bids:'0'},performance:{}},'1H');
  assert.ok(html.includes('$0.00'));assert.ok(html.includes('Waiting for balance history'));assert.ok(!html.includes('NaN'));
+});
+
+test('market type grouping partitions the full legacy registry and keeps hourly, weather and sports separate',()=>{
+ const legacy=JSON.parse(fs.readFileSync(new URL('../services/paper_demo/shadow/market_profiles.json',import.meta.url),'utf8'));
+ const extra=[{id:'hourbtc',series:'KXBTCD',asset:'hourly'},{id:'hourfx',series:'KXUSDCADAH',asset:'hourly'},
+  {id:'hourmetal',series:'KXGOLDH',asset:'hourly'},{id:'weather',asset:'weather'},
+  {id:'daily',asset:'weather_daily'},{id:'sports',asset:'sports'},
+  {id:'scanner',strategy:'complete_set',series:'ALL_SAME_DAY'},{id:'unknown',series:'NEW_TYPE'}];
+ const groups=marketTypeGroups([...legacy,...extra]);
+ assert.deepEqual(groups.filter(g=>g.id.endsWith('-15m')).map(g=>[g.id,g.bots.length]),[
+  ['crypto-15m',9],['commodities-15m',8],['finance-15m',11]]);
+ for(const id of ['crypto-hourly','commodities-hourly','finance-hourly','weather-hourly','weather-daily','sports','complete-sets','other'])assert.ok(groups.some(g=>g.id===id),id);
+ const ids=groups.flatMap(g=>g.bots.map(b=>b.id));assert.equal(ids.length,legacy.length+extra.length);
+ assert.equal(new Set(ids).size,ids.length);
+});
+test('market type subfolders remember state independently per strategy and search does not overwrite preferences',()=>{
+ const storage=new Map(),detail={dataset:{marketType:'favorites::crypto-15m'},open:true,isConnected:true};
+ const data=fixture(),{context,nodes}=setup(data,{storage,queries:{'details[data-market-type]':[detail]}});
+ assert.ok(nodes.get('groups').innerHTML.includes('data-market-type="favorites::crypto-15m" >'));
+ detail.ontoggle({target:detail});
+ assert.deepEqual(JSON.parse(storage.get('moneytree-market-type-views')),['favorites::crypto-15m']);
+ const html=setup(data,{storage}).nodes.get('groups').innerHTML;
+ assert.ok(html.includes('data-market-type="favorites::crypto-15m" open'));
+ assert.ok(html.includes('data-market-type="sequential::crypto-15m" >'));
+ assert.equal(storage.has('moneytree-folder-views'),false);assert.equal(storage.has('moneytree-market-views'),false);
+ detail.open=false;detail.ontoggle({target:detail});
+ nodes.get('find').value='btc';vm.runInContext('draw()',context);
+ assert.ok(nodes.get('groups').innerHTML.includes('data-market-type="sequential::crypto-15m" open'));
+ detail.open=true;detail.ontoggle({target:detail});
+ assert.deepEqual(JSON.parse(storage.get('moneytree-market-type-views')),[]);
+ nodes.get('find').value='';vm.runInContext('draw()',context);
+ assert.ok(nodes.get('groups').innerHTML.includes('data-market-type="favorites::crypto-15m" >'));
 });

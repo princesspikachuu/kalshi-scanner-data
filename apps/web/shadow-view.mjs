@@ -71,6 +71,29 @@ export function sequentialComparisonMarkup(folders){
  const number=(v,suffix='')=>finite(v)?Number(v).toFixed(2)+suffix:'—';
  return `<details class="sequential-comparison"><summary>Sequential strategy comparison · ${rows.length} variants</summary><p class="small">New attempts since each comparison start; earlier baseline history is excluded here. Wallet summaries retain full history. Results include failed attempts and data gaps. These experiments are not proven profitable. Comparison figures use their own full test window.</p><div class="comparison-grid">${rows.map(f=>{const c=f.comparison;return `<article class="comparison-card"><h3>${e(f.name)}</h3><p class="small">Since ${e(new Date(c.started_at*1000).toLocaleString())}</p><dl><dt>Net P/L · marked positions included</dt><dd>${e(dollars(c.net_pnl))}${c.unpriced?' · quotes missing':''}</dd><dt>Realized P/L</dt><dd>${e(dollars(c.realized_pnl))}</dd><dt>Completed / first-filled finished attempts</dt><dd>${e(String(c.completed))} / ${e(String(c.first_fills))} · ${finite(c.completion_rate)?number(c.completion_rate*100,'%'):'—'}</dd><dt>Losses on unmatched attempts</dt><dd>${e(dollars(c.unmatched_losses))}</dd><dt>Maximum observed drawdown</dt><dd>${e(dollars(c.max_drawdown))}${c.drawdown_incomplete?' · incomplete quotes':''}</dd><dt>Average start-to-completion time</dt><dd>${number(finite(c.average_completion_seconds)?c.average_completion_seconds/60:null,' min')}</dd><dt>Capital committed × hours</dt><dd>${number(c.dollar_hours,' dollar-hours')}</dd><dt>Net profit / dollar-hour</dt><dd>${number(finite(c.profit_per_dollar_hour)?c.profit_per_dollar_hour*100:null,'¢')}</dd></dl><p class="small">${e(String(c.attempts))} finished attempts · ${e(String(c.open_attempts))} open. Drawdown uses observed snapshots; capital time includes bids and positions.</p></article>`}).join('')}</div></details>`;
 }
+export function marketTypeGroups(bots){
+ const groups=new Map();
+ for(const bot of bots){
+  const series=String(bot.series||'').toUpperCase(),asset=bot.asset;
+  const period=series.endsWith('15M')?'15m':asset==='hourly'?'hourly':'';
+  let id,label,rank;
+  if(asset==='weather'){id='weather-hourly';label='Hourly weather';rank=40}
+  else if(asset==='weather_daily'){id='weather-daily';label='Daily weather';rank=50}
+  else if(asset==='sports'){id='sports';label='Sports';rank=60}
+  else if(bot.strategy==='complete_set'||series==='ALL_SAME_DAY'){id='complete-sets';label='Complete-set scanner';rank=70}
+  else{
+   let category='other',name='Other market types';rank=90;
+   if(/^KX(BTC|ETH|SOL|XRP|DOGE|BNB|HYPE|ZEC|NEAR)(15M|D|H)?$/.test(series)){category='crypto';name='Crypto';rank=10}
+   else if(/^KX(GOLD|SILVER|PLATINUM|PALLADIUM|COPPER|WTI|NATGAS|BRENT)(15M|H|D)?$/.test(series)){category='commodities';name='Commodities';rank=20}
+   else if(/^KX(USDCAD|AUDUSD|USDJPY|GBPUSD|EURUSD|2YRRATE|5YRRATE|10YRRATE|30YRRATE|INX|NDQ|NASDAQ100)(15M|AH|H|U|D)?$/.test(series)){category='finance';name='Finance';rank=30}
+   id=category+(period?'-'+period:'');label=name+(period==='15m'?' · 15 minutes':period==='hourly'?' · 1 hour':'');
+   if(period==='hourly')rank+=1;
+  }
+  if(!groups.has(id))groups.set(id,{id,label,rank,bots:[]});
+  groups.get(id).bots.push(bot);
+ }
+ return [...groups.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label));
+}
 export function summaryExposure(a){
  const number=key=>finite(a?.[key])?Number(a[key]):null;
  const bids=number('unfilled_bids'),active=number('active_cost'),pending=number('pending_cost');
