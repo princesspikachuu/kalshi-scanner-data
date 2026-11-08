@@ -140,7 +140,10 @@ async def sports_once(host):
             scan['subscribed']+=1
             break
         if scan['subscribed']:break
-    cache['retry_at']=min([suite.sports_events[ev].get('retry_at',now+60) for ev in events]+[cache['refresh_at']])
+    # Admission or the three-event budget can stop before every listed event
+    # has a state entry. Unvisited events remain immediately eligible for the
+    # next fair series pass; never abort a successful admission with KeyError.
+    cache['retry_at']=min([suite.sports_events.get(ev,{}).get('retry_at',now) for ev in events]+[cache['refresh_at']])
     print(json.dumps(dict(event='paper_sports_scan',**scan,next_check_at=cache['retry_at'],real_orders_enabled=False)),flush=True)
 
 async def discover_sports(host):
