@@ -1,5 +1,5 @@
 """Atomic hosted wallet/checkpoint and audit records under the existing trading fence."""
-import json,time,tempfile
+import asyncio,json,time,tempfile
 from collections import Counter
 from pathlib import Path
 from uuid import uuid4
@@ -39,8 +39,8 @@ class HostedAudit:
     def flush(self):
         records=self.buffer;self.buffer=None
         if records:self.commit(records)
-    def commit(self,records):
-        self.guard();data=self.snapshot()
+    def prepare(self,records):
+        started=time.monotonic();data=self.snapshot()
         batch=[entry(KEY,{},data)]+getattr(self,'extra_writes',[])
         self.extra_writes=[]
         commands=[];written_events=[]
@@ -59,20 +59,47 @@ class HostedAudit:
                 report=json.loads(fields['details']);report['at']=now
                 report['bot_revision']=self.engine.markets[report['ticker']].get('bot_revision',1)
                 batch.append(entry('demo/shadow/report/'+report['ticker'],dict(time=now,bot_id=report.get('bot_id')),report))
+        self.snapshot_ms=(time.monotonic()-started)*1000
+        return batch,commands,written_events
+    def write(self,prepared):
+        batch,commands,written_events=prepared
+        started=time.monotonic();self.guard()
         with self.store.pool.connection() as c:
             # Pipeline the event burst; wallet/checkpoint, all audit rows, reports
             # and refill completion markers still commit in one transaction.
             with c.cursor() as cur:
                 cur.executemany(UPSERT,batch)
                 if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
+        self.write_ms=(time.monotonic()-started)*1000
         counts=Counter(e['event'] for e in written_events)
         if any(k in counts for k in ('ORDER_SUBMITTED','MAKER_RESTING','FILL','CANCELLED','SPOT_SAFETY_CANCEL','SAFETY_REENTRY_READY','IOC_COMPLETE','DATA_GAP')):
             print(json.dumps(dict(event='shadow_audit_committed',counts=dict(counts),
                 fills=[e for e in written_events if e['event']=='FILL'],
                 gaps=[e for e in written_events if e['event']=='DATA_GAP'],real_orders_enabled=False)),flush=True)
         self.last_snapshot=time.monotonic()
-    def checkpoint(self):
+    def commit(self,records):self.write(self.prepare(records))
+    async def durable_io(self,action,*args):
+        # A cancelled coroutine must not leave an unknown database write running
+        # after the state lock is released or shutdown writes another checkpoint.
+        task=asyncio.create_task(asyncio.to_thread(action,*args))
+        cancelled=False
+        while True:
+            try:
+                result=await asyncio.shield(task)
+                break
+            except asyncio.CancelledError:
+                if task.cancelled():raise
+                cancelled=True
+        if cancelled:raise asyncio.CancelledError()
+        return result
+    async def flush_async(self):
+        records=self.buffer;self.buffer=None
+        if records:await self.durable_io(self.write,self.prepare(records))
+    def write_checkpoint(self,data):
         self.guard()
-        with self.store.pool.connection() as c:put(c,KEY,{},self.snapshot())
+        with self.store.pool.connection() as c:put(c,KEY,{},data)
         self.last_snapshot=time.monotonic()
+    async def checkpoint_async(self):
+        await self.durable_io(self.write_checkpoint,self.snapshot())
+    def checkpoint(self):self.write_checkpoint(self.snapshot())
     def close(self):pass

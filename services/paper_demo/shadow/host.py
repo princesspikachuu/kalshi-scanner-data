@@ -78,6 +78,10 @@ class HostedRun(ForwardRun):
             if owner and not owner.enabled and order.maker:self.engine.cancel(order.id)
         self.audit.checkpoint()
 
+    def spot_required(self):
+        return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
+            or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
+
     def subscription_books(self):
         books=dict(self.engine.books)
         if hasattr(self,'experiments'):
@@ -145,11 +149,17 @@ class HostedRun(ForwardRun):
             await asyncio.sleep(1)
 
     async def clock(self):
+        due=time.monotonic()
         while not self.done.is_set():
+            self.loop_lag_max=max(getattr(self,'loop_lag_max',0),max(0,time.monotonic()-due))
             await self.put('clock',{})
+            due=time.monotonic()+.1
             await asyncio.sleep(.1)
 
     async def put(self,source,payload):
+        if not hasattr(self,'input_counts'):self.input_counts={}
+        kind=source+':'+str(payload.get('type','')) if source=='kalshi' else source
+        self.input_counts[kind]=self.input_counts.get(kind,0)+1
         if (source=='kalshi' and payload.get('type')=='market_lifecycle_v2'
                 and payload.get('seq') is None):
             # Lifecycle is an exchange-wide stream. Ignore unsequenced notices
@@ -204,178 +214,224 @@ class HostedRun(ForwardRun):
             payload=dict(payload,type='fee_blocked')
         return payload
 
+    def pipeline_sample(self,count,simulation_ms,commit_ms,lag):
+        if not hasattr(self,'pipeline_totals'):self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
+        totals=self.pipeline_totals
+        totals['inputs']+=count;totals['batches']+=1
+        totals['simulation_ms']+=simulation_ms;totals['commit_ms']+=commit_ms
+        totals['max_queue_lag_seconds']=max(totals['max_queue_lag_seconds'],lag)
+        now=time.monotonic()
+        if now<getattr(self,'pipeline_log_at',0):return
+        self.pipeline_log_at=now+30
+        print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
+            event_loop_lag_max_seconds=getattr(self,'loop_lag_max',0),
+            last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
+            last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
+            last_control_ms=getattr(self,'last_control_ms',None),
+            input_types=getattr(self,'input_counts',{}),real_orders_enabled=False)),flush=True)
+        self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
+        self.input_counts={};self.loop_lag_max=0
+
+    def state_mutex(self):
+        if not hasattr(self,'_state_mutex'):self._state_mutex=asyncio.Lock()
+        return self._state_mutex
+
+    async def flush_audit(self):
+        if isinstance(self.audit,HostedAudit):await self.audit.flush_async()
+        else:self.audit.flush()
+
     async def consume(self):
         last=self.engine.now
         while not self.done.is_set():
             item=await self.queue.get()
-            self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
-            try:
-                while True:
-                    source,payload,received=item
-                    max_lag=max(max_lag,max(0,time.time()-received))
-                    now=max(received,last)
-                    if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
-                    last=now
-                    try:
-                        payload=self.prepare_fees(source,payload,now)
-                        if source=='rest_settlement_confirmed':
-                            if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
-                            ticker=payload['ticker']
-                            if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
-                                raise ValueError('REST settlement confirmation invalid')
-                            self.engine.advance(now)
-                            if ticker not in self.engine.settled:
-                                self.engine.markets[ticker]['settlement_confirmation']='production_rest'
-                                self.engine.markets[ticker]['yes_payout_confirmed']='1' if payload['result']=='yes' else '0'
-                                self.engine.settled.add(ticker)
-                                self.engine.cancel_buys(ticker)
-                                self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
-                                recovered.append(ticker)
-                        elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
-                            try:self.engine.handle(source,payload,now)
-                            except ValueError as exc:self.reject_input(source,payload,exc)
-                        if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
-                    except ValueError as exc:
-                        self.reject_input(source,payload,exc)
-                    completed+=1
-                    # Preserve every event and its cash value, but avoid a DB
-                    # round trip/checkpoint for each partial fill in a burst.
-                    if self.done.is_set() or self.queue.empty() or completed>=128 or time.monotonic()-started>=.020:
-                        break
-                    item=self.queue.get_nowait()
-                self.audit.flush()
-                if hasattr(self,'experiments'):
-                    self.experiments.monitoring.observe(time.time(),self.queue.qsize(),max_lag,
-                        (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining())
-            except BaseException:
-                self.audit.abort();raise
-            for ticker in recovered:
-                print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
-                                      confirmation='production_rest',real_orders_enabled=False)),flush=True)
-            for _ in range(completed):self.queue.task_done()
+            async with self.state_mutex():
+                self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
+                try:
+                    while True:
+                        source,payload,received=item
+                        max_lag=max(max_lag,max(0,time.time()-received))
+                        now=max(received,last)
+                        if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
+                        last=now
+                        try:
+                            payload=self.prepare_fees(source,payload,now)
+                            if source=='rest_settlement_confirmed':
+                                if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
+                                ticker=payload['ticker']
+                                if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
+                                    raise ValueError('REST settlement confirmation invalid')
+                                self.engine.advance(now)
+                                if ticker not in self.engine.settled:
+                                    self.engine.markets[ticker]['settlement_confirmation']='production_rest'
+                                    self.engine.markets[ticker]['yes_payout_confirmed']='1' if payload['result']=='yes' else '0'
+                                    self.engine.settled.add(ticker)
+                                    self.engine.cancel_buys(ticker)
+                                    self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
+                                    recovered.append(ticker)
+                            elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
+                                try:self.engine.handle(source,payload,now)
+                                except ValueError as exc:self.reject_input(source,payload,exc)
+                            if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
+                        except ValueError as exc:
+                            self.reject_input(source,payload,exc)
+                        completed+=1
+                        # Preserve every event and its cash value, but avoid a DB
+                        # round trip/checkpoint for each partial fill in a burst.
+                        if self.done.is_set() or self.queue.empty() or completed>=128 or time.monotonic()-started>=.020:
+                            break
+                        item=self.queue.get_nowait()
+                    simulated=time.monotonic()
+                    await self.flush_audit()
+                    committed=time.monotonic()
+                    self.pipeline_sample(completed,(simulated-started)*1000,(committed-simulated)*1000,max_lag)
+                    if hasattr(self,'experiments'):
+                        self.experiments.monitoring.observe(time.time(),self.queue.qsize(),max_lag,
+                            (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining())
+                except BaseException:
+                    self.audit.abort();raise
+                for ticker in recovered:
+                    print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
+                                          confirmation='production_rest',real_orders_enabled=False)),flush=True)
+                for _ in range(completed):self.queue.task_done()
             # queue.get() doesn't yield while a burst is buffered. Socket
             # readers, pongs and controls still run between committed batches.
             await asyncio.sleep(0)
 
+    def pending_commands(self):
+        with self.store.pool.connection() as c:
+            return c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/command/' AND idempotency_key<'demo/shadow/command/zzzz' AND progress->>'done' IS DISTINCT FROM 'true' ORDER BY created_at LIMIT 100").fetchall()
+
     async def control(self):
         while not self.done.is_set():
             if self.outer_stop.is_set():self.done.set();return
-            self.guard();mode=read_mode(self.store.pool).get('mode','demo')
-            all_rows=self.store.rows('shadow/bot/',BOT_LIMIT)
-            self.experiments.control(all_rows,mode)
-            self.experiments.maintain()
-            rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
-            for row in rows:
-                p=row['parameters'];bot=self.strategy.bots[p['series']]
-                enabled=row['progress'].get('desired')=='running' and mode=='demo'
-                if not enabled and bot.enabled:
-                    for ticker in self.engine.markets:
-                        if ticker.startswith(p['series']+'-'):self.engine.cancel_buys(ticker)
-                bot.enabled=enabled
-                if self.revisions.get(p['id']) != p['revision']:
-                    bot.contracts=D(p['contracts'])
-                    for ticker in self.engine.markets:
-                        if ticker.startswith(p['series']+'-') and ticker not in self.engine.settled:
-                            self.strategy.halted.add(ticker);self.engine.cancel_buys(ticker)
-                    self.revisions[p['id']]=p['revision']
-                self.profiles=[p if old['id']==p['id'] else old for old in self.profiles]
-            with self.store.pool.connection() as c:
-                commands=c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/command/' AND idempotency_key<'demo/shadow/command/zzzz' AND progress->>'done' IS DISTINCT FROM 'true' ORDER BY created_at LIMIT 100").fetchall()
-            for row in commands:
-                command=row['parameters']
-                self.audit.command_key=row['idempotency_key']
-                if command.get('action')=='reset':
-                    self.reset_folder(command['folder_id'])
-                else:self.engine.refill(D(command['amount_cents'])/100)
-                self.audit.command_key=None
-            now=time.time()
-            active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
-            books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
-            fees_ready=0
-            for ticker in active:
-                try:self.verified_fees.schedule(ticker,now);fees_ready+=1
-                except Exception:pass
-            state='ready' if books and fees_ready==len(active) and self.engine.spot.ready(now) else 'waiting'
-            if time.monotonic()>=self.health_log_at:
-                self.health_log_at=time.monotonic()+30
-                print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
-                print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
-                print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
-                    valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
-                    mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
-                    two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
-                    halted_markets=sum(t in self.strategy.halted for t in active),
-                    prior_halted_markets=sum(t in self.prior_halts for t in active),
-                    spike_cooldown_seconds=max(0,self.engine.safety_until-now),
-                    phase_counts={str(phase):sum(b.phases.get(t)==phase for t in active for b in [self.strategy.owner(t)] if b) for phase in (1,2,3)},
-                    awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
-                        self.engine.markets[t]['close']<=now and t not in self.engine.settled),
-                    spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
-                    input_rejections=getattr(self,'input_rejections',0),
-                    unrelated_lifecycle_dropped=getattr(self,'lifecycle_dropped',0),
-                    valid_cycles=sum(self.engine.wallet.stat(t).valid for t in active),
-                    resting_orders=sum(o.status=='resting' for o in self.engine.orders.values()),
-                    pending_orders=sum(o.status=='pending' for o in self.engine.orders.values()),
-                    open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
-                    real_orders_enabled=False)),flush=True)
-            if time.monotonic()>=self.publish_at:
-                self.publish_at=time.monotonic()+5
-                money=money_snapshot(self.engine,self.profiles,time.time())
-                portfolio=money['portfolio']
-                orders=money.pop('orders');positions=money.pop('positions')
-                if time.monotonic()>=getattr(self,'accounting_log_at',0):
-                    self.accounting_log_at=time.monotonic()+30
-                    print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
-                                          real_orders_enabled=False)),flush=True)
-                self.store.put('health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
-                experiment_snapshot=self.experiments.snapshot(time.time())
-                if int(now//60)!=getattr(self,'balance_history_minute',None):
-                    accounts=dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()})
-                    record_balances(self.store,accounts,now)
-                    record_bot_balances(self.store,accounts,experiment_snapshot,now,positions)
-                    self.balance_history_minute=int(now//60)
-                self.store.put('shadow/status',dict(at=time.time(),selected=self.selected,
-                    equity=portfolio['equity'],accounting=money,
-                    virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
-                    open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
-                    market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
-                        book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
-                    orders=orders,positions=positions,experiments=experiment_snapshot,monitoring=self.experiments.monitoring_snapshot(now)))
-            # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
-            # execution state in the hot checkpoint; never rewrite years of history.
-            self.engine.prune_terminal_orders()
-            active=set(self.selected.values())
-            pending_ids={item[3] for item in self.engine.pending}
-            retired=[t for t,m in self.engine.markets.items() if m.get('paid') and t not in active and
-                     not any(o.ticker==t and o.id in pending_ids for o in self.engine.orders.values())]
-            for ticker in retired:
-                self.engine.markets.pop(ticker,None);self.engine.books.pop(ticker,None)
-                self.verified_fees.cache.pop(ticker,None);self.fee_locks.pop(ticker,None)
-                self.settlement_checks.pop(ticker,None);self.engine.gap_reasons.pop(ticker,None)
-                self.engine.fees.pop(ticker,None);self.engine.wallet.stats.pop(ticker,None)
-                self.engine.closed_reports.discard(ticker);self.engine.settled.discard(ticker)
-                self.strategy.halted.discard(ticker)
-                self.engine.orders={k:o for k,o in self.engine.orders.items() if o.ticker!=ticker}
-                for bot in self.strategy.bots.values():
-                    bot.phases.pop(ticker,None);bot.emergency.pop(ticker,None);bot.last_exit.pop(ticker,None)
-                    bot.safety_retries={k for k in bot.safety_retries if k[0]!=ticker}
-                    bot.entered={k for k in bot.entered if k[0]!=ticker};bot.locked={k for k in bot.locked if k[0]!=ticker}
-            if retired:
-                self.rejection_logs={k:v for k,v in getattr(self,'rejection_logs',{}).items() if k[1] not in retired}
-                self.metadata_logs={k:v for k,v in getattr(self,'metadata_logs',{}).items() if k[1] not in retired}
-                self.audit.checkpoint()
+            # Read-only configuration fetches may overlap the execution commit.
+            # Command consumption remains inside the state lock to prevent a
+            # prefetched refill from being applied twice across that commit.
+            mode_row,all_rows=await asyncio.gather(
+                self.audit.durable_io(read_mode,self.store.pool),
+                self.audit.durable_io(self.store.rows,'shadow/bot/',BOT_LIMIT))
+            mode=mode_row.get('mode','demo')
+            async with self.state_mutex():
+                control_started=time.monotonic()
+                await self.audit.durable_io(self.guard)
+                self.experiments.control(all_rows,mode)
+                self.experiments.maintain()
+                rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
+                for row in rows:
+                    p=row['parameters'];bot=self.strategy.bots[p['series']]
+                    enabled=row['progress'].get('desired')=='running' and mode=='demo'
+                    if not enabled and bot.enabled:
+                        for ticker in self.engine.markets:
+                            if ticker.startswith(p['series']+'-'):self.engine.cancel_buys(ticker)
+                    bot.enabled=enabled
+                    if self.revisions.get(p['id']) != p['revision']:
+                        bot.contracts=D(p['contracts'])
+                        for ticker in self.engine.markets:
+                            if ticker.startswith(p['series']+'-') and ticker not in self.engine.settled:
+                                self.strategy.halted.add(ticker);self.engine.cancel_buys(ticker)
+                        self.revisions[p['id']]=p['revision']
+                    self.profiles=[p if old['id']==p['id'] else old for old in self.profiles]
+                commands=await self.audit.durable_io(self.pending_commands)
+                for row in commands:
+                    command=row['parameters']
+                    self.audit.command_key=row['idempotency_key']
+                    if command.get('action')=='reset':
+                        self.reset_folder(command['folder_id'])
+                    else:self.engine.refill(D(command['amount_cents'])/100)
+                    self.audit.command_key=None
+                now=time.time()
+                active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
+                books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
+                fees_ready=0
+                for ticker in active:
+                    try:self.verified_fees.schedule(ticker,now);fees_ready+=1
+                    except Exception:pass
+                legacy_needed=self.spot_required()
+                strategy_books=sum(e.book_fresh(t) for e,f,ps in self.experiments.portfolios.values()
+                    for t,m in e.markets.items() if m['close']>now and (f.owner(t) and f.owner(t).enabled or any(l.ticker==t for l in e.wallet.lots)))
+                state='ready' if (books and fees_ready==len(active) and self.engine.spot.ready(now) if legacy_needed else strategy_books>0) else 'waiting'
+                if time.monotonic()>=self.health_log_at:
+                    self.health_log_at=time.monotonic()+30
+                    print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
+                    print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                    print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
+                        valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
+                    legacy_spot_required=legacy_needed,active_strategy_books=strategy_books,
+                        mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
+                        two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
+                        halted_markets=sum(t in self.strategy.halted for t in active),
+                        prior_halted_markets=sum(t in self.prior_halts for t in active),
+                        spike_cooldown_seconds=max(0,self.engine.safety_until-now),
+                        phase_counts={str(phase):sum(b.phases.get(t)==phase for t in active for b in [self.strategy.owner(t)] if b) for phase in (1,2,3)},
+                        awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
+                            self.engine.markets[t]['close']<=now and t not in self.engine.settled),
+                        spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
+                        input_rejections=getattr(self,'input_rejections',0),
+                        unrelated_lifecycle_dropped=getattr(self,'lifecycle_dropped',0),
+                        valid_cycles=sum(self.engine.wallet.stat(t).valid for t in active),
+                        resting_orders=sum(o.status=='resting' for o in self.engine.orders.values()),
+                        pending_orders=sum(o.status=='pending' for o in self.engine.orders.values()),
+                        open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
+                        real_orders_enabled=False)),flush=True)
+                if time.monotonic()>=self.publish_at:
+                    self.publish_at=time.monotonic()+5
+                    money=money_snapshot(self.engine,self.profiles,time.time())
+                    portfolio=money['portfolio']
+                    orders=money.pop('orders');positions=money.pop('positions')
+                    if time.monotonic()>=getattr(self,'accounting_log_at',0):
+                        self.accounting_log_at=time.monotonic()+30
+                        print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
+                                              real_orders_enabled=False)),flush=True)
+                    await self.audit.durable_io(self.store.put,'health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
+                    experiment_snapshot=self.experiments.snapshot(time.time())
+                    if int(now//60)!=getattr(self,'balance_history_minute',None):
+                        accounts=dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()})
+                        await self.audit.durable_io(record_balances,self.store,accounts,now)
+                        await self.audit.durable_io(record_bot_balances,self.store,accounts,experiment_snapshot,now,positions)
+                        self.balance_history_minute=int(now//60)
+                    await self.audit.durable_io(self.store.put,'shadow/status',dict(at=time.time(),selected=self.selected,
+                        equity=portfolio['equity'],accounting=money,
+                        virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
+                        open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
+                        market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
+                            book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
+                        orders=orders,positions=positions,experiments=experiment_snapshot,monitoring=self.experiments.monitoring_snapshot(now)))
+                # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
+                # execution state in the hot checkpoint; never rewrite years of history.
+                self.engine.prune_terminal_orders()
+                active=set(self.selected.values())
+                pending_ids={item[3] for item in self.engine.pending}
+                retired=[t for t,m in self.engine.markets.items() if m.get('paid') and t not in active and
+                         not any(o.ticker==t and o.id in pending_ids for o in self.engine.orders.values())]
+                for ticker in retired:
+                    self.engine.markets.pop(ticker,None);self.engine.books.pop(ticker,None)
+                    self.verified_fees.cache.pop(ticker,None);self.fee_locks.pop(ticker,None)
+                    self.settlement_checks.pop(ticker,None);self.engine.gap_reasons.pop(ticker,None)
+                    self.engine.fees.pop(ticker,None);self.engine.wallet.stats.pop(ticker,None)
+                    self.engine.closed_reports.discard(ticker);self.engine.settled.discard(ticker)
+                    self.strategy.halted.discard(ticker)
+                    self.engine.orders={k:o for k,o in self.engine.orders.items() if o.ticker!=ticker}
+                    for bot in self.strategy.bots.values():
+                        bot.phases.pop(ticker,None);bot.emergency.pop(ticker,None);bot.last_exit.pop(ticker,None)
+                        bot.safety_retries={k for k in bot.safety_retries if k[0]!=ticker}
+                        bot.entered={k for k in bot.entered if k[0]!=ticker};bot.locked={k for k in bot.locked if k[0]!=ticker}
+                if retired:
+                    self.rejection_logs={k:v for k,v in getattr(self,'rejection_logs',{}).items() if k[1] not in retired}
+                    self.metadata_logs={k:v for k,v in getattr(self,'metadata_logs',{}).items() if k[1] not in retired}
+                    await self.audit.checkpoint_async()
+                if mode=='draining_demo' and not self.engine.wallet.lots and not any(e.wallet.lots for e,f,p in self.experiments.portfolios.values()) and not any(o.status in ('pending','resting') for o in self.engine.orders.values()):
+                    with self.store.pool.connection() as c:
+                        c.execute('SELECT pg_advisory_xact_lock(%s)',(MODE_LOCK,))
+                        current=c.execute("SELECT progress FROM research_job WHERE idempotency_key='trading/mode'").fetchone()
+                        if current and current['progress'].get('mode')=='draining_demo':
+                            write_mode(c,dict(current['progress'],mode='live',demo_drained_at=time.time()))
+                    self.done.set();return
+                self.last_control_ms=(time.monotonic()-control_started)*1000
             if time.time()>=self.maintenance_at:
                 from services.demo.maintenance import maintenance
                 import os
                 self.maintenance_at=time.time()+300
-                await asyncio.to_thread(maintenance,self.store,os.environ,self.outer_stop)
-            if mode=='draining_demo' and not self.engine.wallet.lots and not any(e.wallet.lots for e,f,p in self.experiments.portfolios.values()) and not any(o.status in ('pending','resting') for o in self.engine.orders.values()):
-                with self.store.pool.connection() as c:
-                    c.execute('SELECT pg_advisory_xact_lock(%s)',(MODE_LOCK,))
-                    current=c.execute("SELECT progress FROM research_job WHERE idempotency_key='trading/mode'").fetchone()
-                    if current and current['progress'].get('mode')=='draining_demo':
-                        write_mode(c,dict(current['progress'],mode='live',demo_drained_at=time.time()))
-                self.done.set();return
+                await self.audit.durable_io(maintenance,self.store,os.environ,self.outer_stop)
             await asyncio.sleep(1)
 
     def reset_folder(self,folder):

@@ -183,6 +183,8 @@ class ExperimentSuite:
             and not any(o.status in ('pending','resting') for o in e.orders.values()))
 
     def handle(self,source,payload,now):
+        # These portfolios use Kalshi books, not the legacy BTC spot valve.
+        if source=='gap' and payload.get('reason')=='spot stream disconnected':return
         if source=='set_markets':self.add_set(payload,now);return
         if source=='sports_status':
             ticker=payload['ticker']
