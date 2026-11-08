@@ -140,7 +140,7 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
         for t in ('BTC','WTI'):
             run.engine.add_market(dict(ticker=t,close=1900),FeePolicy())
         run.engine.books['BTC'].sid=999  # Restored connection's obsolete SID.
-        commands=[];events=[];step=0
+        commands=[];events=[];step=0;self_outer=self
         class Socket:
             async def send(self,raw):commands.append(json.loads(raw))
             async def recv(self):
@@ -149,6 +149,9 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 if step==1:return json.dumps(dict(type='subscribed',msg=dict(channel='orderbook_delta',sid=11)))
                 if step==2:return json.dumps(dict(type='subscribed',msg=dict(channel='trade',sid=12)))
                 if step==3:
+                    # The restored/paused copy still has obsolete SID 999, but
+                    # its repair must already target the current book SID 11.
+                    self_outer.assertTrue(any(c['cmd']=='update_subscription' and c['params'].get('action')=='get_snapshot' and c['params']['sid']==11 and 'BTC' in c['params']['market_tickers'] for c in commands))
                     run.selected['b']='WTI'
                     run.engine.books['BTC'].sid=11
                     return json.dumps(dict(type='ok'))

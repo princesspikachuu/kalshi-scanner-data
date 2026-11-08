@@ -240,7 +240,7 @@ class ForwardRun:
                             subscribed.update(additions)
                         if book_sid is not None and time.time()-last_snapshot_request>1:
                             invalid=[(t,books[t]) for t in desired if t in books and not books[t].valid
-                                     and books[t].sid == book_sid and self.resnapshot_allowed(t)]
+                                     and t in subscribed and self.resnapshot_allowed(t)]
                             if invalid:
                                 await ws.send(json.dumps(dict(id=ident,cmd='update_subscription',params=dict(
                                     sid=book_sid,market_tickers=[t for t,b in invalid],action='get_snapshot'))))
