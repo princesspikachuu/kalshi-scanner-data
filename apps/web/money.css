@@ -99,3 +99,9 @@
 .market-type-folder[open]>summary .market-type-disclosure:after{content:'▴'}
 .market-type-folder .bot-list{margin-top:10px}
 @media(max-width:650px){.market-type-folder{padding-left:10px;padding-right:10px}.market-type-folder>summary{gap:8px}.market-type-name{flex:1 1 170px}}
+
+.market-type-folder>summary{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.market-type-heading{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
+.market-type-heading .market-type-name{flex:1 1 180px}
+.market-type-values strong{font-size:22px}
+.market-type-coverage{font-size:11px;line-height:1.5}
