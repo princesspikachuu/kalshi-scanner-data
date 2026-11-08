@@ -13,7 +13,7 @@ from .market_maker import MarketMaker,MM_FOLDERS,activity_deadline
 from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
-from .monitoring import MonitoringBudget,protected,category as market_category
+from .monitoring import MonitoringBudget,protected,maker_entry_limit,category as market_category
 from .discovery_budget import CATEGORY_LIMITS
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
@@ -162,13 +162,17 @@ class ExperimentSuite:
         probes=active-care
         markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
         legacy={t for t,m in self.host.engine.markets.items() if m['close']>now}
-        return dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
+        stats=dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
             subscribed_markets=len(active|legacy),legacy_markets=len(legacy),coalesced_inputs=sum(getattr(e,'coalesced_inputs',0) for e,_,_ in self.portfolios.values()),filtered_quote_updates=sum(getattr(e,'filtered_quote_updates',0) for e,_,_ in self.portfolios.values()),
             categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set','market_maker')},
             rotated_markets=len(self.rotation_exclusions))
+        stats['maker_entry_limit']=maker_entry_limit(stats)
+        stats['maker_slots_free']=max(0,stats['maker_entry_limit']-stats['categories']['market_maker']) if stats['admitting'] else 0
+        return stats
     def search_capacity(self,category,now,slots=1):
         stats=self.monitoring_snapshot(now)
-        return (stats['admitting'] and stats['categories'].get(category,0)+slots<=(4 if category=='complete_set' else min(CATEGORY_LIMITS.get(category,stats['per_category']),stats['per_category'])) and
+        limit=maker_entry_limit(stats) if category=='market_maker' else (4 if category=='complete_set' else min(CATEGORY_LIMITS.get(category,stats['per_category']),stats['per_category']))
+        return (stats['admitting'] and stats['categories'].get(category,0)+slots<=limit and
             stats['entry_markets']+slots<=stats['entry_candidates'] and stats['subscribed_markets']+slots<=stats['total'])
     def extra_capacity(self,tickers,now):
         additions=set(tickers)-set(self.extra)
@@ -221,6 +225,21 @@ class ExperimentSuite:
     @staticmethod
     def flat_portfolio(e):
         return not e.wallet.lots and not any(o.status in ('pending','resting') for o in e.orders.values())
+    @staticmethod
+    def skip_unrelated_flat_maker(e,source,payload):
+        # Preserve every relevant frame and all active execution. Only a flat
+        # portfolio with no delayed work may skip an unrelated transport frame.
+        if source!='kalshi' or payload.get('type') not in ('orderbook_snapshot','orderbook_delta','trade'):return False
+        if payload.get('msg',{}).get('market_ticker') in e.markets or e.pending or not ExperimentSuite.flat_portfolio(e):return False
+        sid,seq=payload.get('sid'),payload.get('seq')
+        if sid is None or seq is None:return False
+        previous=e.sequences.get(sid)
+        if payload.get('type')!='orderbook_snapshot' and previous is not None:
+            if seq<=previous:return True
+            if seq!=previous+1:return False  # Normal engine path invalidates every affected book.
+        e.sequences[sid]=seq
+        e.unrelated_inputs_skipped=getattr(e,'unrelated_inputs_skipped',0)+1
+        return True
     def coalesce_flat_input(self,e,source,payload,now):
         # Only the two newly introduced experiments use this path. The primary
         # scalper already verified this exact shared subscription frame.
@@ -287,7 +306,7 @@ class ExperimentSuite:
             m=payload['market'];ticker=m['ticker']
             discovery=getattr(self,'maker_discovery',{})
             row=discovery.get('candidates',{}).get(ticker)
-            if not self.extra_capacity([ticker],now):
+            if (ticker not in self.extra and not self.search_capacity('market_maker',now)) or not self.extra_capacity([ticker],now):
                 if row is not None:
                     row.update(reason='shared_admission_rejected_capacity',retry_at=now+30)
                     discovery['state']='Verified candidate deferred by current capacity'
@@ -329,6 +348,7 @@ class ExperimentSuite:
                 if getattr(f,'_resource_paused',None) is not resource_paused:
                     for bot in f.bots.values():bot.resource_paused=resource_paused
                     f._resource_paused=resource_paused
+            if folder in MM_FOLDERS and self.skip_unrelated_flat_maker(e,source,payload):continue
             if folder in ('scalper_momentum','scalper_dislocation'):
                 if source=='clock':
                     pending=getattr(e,'coalesced_tickers',set())

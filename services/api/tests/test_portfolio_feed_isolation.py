@@ -3,6 +3,7 @@ import asyncio,unittest
 from unittest.mock import Mock
 from services.paper_demo.shadow.host import HostedRun
 from services.paper_demo.shadow.core import Engine,FeePolicy
+from services.paper_demo.shadow.market_maker import MM_FOLDERS
 from services.api.tests.test_strategy_scope import ScopeTests
 
 class Isolation(unittest.TestCase):
@@ -14,7 +15,9 @@ class Isolation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'stale book event'):
             suite.handle('kalshi',dict(type='orderbook_delta',sid=2,seq=5,msg=dict(market_ticker='KXBTC15M-test')),1000)
         self.assertIn('favorites',seen)
-        self.assertEqual(len(seen),len(suite.portfolios)-1)
+        self.assertEqual(set(seen),set(suite.portfolios)-{first,*MM_FOLDERS})
+        for folder in MM_FOLDERS:
+            self.assertEqual(suite.portfolios[folder][0].sequences[2],5)
 
     def test_healthy_favorite_book_does_not_mask_legacy_resnapshot(self):
         from types import SimpleNamespace

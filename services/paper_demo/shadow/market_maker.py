@@ -189,7 +189,7 @@ async def maker_once(host):
     s['candidates']=dict(list(s['candidates'].items())[:100])
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),inspected_at=r.get('inspected_at'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
-    if len(maker_active)>=2 or not suite.search_capacity('market_maker',time.time()):
+    if not suite.search_capacity('market_maker',time.time()):
         s['state']='Shared capacity occupied; existing strategies preserved';scan_report(s,now,len(result.get('events',[])),len(maker_active));return
     checked=0;s['state']='Inspecting candidates'
     for ticker,row in sorted(s['candidates'].items(),key=lambda item:(item[1].get('inspected_at',0),-item[1]['score'])):

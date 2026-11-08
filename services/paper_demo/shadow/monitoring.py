@@ -1,6 +1,14 @@
 """Bounded admission for new candidates; existing exposure is never evicted."""
 from collections import deque
 
+def maker_entry_limit(stats):
+    own=stats['categories'].get('market_maker',0)
+    # Leave two additional discovery slots available to other strategies.
+    other_entries=max(0,stats['entry_markets']-own)
+    other_subscriptions=max(0,stats['subscribed_markets']-own)
+    return max(0,min(8+4*stats['level'],stats['entry_candidates']-other_entries-2,
+        stats['total']-other_subscriptions-2))
+
 def category(m):
     return 'market_maker' if m.get('market_maker') else m.get('weather_category') or ('sports' if m.get('sports') else 'hourly' if m.get('hourly_price') else 'complete_set')
 
