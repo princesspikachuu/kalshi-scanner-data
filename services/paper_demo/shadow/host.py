@@ -256,6 +256,7 @@ class HostedRun(ForwardRun):
                     active_orders=sum(o.status in ('pending','resting') for o in engine.orders.values()),
                     position_lots=len(engine.wallet.lots),orders_generated_total=engine.serial,
                     coalesced_inputs_total=getattr(engine,'coalesced_inputs',0),
+                    unrelated_inputs_skipped_total=getattr(engine,'unrelated_inputs_skipped',0),
                     observations_total=sum(getattr(b,'research',{}).get('totals',{}).get('opportunities',0) for b in fleet.bots.values()),
                     round_trips_total=sum(getattr(b,'research',{}).get('totals',{}).get('completed',0) for b in fleet.bots.values()))
         print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
