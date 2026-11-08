@@ -31,7 +31,20 @@ def workspace_response(payload,*,compressed=False):
             folder['accounting']={k:v for k,v in account.items() if k not in ('current_cycles','bots')}
         folder.pop('bots',None)
         folders.append(folder)
-    result=JSONResponse(dict(payload,status=status,folders=folders))
+    # Experimental metrics reference the same research object for every period.
+    # Transmit that evidence once in bot.experiment, rather than expanding it
+    # eight more times into the financial summary cards.
+    metric_fields=('gross_profit','fees','net_realized_pnl','win_rate','cycles','excluded_cycles')
+    bots=[]
+    for source in payload.get('bots',[]):
+        bot=dict(source)
+        if bot.get('experiment') is not None:
+            for field in ('metrics','financial_metrics'):
+                if field in bot:
+                    bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
+                        for period,metric in bot[field].items()}
+        bots.append(bot)
+    result=JSONResponse(dict(payload,status=status,folders=folders,bots=bots))
     raw=result.body
     digest=hashlib.sha256(raw).hexdigest()
     if compressed:
