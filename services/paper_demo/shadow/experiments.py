@@ -138,12 +138,15 @@ class ExperimentSuite:
         return not owners or not all(b.attempts.get(ticker,{}).get('first') for b in owners)
     def monitoring_snapshot(self,now):
         limits=self.monitoring.limits(now)
-        care={t for t in self.extra if protected(self,t,now)}
-        probes=set(self.extra)-care
+        active={t for t,m in self.feed_markets().items() if m['close']>now}
+        # Complete-set feeds have their own portfolio, outside feed_markets().
+        active.update(t for e,_,_ in self.portfolios.values() for t,m in e.markets.items() if t in self.extra and m['close']>now and not m.get('entry_parked') and not m.get('paid'))
+        care={t for t in active if protected(self,t,now)}
+        probes=active-care
         markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
         legacy=sum(m['close']>now for m in self.host.engine.markets.values())
         return dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
-            subscribed_markets=len(self.extra)+legacy,legacy_markets=legacy,
+            subscribed_markets=len(active)+legacy,legacy_markets=legacy,
             categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set')},
             rotated_markets=len(self.rotation_exclusions))
     def search_capacity(self,category,now,slots=1):
@@ -157,20 +160,31 @@ class ExperimentSuite:
         return (stats['admitting'] and all(self.candidate_allowed(t,now) for t in additions) and
             stats['subscribed_markets']+len(additions)<=stats['total'] and
             stats['entry_markets']+len(additions)<=stats['entry_candidates'])
+    def reclaim_idle_candidate(self,now):
+        # Runs on the serialized engine path. Never revoke a live order or lot
+        # merely to admit a new game, including pending transport arrivals.
+        for t,m in sorted(self.feed_markets().items(),key=lambda item:item[1].get('discovered_at',now)):
+            if m['close']<=now or m.get('sports') or now-m.get('discovered_at',now)<30 or protected(self,t,now):continue
+            if any(o.ticker==t and o.status in ('pending','resting') for e,_,_ in self.portfolios.values() for o in e.orders.values()):continue
+            self.park_candidate(t,m,now)
+            return True
+        return False
+    def park_candidate(self,t,m,now):
+        self.rotation_exclusions[t]=min(m['close'],now+60)
+        for folder,(e,f,ps) in self.portfolios.items():
+            if t not in e.markets or folder=='complete_set':continue
+            b=f.owner(t);a=b.attempts.get(t,{}) if b else {}
+            if a and not a.get('first') and not a.get('recorded'):
+                if isinstance(b,SequentialStrategy):b.finish(t)
+                else:a['recorded']=True
+            e.markets[t]['entry_parked']=True;e.books[t].valid=False
+        self.extra.pop(t,None)
     def rotate_candidates(self,now):
         self.rotation_exclusions={t:end for t,end in self.rotation_exclusions.items() if end>now}
         for t,m in list(self.feed_markets().items()):
             if now-m.get('discovered_at',now)<120 or protected(self,t,now):continue
             if any(o.ticker==t and o.status in ('pending','resting') for e,_,_ in self.portfolios.values() for o in e.orders.values()):continue
-            self.rotation_exclusions[t]=min(m['close'],now+60)
-            for folder,(e,f,ps) in self.portfolios.items():
-                if t not in e.markets or folder=='complete_set':continue
-                b=f.owner(t);a=b.attempts.get(t,{}) if b else {}
-                if a and not a.get('first') and not a.get('recorded'):
-                    if isinstance(b,SequentialStrategy):b.finish(t)
-                    else:a['recorded']=True
-                e.markets[t]['entry_parked']=True;e.books[t].valid=False
-            self.extra.pop(t,None)
+            self.park_candidate(t,m,now)
     def prepare(self,e,source,payload,now):
         targets={e.orders[item[3]].ticker for item in e.pending if item[0]<=now}
         if source=='clock':targets.update(e.books)
@@ -202,6 +216,8 @@ class ExperimentSuite:
                     e.advance(now);e.markets[ticker].update(payload['gate']);f.step(ticker)
             return
         if source in ('weather_market','sports_market','hourly_market'):
+            if source=='sports_market' and payload['market'].get('sports_live') and self.candidate_allowed(payload['market']['ticker'],now) and not self.extra_capacity([payload['market']['ticker']],now):
+                if self.monitoring_snapshot(now)['admitting']:self.reclaim_idle_candidate(now)
             if not self.extra_capacity([payload['market']['ticker']],now):return
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
         errors=[]

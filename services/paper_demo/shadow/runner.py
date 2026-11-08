@@ -188,6 +188,15 @@ class ForwardRun:
 
     def resnapshot_allowed(self,ticker):return True
 
+    def subscription_tickers(self,now):
+        legacy={t for t in self.selected.values() if t in self.engine.markets
+                and self.engine.markets[t]['close']>now and not self.engine.markets[t].get('paid')}
+        suite=getattr(self,'experiments',None)
+        if suite is None:return legacy
+        active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
+                if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
+        return legacy | (set(suite.extra) & active)
+
     async def kalshi(self):
         delay = .25
         while not self.done.is_set():
@@ -217,8 +226,7 @@ class ForwardRun:
                             pong=await ws.ping();ping_sent=time.monotonic()
                         # Keep lifecycle subscription across rolls to avoid missing settlement events.
                         books=self.subscription_books() if hasattr(self,'subscription_books') else self.engine.books
-                        desired=({t for t in self.selected.values() if t in self.engine.markets} |
-                                 set(getattr(getattr(self,'experiments',None),'extra',{})))
+                        desired=self.subscription_tickers(time.time())
                         additions=desired-subscribed
                         removals=subscribed-desired
                         if removals and book_sid is not None and trade_sid is not None:

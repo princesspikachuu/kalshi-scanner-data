@@ -2,6 +2,7 @@
 import asyncio,json,time
 from decimal import Decimal as D,ROUND_FLOOR
 from .runner import ts
+from .schedules import session_wake
 from .discovery_budget import candidate_markets,next_profile
 
 
@@ -32,6 +33,12 @@ async def hourly_once(host):
         p,cursor=next_profile(suite,ps,blocked,suite.hourly_cursor)
         if not p:break
         suite.hourly_cursor=cursor;series=p['series'];scan['checked_series']+=1
+        wake=session_wake(series,now)
+        if wake is not None:
+            suite.hourly_retry_at[series]=wake
+            suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,next_check_at=wake,
+                reason='Cash-index session closed · scheduled to resume before the next opening')
+            continue
         metadata=suite.hourly_metadata.get(series)
         if not metadata or now-metadata['at']>=900:
             raw=await asyncio.to_thread(host.verified_data.call,'GET','/series/'+series)

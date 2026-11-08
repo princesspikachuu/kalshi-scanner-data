@@ -1,6 +1,7 @@
 """Production stream recovery must stay scoped and preserve invalid-cycle evidence."""
 import asyncio
 import json
+import time
 import unittest
 from decimal import Decimal as D
 from unittest.mock import Mock, patch, AsyncMock
@@ -120,7 +121,7 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
         run.engine=Engine(Mock());run.engine.advance(1000)
         run.verified_fees=Mock();run.verified_fees.schedule.return_value=('quadratic',1)
         for t in ('BTC','WTI'):
-            run.engine.add_market(dict(ticker=t,close=1900),FeePolicy())
+            run.engine.add_market(dict(ticker=t,close=time.time()+900),FeePolicy())
             run.engine.books[t].valid=True
         def rejected(*args):
             run.done.set()
@@ -138,7 +139,7 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
         run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock()
         run.engine=Engine(Mock());run.selected={'a':'BTC'}
         for t in ('BTC','WTI'):
-            run.engine.add_market(dict(ticker=t,close=1900),FeePolicy())
+            run.engine.add_market(dict(ticker=t,close=time.time()+900),FeePolicy())
         run.engine.books['BTC'].sid=999  # Restored connection's obsolete SID.
         commands=[];events=[];step=0;self_outer=self
         class Socket:
