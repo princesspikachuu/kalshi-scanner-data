@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -324,4 +324,28 @@ test('failed initial requests replace the checking status and remain retryable',
  assert.equal(nodes.get('health').textContent,'Dashboard data unavailable');
  assert.ok(nodes.get('accountSummary').innerHTML.includes('Retrying automatically'));
  assert.ok(nodes.get('message').textContent.includes('timed out'));
+});
+
+
+test('Favorites category research weights contracts and fees while keeping series sides clocks and horizons separate',()=>{
+ const base={series:'WX',market_type:'weather_daily',side:'yes',clock:'market_close',horizon:'5–10m',price:'.90',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9.1',net:'-.1',unverified:'0'};
+ const rows=favoriteCategoryRows([base,{...base,price:'.95',contracts:'2',closed:'2',resolved:'2',winners:'2',cost:'1.9',net:'.1'},
+ {...base,horizon:'1–2h'},{...base,series:'SPORTS',market_type:'sports'},{...base,side:'no'},{...base,clock:'estimated_game_end'}]);
+ assert.equal(rows.length,5);const combined=rows.find(r=>r.series==='WX'&&r.side==='yes'&&r.clock==='market_close'&&r.horizon==='5–10m');
+ assert.equal(combined.band,'90–99¢');assert.equal(combined.contracts,12);assert.equal(combined.resolved,12);assert.equal(combined.winners,11);assert.equal(combined.cost,11);assert.equal(combined.net,0);
+});
+test('Favorites research is accessible at folder level with honest pending outcomes and escaped bot labels',()=>{
+ const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.name='<img onerror=x>';
+ bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'10–15m',price:'.90',contracts:'4',closed:'0',resolved:'0',winners:'0',cost:'3.6',net:'0'}];
+ const {nodes}=setup(d),html=nodes.get('groups').innerHTML;
+ for(const text of ['Research data · price category × time remaining','90–99¢','10–15m left','no closed contracts','Bids are still gathering data','independent of the P/L time selector'])assert.ok(html.includes(text),text);
+ assert.ok(!html.includes('<img onerror'));assert.ok(!html.includes('NaN'));
+ assert.ok(html.indexOf('Research data')<html.indexOf('data-market="favorites"'));
+});
+test('Favorites research expansion survives refresh and reload',()=>{
+ const key='favorites-research',detail={dataset:{research:key},open:true,isConnected:true},storage=new Map();
+ const {context}=setup(fixture(),{storage,queries:{'details[data-research]':[detail]}});
+ detail.ontoggle({target:detail});vm.runInContext('draw()',context);
+ assert.equal(storage.get('moneytree-research-views'),'["favorites-research"]');
+ const {nodes}=setup(fixture(),{storage});assert.match(nodes.get('groups').innerHTML,/data-research="favorites-research" open/);
 });

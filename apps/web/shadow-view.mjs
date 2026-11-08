@@ -1,5 +1,28 @@
 import {escapeHTML as e,botSummaryPeriodMarkup} from './demo-client.mjs';
 export const dollars=value=>value===null||value===undefined?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(value));
+export function favoriteCategoryRows(rows=[]){
+ const groups=new Map(),bands=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
+ for(const r of rows){
+  if(r.price==null||!Number.isFinite(Number(r.price)))continue;
+  const low=Math.floor((Number(r.price)*100+1e-7)/10)*10;
+  const key=JSON.stringify([r.series,r.market_type,r.side,r.clock,low,r.horizon]);
+  if(!groups.has(key))groups.set(key,{series:r.series,market_type:r.market_type,side:r.side,clock:r.clock,low,band:`${low}–${low+9}¢`,horizon:r.horizon,contracts:0,closed:0,resolved:0,winners:0,cost:0,net:0,unverified:0});
+  const g=groups.get(key);
+  for(const field of ['contracts','closed','resolved','winners','cost','net','unverified']){
+   const n=Number(r[field]??0);if(Number.isFinite(n))g[field]+=n;
+  }
+ }
+ return [...groups.values()].sort((a,b)=>a.series.localeCompare(b.series)||a.side.localeCompare(b.side)||a.clock.localeCompare(b.clock)||a.low-b.low||bands.indexOf(a.horizon)-bands.indexOf(b.horizon));
+}
+export function favoriteResearchMarkup(bots,open=new Set()){
+ const detail=(key,label,body)=>`<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${label}</summary>${body}</details>`;
+ const contents=bots.map(bot=>{
+  const rows=favoriteCategoryRows(bot.experiment?.entry_timing);
+  const body=rows.length?`<div class="comparison-grid">${rows.map(r=>`<article class="comparison-card"><h3>${e(r.band)} · ${e(r.horizon)} left · ${e(String(r.side).toUpperCase())}</h3><p class="small">${e(r.series)} · ${e(r.market_type)} · ${r.clock==='estimated_game_end'?'Estimated game end':'Market close'}</p><dl><dt>Purchased / still open</dt><dd>${r.contracts} / ${Math.max(0,r.contracts-r.closed)} contracts</dd><dt>Outcome wins / losses · settled</dt><dd>${r.winners} / ${r.resolved-r.winners} contracts</dd><dt>Settled contract win rate</dt><dd>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</dd><dt>Average entry cost · including fees</dt><dd>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'¢':'—'}</dd><dt>Realized P/L · after fees and exits</dt><dd class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</dd></dl>${r.unverified>0?`<p class="small">${r.unverified} contracts lack verified entry coverage.</p>`:''}</article>`).join('')}</div>`:'<p class="small">No recorded price-and-time entries yet. Older trades without entry timing cannot be placed in these categories.</p>';
+  return detail('favorites-research-'+bot.id,`${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed categories`,body);
+ }).join('');
+ return detail('favorites-research','Research data · price category × time remaining',`<p class="small">All collected entry-timing data for each bot. Price categories are 70–79¢, 80–89¢ and 90–99¢ (other observed prices appear too). Time remaining is measured when the purchase fills. Market series, sides and clocks stay separate. These research results are independent of the P/L time selector. Contract counts are not independent event counts; unsettled outcomes remain pending. Win rates measure settlement outcomes, while P/L includes actual exits. Bids are still gathering data and do not automatically adjust.</p>${contents||'<p class="small">No Favorites bots match this search.</p>'}`);
+}
 export function favoriteTimingMarkup(rows){
  if(!rows?.length)return '<p class="small">Price × time-to-close research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
  const num=v=>v==null?'—':Number(v).toFixed(2);

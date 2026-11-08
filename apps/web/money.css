@@ -107,3 +107,5 @@
 .market-type-coverage{font-size:11px;line-height:1.5}
 
 .favorite-timing{margin:18px 0}.favorite-timing>summary{font-weight:700;cursor:pointer}.favorite-timing .comparison-grid{margin-top:12px}
+
+.favorite-research{margin:14px 0;padding:12px;border:1px solid var(--border,#d9e0df);border-radius:12px;min-width:0}.favorite-research>summary{font-weight:700;cursor:pointer;overflow-wrap:anywhere}.favorite-research .comparison-grid{margin-top:12px}.favorite-research .comparison-card h3{overflow-wrap:anywhere}
