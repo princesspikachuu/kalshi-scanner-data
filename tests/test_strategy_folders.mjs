@@ -396,3 +396,12 @@ test('new scalper modes and market maker use existing gateway paper controls',as
   assert.equal(result.status,200);assert.ok(forwarded);
  }
 });
+
+test('maker discovery displays ranked candidates and actual admission rejection reasons',()=>{
+ const data=fixture(),base=data.bots[0];
+ data.folders.push({id:'market_maker',name:'Market Maker',strategy:'market_maker',scanner:{state:'Candidate inspection complete',reads:5,ranked:[{ticker:'<candidate>',category:'politics',score:.12345,reason:'insufficient_executed_trade_frequency'}]}});
+ data.bots.push({...base,id:'market_maker_politics',name:'Politics',series:'MM_POLITICS',strategy:'market_maker',market_category:'politics',folder_id:'market_maker'});
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ for(const value of ['Market Maker discovery','1 ranked candidates','5 shared-budget data reads','insufficient executed trade frequency','&lt;candidate','0.1235'])assert.ok(html.includes(value),value);
+ assert.ok(!html.includes('<candidate>'));
+});
