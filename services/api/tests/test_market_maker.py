@@ -237,3 +237,12 @@ class LongRunningResourceTests(unittest.TestCase):
         self.assertTrue(all('POL-X' not in suite.portfolios[folder][0].markets for folder in MM_FOLDERS))
         self.assertEqual(first.research['totals']['completed'],7)
         self.assertEqual(suite.snapshot(700)[MM_FOLDERS[0]]['bots']['market_maker_politics']['completed'],7)
+
+
+class MakerVariantSelectionTests(unittest.TestCase):
+    def test_discovery_sees_every_experimental_configuration_without_duplicate_streams(self):
+        rows=[dict(parameters=dict(p,revision=1),progress=dict(desired='running')) for p in profiles()]
+        host=Mock();host.audit=QuietAudit();suite=ready_suite(host,rows)
+        choices=suite.enabled_profiles('market_maker')
+        self.assertEqual(len(choices),8);self.assertEqual(len({p['series'] for p in choices}),4)
+        self.assertEqual({p['config']['min_spread'] for p in choices},{.02,.03})

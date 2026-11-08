@@ -110,7 +110,7 @@ class ExperimentSuite:
         found={}
         for e,f,ps in self.portfolios.values():
             for p in ps:
-                if p.get('asset')==asset and f.bots[p['series']].enabled and not p.get('retired'):found.setdefault(p['series'],p)
+                if p.get('asset')==asset and f.bots[p['series']].enabled and not p.get('retired'):found.setdefault(p['id'] if asset=='market_maker' else p['series'],p)
         return list(found.values())
     def feed_markets(self):
         return {t:m for e,f,ps in self.portfolios.values() for t,m in e.markets.items()

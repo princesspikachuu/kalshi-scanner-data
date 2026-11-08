@@ -391,7 +391,7 @@ class HostedRun(ForwardRun):
                             observations=sum(v['opportunities'] for v in totals),submitted=sum(v['submitted'] for v in totals),
                             entry_fills=sum(v['entry_fills'] for v in totals),completed=sum(v['completed'] for v in totals),
                             carryovers=sum(v['settlement_carryovers'] for v in totals),
-                            reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets}}),
+                            reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets} or folder in MM_FOLDERS and any(m.get('bot_id')==b.profile['id'] for m in se.markets.values())}),
                             real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                         valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),

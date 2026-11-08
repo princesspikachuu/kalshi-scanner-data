@@ -147,7 +147,7 @@ async def maker_once(host):
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if len(maker_active)>=2 or not suite.search_capacity('market_maker',time.time()):s['state']='Shared capacity occupied; existing strategies preserved';return
-    checked=0
+    checked=0;s['state']='Inspecting candidates'
     for ticker,row in s['candidates'].items():
         if ticker in active or now<row.get('retry_at',0):continue
         ps=[p for p in choices if p['market_category']==row['category']]
@@ -170,7 +170,9 @@ async def maker_once(host):
             maker_score=row['score'],trades_24h=count,scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
             incentives=s['incentives'].get(ticker,[]),price_ranges=raw.get('price_ranges',[])),taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
         row['reason']='submitted_for_shared_monitoring';s['state']='Verified candidate submitted';break
-    print(json.dumps(dict(event='market_maker_scan',at=now,state=s.get('state'),reads=s['reads'],ranked=s.get('ranked',[]),shared_active=len(maker_active),reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
+    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
+    if s.get('state')!='Verified candidate submitted':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
+    print(json.dumps(dict(event='market_maker_scan',at=now,listed_events=len(result.get('events',[])),candidate_count=len(s['candidates']),state=s.get('state'),reads=s['reads'],ranked=s.get('ranked',[]),shared_active=len(maker_active),reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
 
 async def discover_maker(host):
     while not host.done.is_set():
