@@ -758,6 +758,7 @@ class Engine:
     def handle(self, source: str, payload: dict, now: float):
         # Execute due actions against the last causally observed book BEFORE a newer event.
         changed={self.orders[item[3]].ticker for item in self.pending if item[0]<=now}
+        before_quote=None
         self.advance(now)
         if source == 'market':
             changed.add(payload['market']['ticker'])
@@ -804,7 +805,11 @@ class Engine:
         elif source == 'kalshi':
             kind, msg = payload.get('type'), payload.get('msg', {})
             ticker = msg.get('market_ticker')
-            if ticker in self.markets:changed.add(ticker)
+            if ticker in self.markets:
+                if kind=='orderbook_delta' and getattr(self,'filter_unchanged_quotes',False):
+                    book=self.books[ticker];prices=tuple(book.bid(side) for side in ('yes','no'))
+                    before_quote=(prices,tuple(book.levels[side].get(price,ZERO) for side,price in zip(('yes','no'),prices)))
+                else:changed.add(ticker)
             sid, seq = payload.get('sid'), payload.get('seq')
             previous_seq = self.sequences.get(sid)
             if sid is not None and seq is not None:
@@ -845,6 +850,12 @@ class Engine:
                         self.cancel_buys(ticker)
                     elif msg['event_type'] in ('deactivated','close_date_updated'):
                         self.data_gap(ticker, msg['event_type'])
+        if before_quote is not None:
+            book=self.books[ticker];prices=tuple(book.bid(side) for side in ('yes','no'))
+            quantities=tuple(book.levels[side].get(price,ZERO) for side,price in zip(('yes','no'),prices))
+            material=prices!=before_quote[0] or any(abs(q-old)>=max(D(1),old/4) for q,old in zip(quantities,before_quote[1]))
+            if material:changed.add(ticker)
+            else:self.filtered_quote_updates=getattr(self,'filtered_quote_updates',0)+1
         if source == 'clock':
             for ticker, book in self.books.items():
                 if self.now < self.markets[ticker]['close'] and book.valid and (
