@@ -295,7 +295,10 @@ class ExperimentSuite:
                 e.handle('market',dict(payload,market=dict(m,bot_id=profile['id'],bot_name=profile['name'],bot_revision=profile['revision'],strategy_version=profile['version'])),now)
             return
         errors=[]
-        resource_paused=not self.monitoring.limits(now)['admitting']
+        # Runtime telemetry is timestamped after durable commits using wall
+        # time. A queued observation predates that commit and cannot be used
+        # to decide whether those operational measurements are fresh.
+        resource_paused=not self.monitoring.limits(time.time())['admitting']
         for folder,(e,f,ps) in self.portfolios.items():
             if getattr(self.host,'suspend_idle_feeds',False) is True:
                 idle=self.idle_feed(e,f)
