@@ -24,7 +24,8 @@ class WorkspaceTransport(unittest.TestCase):
         with self.assertRaises(ValueError):workspace_response(dict(status={},folders=[],bots=[],invalid=float('nan')))
     def test_repeated_research_above_transport_limit_is_sent_once(self):
         import base64,gzip
-        research=dict(cells=[dict(net='1',dimensions=dict(underlying='BTC'),evidence='x'*1200) for _ in range(1000)])
+        research=dict(cells=[dict(net='1',dimensions=dict(underlying='BTC')) for _ in range(1000)],
+            config=dict(research_note='x'*1200000))
         metric=dict(gross_profit='12',fees='2',net_realized_pnl='10',win_rate='50',cycles=20,excluded_cycles=1,
             scalper=research,entry_timing=[dict(net='10')])
         periods={p:metric for p in ('all','1H','6H','24H')}
@@ -40,6 +41,19 @@ class WorkspaceTransport(unittest.TestCase):
         for field in ('metrics','financial_metrics'):
             for summary in bot[field].values():
                 self.assertEqual(summary,dict(gross_profit='12',fees='2',net_realized_pnl='10',win_rate='50',cycles=20,excluded_cycles=1))
+        self.assertEqual(payload,original)
+
+    def test_research_cells_keep_all_rendered_summary_fields_without_mutating_full_evidence(self):
+        from services.paper_demo.shadow.scalper import bucket
+        cell=dict(bucket(),dimensions=dict(underlying='BTC',horizon='3–5m',price_tier='30–39¢'),
+            completed=5,win_rate=60,net=.12,average_net=.024,entry_quantity=10,closed_quantity=8,
+            winning_quantity=5,entry_cost=3.1,holding_seconds=35)
+        payload=dict(status={},folders=[],bots=[dict(id='scalper',experiment=dict(scalper=dict(cells=[cell],totals=cell)))])
+        original=deepcopy(payload);body=workspace_response(payload).body;result=json.loads(body)
+        sent=result['bots'][0]['experiment']['scalper']
+        self.assertEqual(sent['totals'],cell)
+        self.assertEqual(sent['cells'],[{k:cell[k] for k in ('dimensions','completed','win_rate','net','average_net',
+            'entry_quantity','closed_quantity','winning_quantity','entry_cost','holding_seconds')}])
         self.assertEqual(payload,original)
     def test_negotiated_compression_preserves_large_unicode_payload_and_embedded_checksum(self):
         import base64,gzip

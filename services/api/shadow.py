@@ -1,5 +1,5 @@
 """Owner-authenticated shadow controls and durable results; virtual money only."""
-import csv,io,json,time,hashlib,gzip,base64,math
+import csv,io,json,time,hashlib,gzip,base64,math,re
 from uuid import uuid4
 from decimal import Decimal as D
 from fastapi import Request,Response,HTTPException
@@ -36,10 +36,17 @@ def workspace_response(payload,*,compressed=False,request_started=None):
     # Transmit that evidence once in bot.experiment, rather than expanding it
     # eight more times into the financial summary cards.
     metric_fields=('gross_profit','fees','net_realized_pnl','win_rate','cycles','excluded_cycles')
+    cell_fields={'dimensions','completed','win_rate','net','average_net','entry_quantity','closed_quantity',
+        'winning_quantity','entry_cost','holding_seconds'}
     bots=[]
     for source in payload.get('bots',[]):
         bot=dict(source)
         if bot.get('experiment') is not None:
+            experiment=bot['experiment']
+            if experiment.get('scalper') is not None:
+                research=experiment['scalper']
+                bot['experiment']=dict(experiment,scalper=dict(research,
+                    cells=[{k:v for k,v in cell.items() if k in cell_fields} for cell in research.get('cells',[])]))
             for field in ('metrics','financial_metrics'):
                 if field in bot:
                     bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
@@ -206,6 +213,17 @@ def install_shadow(app,auth,mutate,pool):
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
             pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done'))),
             compressed=request.headers.get('x-pocket-workspace-encoding')=='gzip-base64-v1',request_started=request_started)
+
+    @app.get('/demo/shadow/research/{identifier}')
+    def research_details(identifier:str,request:Request):
+        auth(request);query(request)
+        if not re.fullmatch('[a-z0-9_]{1,40}',identifier):raise HTTPException(422,'Invalid bot')
+        row=store.get('shadow/status');status=row['progress'] if row else {}
+        for folder in status.get('experiments',{}).values():
+            research=folder.get('bots',{}).get(identifier,{}).get('scalper')
+            if research is not None:
+                return dict(contract='demo-v1',bot_id=identifier,at=status.get('at'),research=research,real_orders_enabled=False)
+        raise HTTPException(404,'Research not available')
 
     class Change(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
