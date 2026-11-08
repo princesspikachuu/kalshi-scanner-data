@@ -162,7 +162,7 @@ class ExperimentSuite:
         markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
         legacy={t for t,m in self.host.engine.markets.items() if m['close']>now}
         return dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
-            subscribed_markets=len(active|legacy),legacy_markets=len(legacy),
+            subscribed_markets=len(active|legacy),legacy_markets=len(legacy),coalesced_inputs=sum(getattr(e,'coalesced_inputs',0) for e,_,_ in self.portfolios.values()),
             categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set','market_maker')},
             rotated_markets=len(self.rotation_exclusions))
     def search_capacity(self,category,now,slots=1):
@@ -214,6 +214,50 @@ class ExperimentSuite:
                 if e.books[ticker].valid:e.data_gap(ticker,'current fee schedule unverified')
                 if source=='kalshi' and payload.get('msg',{}).get('market_ticker')==ticker:return dict(payload,type='fee_blocked')
         return payload
+
+    @staticmethod
+    def flat_portfolio(e):
+        return not e.wallet.lots and not any(o.status in ('pending','resting') for o in e.orders.values())
+    def coalesce_flat_input(self,e,source,payload,now):
+        # Only the two newly introduced experiments use this path. The primary
+        # scalper already verified this exact shared subscription frame.
+        if source!='kalshi' or payload.get('type') not in ('orderbook_snapshot','orderbook_delta','trade') or not self.flat_portfolio(e):return False
+        primary=self.portfolios['volatility_scalper'][0]
+        sid,seq=payload.get('sid'),payload.get('seq');ticker=payload.get('msg',{}).get('market_ticker')
+        if sid is None or seq is None or primary.sequences.get(sid)!=seq:return False
+        if ticker in e.books and (ticker not in primary.books or not primary.book_fresh(ticker)):return False
+        e.advance(now)
+        e.sequences[sid]=seq;e.book_feed_at=dict(primary.book_feed_at)
+        if ticker in e.books:
+            e.coalesced_tickers=getattr(e,'coalesced_tickers',set());e.coalesced_tickers.add(ticker)
+            # Keep this portfolio's hypothetical consumption, never the primary
+            # portfolio's overlay. Real removals invalidate consumed levels.
+            live=primary.books[ticker].levels
+            for side in ('yes','no'):
+                e.books[ticker].used[side]={p:q for p,q in e.books[ticker].used[side].items() if p in live[side]}
+            e.fees[ticker]=primary.fees[ticker]
+        e.coalesced_inputs=getattr(e,'coalesced_inputs',0)+1
+        return True
+    def sync_flat_books(self,e,now):
+        pending=getattr(e,'coalesced_tickers',set())
+        if not pending:return
+        primary=self.portfolios['volatility_scalper'][0]
+        # No pending order may execute against a later source frame. All books
+        # are detached before the clock can submit the first entry.
+        if not self.flat_portfolio(e):
+            for t in list(pending):e.data_gap(t,'flat-feed exposure changed; fresh snapshot required')
+            pending.clear();return
+        for t in list(pending):
+            if t not in e.books:pending.discard(t);continue
+            if t not in primary.books or not primary.book_fresh(t):
+                e.data_gap(t,'shared verified book unavailable');pending.discard(t);continue
+            book,live=e.books[t],primary.books[t]
+            book.levels={side:dict(live.levels[side]) for side in ('yes','no')}
+            book.used={side:{p:q for p,q in book.used[side].items() if p in book.levels[side]} for side in ('yes','no')}
+            for field in ('seq','sid','valid','at','snapshot_at'):setattr(book,field,getattr(live,field))
+            pending.discard(t)
+        e.book_feed_at=dict(primary.book_feed_at)
+
     @staticmethod
     def idle_feed(e,f):
         return (not any(b.enabled for b in f.bots.values()) and not e.wallet.lots
@@ -265,6 +309,16 @@ class ExperimentSuite:
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
                 limits=self.monitoring.limits(now)
                 for bot in f.bots.values():bot.resource_paused=not limits['admitting']
+            if folder in ('scalper_momentum','scalper_dislocation'):
+                if source=='clock':
+                    pending=getattr(e,'coalesced_tickers',set())
+                    due=any((b:=f.owner(t)) and b.enabled and now-b.last_eval.get(t,-1e9)>=b.config['eval_seconds'] for t in pending)
+                    if due:self.sync_flat_books(e,now)
+                elif self.coalesce_flat_input(e,source,payload,now):continue
+                elif source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade'):
+                    t=payload.get('msg',{}).get('market_ticker');pending=getattr(e,'coalesced_tickers',set())
+                    if t in pending:
+                        e.data_gap(t,'shared feed interrupted; fresh snapshot required');pending.discard(t)
             local=payload
             if source in ('market','weather_market','sports_market','hourly_market'):
                 if folder not in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS) or source=='hourly_market' and folder not in ('favorites',*SCALPER_FOLDERS):continue
