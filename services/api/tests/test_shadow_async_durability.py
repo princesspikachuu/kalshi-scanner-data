@@ -1,5 +1,6 @@
 """Database waits must leave sockets live without allowing concurrent wallet mutation."""
 import asyncio,shutil,threading,unittest
+from types import SimpleNamespace
 from decimal import Decimal as D
 from unittest.mock import Mock
 from services.paper_demo.shadow.core import Engine,StrategyFleet
@@ -29,6 +30,27 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(task.done())
             release.set();await asyncio.wait_for(task,2)
             audit.write.assert_called_once()
+        finally:
+            release.set();await asyncio.gather(task,return_exceptions=True)
+
+    async def test_concurrent_discovery_cannot_mutate_frozen_checkpoint_cache(self):
+        audit=self.audit();discovery=dict(cursor='before',candidates={'one':{'score':1}})
+        audit.experiments=SimpleNamespace(maker_discovery=discovery,state=lambda:dict(_maker_discovery=discovery))
+        started=threading.Event();release=threading.Event();original=audit.prepare
+        def prepare(records):
+            started.set()
+            if not release.wait(2):raise RuntimeError('test release timeout')
+            return original(records)
+        audit.prepare=prepare;audit.write=Mock();audit.begin();audit.engine.refill(D(1))
+        task=asyncio.create_task(audit.flush_async())
+        try:
+            self.assertTrue(await asyncio.to_thread(started.wait,1))
+            discovery['cursor']='after';discovery['candidates']['two']={'score':2}
+            release.set();await asyncio.wait_for(task,2)
+            payload=audit.write.call_args.args[0][0][0][2].obj
+            self.assertEqual(payload['experiments']['_maker_discovery'],dict(cursor='before',candidates={'one':{'score':1}}))
+            self.assertEqual(discovery['cursor'],'after')
+            self.assertFalse(hasattr(audit,'_frozen_discovery'))
         finally:
             release.set();await asyncio.gather(task,return_exceptions=True)
 
