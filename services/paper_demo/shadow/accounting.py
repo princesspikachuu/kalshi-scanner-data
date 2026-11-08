@@ -4,7 +4,7 @@ from decimal import Decimal as D
 ZERO=D(0)
 FIELDS=('unfilled_bids','unfilled_principal','reserved_fees','unfilled_contracts',
         'active_cost','active_value','active_contracts','pending_cost','pending_value',
-        'pending_contracts','pending_max_payout','position_cost')
+        'pending_contracts','pending_max_payout','position_cost','estimated_contracts')
 
 def empty():
     return dict({k:ZERO for k in FIELDS},active_value_known=True,pending_value_known=True,
@@ -12,6 +12,7 @@ def empty():
 
 def finish(row):
     row=dict(row)
+    row['valuation_estimated']=row['estimated_contracts']>0
     if not row['active_value_known']:row['active_value']=None
     if not row['pending_value_known']:row['pending_value']=None
     known=row['active_value_known'] and row['pending_value_known']
@@ -46,18 +47,28 @@ def snapshot(engine,profiles,now):
         market=engine.markets[lot.ticker];pending=now>=market['close']
         cost=lot.quantity*lot.price+lot.entry_fee;book=engine.books.get(lot.ticker)
         confirmed=market.get('yes_payout_confirmed')
-        mark=None;source='unavailable'
+        mark=None;source='entry_price';quote_at=None
+        cached=market.setdefault('valuation_marks',{}).get(lot.side)
         if pending and confirmed in ('0','1'):
             mark=D(confirmed) if lot.side=='yes' else 1-D(confirmed);source='confirmed_outcome'
         elif book and book.valid and (pending or
                 now-max(book.at,engine.book_feed_at.get(book.sid,0))<=engine.stale_seconds):
             mark=book.bid(lot.side)
-            if mark is not None:source='last_bid' if pending else 'current_bid'
-        value=lot.quantity*mark if mark is not None else None
+            if mark is not None:
+                source='last_bid' if pending else 'current_bid';quote_at=book.at
+                market['valuation_marks'][lot.side]=dict(price=str(mark),at=book.at)
+        if mark is None and cached:
+            mark=D(cached['price']);quote_at=cached['at'];source='last_verified_bid'
+        if mark is None and book and book.valid:
+            mark=book.bid(lot.side);quote_at=book.at
+            if mark is not None:source='last_verified_bid'
+        if mark is None:mark=lot.price
+        value=lot.quantity*mark
         kind='pending' if pending else 'active'
         for row in buckets(lot.ticker):
             row[kind+'_cost']+=cost;row['position_cost']+=cost
             row[kind+'_contracts']+=lot.quantity
+            if source not in ('current_bid','confirmed_outcome'):row['estimated_contracts']+=lot.quantity
             if value is None:row[kind+'_value_known']=False
             else:row[kind+'_value']+=value
             if pending:
@@ -65,8 +76,9 @@ def snapshot(engine,profiles,now):
                 row['pending_all_confirmed'] &= source=='confirmed_outcome'
         positions.append(dict(ticker=lot.ticker,bot_id=owner(lot.ticker),side=lot.side,
             quantity=lot.quantity,price=lot.price,entry_fee=lot.entry_fee,cost=cost,
-            value=value,mark_price=mark,valuation_source=source,quote_at=book.at if book else None,
+            value=value,mark_price=mark,valuation_source=source,quote_at=quote_at,
             state=kind,is_armed=lot.is_armed,phase_origin=lot.phase_origin,
+            valuation_estimated=source not in ('current_bid','confirmed_outcome'),
             recovery_cost=lot.recovery_cost,recovery_proceeds=lot.recovery_proceeds,
             bot_revision=market.get('bot_revision',1)))
     total=finish(total);groups={k:finish(v) for k,v in groups.items()}

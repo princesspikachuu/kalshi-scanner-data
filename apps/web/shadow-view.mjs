@@ -1,32 +1,42 @@
 import {escapeHTML as e,botSummaryPeriodMarkup} from './demo-client.mjs';
 export const dollars=value=>value===null||value===undefined?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(value));
-export function favoriteCategoryRows(rows=[]){
+export function favoriteCategoryRows(rows=[],combineSeries=false){
  const groups=new Map(),bands=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  for(const r of rows){
   if(r.price==null||!Number.isFinite(Number(r.price)))continue;
   const low=Math.floor((Number(r.price)*100+1e-7)/10)*10;
-  const key=JSON.stringify([r.series,r.market_type,r.side,r.clock,low,r.horizon]);
-  if(!groups.has(key))groups.set(key,{series:r.series,market_type:r.market_type,side:r.side,clock:r.clock,low,band:`${low}–${low+9}¢`,horizon:r.horizon,contracts:0,closed:0,resolved:0,winners:0,cost:0,net:0,unverified:0});
+  const series=combineSeries?'combined':String(r.series||'');
+  const key=JSON.stringify([series,combineSeries?'category':r.market_type,r.clock,low,r.horizon]);
+  if(!groups.has(key))groups.set(key,{series,market_type:r.market_type,clock:r.clock,low,band:`${low}–${low+9}%`,horizon:r.horizon,contracts:0,closed:0,resolved:0,winners:0,cost:0,net:0,unverified:0,holding_seconds:0,dollar_hours:0});
   const g=groups.get(key);
-  for(const field of ['contracts','closed','resolved','winners','cost','net','unverified']){
+  for(const field of ['contracts','closed','resolved','winners','cost','net','unverified','holding_seconds','dollar_hours']){
    const n=Number(r[field]??0);if(Number.isFinite(n))g[field]+=n;
   }
  }
- return [...groups.values()].sort((a,b)=>a.series.localeCompare(b.series)||a.side.localeCompare(b.side)||a.clock.localeCompare(b.clock)||a.low-b.low||bands.indexOf(a.horizon)-bands.indexOf(b.horizon));
+ return [...groups.values()].sort((a,b)=>a.series.localeCompare(b.series)||String(a.clock).localeCompare(String(b.clock))||a.low-b.low||bands.indexOf(a.horizon)-bands.indexOf(b.horizon));
+}
+function researchTable(rows){
+ if(!rows.length)return '<p class="small">No recorded price-and-time entries yet. Earlier trades without entry timing are not assigned guessed categories.</p>';
+ return `<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>Settled</th><th>Win rate</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+const researchNote='<p class="small">YES and NO purchases are combined by the purchased contract’s implied percentage and time remaining at fill. Win rates use settled contract quantities; unsettled outcomes stay pending. Price percentages are market prices, not proven outcome probabilities. P/L includes exits and fees. Research uses all collected data, independent of the P/L time selector. Bids are still gathering data and do not automatically adjust.</p>';
+export function favoriteCategoryResearchMarkup(group,open=new Set()){
+ if(group.id==='sports')return '';
+ const rows=favoriteCategoryRows(group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
+ const key='favorites-category-'+group.id;
+ return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${researchNote}${researchTable(rows)}</details>`;
 }
 export function favoriteResearchMarkup(bots,open=new Set()){
- const detail=(key,label,body)=>`<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${label}</summary>${body}</details>`;
  const contents=bots.map(bot=>{
   const rows=favoriteCategoryRows(bot.experiment?.entry_timing);
-  const body=rows.length?`<div class="comparison-grid">${rows.map(r=>`<article class="comparison-card"><h3>${e(r.band)} · ${e(r.horizon)} left · ${e(String(r.side).toUpperCase())}</h3><p class="small">${e(r.series)} · ${e(r.market_type)} · ${r.clock==='estimated_game_end'?'Estimated game end':'Market close'}</p><dl><dt>Purchased / still open</dt><dd>${r.contracts} / ${Math.max(0,r.contracts-r.closed)} contracts</dd><dt>Outcome wins / losses · settled</dt><dd>${r.winners} / ${r.resolved-r.winners} contracts</dd><dt>Settled contract win rate</dt><dd>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</dd><dt>Average entry cost · including fees</dt><dd>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'¢':'—'}</dd><dt>Realized P/L · after fees and exits</dt><dd class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</dd></dl>${r.unverified>0?`<p class="small">${r.unverified} contracts lack verified entry coverage.</p>`:''}</article>`).join('')}</div>`:'<p class="small">No recorded price-and-time entries yet. Older trades without entry timing cannot be placed in these categories.</p>';
-  return detail('favorites-research-'+bot.id,`${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed categories`,body);
+  const key='favorites-research-'+bot.id;
+  return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed tiers</summary>${researchTable(rows)}</details>`;
  }).join('');
- return detail('favorites-research','Research data · price category × time remaining',`<p class="small">All collected entry-timing data for each bot. Price categories are 70–79¢, 80–89¢ and 90–99¢ (other observed prices appear too). Time remaining is measured when the purchase fills. Market series, sides and clocks stay separate. These research results are independent of the P/L time selector. Contract counts are not independent event counts; unsettled outcomes remain pending. Win rates measure settlement outcomes, while P/L includes actual exits. Bids are still gathering data and do not automatically adjust.</p>${contents||'<p class="small">No Favorites bots match this search.</p>'}`);
+ return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
 export function favoriteTimingMarkup(rows){
- if(!rows?.length)return '<p class="small">Price × time-to-close research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
- const num=v=>v==null?'—':Number(v).toFixed(2);
- return `<details class="favorite-timing"><summary>Entry price × time remaining · ${rows.length} groups</summary><p class="small">Actual purchase price and time remaining at each fill. Each bot learns within its own series, side and clock; market types are not pooled. A 90¢ quote is a market price, not a verified 90% win probability. Event win rates count correlated outcomes conservatively once per event. P/L includes protective exits and fees; outcomes wait for confirmed settlement.</p><div class="comparison-grid">${rows.map(r=>`<article class="comparison-card"><h3>${e(String(Number(r.price)*100))}¢ · ${e(r.horizon)} remaining · ${e(r.side.toUpperCase())}</h3><p class="small">${e(r.market_type)} · ${e(r.series)} · ${r.clock==='estimated_game_end'?'Estimated game end':'Market close'}</p><dl><dt>Purchased / still open</dt><dd>${e(r.contracts)} / ${e(r.open_contracts)} contracts</dd><dt>Verified resolved events</dt><dd>${e(String(r.events))}</dd><dt>Resolved contract win rate / entry break-even</dt><dd>${Number(r.resolved)>0?num(100*Number(r.winners)/Number(r.resolved))+'%':'—'} / ${r.break_even==null?'—':num(r.break_even)+'%'}</dd><dt>Conservative event win rate</dt><dd>${r.event_win_rate==null?'—':num(r.event_win_rate)+'%'}</dd><dt>Realized P/L · after entry and exit fees</dt><dd>${e(dollars(r.net))}</dd><dt>Average holding time · closed contracts</dt><dd>${num(r.average_holding_minutes)} min</dd><dt>Net profit per dollar-hour committed</dt><dd>${r.net_per_dollar_hour==null?'—':num(Number(r.net_per_dollar_hour)*100)+'¢'}</dd></dl>${Number(r.unverified)>0?`<p class="small">${e(r.unverified)} contracts lack verified entry coverage; retained in financial results.</p>`:''}<p class="small">${Number(r.events)<30?'Early sample: not enough events to establish an edge.':'Observed results; future profitability is not established.'}</p></article>`).join('')}</div></details>`;
+ if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
+ return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${researchTable(favoriteCategoryRows(rows))}</details>`;
 }
 export const pnlClass=value=>value===null||value===undefined?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
 export function executionMarkup(x){
@@ -41,31 +51,40 @@ export function valueBounds(a,positions=[],kind='position'){
  const exact=a[kind+'_value'];
  if(finite(exact))return {low:Number(exact),high:Number(exact),unpriced:0};
  const quantity=kind==='position'?Number(a.active_contracts||0)+Number(a.pending_contracts||0):Number(a[kind+'_contracts']||0);
- if(!quantity)return null;
- const priced=positions.filter(p=>(kind==='position'||p.state===kind)&&finite(p.value));
- const known=priced.reduce((s,p)=>s+Number(p.value),0);
- const missing=Math.max(0,quantity-priced.reduce((s,p)=>s+Number(p.quantity),0));
- return {low:known,high:known+missing,unpriced:missing};
+ const owned=positions.filter(p=>kind==='position'||p.state===kind);
+ let value=0,cost=0,covered=0,estimated=0;
+ for(const p of owned){
+  const q=Number(p.quantity||0);let mark=finite(p.value)?Number(p.value):null;
+  if(mark===null){mark=finite(p.mark_price)?q*Number(p.mark_price):finite(p.price)?q*Number(p.price):finite(p.cost)?Number(p.cost):null;estimated+=q}
+  if(mark===null)return null;
+  value+=mark;covered+=q;cost+=Number(p.cost||0);
+ }
+ const totalCost=a[kind+'_cost'];
+ if(quantity>covered){if(!finite(totalCost))return null;value+=Math.max(0,Number(totalCost)-cost);estimated+=quantity-covered}
+ if(!quantity&&!owned.length&&finite(totalCost))value=Number(totalCost);
+ return {low:value,high:value,unpriced:estimated};
 }
+const performanceEstimate=r=>finite(r?.pnl)?Number(r.pnl):finite(r?.pnl_estimate)?Number(r.pnl_estimate):finite(r?.realized_pnl)?Number(r.realized_pnl):null;
+const point=value=>finite(value)?{low:Number(value),high:Number(value),unpriced:0}:null;
 const shifted=(range,amount)=>range&&finite(amount)?{...range,low:range.low+Number(amount),high:range.high+Number(amount)}:null;
-export const rangeText=range=>!range?'—':dollars(range.low)===dollars(range.high)?dollars(range.low):`${dollars(range.low)} to ${dollars(range.high)}`;
+export const rangeText=range=>!range||range.low!==range.high?'—':dollars(range.low);
 const rangeClass=range=>!range?'':range.high<0?'negative':range.low>0?'positive':'';
 const rangedMetric=(label,range,note)=>`<div><span>${e(label)}</span><strong class="${range?.unpriced?'value-range':''}">${e(rangeText(range))}</strong><small>${e(note)}</small></div>`;
 export function accountPnl(a,positions=[]){
- if(finite(a?.total_pnl))return {text:dollars(a.total_pnl),className:pnlClass(a.total_pnl),uncertain:false};
+ if(finite(a?.total_pnl))return {text:dollars(a.total_pnl),className:pnlClass(a.total_pnl),uncertain:!!a.valuation_estimated};
  const range=shifted(valueBounds(a,positions),Number(a?.realized_pnl)-Number(a?.position_cost));
  return {text:rangeText(range),className:rangeClass(range),uncertain:!!range?.unpriced};
 }
 export function pendingLabel(a){
  if(!a||!Number(a.pending_contracts))return 'No payment pending';
  if(a.pending_payout_state==='confirmed')return `Confirmed payout ${dollars(a.pending_value)}`;
- if(a.pending_payout_state==='estimated')return `Estimated payout ${dollars(a.pending_value)} · outcome unconfirmed`;
- return `Outcome unconfirmed · up to ${dollars(a.pending_max_payout)}`;
+ if(a.pending_payout_state==='estimated')return `Estimated value ${dollars(a.pending_value)} · outcome unconfirmed`;
+ return 'Outcome unconfirmed · last available estimate';
 }
 export function exposureMarkup(a,positions=[]){
  if(!a)return '<p class="small">Waiting for the worker’s accounting snapshot…</p>';
  const unreal=finite(a.unrealized_pnl)?{low:Number(a.unrealized_pnl),high:Number(a.unrealized_pnl),unpriced:0}:shifted(valueBounds(a,positions),-Number(a.position_cost));
- return `<div class="money-grid bot-money">${metric('Unfilled buy bids',a.unfilled_bids,'Cash reserved, not spent')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}${rangedMetric('Open position P/L',unreal,unreal?.unpriced?'Estimated range · some positions unpriced':'Current and pending positions · after entry fees')}</div>`;
+ return `<div class="money-grid bot-money">${metric('Unfilled buy bids',a.unfilled_bids,'Cash reserved, not spent')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}${rangedMetric('Open position P/L',unreal,unreal?.unpriced?'Best estimate · last available quote or entry price':'Current and pending positions · after entry fees')}</div>`;
 }
 export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  if(!account)return '<p>Waiting for a consistent accounting snapshot…</p>';
@@ -75,9 +94,9 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  const equity=finite(a.equity)?{low:Number(a.equity),high:Number(a.equity),unpriced:0}:shifted(value,a.cash);
  const pnl=finite(a.total_pnl)?{low:Number(a.total_pnl),high:Number(a.total_pnl),unpriced:0}:shifted(equity,-Number(a.deposits));
  const unreal=finite(a.unrealized_pnl)?{low:Number(a.unrealized_pnl),high:Number(a.unrealized_pnl),unpriced:0}:shifted(value,-Number(a.position_cost));
- return `<div class="portfolio-headlines"><div><span>Portfolio value · ${uncertain?'estimated range':'estimated'}</span><strong class="${uncertain?'value-range':''}">${e(rangeText(equity))}</strong><small>Cash plus the current value of positions</small></div><div><span>Total P/L · ${uncertain?'estimated range · ':''}after fees</span><strong class="${rangeClass(pnl)} ${uncertain?'value-range':''}">${e(rangeText(pnl))}</strong><small>Lifetime · all bots and versions</small></div></div>
- ${uncertain?`<p class="account-warning">${e(String(Number(value.unpriced.toFixed(2))))} contracts have no usable bid quote. Known cash and priced positions are included; unpriced contracts are valued from $0 to $1 each. These ranges are not predicted payouts.</p>`:''}
- <div class="portfolio-breakdown">${metric('Realized P/L',a.realized_pnl,'Closed trades and settled contracts · after fees')}${rangedMetric('Unrealized P/L',unreal,uncertain?'Estimated range for positions still held':'Value change of positions still held')}${metric('Virtual funds added',a.deposits,'Starting bankroll plus refills; not profit')}</div>
+ return `<div class="portfolio-headlines"><div><span>Portfolio value · best current estimate</span><strong class="${uncertain?'value-range':''}">${e(rangeText(equity))}</strong><small>Cash plus the current value of positions</small></div><div><span>Total P/L · best current estimate · after fees</span><strong class="${rangeClass(pnl)} ${uncertain?'value-range':''}">${e(rangeText(pnl))}</strong><small>Lifetime · all bots and versions</small></div></div>
+ <p class="small">Current bids value positions when available; otherwise the last verified bid or entry price is used.</p>
+ <div class="portfolio-breakdown">${metric('Realized P/L',a.realized_pnl,'Closed trades and settled contracts · after fees')}${rangedMetric('Unrealized P/L',unreal,uncertain?'Best estimate for positions still held':'Value change of positions still held')}${metric('Virtual funds added',a.deposits,'Starting bankroll plus refills; not profit')}</div>
  <div class="money-grid">${metric('Available cash',a.available_cash,`Total cash ${dollars(a.cash)}`)}${metric('Unfilled buy bids',a.unfilled_bids,'Reserved from cash; includes estimated fees')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}</div>
  <p class="small accounting-equation">Portfolio value = cash (including reserved bids) + active position value + estimated pending payout. Position cost is shown separately from value. Values round to cents on screen.</p>
  ${now-account.at>30?`<p class="account-warning">Accounting snapshot is ${e(String(Math.floor(now-account.at)))} seconds old. These figures may be stale.</p>`:''}
@@ -140,8 +159,7 @@ export function marketTypeSummaryValues(bots,period='all',positions=[]){
  for(const bot of bots){
   const r=bot.performance?.[period],a=bot.account;
   partial ||= !!r?.partial;
-  let bounds=!r?.missing_history&&finite(r?.pnl)?{low:Number(r.pnl),high:Number(r.pnl)}:
-   !r?.missing_history&&finite(r?.pnl_low)&&finite(r?.pnl_high)?{low:Number(r.pnl_low),high:Number(r.pnl_high)}:null;
+  let bounds=!r?.missing_history?point(performanceEstimate(r)):null;
   if(!bounds&&period==='all'){
    if(finite(a?.total_pnl))bounds={low:Number(a.total_pnl),high:Number(a.total_pnl)};
    else if(finite(a?.realized_pnl)&&finite(a?.position_cost)){
@@ -169,12 +187,12 @@ export function folderSummaryValues(f,period='all',now=Date.now()/1000){
  const result=f.performance?.[period];
  let pnl=accountPnl(a,positions);
  if(period!=='all'){
-  const range=finite(result?.pnl)?{low:Number(result.pnl),high:Number(result.pnl),unpriced:0}:finite(result?.pnl_low)&&finite(result?.pnl_high)?{low:Number(result.pnl_low),high:Number(result.pnl_high),unpriced:result.unpriced?1:0}:null;
+  const range=point(performanceEstimate(result));
   pnl={text:rangeText(range),className:rangeClass(range),uncertain:!!range?.unpriced,available:!!range};
  }
  const since=result?.since?new Date(result.since*1000).toLocaleString():'';
  let detail=period==='all'?'Current session':result?.missing_history||!result?'Waiting for balance history':result.partial?'Tracked since '+since:'Rolling '+folderPeriods[period]+' · minute snapshots';
- if(pnl.uncertain)detail+=' · range includes unpriced positions';
+ if(pnl.uncertain)detail+=' · estimate uses fallback position marks';
  return {period,balance:rangeText(balance),balanceUncertain:!!balance?.unpriced,cash:dollars(a?.cash),pnl,detail,
   realized:result?.realized_pnl!=null?dollars(result.realized_pnl):null,stale:!!account&&now-account.at>30};
 }
@@ -193,17 +211,17 @@ export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
   const v=folderSummaryValues(f,period,now),x=summaryExposure(f.accounting?.portfolio);
   return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}</strong><small>Reserved for buys · now</small></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))} · pending ${e(dollars(x.pending))}</small><small>Money committed · includes entry fees</small></td></tr>`;
  }).join('');
- return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Total P/L · ${e(folderPeriods[period])}</th><th>Open bids</th><th>Open/pending positions</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">P/L includes realized and unrealized changes after paid fees, excluding added funds. Open bids show cash reserved for buys; positions show committed cost including entry fees. Exposure amounts are current, independent of the selected P/L period. Ranges include positions without quotes; shorter tracking coverage is shown per folder.</p>`;
+ return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Total P/L · ${e(folderPeriods[period])}</th><th>Open bids</th><th>Open/pending positions</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">P/L includes realized and unrealized changes after paid fees, excluding added funds. Open bids show cash reserved for buys; positions show committed cost including entry fees. Exposure amounts are current, independent of the selected P/L period. P/L uses the best available position marks; older baselines without quotes carry positions at cost. Shorter tracking coverage is shown per folder.</p>`;
 }
 
 export function botPnlMarkup(bot,period='all',positions=[]){
  if(!Object.hasOwn(folderPeriods,period))period='all';
  const r=bot.performance?.[period],all=period==='all';
  const fallback=accountPnl(bot.account,positions);
- const total=finite(r?.pnl)?{low:Number(r.pnl),high:Number(r.pnl)}:finite(r?.pnl_low)&&finite(r?.pnl_high)?{low:Number(r.pnl_low),high:Number(r.pnl_high)}:null;
+ const total=point(performanceEstimate(r));
  const realized=finite(r?.realized_pnl)?Number(r.realized_pnl):all&&finite(bot.account?.realized_pnl)?Number(bot.account.realized_pnl):null;
  const unreal=total&&realized!==null?{low:total.low-realized,high:total.high-realized}:null;
  const text=total?rangeText(total):all?fallback.text:'—';
  const coverage=all?'Current session · all versions':r?.missing_history||!r?'Waiting for balance history':r.partial?`Partial window · tracked since ${new Date(r.since*1000).toLocaleString()}`:`Last ${folderPeriods[period]} · sampled to the minute`;
- return `<div class="bot-pnl-panel"><div class="bot-pnl-values"><div class="summary-total-pnl"><span>Total P/L${all?'':' change'}</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong></div>${exposureHeaderMarkup(bot.account)}</div>${botSummaryPeriodMarkup(bot.id,period,true)}<p class="small">${e(coverage)} · after fees${r?.unpriced?' · range includes unpriced positions':''}. ${all?'Realized P/L':'Realized P/L change'} ${e(dollars(realized))} · ${all?'Unrealized P/L':'Change in unrealized P/L'} ${e(unreal?rangeText(unreal):all?dollars(bot.account?.unrealized_pnl):'—')}. Exposure amounts show money reserved or committed now, independent of the P/L window.</p></div>`;
+ return `<div class="bot-pnl-panel"><div class="bot-pnl-values"><div class="summary-total-pnl"><span>Total P/L${all?'':' change'}</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong></div>${exposureHeaderMarkup(bot.account)}</div>${botSummaryPeriodMarkup(bot.id,period,true)}<p class="small">${e(coverage)} · after fees${r?.unpriced?' · estimate uses fallback position marks':''}. ${all?'Realized P/L':'Realized P/L change'} ${e(dollars(realized))} · ${all?'Unrealized P/L':'Change in unrealized P/L'} ${e(unreal?rangeText(unreal):all?dollars(bot.account?.unrealized_pnl):'—')}. Exposure amounts show money reserved or committed now, independent of the P/L window.</p></div>`;
 }

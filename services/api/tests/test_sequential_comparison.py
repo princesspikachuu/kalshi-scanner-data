@@ -115,7 +115,7 @@ class ComparisonSuiteTests(unittest.TestCase):
         e.wallet.fill(T,'yes','buy',D(1),D('.45'),D(0),1,'old')
         self.assertEqual(suite.snapshot(200)['sequential']['comparison']['net_pnl'],0)
         b.attempts[T]['started_at']=200;e.books[T].valid=False
-        result=suite.snapshot(200)['sequential']['comparison'];self.assertIsNone(result['net_pnl']);self.assertTrue(result['drawdown_incomplete'])
+        result=suite.snapshot(200)['sequential']['comparison'];self.assertAlmostEqual(result['net_pnl'],.04);self.assertTrue(result['drawdown_incomplete']);self.assertTrue(result['unpriced'])
 
 @unittest.skipUnless(fixture.fixture.URL,'Disposable PostgreSQL required')
 class ComparisonMigration(unittest.TestCase):

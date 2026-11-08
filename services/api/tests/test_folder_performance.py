@@ -1,6 +1,6 @@
 import unittest
 from decimal import Decimal as D
-from services.paper_demo.shadow.performance import change,record_balances,folder_performance,history_key,equity_bounds,period_change
+from services.paper_demo.shadow.performance import change,record_balances,folder_performance,history_key,equity_bounds,equity_estimate,period_change
 from services.api.tests import test_strategy_folders as existing
 from services.api.tests import test_demo_postgres as fixture
 
@@ -22,6 +22,19 @@ class Returns(unittest.TestCase):
         b=dict(equity=None,equity_low='1000',equity_high='1010',deposits='1000')
         result=period_change(a,b);self.assertEqual((result['pnl_low'],result['pnl_high']),('0','20'))
         self.assertIsNone(equity_bounds(dict(equity=None,cash='900',deposits='1000')))
+    def test_historical_missing_quotes_use_saved_marks_or_cost_basis_not_range_midpoint(self):
+        baseline=dict(equity=None,equity_low='900',equity_high='1100',equity_estimate='990',deposits='1000',realized_pnl='-5')
+        result=period_change(dict(equity='1005',deposits='1000',realized_pnl='0'),baseline)
+        self.assertEqual(result['pnl'],'15')
+        del baseline['equity_estimate']
+        self.assertEqual(equity_estimate(baseline),D('995'))
+        self.assertEqual(period_change(dict(equity='1005',deposits='1000'),baseline)['pnl'],'10')
+    def test_current_estimate_uses_lot_prices_for_missing_quotes_and_preserves_known_marks(self):
+        row=dict(equity=None,cash='90',position_cost='10',active_contracts='20',deposits='100',realized_pnl='0')
+        positions=[dict(quantity='10',value='7',cost='5'),dict(quantity='10',value=None,price='.4',cost='5')]
+        self.assertEqual(equity_estimate(row,positions),D('101'))
+        self.assertEqual(D(period_change(row,dict(equity='100',deposits='100'),positions)['pnl']),D('1'))
+
     def test_exact_period_returns_remain_exact(self):
         result=period_change(dict(equity='1120',deposits='1100'),dict(equity='1010',deposits='1000'))
         self.assertEqual(result['pnl'],'10');self.assertFalse(result['unpriced'])
