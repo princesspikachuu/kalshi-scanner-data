@@ -21,7 +21,10 @@ def category(event):
     if primary in ('politics','elections'):return 'politics'
     if primary in ('economics','financials','finance','economy'):return 'economics'
     if primary in ('entertainment','culture','awards','social'):return 'entertainment'
-    if primary=='sports' and not re.search(r'game|match|spread|total points',text) and re.search(r'champion|division|season|playoff|award|mvp|winner|cup|title',text):return 'sports_futures'
+    if primary=='sports':
+        game=re.search(r'game|match|spread|quarter|half|inning|period|touchdown|yards|total points',text)
+        future=re.search(r'champion|division|conference|league|season|playoff|award|mvp|cup|title|trophy|bowl',text)
+        if future and not game:return 'sports_futures'
     return None
 
 def profiles():

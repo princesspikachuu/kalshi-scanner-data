@@ -1,5 +1,5 @@
 """Flat experiments reuse verified data; active orders retain causal independent books."""
-import unittest
+import unittest,time
 from decimal import Decimal as D
 from unittest.mock import Mock,patch
 from services.api.tests.test_strategy_folders import QuietAudit,ready_suite,profile
@@ -66,7 +66,7 @@ class FlatExperimentFeedTests(unittest.TestCase):
 
     def test_admission_flags_change_once_without_skipping_book_updates(self):
         from services.paper_demo.shadow.monitoring import MonitoringBudget
-        s=self.suite();s.monitoring=MonitoringBudget();s.monitoring.observe(200,0,0,1)
+        s=self.suite();s.monitoring=MonitoringBudget();s.monitoring.observe(time.time(),0,0,1)
         with patch.object(s.monitoring,'limits',wraps=s.monitoring.limits) as limits:
             self.book(s,200.1,1)
             self.assertEqual(limits.call_count,1)
@@ -74,7 +74,7 @@ class FlatExperimentFeedTests(unittest.TestCase):
             e,f,_=s.portfolios[folder]
             self.assertFalse(f._resource_paused)
             self.assertTrue(all(not b.resource_paused for b in f.bots.values()))
-        s.monitoring.observe(201,5000,3,1)
+        s.monitoring.observe(time.time(),5000,3,1)
         self.delta(s,201.1,2,'yes','.45','2')
         for folder in SCALPER_FOLDERS:
             e,f,_=s.portfolios[folder]

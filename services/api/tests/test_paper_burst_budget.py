@@ -16,7 +16,7 @@ class BurstTimeBudgetTests(unittest.IsolatedAsyncioTestCase):
             if len(seen)==12:run.done.set()
         run.engine.handle=handle;run.audit.flush.side_effect=lambda:commits.append(len(seen))
         for n in range(768):await run.queue.put(('clock',dict(n=n),1000+n*.01))
-        with patch('services.paper_demo.shadow.host.time',Mock(monotonic=lambda:clock[0],time=time.time)):await run.consume()
+        with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:clock[0],time=time.time)):await run.consume()
         self.assertEqual(seen,list(range(12)))
         self.assertEqual(commits,[3,6,9,12])
         self.assertEqual(run.queue._unfinished_tasks,756)
@@ -27,8 +27,31 @@ class SharedRiskBudgetTests(unittest.TestCase):
         return fixture,suite
     def test_one_budget_read_per_shared_market_input(self):
         fixture,suite=self.suite();suite.monitoring.limits=Mock(wraps=suite.monitoring.limits)
-        fixture.delta(suite,200.2,2,'yes','.45','1')
-        suite.monitoring.limits.assert_called_once_with(200.2)
+        with patch('services.paper_demo.shadow.experiments.time',Mock(wraps=time,time=lambda:1000)):
+            fixture.delta(suite,200.2,2,'yes','.45','1')
+        suite.monitoring.limits.assert_called_once_with(1000)
+    def test_feed_timestamp_does_not_falsely_age_current_operational_telemetry(self):
+        fixture,suite=self.suite()
+        from services.paper_demo.shadow.monitoring import MonitoringBudget
+        suite.monitoring=MonitoringBudget();suite.monitoring.observe(1000,0,0,.1)
+        with patch('services.paper_demo.shadow.experiments.time',Mock(wraps=time,time=lambda:1000.1)):
+            fixture.delta(suite,200.2,2,'yes','.45','1')
+            self.assertTrue(suite.extra_capacity(['NEW-MARKET'],200.2))
+            self.assertTrue(suite.search_capacity('market_maker',200.2))
+        self.assertFalse(any(b.resource_paused for folder,(_,fleet,_) in suite.portfolios.items()
+            if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) for b in fleet.bots.values()))
+        # Old or overloaded operational telemetry must still stop new entries.
+        with patch('services.paper_demo.shadow.experiments.time',Mock(wraps=time,time=lambda:1011)):
+            fixture.delta(suite,200.3,3,'yes','.45','1')
+            self.assertFalse(suite.extra_capacity(['NEW-MARKET'],200.3))
+        self.assertTrue(all(b.resource_paused for folder,(_,fleet,_) in suite.portfolios.items()
+            if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) for b in fleet.bots.values()))
+        suite.monitoring.observe(1012,3000,3,.1)
+        with patch('services.paper_demo.shadow.experiments.time',Mock(wraps=time,time=lambda:1012.1)):
+            fixture.delta(suite,200.4,4,'yes','.45','1')
+            self.assertFalse(suite.extra_capacity(['NEW-MARKET'],200.4))
+        self.assertTrue(all(b.resource_paused for folder,(_,fleet,_) in suite.portfolios.items()
+            if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) for b in fleet.bots.values()))
     def test_unchanged_budget_avoids_rewriting_profiles_but_transitions_apply_immediately(self):
         fixture,suite=self.suite();writes=[]
         def record(bot,name,value):

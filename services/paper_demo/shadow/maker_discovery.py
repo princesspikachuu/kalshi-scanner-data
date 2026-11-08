@@ -3,19 +3,25 @@ import asyncio,json,math
 
 CATALOG_CATEGORIES=('Politics','Economics','Financials','Sports','Entertainment','Social')
 
+def catalog_queries(s):
+    failed='Sports' in s.get('series_query_at',{}) and 'Sports' not in s.get('series_catalogs',{})
+    return (*CATALOG_CATEGORIES,*(('Sports:Football',) if failed else ()))
+
 async def read(host,state,path,params):
     state['reads']=state.get('reads',0)+1
     return await asyncio.to_thread(host.verified_data.call,'GET',path,params)
 
 async def catalog(host,s,now,classify,groups):
     queries=s.setdefault('series_query_at',{})
-    query=next((q for q in CATALOG_CATEGORIES if now>=queries.get(q,0)),None)
+    query=next((q for q in catalog_queries(s) if now>=queries.get(q,0)),None)
     if query is None:return
     queries[query]=now+3600
-    # One category per pass, at most six catalogue reads per hour. Avoid the
+    # One query per pass, at most seven catalogue reads per hour. Avoid the
     # multi-megabyte full catalogue; failures in one category cannot block others.
     try:
-        response=await read(host,s,'/series',dict(include_volume='true',category=query))
+        params=dict(include_volume='true',category=query.split(':')[0])
+        if query=='Sports:Football':params['tags']='Football'
+        response=await read(host,s,'/series',params)
         rows=[]
         for row in response.get('series',[]):
             group=classify(dict(row,series_ticker=row.get('ticker') or ''))
@@ -33,7 +39,7 @@ async def catalog(host,s,now,classify,groups):
         s['series_status']='category volume priors; current trades verified separately'
     except Exception as exc:
         s['series_status']='catalogue '+query+' unavailable: '+str(getattr(exc,'code',type(exc).__name__))
-    s['series_at']=min(queries.get(q,0) for q in CATALOG_CATEGORIES)
+    s['series_at']=min(queries.get(q,0) for q in catalog_queries(s))
 
 def finish(s,result,selected):
     if selected:
@@ -62,7 +68,8 @@ async def event_page(host,s,now,minimum,classify,groups):
     pages=s.get('pages',0)
     if s.get('series_status')=='unavailable; broad event pagination retained':
         s['series_at']=0;s['series_status']='retrying category catalogues'
-    if pages and now>=s.get('series_at',0):await catalog(host,s,now,classify,groups)
+    football_due='Sports:Football' in catalog_queries(s) and now>=s.get('series_query_at',{}).get('Sports:Football',0)
+    if pages and (now>=s.get('series_at',0) or football_due):await catalog(host,s,now,classify,groups)
     pool=s.get('series_pool',[]);selected=None
     params=dict(status='open',limit=s.get('event_page_limit',50),with_nested_markets='true',with_milestones='true',min_close_ts=int(now+minimum))
     if pool and pages%4:

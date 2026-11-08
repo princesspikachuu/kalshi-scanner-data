@@ -76,7 +76,10 @@ class Discovery(unittest.TestCase):
 
     def test_discovery_budget_expands_but_remains_bounded(self):
         suite,_=weather_fixture.WeatherSuite().suite();suite.monitoring=MonitoringBudget()
-        for now in range(0,241,5):suite.monitoring.observe(now,0,.01,1)
+        # Operational telemetry uses wall time; market timestamps below stay
+        # deterministic so this also exercises the two independent clocks.
+        started=time.time()-240
+        for elapsed in range(0,241,5):suite.monitoring.observe(started+elapsed,0,.01,1)
         self.assertEqual(suite.monitoring_snapshot(240)['total'],48)
         e=suite.portfolios['favorites'][0]
         for i in range(19):
@@ -84,7 +87,7 @@ class Discovery(unittest.TestCase):
             e.markets[t]['weather_category']='weather_daily';suite.extra[t]=t
         self.assertTrue(suite.extra_capacity(['last'],240))
         self.assertFalse(suite.extra_capacity(['last','overflow'],240))
-        suite.monitoring.observe(245,600,.01,1)
+        suite.monitoring.observe(time.time(),600,.01,1)
         self.assertFalse(suite.extra_capacity(['last'],245))
 
     def test_rotation_serves_unrepresented_series_first(self):

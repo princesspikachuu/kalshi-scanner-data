@@ -82,6 +82,8 @@ class MakerCapacityTests(unittest.IsolatedAsyncioTestCase):
             return dict(events=[],cursor='')
         h.verified_data.call.side_effect=call;s=dict(cursor='',reads=0,pages=1)
         for i in range(12):await maker_event_page(h,s,200+i*30,86400)
-        self.assertEqual(len(queries),6);self.assertEqual(len(set(queries)),6)
+        self.assertEqual(len(queries),7);self.assertEqual(len(set(queries)),6)
+        tagged=[c.args[2] for c in h.verified_data.call.call_args_list if c.args[1]=='/series' and c.args[2].get('tags')]
+        self.assertEqual(tagged,[dict(category='Sports',tags='Football',include_volume='true')])
         self.assertIn('FED',s['series_pool']);self.assertLessEqual(len(s['series_pool']),48)
-        self.assertEqual(s['reads'],18)
+        self.assertEqual(s['reads'],19)
