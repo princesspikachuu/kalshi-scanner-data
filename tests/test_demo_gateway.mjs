@@ -581,3 +581,54 @@ test('dashboard reports transport damage without exposing a raw JSON parser exce
  await assert.rejects(()=>readDemoResponse(bad),/changed in transit/);
  await assert.rejects(()=>readDemoResponse(new Response('{"contract":"demo-v1",}')),/incomplete or invalid data/);
 });
+
+test('negotiated compressed dashboard survives fragmented streaming and validates decoded bytes',async()=>{
+ const {gzipSync}=await import('node:zlib');
+ const {readDemoResponse}=await import('../apps/web/demo-client.mjs');
+ const payload={contract:'demo-v1',bots:Array.from({length:15000},(_,id)=>({id,label:'Quoted "price" · 🌱',pnl:'-0.0123'}))};
+ const raw=new TextEncoder().encode(JSON.stringify(payload));
+ const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)),b=>b.toString(16).padStart(2,'0')).join('');
+ const envelope={transport:'workspace-gzip-v1',bytes:raw.length,sha256:digest,data:gzipSync(raw).toString('base64')};
+ const wire=new TextEncoder().encode(JSON.stringify(envelope));assert.ok(wire.length<raw.length/4);
+ let offset=0;const stream=new ReadableStream({pull(c){if(offset===wire.length){c.close();return}const end=Math.min(offset+997,wire.length);c.enqueue(wire.slice(offset,end));offset=end}});
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace',{headers:{'x-pocket-workspace-encoding':'gzip-base64-v1'}}),env,{fetcher:async(url,options)=>{
+  assert.equal(options.headers.get('x-pocket-workspace-encoding'),'gzip-base64-v1');
+  return new Response(stream,{headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1','x-pocket-workspace-encoding':'gzip-base64-v1','x-pocket-workspace-sha256':digest,'x-pocket-workspace-bytes':String(raw.length)}});
+ }});
+ assert.equal(response.headers.get('x-pocket-workspace-encoding'),'gzip-base64-v1');
+ assert.deepEqual(await readDemoResponse(response),payload);
+});
+test('compressed transport never accepts damaged payloads or decompression past declared bounds',async()=>{
+ const {gzipSync}=await import('node:zlib');const {readDemoResponse}=await import('../apps/web/demo-client.mjs');
+ const raw=new TextEncoder().encode('{"contract":"demo-v1","bots":[]}');
+ const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)),b=>b.toString(16).padStart(2,'0')).join('');
+ const envelope={transport:'workspace-gzip-v1',bytes:raw.length,sha256:digest,data:gzipSync(raw).toString('base64')};
+ const response=body=>new Response(JSON.stringify(body),{headers:{'x-pocket-workspace-encoding':'gzip-base64-v1'}});
+ await assert.rejects(()=>readDemoResponse(response({...envelope,sha256:'0'.repeat(64)})),/changed in transit/);
+ await assert.rejects(()=>readDemoResponse(response({...envelope,data:envelope.data.slice(0,-8)})),/compressed response was interrupted/);
+ await assert.rejects(()=>readDemoResponse(response({...envelope,bytes:1})),/size limit/);
+ await assert.rejects(()=>readDemoResponse(response({...envelope,bytes:8388609})),/invalid transport metadata/);
+});
+test('workspace read retries one damaged response and writes are never replayed',async()=>{
+ const {demoCall}=await import('../apps/web/demo-client.mjs');const previous=globalThis.fetch;let calls=0;
+ try{
+  globalThis.fetch=async(url,options)=>{calls++;assert.equal(options.headers['x-pocket-workspace-encoding'],'gzip-base64-v1');return new Response(calls===1?'{broken':'{"contract":"demo-v1","bots":[]}')};
+  assert.deepEqual(await demoCall('shadow/workspace?version=latest'),{contract:'demo-v1',bots:[]});assert.equal(calls,2);
+  calls=0;globalThis.fetch=async()=>{calls++;return new Response('{broken')};
+  await assert.rejects(()=>demoCall('shadow/workspace'));assert.equal(calls,2);
+  const oldDocument=globalThis.document;globalThis.document={cookie:''};calls=0;
+  try{await assert.rejects(()=>demoCall('shadow/bulk',{action:'pause'}));assert.equal(calls,1)}finally{globalThis.document=oldDocument}
+ }finally{globalThis.fetch=previous}
+});
+test('streamed workspace owns queued bytes instead of retaining a mutable upstream chunk',async()=>{
+ const payload='{"contract":"demo-v1","bots":[]}';const chunk=new TextEncoder().encode(payload);
+ const source=new ReadableStream({start(c){c.enqueue(chunk);c.close()}});
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher:async()=>new Response(source,{headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1'}})});
+ await new Promise(resolve=>setTimeout(resolve,1));chunk.fill(0);
+ assert.equal(await response.text(),payload);
+});
+test('interrupted response streams surface a retryable read error',async()=>{
+ const {readDemoResponse}=await import('../apps/web/demo-client.mjs');
+ const response=new Response(new ReadableStream({start(c){c.error(new TypeError('stream closed'))}}));
+ await assert.rejects(()=>readDemoResponse(response),e=>e.retryable===true&&/interrupted/.test(e.message));
+});

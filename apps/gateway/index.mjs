@@ -31,7 +31,7 @@ function boundedResponse(stream,max,complete){
     if(done){complete();reader.releaseLock();controller.close();return}
     length+=value.byteLength;
     if(length>max)throw new RangeError('body limit');
-    controller.enqueue(value);
+    controller.enqueue(value.slice());
    }catch(error){complete();controller.error(error);try{await reader.cancel(error)}finally{reader.releaseLock()}}
   },
   async cancel(reason){complete();try{await reader.cancel(reason)}finally{reader.releaseLock()}}
@@ -160,6 +160,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  }
  const readOnlySetup=demo&&['/api/demo/connection','/api/demo/paper-connection'].includes(url.pathname)||liveBots&&['/api/live/connection','/api/live/preflight','/api/live/onboarding'].includes(url.pathname);
  const shadowWorkspace=method==='GET'&&url.pathname==='/api/demo/shadow/workspace';
+ if(shadowWorkspace&&request.headers.get('x-pocket-workspace-encoding')==='gzip-base64-v1')headers.set('x-pocket-workspace-encoding','gzip-base64-v1');
  let streaming=false;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),shadowWorkspace?Math.max(timeoutMs,45000):readOnlySetup?Math.max(timeoutMs,30000):timeoutMs);
  try{
@@ -185,6 +186,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
    if(shadowWorkspace&&upstream.headers.get('x-pocket-workspace-contract')==='demo-v1'){
     if(Number(upstream.headers.get('content-length'))>8388608){await upstream.body?.cancel();throw new RangeError('body limit')}
     const streamHeaders={...BASE_HEADERS,'content-type':'application/json','cache-control':'no-store, no-transform'};
+    if(upstream.headers.get('x-pocket-workspace-encoding')==='gzip-base64-v1')streamHeaders['x-pocket-workspace-encoding']='gzip-base64-v1';
     const digest=upstream.headers.get('x-pocket-workspace-sha256'),bytes=upstream.headers.get('x-pocket-workspace-bytes');
     if(/^[a-f0-9]{64}$/.test(digest||'')&&/^[0-9]{1,8}$/.test(bytes||'')){
      streamHeaders['x-pocket-workspace-sha256']=digest;streamHeaders['x-pocket-workspace-bytes']=bytes;

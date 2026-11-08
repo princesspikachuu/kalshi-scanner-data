@@ -366,3 +366,14 @@ test('scalper folders render research with escaped records and existing period c
  assert.ok(html.includes('&lt;script&gt;bad&lt;/script&gt;'));assert.ok(!html.includes('<script>bad'));
  assert.ok(!html.includes('NaN'));assert.ok(!html.includes('Infinity'));
 });
+
+test('a recovered workspace read clears its stale transport error without removing action messages',async()=>{
+ const {context,nodes}=setup(fixture());
+ context.demoCall=async()=>{throw Error('Dashboard response was interrupted or changed in transit. Please use Reload data.')};
+ await vm.runInContext('load()',context);assert.match(nodes.get('message').textContent,/interrupted/);
+ const next={...fixture(),installed:true};
+ context.demoCall=async path=>path.startsWith('shadow/workspace')?next:{items:[]};
+ await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'');
+ vm.runInContext("note('Saved bot settings')",context);
+ await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'Saved bot settings');
+});
