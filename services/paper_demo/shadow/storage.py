@@ -96,6 +96,8 @@ class HostedAudit:
                 cur.executemany(UPSERT,batch)
                 if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
         self.write_ms=(time.monotonic()-started)*1000
+        self.commits=getattr(self,'commits',0)+1
+        self.rows_written=getattr(self,'rows_written',0)+len(batch)+len(commands)
         counts=Counter(e['event'] for e in written_events)
         if any(k in counts for k in ('ORDER_SUBMITTED','MAKER_RESTING','FILL','CANCELLED','SPOT_SAFETY_CANCEL','SAFETY_REENTRY_READY','IOC_COMPLETE','DATA_GAP')):
             print(json.dumps(dict(event='shadow_audit_committed',counts=dict(counts),
@@ -119,12 +121,15 @@ class HostedAudit:
         return result
     async def flush_async(self):
         records=self.buffer;self.buffer=None
-        if records:await self.durable_io(self.write,self.prepare(records))
+        # The caller holds the state mutex until this entire operation finishes.
+        # Encoding/compression is CPU work too: leave the socket loop free while
+        # freezing state, without permitting the next wallet mutation to race it.
+        if records:await self.durable_io(self.commit,records)
     def write_checkpoint(self,data):
         self.guard()
         with self.store.pool.connection() as c:put(c,KEY,{},data)
         self.last_snapshot=time.monotonic()
     async def checkpoint_async(self):
-        await self.durable_io(self.write_checkpoint,self.checkpoint_snapshot())
+        await self.durable_io(self.checkpoint)
     def checkpoint(self):self.write_checkpoint(self.checkpoint_snapshot())
     def close(self):pass

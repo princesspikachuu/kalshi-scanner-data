@@ -1,7 +1,7 @@
 """Google-only, owner-only API. Precomputed research reads; no trading actions."""
 from contextlib import asynccontextmanager
 import hashlib
-import secrets
+import secrets,json,time
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -85,7 +85,17 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
     async def validation_error(request,error):return JSONResponse({'detail':'Invalid request'},status_code=422)
     @app.exception_handler(LoginRejected)
     async def rejected(request,error):return JSONResponse({'detail':'Login rejected'},status_code=401)
-    async def db_error(request,error):return JSONResponse({'detail':'Service temporarily unavailable'},status_code=503)
+    database_errors={}
+    async def db_error(request,error):
+        kind=type(error).__name__;now=time.monotonic()
+        item=database_errors.setdefault(kind,dict(count=0,next_log=0))
+        item['count']+=1
+        if now>=item['next_log']:
+            item['next_log']=now+30
+            route=request.scope.get('route')
+            print(json.dumps(dict(event='api_database_unavailable',error_type=kind,sqlstate=getattr(error,'sqlstate',None),
+                route=getattr(route,'path','unknown'),count=item['count'])),flush=True)
+        return JSONResponse({'detail':'Service temporarily unavailable'},status_code=503)
     app.add_exception_handler(DatabaseError,db_error)
     app.add_exception_handler(PoolTimeout,db_error)
 

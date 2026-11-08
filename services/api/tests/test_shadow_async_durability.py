@@ -12,6 +12,26 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         audit.engine=Engine(audit,cash='1000');audit.fleet=StrategyFleet(audit.engine,[])
         return audit
 
+    async def test_checkpoint_preparation_leaves_socket_loop_responsive(self):
+        audit=self.audit();started=threading.Event();release=threading.Event()
+        original=audit.prepare
+        def prepare(records):
+            started.set()
+            if not release.wait(2):raise RuntimeError('test release timeout')
+            return original(records)
+        audit.prepare=prepare;audit.write=Mock()
+        audit.begin();audit.engine.refill(D(1))
+        task=asyncio.create_task(audit.flush_async())
+        try:
+            self.assertTrue(await asyncio.to_thread(started.wait,1))
+            # This coroutine must run while preparation is still waiting.
+            await asyncio.sleep(0)
+            self.assertFalse(task.done())
+            release.set();await asyncio.wait_for(task,2)
+            audit.write.assert_called_once()
+        finally:
+            release.set();await asyncio.gather(task,return_exceptions=True)
+
     async def test_sockets_keep_receiving_during_commit_but_next_mutation_waits(self):
         audit=self.audit();started=threading.Event();release=threading.Event();committed=[]
         run=object.__new__(HostedRun);run.audit=audit;run.engine=audit.engine
