@@ -159,6 +159,19 @@ class FolderPostgres(unittest.TestCase):
         data=r.json();self.assertEqual(len(data['bots']),85);self.assertEqual(len(data['folders']),4)
         self.assertFalse(data['real_orders_enabled'])
 
+    def test_workspace_compression_is_negotiated_and_preserves_authenticated_contract(self):
+        import base64,gzip,hashlib
+        self.seed()
+        r=self.client.get('/demo/shadow/workspace',headers={'x-pocket-workspace-encoding':'gzip-base64-v1'})
+        self.assertEqual(r.status_code,200)
+        self.assertEqual(r.headers['x-pocket-workspace-encoding'],'gzip-base64-v1')
+        encoded=r.json();raw=gzip.decompress(base64.b64decode(encoded['data']))
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),encoded['sha256'])
+        self.assertEqual(len(raw),encoded['bytes'])
+        data=json.loads(raw)
+        self.assertEqual(data['contract'],'demo-v1');self.assertEqual(len(data['bots']),85)
+        self.assertEqual(len(data['folders']),4);self.assertFalse(data['real_orders_enabled'])
+
     def test_worker_reset_archives_and_checkpoints_one_session_atomically(self):
         from services.paper_demo.shadow.host import HostedRun
         from services.paper_demo.shadow.storage import HostedAudit

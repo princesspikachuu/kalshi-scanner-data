@@ -1,5 +1,5 @@
 """Owner-authenticated shadow controls and durable results; virtual money only."""
-import csv,io,json,time,hashlib
+import csv,io,json,time,hashlib,gzip,base64
 from uuid import uuid4
 from decimal import Decimal as D
 from fastapi import Request,Response,HTTPException
@@ -18,7 +18,7 @@ PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
 
 
-def workspace_response(payload):
+def workspace_response(payload,*,compressed=False):
     # These copies are used to build the bot cards but are not read by the UI.
     # Keep the durable worker snapshot intact and send each accounting view once.
     status=dict(payload['status']);status.pop('experiments',None)
@@ -31,9 +31,20 @@ def workspace_response(payload):
         folder.pop('bots',None)
         folders.append(folder)
     result=JSONResponse(dict(payload,status=status,folders=folders))
+    raw=result.body
+    digest=hashlib.sha256(raw).hexdigest()
+    if compressed:
+        if len(raw)>8388608:raise HTTPException(503,'Dashboard snapshot exceeds its supported size')
+        # Self-contained ASCII envelope: compressed data is far smaller and its
+        # checksum describes the decoded JSON, independent of HTTP transforms.
+        result=JSONResponse(dict(transport='workspace-gzip-v1',sha256=digest,bytes=len(raw),
+            data=base64.b64encode(gzip.compress(raw,compresslevel=3,mtime=0)).decode('ascii')))
+        result.headers['x-pocket-workspace-encoding']='gzip-base64-v1'
+        print(json.dumps(dict(event='dashboard_transport',encoding='gzip-base64-v1',
+            decoded_bytes=len(raw),wire_bytes=len(result.body))),flush=True)
     result.headers['x-pocket-workspace-contract']='demo-v1'
-    result.headers['x-pocket-workspace-sha256']=hashlib.sha256(result.body).hexdigest()
-    result.headers['x-pocket-workspace-bytes']=str(len(result.body))
+    result.headers['x-pocket-workspace-sha256']=digest
+    result.headers['x-pocket-workspace-bytes']=str(len(raw))
     result.headers['cache-control']='no-store, no-transform'
     return result
 
@@ -176,7 +187,8 @@ def install_shadow(app,auth,mutate,pool):
             accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
-            pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done'))))
+            pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done'))),
+            compressed=request.headers.get('x-pocket-workspace-encoding')=='gzip-base64-v1')
 
     class Change(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
