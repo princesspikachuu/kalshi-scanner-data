@@ -7,6 +7,7 @@ import json
 import math
 import statistics
 from itertools import islice
+from collections import deque
 from .microstructure import MarketTape
 from .execution import choose as execution_choice,size as position_size,tick_size,depth_quote,committed
 from decimal import Decimal as D, ROUND_FLOOR
@@ -51,7 +52,7 @@ class ScalperEngine(Engine):
     """Portfolio-local queue uncertainty, without changing other strategies."""
     covered_maker_sells=True
     def __init__(self,*args,**kwargs):
-        super().__init__(*args,**kwargs);self.tape=MarketTape()
+        super().__init__(*args,**kwargs);self.tape=MarketTape();self._print_times=deque()
     def handle(self,source,payload,now):
         self._scalper_source=source
         try:
@@ -91,6 +92,8 @@ class ScalperEngine(Engine):
     def trade(self,ticker,trade):
         # Equivalent YES sells / NO buys compete for the SAME observed print.
         if ticker in self.settled or trade.get('is_block_trade'):return
+        while self._print_times and self.now-self._print_times[0][0]>self.stale_seconds:
+            _,old=self._print_times.popleft();self.trade_ids.discard(old)
         ident=(ticker,trade['trade_id'])
         if ident in self.trade_ids:return
         if not self.book_fresh(ticker):return
@@ -101,7 +104,9 @@ class ScalperEngine(Engine):
         volume=D(trade['count_fp']);at=trade.get('ts_ms',trade.get('ts',0)*1000)/1000
         if not price.is_finite() or not volume.is_finite() or not ZERO<=price<=1 or volume<=0:raise ValueError('invalid trade price/quantity')
         if not math.isfinite(at) or abs(self.now-at)>self.stale_seconds:self.data_gap(ticker,'stale/future trade print');return
-        self.trade_ids.add(ident)
+        if len(self._print_times)>=32768:
+            self.data_gap(ticker,'trade deduplication capacity reached');return
+        self.trade_ids.add(ident);self._print_times.append((self.now,ident))
         self.tape.trade(ticker,trade,self.now)
         def terms(o):return (o.side,o.price) if o.action=='buy' else ('no' if o.side=='yes' else 'yes',1-o.price)
         orders=sorted((o for o in self.orders.values() if o.ticker==ticker and o.status=='resting' and o.arrives<=at and terms(o)[0]==resting and price<=terms(o)[1]),key=lambda o:(-terms(o)[1],o.arrives,o.id))
@@ -279,7 +284,7 @@ class VolatilityScalper(ConvexityStrategy):
         for cell in self.cells(a['meta']):
             cell['peak']=max(cell['peak'],cell['net'])
             cell['max_drawdown']=max(cell['max_drawdown'],cell['peak']-cell['net'])
-        self.increment(a['meta'],**{('maker_net' if a.get('entry_execution')=='maker' else 'taker_net'):net},adverse_losses=min(0,net) if a.get('exit_reason') in ('stop_loss','thesis_invalid','momentum_exhaustion') else 0)
+        self.increment(a['meta'],**{('maker_net' if a.get('entry_execution',a['meta'].get('execution'))=='maker' else 'taker_net'):net},adverse_losses=min(0,net) if a.get('exit_reason') in ('stop_loss','thesis_invalid','momentum_exhaustion') else 0)
         row=dict(a,ticker=ticker,exit_at=self.e.now,exit_remaining=max(0,self.e.markets[ticker]['close']-self.e.now))
         compact={k:v for k,v in row.items() if k not in ('entry_features','config')}
         self.research['recent']=(self.research['recent']+[compact])[-20:]

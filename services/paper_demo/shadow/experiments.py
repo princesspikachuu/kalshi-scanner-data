@@ -374,6 +374,8 @@ class ExperimentSuite:
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
+                if isinstance(b,VolatilityScalper):
+                    retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else {k:v for k,v in getattr(self,'maker_discovery',{}).items() if k in ('state','ranked','reads')} if folder in MM_FOLDERS else None,
                 assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
                     execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
@@ -408,6 +410,25 @@ class ExperimentSuite:
                         mapping=getattr(b,name,None)
                         if mapping is not None:mapping.pop(t,None)
                     f.halted.discard(t);self.extra.pop(t,None)
+            if folder in MM_FOLDERS:
+                # Long-dated, flat probes must not accumulate until settlement.
+                # Their orders/events and research remain in the durable journal.
+                for t,m in list(e.markets.items()):
+                    if not m.get('entry_parked') or e.now-m.get('discovered_at',e.now)<120:continue
+                    b=f.owner(t);a=b.attempts.get(t,{}) if b else {}
+                    if a.get('first') and not a.get('recorded') or any(l.ticker==t for l in e.wallet.lots):continue
+                    if any(o.ticker==t and o.status in ('pending','resting') for o in e.orders.values()):continue
+                    s=e.wallet.stat(t);totals=self.summary.setdefault(folder,{}).setdefault(m['bot_id'],{})
+                    for key,value in dict(gross=s.gross,fees=s.fees_paid,net=s.gross-s.realized_fees,closed=s.closed,won=s.won).items():
+                        totals[key]=str(D(totals.get(key,'0'))+value)
+                    if a:
+                        for key,value in dict(attempts=1,cycles=bool(a.get('recorded')),completed=bool(a.get('completed'))).items():totals[key]=totals.get(key,0)+value
+                    for mapping in (e.markets,e.books,e.fees,e.wallet.stats,e.gap_reasons):mapping.pop(t,None)
+                    e.orders={i:o for i,o in e.orders.items() if o.ticker!=t};e.pending=[item for item in e.pending if item[3] in e.orders]
+                    f.halted.discard(t)
+                    if b:
+                        for mapping in (b.attempts,b.history,b.last_eval):mapping.pop(t,None)
+                        b.last_signature={key:v for key,v in b.last_signature.items() if key[0]!=t}
             retired=[t for t,m in e.markets.items() if m.get('paid') and not any(l.ticker==t for l in e.wallet.lots)]
             if folder=='complete_set':
                 owner=next(iter(f.bots.values()))

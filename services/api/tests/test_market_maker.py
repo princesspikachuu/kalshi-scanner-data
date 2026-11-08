@@ -214,3 +214,26 @@ class HorizonTests(unittest.TestCase):
     def test_remaining_time_bands_distinguish_fast_and_long_market_research(self):
         from services.paper_demo.shadow.scalper import horizon
         self.assertEqual(horizon(600),'5–10m');self.assertEqual(horizon(800),'10–15m');self.assertEqual(horizon(7200),'1–6h');self.assertEqual(horizon(172800),'1–7d');self.assertEqual(horizon(40*86400),'30d+')
+
+
+class LongRunningResourceTests(unittest.TestCase):
+    def test_trade_deduplication_retains_only_live_timestamp_window(self):
+        e=ScalperEngine(QuietAudit());e.advance(200);market(e)
+        for i in range(5000):
+            e.now=200+i*.001;e.books[T].at=e.now
+            e.trade(T,dict(trade_id=str(i),taker_side='yes',yes_price_dollars='.51',count_fp='1',ts_ms=e.now*1000))
+        self.assertLess(len(e.trade_ids),3010);self.assertLess(len(e._print_times),3010)
+        self.assertLessEqual(len(e.tape.state(T)['trades']),256)
+    def test_flat_parked_maker_probes_are_retired_without_erasing_research(self):
+        rows=[dict(parameters=dict(p,revision=1),progress=dict(desired='running')) for p in profiles()]
+        from services.api.tests.test_strategy_folders import profile
+        rows.append(dict(parameters=profile('ALL','set_scanner','complete_set'),progress=dict(desired='running')))
+        host=Mock();host.audit=QuietAudit();host.verified_fees.schedule.return_value=('quadratic',1);suite=ready_suite(host,rows)
+        suite.handle('maker_market',dict(market=dict(ticker='POL-X',market_maker=True,market_category='politics',open=100,close=200000,discovered_at=200),taker_multiplier='1',maker_multiplier='0'),200)
+        first=suite.portfolios[MM_FOLDERS[0]][1].bots['MM_POLITICS'];first.research['totals']['completed']=7
+        suite.park_candidate('POL-X',suite.feed_markets()['POL-X'],500)
+        for folder in MM_FOLDERS:suite.portfolios[folder][0].advance(700)
+        suite.maintain()
+        self.assertTrue(all('POL-X' not in suite.portfolios[folder][0].markets for folder in MM_FOLDERS))
+        self.assertEqual(first.research['totals']['completed'],7)
+        self.assertEqual(suite.snapshot(700)[MM_FOLDERS[0]]['bots']['market_maker_politics']['completed'],7)
