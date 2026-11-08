@@ -184,9 +184,14 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
    if(shadowWorkspace&&upstream.headers.get('x-pocket-workspace-contract')==='demo-v1'){
     if(Number(upstream.headers.get('content-length'))>8388608){await upstream.body?.cancel();throw new RangeError('body limit')}
+    const streamHeaders={...BASE_HEADERS,'content-type':'application/json','cache-control':'no-store, no-transform'};
+    const digest=upstream.headers.get('x-pocket-workspace-sha256'),bytes=upstream.headers.get('x-pocket-workspace-bytes');
+    if(/^[a-f0-9]{64}$/.test(digest||'')&&/^[0-9]{1,8}$/.test(bytes||'')){
+     streamHeaders['x-pocket-workspace-sha256']=digest;streamHeaders['x-pocket-workspace-bytes']=bytes;
+    }
     streaming=true;
     return new Response(boundedResponse(upstream.body,8388608,()=>clearTimeout(timer)),
-     {status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+     {status:200,headers:streamHeaders});
    }
    const text=new TextDecoder().decode(await boundedBody(upstream.body,shadowWorkspace?8388608:(demo||liveBots)?2097152:(research||collection||paper)?262144:32768));
    response=new Response(JSON.stringify(liveBots?liveBotsBody(JSON.parse(text)):demo?demoBody(JSON.parse(text),url.pathname):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
