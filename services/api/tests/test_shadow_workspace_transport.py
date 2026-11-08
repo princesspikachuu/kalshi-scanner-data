@@ -22,6 +22,25 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertEqual(response.headers['x-pocket-workspace-bytes'],str(len(response.body)))
     def test_nonfinite_values_fail_before_response_is_sent(self):
         with self.assertRaises(ValueError):workspace_response(dict(status={},folders=[],bots=[],invalid=float('nan')))
+    def test_repeated_research_above_transport_limit_is_sent_once(self):
+        import base64,gzip
+        research=dict(cells=[dict(net='1',dimensions=dict(underlying='BTC'),evidence='x'*1200) for _ in range(1000)])
+        metric=dict(gross_profit='12',fees='2',net_realized_pnl='10',win_rate='50',cycles=20,excluded_cycles=1,
+            scalper=research,entry_timing=[dict(net='10')])
+        periods={p:metric for p in ('all','1H','6H','24H')}
+        payload=dict(status={},folders=[],bots=[dict(id='scalper',experiment=metric,metrics=periods,financial_metrics=periods)])
+        original=deepcopy(payload)
+        self.assertGreater(len(json.dumps(payload)),8388608)
+        response=workspace_response(payload,compressed=True)
+        envelope=json.loads(response.body)
+        result=json.loads(gzip.decompress(base64.b64decode(envelope['data'])))
+        self.assertLess(envelope['bytes'],1500000)
+        bot=result['bots'][0]
+        self.assertEqual(bot['experiment'],metric)
+        for field in ('metrics','financial_metrics'):
+            for summary in bot[field].values():
+                self.assertEqual(summary,dict(gross_profit='12',fees='2',net_realized_pnl='10',win_rate='50',cycles=20,excluded_cycles=1))
+        self.assertEqual(payload,original)
     def test_negotiated_compression_preserves_large_unicode_payload_and_embedded_checksum(self):
         import base64,gzip
         payload=dict(status={},folders=[],bots=[dict(id=i,label='Quoted "price" · 🌱',pnl='-0.123') for i in range(30000)])
