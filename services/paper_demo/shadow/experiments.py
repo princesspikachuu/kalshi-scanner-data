@@ -264,7 +264,7 @@ class ExperimentSuite:
                     e.idle_feed_suspended=True;continue
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
                 limits=self.monitoring.limits(now)
-                for bot in f.bots.values():bot.resource_paused=limits['backlog']>250 or (limits['lag_p95_seconds'] or 0)>2
+                for bot in f.bots.values():bot.resource_paused=not limits['admitting']
             local=payload
             if source in ('market','weather_market','sports_market','hourly_market'):
                 if folder not in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS) or source=='hourly_market' and folder not in ('favorites',*SCALPER_FOLDERS):continue

@@ -84,7 +84,7 @@ class Discovery(unittest.TestCase):
             e.markets[t]['weather_category']='weather_daily';suite.extra[t]=t
         self.assertTrue(suite.extra_capacity(['last'],240))
         self.assertFalse(suite.extra_capacity(['last','overflow'],240))
-        suite.monitoring.observe(245,300,.01,1)
+        suite.monitoring.observe(245,600,.01,1)
         self.assertFalse(suite.extra_capacity(['last'],245))
 
     def test_rotation_serves_unrepresented_series_first(self):

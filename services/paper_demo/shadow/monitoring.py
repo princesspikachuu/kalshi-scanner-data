@@ -17,7 +17,8 @@ class MonitoringBudget:
         self.lag_p95=recent[at];self.processing_p95=costs[at];self.backlog=backlog;self.cooldown=cooldown
         # A recent overload resets the growth window. Stale telemetry cannot
         # authorize discovery, even if the previous sample looked healthy.
-        overloaded=backlog>250 or self.lag_p95>2 or self.processing_p95>100 or cooldown>0
+        self.queue_seconds=backlog*self.processing_p95/1000
+        overloaded=backlog>2000 or self.queue_seconds>.5 or self.lag_p95>2 or self.processing_p95>100 or cooldown>0
         healthy=backlog<=50 and self.lag_p95<.5 and self.processing_p95<20 and not cooldown
         if overloaded:self.level=0;self.healthy_since=None
         elif healthy:
@@ -31,7 +32,7 @@ class MonitoringBudget:
         return dict(total=32+8*level,entry_candidates=12+4*level,per_category=4+4*level,
             admitting=fresh and not self.overloaded,level=level,
             reason='Waiting for current load measurements' if not fresh else 'Discovery paused: processing lag or read cooldown' if self.overloaded else 'Measured capacity available',
-            backlog=getattr(self,'backlog',0),lag_p95_seconds=getattr(self,'lag_p95',None),
+            backlog=getattr(self,'backlog',0),estimated_queue_seconds=getattr(self,'queue_seconds',None),lag_p95_seconds=getattr(self,'lag_p95',None),
             processing_p95_ms=getattr(self,'processing_p95',None),read_cooldown_seconds=getattr(self,'cooldown',0))
 
 def protected(suite,ticker,now):
