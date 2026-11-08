@@ -377,3 +377,22 @@ test('a recovered workspace read clears its stale transport error without removi
  vm.runInContext("note('Saved bot settings')",context);
  await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'Saved bot settings');
 });
+
+test('market maker renders category and individual controls, isolated experiments, and selected statistics',()=>{
+ const data=fixture(),base=data.bots[0];
+ data.folders.push({id:'market_maker',name:'Market Maker',description:'Paper only'});
+ data.bots.push({...base,id:'market_maker_politics',series:'MM_POLITICS',name:'Politics',folder_id:'market_maker',strategy:'market_maker',market_category:'politics',experiment:{message:'Monitoring',scalper:{market_maker:true,totals:{completed:3,maker_fill_rate:.5},periods:{'1H':{completed:1,win_rate:100}},config:{approach:'market_maker',min_spread:.03},cells:[],recent:[],markets:[{ticker:'POL-X',title:'<bad>',position:'2',orders:1,trades_24h:30,schedule_source:'unavailable',incentives:[]}]}}});
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ for(const text of ['Market Maker','Politics','Pause category','data-maker-market="market_maker_politics"','data-experiment-save="market_maker_politics"','Pause market','&lt;bad&gt;'])assert.ok(html.includes(text),text);
+ const recent=scalperMarkup(data.bots.at(-1).experiment.scalper,'market_maker_politics','1H');
+ assert.match(recent,/1 \/ 100.0%/);assert.match(recent,/selected 1H window/);assert.doesNotMatch(recent,/3 \/ —%/);
+ assert.match(scalperMarkup(data.bots.at(-1).experiment.scalper,'','30D'),/collecting a baseline/);
+});
+
+test('new scalper modes and market maker use existing gateway paper controls',async()=>{
+ for(const folder of ['scalper_momentum','scalper_dislocation','market_maker','maker_competitive']){
+  let forwarded=false;
+  const result=await proxyAuth(new Request('https://app.test/api/demo/shadow/bulk',{method:'POST',headers:{origin:'https://app.test','content-type':'application/json','x-csrf-token':'token'},body:JSON.stringify({action:'pause',folder_id:folder})}),{APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)},{fetcher:async request=>{forwarded=true;return new Response(JSON.stringify({contract:'demo-v1',saved:true,real_orders_enabled:false}),{headers:{'content-type':'application/json'}})}});
+  assert.equal(result.status,200);assert.ok(forwarded);
+ }
+});

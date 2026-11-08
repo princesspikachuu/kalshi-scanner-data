@@ -1,5 +1,5 @@
 """Owner-authenticated shadow controls and durable results; virtual money only."""
-import csv,io,json,time,hashlib,gzip,base64
+import csv,io,json,time,hashlib,gzip,base64,math
 from uuid import uuid4
 from decimal import Decimal as D
 from fastapi import Request,Response,HTTPException
@@ -13,6 +13,7 @@ from services.trading.mode import require_demo,ModeConflict
 
 from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIAL_FOLDERS
 from services.paper_demo.shadow.scalper import SCALPER_FOLDERS
+from services.paper_demo.shadow.market_maker import MM_FOLDERS,CATEGORIES
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
@@ -87,7 +88,7 @@ def install_shadow(app,auth,mutate,pool):
             p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
         all_profiles.sort(key=lambda r:r['parameters']['name'])
         profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
-        folder_rows=store.rows('shadow/folder/',10)
+        folder_rows=store.rows('shadow/folder/',24)
         reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
         revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
         now=time.time()
@@ -195,6 +196,9 @@ def install_shadow(app,auth,mutate,pool):
         revision:int=Field(ge=1)
         contracts:int|None=Field(default=None,ge=1,le=10000)
         desired:str|None=Field(default=None,pattern='^(running|paused)$')
+        config:dict[str,int|float]|None=Field(default=None,max_length=30)
+        market_ticker:str|None=Field(default=None,pattern='^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$')
+        market_desired:str|None=Field(default=None,pattern='^(running|paused)$')
     @app.post('/demo/shadow/bots/{identifier}')
     def change(identifier:str,body:Change,request:Request):
         mutate(request);query(request)
@@ -210,6 +214,23 @@ def install_shadow(app,auth,mutate,pool):
             if body.contracts is not None and body.contracts!=p['contracts']:
                 put(c,'demo/shadow/version/'+identifier+'/'+str(p['revision']),{},p)
                 p=dict(p,contracts=body.contracts,revision=p['revision']+1,changed_at=time.time())
+            if body.config is not None:
+                if p.get('strategy') not in ('market_maker','volatility_scalper'):raise HTTPException(422,'This strategy has no scalping configuration')
+                allowed={'min_price':(.01,.99),'max_price':(.01,.99),'min_remaining':(21600,31536000),'max_sigma':(.001,.25),'min_spread':(.01,.25),'min_trades_24h':(1,100),'max_hold':(1,86400),'order_ttl':(1,3600),'reprice_ticks':(1,10),'reprice_seconds':(1,300),'min_net':(0,10),'depth_fraction':(.01,1),'market_exposure':(.001,1),'event_exposure':(.001,1),'category_exposure':(.001,1),'portfolio_exposure':(.001,1),'reduce_hold':(1,86400),'restrict_entries':(1,604800),'liquidate':(1,86400),'pre_event':(0,86400),'post_event':(0,86400)}
+                if any(k not in allowed or isinstance(v,bool) or not math.isfinite(v) or not allowed[k][0]<=v<=allowed[k][1] for k,v in body.config.items()):raise HTTPException(422,'Invalid experimental parameter')
+                put(c,'demo/shadow/version/'+identifier+'/'+str(p['revision']),{},p)
+                p=dict(p,config=dict(p.get('config',{}),**body.config),revision=p['revision']+1,changed_at=time.time())
+            if (body.market_ticker is None)!=(body.market_desired is None):raise HTTPException(422,'Market and requested state are both required')
+            if body.market_ticker is not None:
+                if p.get('strategy')!='market_maker':raise HTTPException(422,'Per-market control is only available for Market Maker')
+                if body.market_desired=='running':
+                    try:require_demo(c)
+                    except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
+                paused=set(p.get('paused_markets',[]))
+                if body.market_desired=='paused':paused.add(body.market_ticker)
+                else:paused.discard(body.market_ticker)
+                if len(paused)>100:raise HTTPException(422,'Too many market overrides')
+                p=dict(p,paused_markets=sorted(paused))
             if body.desired is not None:state=dict(state,desired=body.desired)
             put(c,'demo/shadow/bot/'+identifier,p,state)
         return dict(contract='demo-v1',saved=True,revision=p['revision'],real_orders_enabled=False)
@@ -235,7 +256,8 @@ def install_shadow(app,auth,mutate,pool):
     class Bulk(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
-        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid)$')
+        category:str|None=Field(default=None,pattern='^(politics|economics|sports_futures|entertainment)$')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive)$')
     @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
@@ -243,8 +265,9 @@ def install_shadow(app,auth,mutate,pool):
             if body.action=='resume':
                 try:require_demo(c)
                 except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
+            if body.category and body.folder_id not in MM_FOLDERS:raise HTTPException(422,'Choose a Market Maker strategy for category controls')
             desired='paused' if body.action=='pause' else 'running'
-            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true')",(desired,body.folder_id,body.folder_id,desired))
+            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true') AND (%s::text IS NULL OR parameters->>'market_category'=%s)",(desired,body.folder_id,body.folder_id,desired,body.category,body.category))
         return dict(contract='demo-v1',saved=True,real_orders_enabled=False)
 
     class Reset(BaseModel):
@@ -253,7 +276,7 @@ def install_shadow(app,auth,mutate,pool):
     @app.post('/demo/shadow/folders/{folder}/reset')
     def reset_folder(folder:str,body:Reset,request:Request):
         mutate(request);query(request)
-        if folder not in ('convexity','complete_set','favorites',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS) or not store.get('shadow/folder/'+folder):
+        if folder not in ('convexity','complete_set','favorites',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or not store.get('shadow/folder/'+folder):
             raise HTTPException(404,'Bot folder not found')
         with pool.connection() as c:
             key='demo/shadow/command/'+body.request_id

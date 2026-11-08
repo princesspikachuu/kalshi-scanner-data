@@ -9,6 +9,8 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
+from .market_maker import MarketMaker,MM_FOLDERS
+from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
 from .monitoring import MonitoringBudget,protected,category as market_category
@@ -25,23 +27,32 @@ class ExperimentFleet(StrategyFleet):
     def __init__(self,engine,profiles,model,complete=False):
         self.e=engine;self.halted=set();self.bots={};self.complete=complete
         for p in profiles:
-            b=VolatilityScalper(engine,p) if p.get('strategy')=='volatility_scalper' else CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
+            b=MarketMaker(engine,p) if p.get('strategy')=='market_maker' else VolatilityScalper(engine,p) if p.get('strategy')=='volatility_scalper' else CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
             b.halted=self.halted;self.bots[p['series']]=b
         engine.fill_callback=self.on_fill;engine.strategy=self
     def on_data_gap(self,ticker,reason):
         owner=self.owner(ticker);callback=getattr(owner,'on_data_gap',None)
         if callback:callback(ticker,reason)
-    def owner(self,ticker):return next(iter(self.bots.values()),None) if self.complete else super().owner(ticker)
+    def owner(self,ticker):
+        if self.complete:return next(iter(self.bots.values()),None)
+        if self.e.markets.get(ticker,{}).get('market_maker'):
+            ident=self.e.markets[ticker]['bot_id'];return next((b for b in self.bots.values() if b.profile['id']==ident),None)
+        return super().owner(ticker)
     def step(self,changed_ticker=None):
         if self.complete:
             for b in self.bots.values():b.step(changed_ticker)
+        elif isinstance(self.e,ScalperEngine) and changed_ticker is None:
+            # Only owners of admitted markets need a clock pass. Empty profiles
+            # cannot place or manage an order and need no duplicate book scans.
+            owners={id(b):b for t in self.e.markets if (b:=self.owner(t)) is not None}
+            for b in owners.values():b.step()
         else:super().step(changed_ticker)
 
 class ExperimentSuite:
     def __init__(self,host,rows,previous=None):
         self.summary=(previous or {}).get('_summary',{})
         self.comparison=(previous or {}).get('_comparison',{})
-        self.monitoring=MonitoringBudget()
+        self.monitoring=MonitoringBudget();self.tape=MarketTape()
         self.rotation_exclusions={t:min(end,time.time()+60) for t,end in (previous or {}).get('_rotation_exclusions',{}).items()}
         self.host=host;self.rows=rows;self.portfolios={};self.models={};self.extra={};self.scanner_cursor='';self.scanner_state={}
         for folder in EXPERIMENT_FOLDERS:
@@ -49,8 +60,9 @@ class ExperimentSuite:
             model_data=(previous or {}).get(folder,{}).get('model')
             if model_data is None and folder=='sequential_flexible':model_data=deepcopy((previous or {}).get('sequential',{}).get('model'))
             model=(AdaptivePairModel if folder=='sequential_adaptive' else PairModel)(model_data)
-            engine_class=ScalperEngine if folder in SCALPER_FOLDERS else Engine
+            engine_class=ScalperEngine if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) else Engine
             e=engine_class(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
+            if isinstance(e,ScalperEngine):e.tape=self.tape
             if getattr(host,'model_worker_latency',False) is True:e.wall_clock=time.time
             f=ExperimentFleet(e,ps,model,folder=='complete_set')
             state=(previous or {}).get(folder)
@@ -85,7 +97,7 @@ class ExperimentSuite:
                     for t in e.markets:
                         if f.owner(t) is b:e.cancel_buys(t)
                 b.enabled=enabled;b.contracts=D(row['parameters']['contracts'])
-                if isinstance(b,VolatilityScalper):p.update(row['parameters'])
+                if isinstance(b,VolatilityScalper):p.update(row['parameters']);b.refresh_config()
     def add_set(self,payload,now):
         if not self.extra_capacity([p['market']['ticker'] for p in payload['markets']],now):return
         e,f,ps=self.portfolios['complete_set'];profile=ps[0]
@@ -102,7 +114,7 @@ class ExperimentSuite:
         return list(found.values())
     def feed_markets(self):
         return {t:m for e,f,ps in self.portfolios.values() for t,m in e.markets.items()
-                if not m.get('entry_parked') and not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
+                if not m.get('entry_parked') and not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price') or m.get('market_maker'))}
     def share_external_markets(self):
         # A newly added strategy must join already subscribed weather/games;
         # waiting for another discovery would strand it behind filled positions.
@@ -134,12 +146,12 @@ class ExperimentSuite:
 
     def settlement_markets(self):
         return {t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()
-                if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price'))}
+                if not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price') or m.get('market_maker'))}
     def candidate_allowed(self,ticker,now):
         if self.rotation_exclusions.get(ticker,0)>now:return False
         owners=[f.owner(ticker) for e,f,_ in self.portfolios.values() if ticker in e.markets]
         owners=[b for b in owners if b and b.enabled]
-        return not owners or not all(b.attempts.get(ticker,{}).get('first') for b in owners)
+        return not owners or not all(b.attempts.get(ticker,{}).get('first') and not (isinstance(b,VolatilityScalper) and b.attempts[ticker].get('recorded')) for b in owners)
     def monitoring_snapshot(self,now):
         limits=self.monitoring.limits(now)
         active={t for t,m in self.feed_markets().items() if m['close']>now}
@@ -148,10 +160,10 @@ class ExperimentSuite:
         care={t for t in active if protected(self,t,now)}
         probes=active-care
         markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
-        legacy=sum(m['close']>now for m in self.host.engine.markets.values())
+        legacy={t for t,m in self.host.engine.markets.items() if m['close']>now}
         return dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
-            subscribed_markets=len(active)+legacy,legacy_markets=legacy,
-            categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set')},
+            subscribed_markets=len(active|legacy),legacy_markets=len(legacy),
+            categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set','market_maker')},
             rotated_markets=len(self.rotation_exclusions))
     def search_capacity(self,category,now,slots=1):
         stats=self.monitoring_snapshot(now)
@@ -224,6 +236,19 @@ class ExperimentSuite:
                 if self.monitoring_snapshot(now)['admitting']:self.reclaim_idle_candidate(now)
             if not self.extra_capacity([payload['market']['ticker']],now):return
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
+        if source=='maker_market':
+            m=payload['market'];ticker=m['ticker']
+            if not self.extra_capacity([ticker],now):return
+            self.extra[ticker]=ticker
+            for folder in MM_FOLDERS:
+                e,f,ps=self.portfolios[folder]
+                profile=next((p for p in ps if p['market_category']==m['market_category']),None)
+                if not profile:continue
+                if ticker in e.markets:
+                    e.markets[ticker].update(m,entry_parked=False)
+                    e.books[ticker].valid=False
+                e.handle('market',dict(payload,market=dict(m,bot_id=profile['id'],bot_name=profile['name'],bot_revision=profile['revision'],strategy_version=profile['version'])),now)
+            return
         errors=[]
         for folder,(e,f,ps) in self.portfolios.items():
             if getattr(self.host,'suspend_idle_feeds',False) is True:
@@ -237,7 +262,7 @@ class ExperimentSuite:
                     # No trading intent, outstanding orders or exposure needs
                     # this duplicate book. Keep lifecycle/settlement processing.
                     e.idle_feed_suspended=True;continue
-            if folder in SCALPER_FOLDERS:
+            if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
                 limits=self.monitoring.limits(now)
                 for bot in f.bots.values():bot.resource_paused=limits['backlog']>250 or (limits['lag_p95_seconds'] or 0)>2
             local=payload
@@ -304,7 +329,7 @@ class ExperimentSuite:
             max_drawdown=draw['max_drawdown'],drawdown_incomplete=draw['coverage_incomplete'],
             open_attempts=len(active),unpriced=unpriced,at=now)
     def data_message(self,e,b,p,now):
-        current=[(t,m) for t,m in e.markets.items() if t.startswith(p['series']+'-') and m['close']>now and not m.get('paid') and not m.get('entry_parked')]
+        current=[(t,m) for t,m in e.markets.items() if (m.get('bot_id')==p['id'] or t.startswith(p['series']+'-')) and m['close']>now and not m.get('paid') and not m.get('entry_parked')]
         if current and not any(e.book_fresh(t) for t,m in current):
             return 'Active market · waiting for fresh order-book data'
         coverage=getattr(self,'hourly_coverage',{}).get(p['series'])
@@ -319,7 +344,7 @@ class ExperimentSuite:
             money=snapshot(e,ps,now)
             if folder in SCALPER_FOLDERS:
                 for order in money['orders']:
-                    if order['purpose']=='scalper_maker_profit_exit':
+                    if order['purpose']=='scalper_maker_profit_exit' and order['action']=='buy':
                         order.update(action='sell',side='no' if order['side']=='yes' else 'yes',price=str(1-D(order['price'])),execution='complementary maker netting')
             bots={}
             for p in ps:
@@ -349,7 +374,7 @@ class ExperimentSuite:
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
-            result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
+            result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else {k:v for k,v in getattr(self,'maker_discovery',{}).items() if k in ('state','ranked','reads')} if folder in MM_FOLDERS else None,
                 assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
                     execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
                     independent_paper_portfolio=True,real_orders_enabled=False))
@@ -430,6 +455,7 @@ class ExperimentSuite:
             e.prune_terminal_orders()
         # One ticker may belong to both a basket and a favorite. Retiring one
         # portfolio must not unsubscribe another portfolio's remaining position.
+        self.tape.prune({t for e,_,_ in self.portfolios.values() for t,m in e.markets.items() if not m.get('paid')})
         self.extra={t:t for t in self.feed_markets()}
         self.extra.update({t:t for t,m in self.portfolios['complete_set'][0].markets.items() if not m.get('paid')})
 

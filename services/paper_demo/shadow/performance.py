@@ -75,7 +75,7 @@ def balance_sample(account,session):
         equity_low=str(bounds[0]) if bounds else None,equity_high=str(bounds[1]) if bounds else None)
 
 def record_balances(store,accounts,now):
-    folders=store.rows('shadow/folder/',10)
+    folders=store.rows('shadow/folder/',24)
     samples={r['parameters']['id']:balance_sample(accounts[r['parameters']['id']],r['progress']['session'])
         for r in folders if r['parameters']['id'] in accounts}
     with store.pool.connection() as c:

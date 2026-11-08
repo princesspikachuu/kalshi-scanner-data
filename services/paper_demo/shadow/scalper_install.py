@@ -41,3 +41,18 @@ def initialize_scalper(store,guard):
                 add('demo/shadow/bot/'+ident,dict(source,id=ident,key=str(uuid4()),contracts=5,revision=1,changed_at=now,
                     folder_id=folder,strategy='volatility_scalper',version='scalper-1',live_enabled=False,config=CONFIGS[folder]),dict(desired='running'))
         add('demo/'+marker,{},dict(at=now,real_orders_enabled=False))
+
+def initialize_scalper_upgrade(store,guard):
+    marker='shadow/scalper-execution-v2'
+    if store.get(marker):return
+    guard();now=time.time()
+    with store.pool.connection() as c:
+        c.execute('SELECT pg_advisory_xact_lock(%s)',(73820193,))
+        def add(key,p,s):
+            c.execute("""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
+                VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp()) ON CONFLICT(idempotency_key) DO NOTHING""",entry(key,p,s))
+        for i,folder in enumerate(('scalper_momentum','scalper_dislocation')):
+            add('demo/shadow/folder/'+folder,dict(id=folder,name='Volatility Scalper · '+('Momentum' if i==0 else 'Liquidity Dislocation'),strategy='volatility_scalper',order=5.3+i/10,description='Independent paper experiment over shared causal observations.',config=CONFIGS[folder]),dict(session=str(uuid4()),created_at=now))
+            for source in scalper_profiles():
+                add('demo/shadow/bot/'+folder+'_'+source['series'].lower(),dict(source,id=folder+'_'+source['series'].lower(),key=str(uuid4()),contracts=5,revision=1,changed_at=now,folder_id=folder,strategy='volatility_scalper',version='scalper-2',live_enabled=False,config=CONFIGS[folder]),dict(desired='running'))
+        add('demo/'+marker,{},dict(at=now,real_orders_enabled=False))

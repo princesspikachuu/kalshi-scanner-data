@@ -97,7 +97,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:shadow\/(?:workspace|events|sessions(?:\/[a-f0-9-]{36})?|funds|bulk|folders\/(?:convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid)\/reset|bots\/[a-z0-9_]{1,40})|workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:shadow\/(?:workspace|events|sessions(?:\/[a-f0-9-]{36})?|funds|bulk|folders\/(?:convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive)\/reset|bots\/[a-z0-9_]{1,40})|workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const liveBots=/^\/api\/live\/(?:workspace|budget|connection|onboarding|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';

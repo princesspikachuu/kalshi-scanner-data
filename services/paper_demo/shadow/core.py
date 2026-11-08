@@ -479,7 +479,7 @@ class Engine:
         if (side not in ('yes','no') or action not in ('buy','sell') or quantity <= 0 or
                 not quantity.is_finite() or not ZERO < price < 1):
             raise ValueError('invalid virtual order')
-        if maker and action != 'buy':
+        if maker and action != 'buy' and not getattr(self,'covered_maker_sells',False):
             raise ValueError('maker engine currently supports strategy entry buys only')
         market = self.markets[ticker]
         self.serial += 1
@@ -640,7 +640,7 @@ class Engine:
         self.wallet.fill(order.ticker, order.side, order.action, quantity, price, fee,
                          order.phase, f'{order.id}:{order.remaining}', order.targets,acquired_at=self.now)
         order.remaining -= quantity
-        if order.maker:
+        if order.maker and order.action=='buy':
             order.reserved = (order.remaining*order.price+
                               self.fees[order.ticker].charge(order.remaining, order.price, True))
         stat = self.wallet.stat(order.ticker)

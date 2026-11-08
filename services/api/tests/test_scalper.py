@@ -115,7 +115,7 @@ class ScalperTests(unittest.TestCase):
         exit_order=next(o for o in e.orders.values() if o.purpose=='scalper_maker_profit_exit')
         e.books[T].at=209.2;e.advance(209.2)
         self.assertEqual(exit_order.status,'resting')
-        e.trade(T,dict(trade_id='exit',taker_side='yes',yes_price_dollars=str(1-exit_order.price),count_fp=str(exit_order.ahead+5),ts_ms=209200))
+        e.trade(T,dict(trade_id='exit',taker_side='yes',yes_price_dollars=str(exit_order.price if exit_order.side=='yes' else 1-exit_order.price),count_fp=str(exit_order.ahead+5),ts_ms=209200))
         self.assertFalse(e.wallet.lots)
         self.assertEqual(b.research['totals']['completed'],1)
         self.assertGreater(b.research['totals']['net'],0)
@@ -186,7 +186,7 @@ class ScalperTests(unittest.TestCase):
         records.append((200,'UNCHANGED',dict(ticker=T,reason='prior strategy')))
         batch,commands,events=audit.prepare(records)
         self.assertEqual(len(batch),3)
-        self.assertEqual(len(events[0]['decisions']),6)
+        self.assertEqual(len(events[0]['decisions']),2*len(SCALPER_FOLDERS))
         self.assertEqual(events[1]['event'],'UNCHANGED')
         self.assertEqual({d['folder_id'] for d in events[0]['decisions']},set(SCALPER_FOLDERS))
 

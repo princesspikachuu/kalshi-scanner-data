@@ -15,16 +15,16 @@ export function favoriteCategoryRows(rows=[],combineSeries=false){
  }
  return [...groups.values()].sort((a,b)=>a.series.localeCompare(b.series)||String(a.clock).localeCompare(String(b.clock))||a.low-b.low||bands.indexOf(a.horizon)-bands.indexOf(b.horizon));
 }
-function researchTable(rows){
+function researchTable(rows,roundTrips=false){
  if(!rows.length)return '<p class="small">No recorded price-and-time entries yet. Earlier trades without entry timing are not assigned guessed categories.</p>';
- return `<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>Settled</th><th>Win rate</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`).join('')}</tbody></table></div>`;
+ return `<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>${roundTrips?'Completed contracts':'Settled'}</th><th>${roundTrips?'Profitable round trips':'Win rate'}</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`).join('')}</tbody></table></div>`;
 }
 const researchNote='<p class="small">YES and NO purchases are combined by the purchased contract’s implied percentage and time remaining at fill. Win rates use settled contract quantities; unsettled outcomes stay pending. Price percentages are market prices, not proven outcome probabilities. P/L includes exits and fees. Research uses all collected data, independent of the P/L time selector. Bids are still gathering data and do not automatically adjust.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set()){
  if(group.id==='sports')return '';
  const rows=favoriteCategoryRows(group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
  const key='favorites-category-'+group.id;
- return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${researchNote}${researchTable(rows)}</details>`;
+ return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${group.research_kind==='round_trips'?'<p class="small">Both contract directions are combined by entry percentage and time. Win rate measures profitable completed trades, including fees; it is not event prediction accuracy. Data includes all collected history.</p>':researchNote}${researchTable(rows,group.research_kind==='round_trips')}</details>`;
 }
 export function favoriteResearchMarkup(bots,open=new Set()){
  const contents=bots.map(bot=>{
@@ -95,7 +95,7 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  const pnl=finite(a.total_pnl)?{low:Number(a.total_pnl),high:Number(a.total_pnl),unpriced:0}:shifted(equity,-Number(a.deposits));
  const unreal=finite(a.unrealized_pnl)?{low:Number(a.unrealized_pnl),high:Number(a.unrealized_pnl),unpriced:0}:shifted(value,-Number(a.position_cost));
  return `<div class="portfolio-headlines"><div><span>Portfolio value · best current estimate</span><strong class="${uncertain?'value-range':''}">${e(rangeText(equity))}</strong><small>Cash plus the current value of positions</small></div><div><span>Total P/L · best current estimate · after fees</span><strong class="${rangeClass(pnl)} ${uncertain?'value-range':''}">${e(rangeText(pnl))}</strong><small>Lifetime · all bots and versions</small></div></div>
- <p class="small">Current bids value positions when available; otherwise the last verified bid or entry price is used.</p>
+ <p class="small">Scalper and Market Maker positions use executable bid depth after exit fees. Other positions use current bids. The last verified bid or entry price provides the fallback estimate; unavailable depth is identified as estimated.</p>
  <div class="portfolio-breakdown">${metric('Realized P/L',a.realized_pnl,'Closed trades and settled contracts · after fees')}${rangedMetric('Unrealized P/L',unreal,uncertain?'Best estimate for positions still held':'Value change of positions still held')}${metric('Virtual funds added',a.deposits,'Starting bankroll plus refills; not profit')}</div>
  <div class="money-grid">${metric('Available cash',a.available_cash,`Total cash ${dollars(a.cash)}`)}${metric('Unfilled buy bids',a.unfilled_bids,'Reserved from cash; includes estimated fees')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}</div>
  <p class="small accounting-equation">Portfolio value = cash (including reserved bids) + active position value + estimated pending payout. Position cost is shown separately from value. Values round to cents on screen.</p>
@@ -109,7 +109,7 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
 export const folderPeriods={all:'All', '1H':'1h', '6H':'6h', '24H':'24h', '7D':'7d', '30D':'30d'};
 export function monitoringMarkup(m){
  if(!m)return '';
- const names={weather:'Hourly weather',weather_daily:'Daily weather',hourly:'Hourly prices',sports:'Sports',complete_set:'Complete sets'};
+ const names={weather:'Hourly weather',weather_daily:'Daily weather',hourly:'Hourly prices',sports:'Sports',market_maker:'Market Maker',complete_set:'Complete sets'};
  return `<details class="sequential-comparison monitoring-status"><summary>Market monitoring · ${e(String(m.subscribed_markets))} watched · ${e(String(m.entry_markets))} entry candidates</summary><p class="small">${e(m.reason)}. Positions, protective exits and live games awaiting the Favorites window retain monitoring. Their subscriptions count toward the total limit, separately from entry candidates. Existing positions stay monitored if capacity is exceeded.</p><div class="money-grid"><div><span>Protected monitoring</span><strong>${e(String(m.position_and_exit_markets))}</strong></div><div><span>Entry candidates</span><strong>${e(String(m.entry_markets))} / ${e(String(m.entry_candidates))}</strong></div><div><span>Total admission ceiling</span><strong>${e(String(m.subscribed_markets))} / ${e(String(m.total))}</strong></div><div><span>Pending feed inputs</span><strong>${e(String(m.backlog))}</strong></div></div><p class="small">${Object.entries(names).map(([k,label])=>`${label}: ${e(String(m.categories?.[k]||0))}`).join(' · ')}. Entry slots per category: ${e(String(m.per_category))} (complete sets: 4).</p><p class="small">Recent 95th-percentile processing lag: ${finite(m.lag_p95_seconds)?Number(m.lag_p95_seconds).toFixed(2)+'s':'waiting'} · ${e(String(m.rotated_markets))} candidates rotated out until their market closes. Capacity grows after sustained healthy processing and pauses new discovery during overload.</p></details>`;
 }
 export function sequentialComparisonMarkup(folders){
@@ -124,7 +124,8 @@ export function marketTypeGroups(bots){
   const series=String(bot.series||'').toUpperCase(),asset=bot.asset;
   const period=series.endsWith('15M')?'15m':asset==='hourly'?'hourly':'';
   let id,label,rank;
-  if(asset==='weather'){id='weather-hourly';label='Hourly weather';rank=40}
+  if(bot.strategy==='market_maker'){id='maker-'+bot.market_category;label=({'politics':'Politics','economics':'Economics / Finance','sports_futures':'Sports Futures','entertainment':'Entertainment / Culture'})[bot.market_category]||'Market Maker';rank=5}
+  else if(asset==='weather'){id='weather-hourly';label='Hourly weather';rank=40}
   else if(asset==='weather_daily'){id='weather-daily';label='Daily weather';rank=50}
   else if(asset==='sports'){id='sports';label='Sports';rank=60}
   else if(bot.strategy==='complete_set'||series==='ALL_SAME_DAY'){id='complete-sets';label='Complete-set scanner';rank=70}
@@ -149,7 +150,7 @@ export function summaryExposure(a){
 }
 function exposureHeaderMarkup(a){
  const x=summaryExposure(a);
- return `<span class="exposure-header-value"><span class="folder-card-label">Open bids</span><strong>${e(dollars(x.bids))}</strong><small>Reserved for buys · now</small></span><span class="exposure-header-value"><span class="folder-card-label">Open/pending positions</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))} · pending ${e(dollars(x.pending))}</small><small>Money committed · includes entry fees</small></span>`;
+ return `<span class="exposure-header-value"><span class="folder-card-label">Open bids</span><strong>${e(dollars(x.bids))}</strong><small>Reserved for buys · now</small></span><span class="exposure-header-value"><span class="folder-card-label">Open/pending positions</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))} · pending ${e(dollars(x.pending))}</small><small>Money committed · includes entry fees</small><small>Estimated market value ${e(dollars(a?.position_value))}</small></span>`;
 }
 export function marketTypeSummaryValues(bots,period='all',positions=[]){
  if(!Object.hasOwn(folderPeriods,period))period='all';
