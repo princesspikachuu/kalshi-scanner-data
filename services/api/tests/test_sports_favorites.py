@@ -77,6 +77,41 @@ class SportsRetryDiagnostics(unittest.IsolatedAsyncioTestCase):
 
 
 class SportsDiscovery(unittest.IsolatedAsyncioTestCase):
+    def batch_host(self,count,scheduled=False):
+        suite,rows=weather.WeatherSuite().suite()
+        rows += [dict(parameters=dict(sports_profiles()[0],revision=1),progress=dict(desired='running'))]
+        suite=weather.existing.ready_suite(suite.host,rows);host=Mock();host.experiments=suite;host.engine.markets={}
+        host.put=AsyncMock();host.fee_policy=AsyncMock(return_value=Mock(taker_multiplier=D(1),maker_multiplier=D(0)))
+        now=time.time();date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat();seen=[]
+        def call(method,path,query=None):
+            self.assertEqual(method,'GET');seen.append(path)
+            if path=='/markets':return dict(markets=[dict(ticker=query['series_ticker']+'-TEST-'+str(i),
+                event_ticker='EVENT'+str(i),status='active',open_time=date(now-1000),close_time=date(now+86400),
+                expected_expiration_time=date(now+3600)) for i in range(count)])
+            if path=='/milestones':return dict(milestones=[dict(id=query['related_event_ticker'],category='Sports',
+                start_date=date(now+3600 if scheduled else now-2000),related_event_tickers=[query['related_event_ticker']])])
+            if path.startswith('/live_data/milestone/'):return dict(live_data=dict(milestone_id=path.split('/')[-1],
+                details=dict(status='live',last_updated_ts=now)))
+            raise AssertionError(path)
+        host.verified_data.call.side_effect=call
+        return host,now,seen
+
+    async def test_first_admission_leaves_unvisited_events_ready_without_aborting_scan(self):
+        host,now,seen=self.batch_host(2)
+        await sports_once(host)
+        host.put.assert_awaited_once();self.assertEqual(host.put.await_args.args[0],'sports_market')
+        cache=next(iter(host.experiments.sports_schedule.values()))
+        self.assertLess(cache['retry_at'],now+2)
+        self.assertEqual(seen.count('/milestones'),1)
+
+    async def test_three_event_budget_leaves_unvisited_events_ready_without_aborting_scan(self):
+        host,now,seen=self.batch_host(5,scheduled=True)
+        await sports_once(host)
+        host.put.assert_not_awaited();self.assertEqual(seen.count('/milestones'),3)
+        self.assertFalse(any(p.startswith('/live_data/') for p in seen))
+        cache=next(iter(host.experiments.sports_schedule.values()))
+        self.assertLess(cache['retry_at'],now+2)
+
     async def test_verified_late_game_uses_read_only_milestone_and_live_endpoints(self):
         suite,rows=weather.WeatherSuite().suite()
         rows += [dict(parameters=dict(p,revision=1),progress=dict(desired='running')) for p in sports_profiles()]
