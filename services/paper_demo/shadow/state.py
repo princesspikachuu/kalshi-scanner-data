@@ -4,16 +4,30 @@ from .core import D, ZERO, Wallet, Lot, Stats, Order, Book, FeePolicy
 
 
 def encode(engine, fleet):
+    # These execution records contain scalar fields and Order.targets only.
+    # asdict recursively deep-copies every Decimal, although serialization runs
+    # under the state fence and immediately freezes the result into bytes.
+    def record(value):
+        result=vars(value).copy()
+        if isinstance(value,Order) and value.targets is not None:result['targets']=list(value.targets)
+        return result
+    fleet_state={};shared_halts_written=False
+    for series,b in fleet.bots.items():
+        shared=b.halted is getattr(fleet,'halted',None)
+        halts=[] if shared and shared_halts_written else sorted(b.halted)
+        if shared:shared_halts_written=True
+        # All fleet bots already reference one shared halt set. Restore unions
+        # these lists, so writing it once is lossless for old and new readers.
+        fleet_state[series]=dict(phases=b.phases,entered=sorted(b.entered),locked=sorted(b.locked),
+            halted=halts,safety_retries=sorted(b.safety_retries),emergency=b.emergency,last_exit=b.last_exit)
     return dict(schema=1, now=engine.now,safety_until=engine.safety_until, serial=engine.serial,rng_state=engine.rng.getstate(),
         wallet=dict(cash=str(engine.wallet.cash),deposits=str(engine.wallet.deposits),
-            lots=[asdict(l) for l in engine.wallet.lots],
-            stats={k:asdict(v) for k,v in engine.wallet.stats.items()}),
-        markets=engine.markets,fees={k:asdict(v) for k,v in engine.fees.items()},
-        orders={k:asdict(v) for k,v in engine.orders.items()},pending=engine.pending,
+            lots=[record(l) for l in engine.wallet.lots],
+            stats={k:record(v) for k,v in engine.wallet.stats.items()}),
+        markets=engine.markets,fees={k:record(v) for k,v in engine.fees.items()},
+        orders={k:record(v) for k,v in engine.orders.items()},pending=engine.pending,
         closed_reports=sorted(engine.closed_reports),settled=sorted(engine.settled),
-        fleet={series:dict(phases=b.phases,entered=sorted(b.entered),locked=sorted(b.locked),
-            halted=sorted(b.halted),safety_retries=sorted(b.safety_retries),emergency=b.emergency,last_exit=b.last_exit)
-            for series,b in fleet.bots.items()})
+        fleet=fleet_state)
 
 
 def restore(engine,fleet,data):

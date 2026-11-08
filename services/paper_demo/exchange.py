@@ -1,5 +1,5 @@
 """Production GET-only data adapter; virtual portfolio routes never touch HTTP."""
-import re,time,json
+import re,time,json,threading
 from datetime import datetime
 from cryptography.fernet import Fernet
 import httpx
@@ -7,6 +7,7 @@ from services.demo.exchange import DemoSigner,ExchangeFailure,PATH,PUBLIC_ACTIVI
 from .model import D,decimal,charge
 from .ledger import Ledger,rows,get,wire
 from .read_budget import PRODUCTION_READS
+from .telemetry import measure_request,request_sent
 
 WS='wss://external-api-ws.kalshi.com/trade-api/ws/v2'
 
@@ -22,6 +23,7 @@ class ProductionData:
         self.signer=signer;self.client=client or httpx.Client(timeout=httpx.Timeout(8,connect=5),follow_redirects=False)
         self.reads=0;self.cooldown=0;self.next_read=0;self.before_read=None
     def close(self):self.client.close()
+    @measure_request
     def call(self,method,path,params=None):
         if method!='GET' or not (path in ('/series','/incentive_programs','/milestones','/events','/markets','/markets/trades','/series/fee_changes','/events/fee_changes','/exchange/status','/api_keys','/account/limits') or re.fullmatch(r'/(?:markets/[A-Za-z0-9][A-Za-z0-9.-]{0,127}(?:/orderbook)?|series/[A-Za-z0-9-]{1,128}|live_data/milestone/[A-Za-z0-9-]{1,128})',path)):
             raise ExchangeFailure('paper_network_write_forbidden')
@@ -31,6 +33,7 @@ class ProductionData:
         self.next_read=time.monotonic()+.05;self.reads+=1
         headers=self.signer.headers('GET',PATH+path) if self.signer else {}
         try:
+            request_sent()
             with self.client.stream('GET',PUBLIC_ACTIVITY_ROOT+PATH+path,params=params,headers=headers) as response:
                 if response.status_code==429:
                     self.cooldown=time.monotonic()+30;PRODUCTION_READS.reject()
@@ -45,15 +48,19 @@ class ProductionData:
         except (httpx.HTTPError,ValueError):raise ExchangeFailure('paper_data_unavailable') from None
 
 class Fees:
-    def __init__(self,data):self.data=data;self.cache={};self.series={}
+    def __init__(self,data):self.data=data;self.cache={};self.series={};self.series_locks={}
     def load(self,ticker,market,now):
         series=market.get('series_ticker') or ticker.split('-')[0];event=market['event_ticker']
-        cached=self.series.get(series)
-        if not cached or now-cached['at']>30:
-            raw=self.data.call('GET','/series/'+series).get('series',{})
-            change=self.data.call('GET','/series/fee_changes',dict(series_ticker=series)).get('series_fee_change_arr')
-            if not isinstance(change,list) or len(change)>1000:raise ExchangeFailure('paper_fee_schedule_unknown')
-            cached=dict(at=now,base=(raw.get('fee_type'),raw.get('fee_multiplier')),changes=change);self.series[series]=cached
+        # Several admitted markets can share a cold series. Recheck inside a
+        # per-series lock so four fee verifiers don't fetch the same two routes
+        # four times. Different series remain concurrent; TTLs are unchanged.
+        with self.series_locks.setdefault(series,threading.Lock()):
+            cached=self.series.get(series)
+            if not cached or now-cached['at']>30:
+                raw=self.data.call('GET','/series/'+series).get('series',{})
+                change=self.data.call('GET','/series/fee_changes',dict(series_ticker=series)).get('series_fee_change_arr')
+                if not isinstance(change,list) or len(change)>1000:raise ExchangeFailure('paper_fee_schedule_unknown')
+                cached=dict(at=now,base=(raw.get('fee_type'),raw.get('fee_multiplier')),changes=change);self.series[series]=cached
         events=[];cursor=None
         for _ in range(5):
             page=self.data.call('GET','/events/fee_changes',dict(event_ticker=event,limit=200,**({'cursor':cursor} if cursor else {})))

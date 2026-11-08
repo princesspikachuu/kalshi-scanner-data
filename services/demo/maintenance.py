@@ -167,6 +167,18 @@ def maintenance(store,env,stop):
     measurement=storage_measurement(size,policy,env,time.time(),previous['progress'] if previous else None)
     used=measurement['percent'];store.put('storage-health',measurement)
     print(json.dumps(dict(event='database_storage_health',**measurement)),flush=True)
+    # Catalog statistics, not scans of historical event bodies. Sample on the
+    # existing five-minute maintenance cadence and never log SQL text or users.
+    try:
+        with store.pool.connection() as c:
+            tables=c.execute("""SELECT relname,n_live_tup,n_dead_tup,seq_scan,idx_scan,
+                pg_total_relation_size(relid) AS bytes FROM pg_stat_user_tables
+                ORDER BY pg_total_relation_size(relid) DESC LIMIT 10""").fetchall()
+            database=c.execute("""SELECT numbackends,xact_commit,xact_rollback,blks_read,blks_hit,
+                temp_bytes,deadlocks FROM pg_stat_database WHERE datname=current_database()""").fetchone()
+        print(json.dumps(dict(event='database_operational_sample',tables=tables,database=database),default=str),flush=True)
+    except Exception as error:
+        print(json.dumps(dict(event='database_operational_sample_unavailable',error_type=type(error).__name__)),flush=True)
     if used>=policy['storage_warning_percent']:store.alert('storage',f'Database data uses {used:.1f}% of {measurement["provisioned_gb"]} GB capacity. Review storage and archiving thresholds.',used>=policy['storage_critical_percent'])
     else:store.clear_alert('storage')
     objects=None;failed=False

@@ -17,6 +17,7 @@ import requests
 from websockets.asyncio.client import connect
 from .auth import Signer
 from services.paper_demo.read_budget import PRODUCTION_READS
+from services.paper_demo.telemetry import measure_request,request_sent
 from services.demo.exchange import PATH,ExchangeFailure
 from .core import Audit, ConvexityStrategy, Engine, FeePolicy, StrategyFleet
 
@@ -32,8 +33,9 @@ def ts(value):
 
 class ProductionData:
     """Only three public GET routes are allowed. No account/order endpoints or mutation verb."""
-    def __init__(self,signer=None):self.signer=signer
+    def __init__(self,signer=None):self.signer=signer;self.reads=0
 
+    @measure_request
     def get(self, path: str, params=None):
         if not (path in ('/markets', '/series/KXBTC15M') or
                 re.fullmatch(r'/markets/KX[A-Z0-9]+15M-[A-Za-z0-9-]+', path) or
@@ -41,9 +43,11 @@ class ProductionData:
             raise ValueError('Data client route not allowed')
         # No shared requests.Session across threads. Connection setup isn't in the execution path.
         PRODUCTION_READS.wait()
+        self.reads+=1
         with requests.Session() as session:
             session.trust_env = False
             headers=self.signer.headers('GET',PATH+path) if self.signer else {}
+            request_sent()
             response = session.get(BASE+path, params=params, headers=headers, timeout=(2,5), allow_redirects=False)
             if response.status_code==429:PRODUCTION_READS.reject()
             if response.status_code != 200:

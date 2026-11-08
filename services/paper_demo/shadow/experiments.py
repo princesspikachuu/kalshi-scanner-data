@@ -352,7 +352,13 @@ class ExperimentSuite:
                 if payload['ticker'] not in e.markets:continue
                 e.markets[payload['ticker']]['yes_payout_confirmed']=payload['yes_payout']
             try:
-                e.handle('market' if source in ('weather_market','sports_market','hourly_market') else source,self.prepare(e,source,local,now),now)
+                started=time.thread_time()
+                try:
+                    e.handle('market' if source in ('weather_market','sports_market','hourly_market') else source,self.prepare(e,source,local,now),now)
+                finally:
+                    if not hasattr(self,'processing_costs'):self.processing_costs={}
+                    cost=self.processing_costs.setdefault(folder,dict(calls=0,cpu_ms=0.))
+                    cost['calls']+=1;cost['cpu_ms']+=(time.thread_time()-started)*1000
             except ValueError as exc:
                 # Every portfolio must consume the shared subscription sequence,
                 # even when another portfolio rejects this market's book.

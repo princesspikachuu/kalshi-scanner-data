@@ -40,6 +40,29 @@ class CheckpointCodecTests(unittest.TestCase):
         new=Engine(Mock());nf=StrategyFleet(new,profiles());restore(new,nf,packed)
         self.assertEqual(new.wallet.cash,D('123.4567'));self.assertEqual(new.wallet.deposits,D('123.4567'))
 
+    def test_shared_fleet_halts_are_written_once_and_restore_for_every_owner(self):
+        from services.paper_demo.shadow.state import encode
+        e=Engine(Mock());f=StrategyFleet(e,profiles());f.halted.update('historical-'+str(i) for i in range(1000))
+        data=encode(e,f)
+        self.assertEqual(sum(len(b['halted']) for b in data['fleet'].values()),1000)
+        new=Engine(Mock());nf=StrategyFleet(new,profiles());restore(new,nf,data)
+        self.assertEqual(nf.halted,f.halted)
+        for bot in nf.bots.values():self.assertIs(bot.halted,nf.halted)
+
+    def test_scalar_execution_records_match_recursive_encoding_and_detach_targets(self):
+        from dataclasses import asdict
+        from services.paper_demo.shadow.state import encode
+        e=Engine(Mock());f=StrategyFleet(e,profiles());e.advance(1000)
+        e.add_market(dict(ticker='KXBTC15M-test',close=2000),FeePolicy())
+        e.wallet.fill('KXBTC15M-test','yes','buy',D('2.25'),D('.4211'),D('.0032'),1,'held')
+        ident=e.place('KXBTC15M-test','yes','sell',D(1),D('.5'),maker=False,targets=['held'])
+        data=encode(e,f)
+        self.assertEqual(data['orders'][ident],asdict(e.orders[ident]))
+        self.assertEqual(data['wallet']['lots'],[asdict(l) for l in e.wallet.lots])
+        self.assertEqual(data['wallet']['stats'],{k:asdict(v) for k,v in e.wallet.stats.items()})
+        e.orders[ident].targets.append('later')
+        self.assertEqual(data['orders'][ident]['targets'],['held'])
+
 @unittest.skipUnless(fixture.URL,'Disposable PostgreSQL is required')
 class CheckpointPostgresTests(unittest.TestCase):
     setUp=fixture.DemoPostgres.setUp
