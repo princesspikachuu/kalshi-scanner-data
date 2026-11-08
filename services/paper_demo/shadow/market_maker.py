@@ -126,7 +126,7 @@ async def maker_once(host):
             s['incentives']=known
         except Exception:s['incentives']={};s['incentive_status']='unavailable; estimates disabled'
     minimum=max(21600,min(p.get('config',{}).get('min_remaining',86400) for p in choices))
-    result=await asyncio.to_thread(host.verified_data.call,'GET','/events',dict(status='open',limit=50,with_nested_markets='true',with_milestones='true',min_close_ts=int(now+minimum),cursor=s['cursor']));s['reads']+=1
+    result=await asyncio.to_thread(host.verified_data.call,'GET','/events',dict(status='open',limit=200,with_nested_markets='true',with_milestones='true',min_close_ts=int(now+minimum),cursor=s['cursor']));s['reads']+=1
     s['cursor']=result.get('cursor','')
     for event in result.get('events',[]):
         group=category(event)
