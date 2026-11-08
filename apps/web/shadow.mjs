@@ -1,6 +1,6 @@
 import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferences} from './demo-client.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from './shadow-view.mjs';
+import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,marketTypeGroups} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences(undefined,true);
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null;
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
@@ -13,6 +13,16 @@ function saveFolderViews(){try{localStorage.setItem('moneytree-folder-views',JSO
 let marketViews=[];try{marketViews=JSON.parse(localStorage.getItem('moneytree-market-views')||'[]')}catch{}
 const openMarkets=new Set(Array.isArray(marketViews)?marketViews.filter(id=>typeof id==='string'):[]);
 function saveMarketViews(){try{localStorage.setItem('moneytree-market-views',JSON.stringify([...openMarkets]))}catch{}}
+let typeViews=[];try{typeViews=JSON.parse(localStorage.getItem('moneytree-market-type-views')||'[]')}catch{}
+const openMarketTypes=new Set(Array.isArray(typeViews)?typeViews.filter(id=>typeof id==='string'):[]);
+function saveMarketTypeViews(){try{localStorage.setItem('moneytree-market-type-views',JSON.stringify([...openMarketTypes]))}catch{}}
+function marketTypeFolders(bots,status,folderId,search='',retired=false){
+ return marketTypeGroups(bots).map(group=>{
+  const key=folderId+'::'+(retired?'retired::':'')+group.id;
+  const running=group.bots.filter(b=>b.desired==='running').length;
+  return `<details class="market-type-folder" data-market-type="${e(key)}" ${openMarketTypes.has(key)||search?'open':''}><summary><span class="market-type-name">${e(group.label)}</span><span class="badge">${group.bots.length} bots · ${running} running</span><span class="market-type-disclosure" aria-hidden="true"></span></summary><div class="bot-list">${group.bots.map(b=>botCard(b,status)).join('')}</div></details>`;
+ }).join('');
+}
 const note=value=>$('message').textContent=value;
 function botCard(bot,status){
   const selected=periods[bot.id]||'all',metrics=(bot.financial_metrics||bot.metrics).all,ticker=status.selected?.[bot.series];
@@ -40,8 +50,9 @@ function draw(){
   const bots=matching.filter(b=>!b.retired),retired=matching.filter(b=>b.retired);
   const money=folder.accounting,local=folder.id==='convexity'?status:{...status,positions:money?.positions||[],orders:money?.orders||[]};
   const running=activeFolderBots.filter(b=>b.desired==='running').length;
-  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}<div class="bot-list">${bots.map(b=>botCard(b,local)).join('')}</div>${retired.length?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary><div class="bot-list">${retired.map(b=>botCard(b,local)).join('')}</div></details>`:''}</details>`;
+  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}${marketTypeFolders(bots,local,folder.id,find)}${retired.length?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary>${marketTypeFolders(retired,local,folder.id,find,true)}</details>`:''}</details>`;
  }).join('');
+ for(const detail of document.querySelectorAll('details[data-market-type]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false||$('find').value.trim())return;const key=detail.dataset.marketType;if(detail.open)openMarketTypes.add(key);else openMarketTypes.delete(key);saveMarketTypeViews()};
  for(const detail of document.querySelectorAll('details[data-market]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false)return;const id=detail.dataset.market;if(detail.open)openMarkets.add(id);else openMarkets.delete(id);saveMarketViews()};
  for(const detail of document.querySelectorAll('details[data-folder]'))detail.ontoggle=()=>{if(detail.isConnected===false)return;const id=detail.dataset.folder;if(detail.open)openFolders.add(id);else openFolders.delete(id);saveFolderViews()};
  for(const b of document.querySelectorAll('[data-folder-summary-period]'))b.onclick=event=>{event.preventDefault();event.stopPropagation();folderSummaryPeriods[b.dataset.summaryFolder]=b.dataset.folderSummaryPeriod;saveFolderViews();draw()};
