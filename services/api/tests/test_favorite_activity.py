@@ -78,7 +78,10 @@ class Discovery(unittest.TestCase):
         suite,_=weather_fixture.WeatherSuite().suite();suite.monitoring=MonitoringBudget()
         for now in range(0,241,5):suite.monitoring.observe(now,0,.01,1)
         self.assertEqual(suite.monitoring_snapshot(240)['total'],48)
-        suite.extra={str(i):str(i) for i in range(19)}
+        e=suite.portfolios['favorites'][0]
+        for i in range(19):
+            t='KXHIGHNY-'+str(i);market(e,t,close=1000)
+            e.markets[t]['weather_category']='weather_daily';suite.extra[t]=t
         self.assertTrue(suite.extra_capacity(['last'],240))
         self.assertFalse(suite.extra_capacity(['last','overflow'],240))
         suite.monitoring.observe(245,300,.01,1)
