@@ -306,3 +306,22 @@ test('search keeps full market-type totals and subfolders follow their parent P/
  vm.runInContext("folderSummaryPeriods.favorites='1H';draw()",context);
  assert.ok(header().includes('Total P/L · 1h'));assert.ok(header().includes('$3.00'));
 });
+
+test('balances and folders render before a stalled activity request finishes',async()=>{
+ const {context,nodes}=setup(fixture());
+ nodes.get('groups').innerHTML='';let finishActivity;
+ const next=fixture();next.installed=true;next.folders[0].name='Freshly loaded folder';
+ context.demoCall=async path=>path.startsWith('shadow/workspace')?next:new Promise(resolve=>{finishActivity=resolve});
+ const pending=vm.runInContext('load()',context);
+ await new Promise(setImmediate);
+ assert.ok(nodes.get('groups').innerHTML.includes('Freshly loaded folder'));
+ finishActivity({items:[]});await pending;
+});
+test('failed initial requests replace the checking status and remain retryable',async()=>{
+ const {context,nodes}=setup(fixture());vm.runInContext('data=undefined',context);
+ context.demoCall=async()=>{throw Error('Demo data request timed out. Please retry.')};
+ await vm.runInContext('load()',context);
+ assert.equal(nodes.get('health').textContent,'Dashboard data unavailable');
+ assert.ok(nodes.get('accountSummary').innerHTML.includes('Retrying automatically'));
+ assert.ok(nodes.get('message').textContent.includes('timed out'));
+});

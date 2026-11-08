@@ -518,3 +518,21 @@ test('strategy folder reset and archived sessions retain owner-only methods',asy
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/folders/sequential/reset'),env,options)).status,405);
  assert.notEqual((await proxyAuth(new Request('https://app.test/api/demo/shadow/sessions/12345678-1234-1234-1234-123456789012'),env,options)).status,404);
 });
+
+test('expanded shadow results above the old 2 MiB ceiling load while other routes stay bounded',async()=>{
+ const payload=JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],research:'x'.repeat(2100000)});
+ const fetcher=async()=>new Response(payload,{headers:{'content-type':'application/json'}});
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher})).status,200);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{fetcher})).status,502);
+ const oversized=async()=>new Response(JSON.stringify({contract:'demo-v1',padding:'x'.repeat(8388608)}),{headers:{'content-type':'application/json'}});
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher:oversized})).status,502);
+});
+test('slow shadow workspace reads get time to finish without extending activity or mutation deadlines',async()=>{
+ const fetcher=async(_,options)=>new Promise((resolve,reject)=>{
+  const done=setTimeout(()=>resolve(new Response(JSON.stringify({contract:'demo-v1',bots:[]}),{headers:{'content-type':'application/json'}})),20);
+  options.signal.addEventListener('abort',()=>{clearTimeout(done);reject(Error('aborted'))},{once:true});
+ });
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher,timeoutMs:1})).status,200);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/events'),env,{fetcher,timeoutMs:1})).status,504);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/bulk',{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json'},body:'{}'}),env,{fetcher,timeoutMs:1})).status,504);
+});
