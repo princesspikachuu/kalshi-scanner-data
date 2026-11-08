@@ -32,7 +32,7 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(h.verified_data.call.call_args.args[2]['series_ticker'],'POL')
         await maker_event_page(h,s,230,86400)
         self.assertEqual(s['discovery_source'],'FED')
-        self.assertEqual(sum(c.args[1]=='/series' for c in h.verified_data.call.call_args_list),1)
+        self.assertEqual(sum(c.args[1]=='/series' for c in h.verified_data.call.call_args_list),2)
         self.assertEqual(sum(c.args[1]=='/events' for c in h.verified_data.call.call_args_list),2)
     async def test_every_fourth_page_preserves_broad_progress(self):
         h=self.host();s=dict(cursor='broad-old',reads=0,pages=4,series_at=1000,series_pool=['POL'],series_cursors={'POL':'pol-old'})
@@ -40,7 +40,7 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         params=h.verified_data.call.call_args.args[2]
         self.assertNotIn('series_ticker',params);self.assertEqual(params['cursor'],'broad-old')
         self.assertEqual(s['cursor'],'next-broad');self.assertEqual(s['series_cursors']['POL'],'pol-old')
-    async def test_missing_catalog_falls_back_without_retrying_every_scan(self):
+    async def test_missing_catalog_falls_back_and_tries_other_categories(self):
         h=self.host()
         def call(method,path,params):
             if path=='/series':raise ValueError('unavailable')
@@ -48,7 +48,8 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         h.verified_data.call.side_effect=call;s=dict(cursor='',reads=0,pages=1)
         await maker_event_page(h,s,200,86400);await maker_event_page(h,s,230,86400)
         self.assertEqual(s['discovery_source'],'broad_events')
-        self.assertEqual(sum(c.args[1]=='/series' for c in h.verified_data.call.call_args_list),1)
+        self.assertEqual(sum(c.args[1]=='/series' for c in h.verified_data.call.call_args_list),2)
+        self.assertEqual(len(s['series_query_at']),2)
     async def test_catalog_cache_is_bounded_and_never_creates_orders(self):
         h=self.host([dict(ticker=str(i),category='Politics',title='Election',volume=100+i) for i in range(200)]+[dict(ticker='NAN',category='Politics',volume='nan')])
         s=dict(cursor='',reads=0,pages=1,series_cursors={'old':'cursor'})

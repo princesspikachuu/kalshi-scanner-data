@@ -95,41 +95,16 @@ def schedule_times(milestones,event):
     return sorted(set(result))[:20]
 
 async def maker_event_page(host,s,now,minimum):
-    # All-time series volume is only a discovery prior, never a substitute for
-    # current executed-trade frequency, spread or depth verification.
-    pages=s.get('pages',0)
-    if pages and now>=s.get('series_at',0):
-        s['series_at']=now+3600
-        try:
-            catalog=await asyncio.to_thread(host.verified_data.call,'GET','/series',dict(include_volume='true'));s['reads']+=1
-            groups={key:[] for key in CATEGORIES}
-            for row in catalog.get('series',[]):
-                group=category(dict(row,series_ticker=row.get('ticker','')))
-                if not group or not row.get('ticker'):continue
-                try:volume=float(row.get('volume_fp') or row.get('volume') or 0)
-                except (TypeError,ValueError):continue
-                if math.isfinite(volume) and volume>0:groups[group].append((volume,row['ticker']))
-            ranked={key:sorted(rows,reverse=True)[:12] for key,rows in groups.items()}
-            s['series_pool']=[ranked[key][i][1] for i in range(12) for key in CATEGORIES if i<len(ranked[key])]
-            s['series_cursors']={t:c for t,c in s.get('series_cursors',{}).items() if t in s['series_pool']}
-            s['series_status']='all-time volume prior; current trades verified separately'
-        except Exception:
-            s['series_status']='unavailable; broad event pagination retained'
-    pool=s.get('series_pool',[])
-    params=dict(status='open',limit=200,with_nested_markets='true',with_milestones='true',min_close_ts=int(now+minimum))
-    selected=None
-    # Every fourth page continues the broad scan, preserving its cursor.
-    if pool and pages%4:
-        index=s.get('series_index',0);selected=pool[index%len(pool)]
-        params.update(series_ticker=selected,cursor=s.get('series_cursors',{}).get(selected,''))
-    else:params['cursor']=s['cursor']
-    result=await asyncio.to_thread(host.verified_data.call,'GET','/events',params);s['reads']+=1
-    if selected:
-        s.setdefault('series_cursors',{})[selected]=result.get('cursor','')
-        s['series_index']=s.get('series_index',0)+1
-    else:s['cursor']=result.get('cursor','')
-    s['pages']=pages+1;s['discovery_source']=selected or 'broad_events'
-    return result
+    from .maker_discovery import event_page
+    return await event_page(host,s,now,minimum,category,CATEGORIES)
+
+def scan_report(s,now,listed=0,active=0):
+    print(json.dumps(dict(event='market_maker_scan',at=now,listed_events=listed,
+        candidate_count=len(s.get('candidates',{})),state=s.get('state'),reads=s.get('reads',0),
+        discovery_source=s.get('discovery_source'),page_limit=s.get('event_page_limit',50),
+        catalog_status=s.get('series_status'),catalog_series=len(s.get('series_pool',[])),
+        split_event=bool(s.get('split_event')),ranked=s.get('ranked',[])[:8],shared_active=active,
+        reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
 
 async def maker_once(host):
     suite=host.experiments;now=time.time()
@@ -151,7 +126,7 @@ async def maker_once(host):
     if not choices:return
     limits=suite.monitoring_snapshot(now)
     if not limits['admitting']:
-        s['state']='Discovery waits for healthy processing';return
+        s['state']='Discovery waits for healthy processing';scan_report(s,now);return
     if now>=s['incentive_at']:
         s['incentive_at']=now+3600
         try:
@@ -183,7 +158,8 @@ async def maker_once(host):
     s['candidates']=dict(list(s['candidates'].items())[:100])
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),inspected_at=r.get('inspected_at'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
-    if len(maker_active)>=2 or not suite.search_capacity('market_maker',time.time()):s['state']='Shared capacity occupied; existing strategies preserved';return
+    if len(maker_active)>=2 or not suite.search_capacity('market_maker',time.time()):
+        s['state']='Shared capacity occupied; existing strategies preserved';scan_report(s,now,len(result.get('events',[])),len(maker_active));return
     checked=0;s['state']='Inspecting candidates'
     for ticker,row in sorted(s['candidates'].items(),key=lambda item:(item[1].get('inspected_at',0),-item[1]['score'])):
         if ticker in active or now<row.get('retry_at',0):continue
@@ -207,9 +183,9 @@ async def maker_once(host):
             maker_score=row['score'],trades_24h=count,scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
             incentives=s['incentives'].get(ticker,[]),price_ranges=raw.get('price_ranges',[])),taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
         row['reason']='submitted_for_shared_monitoring';s['state']='Verified candidate submitted';break
-    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
+    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if s.get('state')!='Verified candidate submitted':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
-    print(json.dumps(dict(event='market_maker_scan',at=now,listed_events=len(result.get('events',[])),candidate_count=len(s['candidates']),state=s.get('state'),reads=s['reads'],discovery_source=s.get('discovery_source'),ranked=s.get('ranked',[]),shared_active=len(maker_active),reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
+    scan_report(s,now,len(result.get('events',[])),len(maker_active))
 
 async def discover_maker(host):
     while not host.done.is_set():

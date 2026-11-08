@@ -134,7 +134,7 @@ class DiscoveryTests(unittest.IsolatedAsyncioTestCase):
         await maker_once(host)
         host.put.assert_not_called();self.assertEqual(host.verified_data.call.call_count,3)
         event_call=next(c for c in host.verified_data.call.call_args_list if c.args[1]=='/events')
-        self.assertEqual(event_call.args[2]['limit'],200)
+        self.assertEqual(event_call.args[2]['limit'],50)
         self.assertEqual(suite.maker_discovery['candidates']['POL-X']['reason'],'insufficient_executed_trade_frequency')
         await maker_once(host);self.assertEqual(host.verified_data.call.call_count,3)
     async def test_eligible_market_admission_and_incentives_are_metadata_only(self):
