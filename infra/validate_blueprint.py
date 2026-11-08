@@ -40,7 +40,7 @@ jsonschema.validate(processor,schema)
 assert len(processor['services'])==1
 service=processor['services'][0]
 assert service['type']=='worker' and service['name']=='pocket-processing-staging'
-assert service['autoDeployTrigger']=='off' and service['plan']=='0.5c-512mb'
+assert service['autoDeployTrigger']=='off' and service['plan']=='1c-2g'
 variables={v['key']:v for v in service['envVars'] if 'key' in v}
 assert variables['WORKER_ROLE']['value']=='demo'
 assert variables['DATABASE_URL']['fromService']=={'name':'pocket-research-staging','type':'worker','envVarKey':'DATABASE_URL'}

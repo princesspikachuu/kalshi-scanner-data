@@ -7,7 +7,8 @@ services:
   runtime: python
   branch: build/google-auth-foundation
   region: oregon
-  plan: 0.5c-512mb
+  # Owner-approved capacity upgrade: 1 CPU / 2 GB, $25/month.
+  plan: 1c-2g
   numInstances: 1
   autoDeployTrigger: 'off'
   maxShutdownDelaySeconds: 120
