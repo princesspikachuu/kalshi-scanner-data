@@ -124,6 +124,34 @@ class HostedPostgres(unittest.TestCase):
         self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),104)
         shutil.rmtree(audit.path)
 
+    def test_async_commit_keeps_refill_marker_events_and_wallet_atomic(self):
+        import asyncio
+        self.seed();request=dict(amount_cents=5000,request_id='async-refill-request-123')
+        self.assertEqual(self.client.post('/demo/shadow/funds',json=request).status_code,200)
+        audit=HostedAudit(self.demo,lambda:None);engine=Engine(audit);fleet=StrategyFleet(engine,profiles())
+        self.addCleanup(shutil.rmtree,audit.path)
+        audit.engine,audit.fleet=engine,fleet
+        audit.command_key='demo/shadow/command/'+request['request_id']
+        audit.begin();engine.refill(D(50));asyncio.run(audit.flush_async())
+        self.assertTrue(self.demo.get('shadow/command/'+request['request_id'])['progress']['done'])
+        self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),100)
+        with self.demo.pool.connection() as c:
+            events=c.execute("SELECT progress FROM research_job WHERE starts_with(idempotency_key,'demo/shadow/event/') AND progress->>'event'='REFILL'").fetchall()
+        self.assertEqual(len(events),1);self.assertEqual(D(events[0]['progress']['cash']),100)
+
+    def test_hosted_control_publishes_through_serialized_async_database_path(self):
+        import asyncio,threading
+        from unittest.mock import patch
+        from services.paper_demo.shadow.host import HostedRun
+        self.seed();run=HostedRun(self.demo,lambda:None,threading.Event(),Mock())
+        self.addCleanup(shutil.rmtree,run.audit.path)
+        async def stop_after_pass(_):run.done.set()
+        with patch('services.paper_demo.shadow.host.asyncio.sleep',side_effect=stop_after_pass):
+            asyncio.run(run.control())
+        self.assertIsNotNone(self.demo.get('shadow/status'))
+        self.assertEqual(self.demo.get('health')['progress']['state'],'waiting')
+        self.assertFalse(run.state_mutex().locked())
+
     def test_controls_require_csrf_and_do_not_allow_real_routing(self):
         self.seed();self.client.headers.pop('x-csrf-token')
         self.assertEqual(self.client.post('/demo/shadow/bulk',json=dict(action='resume')).status_code,403)

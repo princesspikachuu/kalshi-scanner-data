@@ -273,15 +273,20 @@ class ForwardRun:
             await asyncio.sleep(delay)
             delay = min(5, delay*2)
 
+    def spot_required(self):return True
+
     async def spot(self):
         delay = .25
         while not self.done.is_set():
+            if not self.spot_required():
+                await asyncio.sleep(1);continue
             try:
                 async with connect(COINBASE, ping_interval=10, ping_timeout=5, open_timeout=5) as ws:
                     await ws.send(json.dumps(dict(type='subscribe', product_ids=['BTC-USD'],
                                                  channels=['matches','heartbeat'])))
                     connected_at = time.monotonic()
                     async for raw in ws:
+                        if not self.spot_required():break
                         event = json.loads(raw)
                         if event.get('type')=='error':
                             raise ValueError('Coinbase subscription error')
@@ -293,7 +298,7 @@ class ForwardRun:
             except Exception as exc:
                 LOG.warning('SPOT_DISCONNECTED %s', type(exc).__name__)
             finally:
-                if not self.done.is_set():
+                if not self.done.is_set() and self.spot_required():
                     await self.put('gap', {'reason':'spot stream disconnected'})
             await asyncio.sleep(delay)
             delay = min(5, delay*2)
