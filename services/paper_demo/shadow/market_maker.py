@@ -146,20 +146,20 @@ async def maker_once(host):
     s['candidates']={t:r for t,r in sorted(s['candidates'].items(),key=lambda x:-x[1]['score']) if now-r['at']<3600 and ts(r['raw']['close_time'])>now}
     s['candidates']=dict(list(s['candidates'].items())[:100])
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
-    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
+    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),inspected_at=r.get('inspected_at'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if len(maker_active)>=2 or not suite.search_capacity('market_maker',time.time()):s['state']='Shared capacity occupied; existing strategies preserved';return
     checked=0;s['state']='Inspecting candidates'
-    for ticker,row in s['candidates'].items():
+    for ticker,row in sorted(s['candidates'].items(),key=lambda item:(item[1].get('inspected_at',0),-item[1]['score'])):
         if ticker in active or now<row.get('retry_at',0):continue
         ps=[p for p in choices if p['market_category']==row['category']]
         if not ps:continue
         if checked>=1:break
         checked+=1
-        row['retry_at']=now+300;raw=row['raw']
+        row['retry_at']=now+300;row['inspected_at']=now;raw=row['raw']
         trades=await asyncio.to_thread(host.verified_data.call,'GET','/markets/trades',dict(ticker=ticker,min_ts=int(now-86400),limit=100));s['reads']+=1
         prints=[t for t in trades.get('trades',[]) if not t.get('is_block_trade') and now-86400<=ts(t['created_time'])<=now]
         prices=[float(t['yes_price_dollars']) for t in prints]
-        count=len(prints);required=min(p.get('config',{}).get('min_trades_24h',30) for p in ps)
+        count=len(prints);row['trades_24h']=count;required=min(p.get('config',{}).get('min_trades_24h',30) for p in ps)
         if count<required:row['reason']='insufficient_executed_trade_frequency';continue
         if len(prices)>1 and max(prices)-min(prices)>.20:row['reason']='recent_trade_prices_unstable';continue
         book=await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker+'/orderbook',dict(depth=3));s['reads']+=1
