@@ -63,3 +63,12 @@ class FlatExperimentFeedTests(unittest.TestCase):
         for f in ('volatility_scalper','scalper_fixed','scalper_grid'):
             self.assertEqual(s.portfolios[f][0].books[T].levels['yes'][D('.45')],102)
             self.assertFalse(hasattr(s.portfolios[f][0],'coalesced_inputs'))
+
+    def test_discovery_progress_and_rejection_records_survive_restart(self):
+        s=self.suite()
+        s.maker_discovery=dict(cursor='next-current-page',candidates={'CANDIDATE':dict(raw=dict(ticker='CANDIDATE'),event=dict(category='Politics'),category='politics',score=.5,at=200,reason='insufficient_executed_trade_frequency',retry_at=500,scheduled_events=[600])},reads=17,next_at=230,incentive_at=1000,incentives={},settlement_at={},rejected={},ranked=[])
+        saved=s.state();h=Mock();h.audit=QuietAudit();h.verified_fees.schedule.return_value=('quadratic',1)
+        rebuilt=ready_suite(h,s.rows,saved)
+        self.assertEqual(rebuilt.maker_discovery,s.maker_discovery)
+        self.assertIsNot(rebuilt.maker_discovery,s.maker_discovery)
+        self.assertEqual(rebuilt.portfolios['scalper_momentum'][0].wallet.cash,1000)

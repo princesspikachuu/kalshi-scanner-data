@@ -83,8 +83,9 @@ class ExperimentSuite:
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.control(rows)
+        if isinstance((previous or {}).get('_maker_discovery'),dict):self.maker_discovery=deepcopy(previous['_maker_discovery'])
     def state(self):
-        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
+        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
             strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):

@@ -109,6 +109,7 @@ async def maker_once(host):
         raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market'];s['reads']+=1
         if raw.get('status') in ('settled','finalized') and raw.get('result') in ('yes','no'):
             await host.put('experiment_settlement',dict(ticker=ticker,result=raw['result'],status=raw['status']))
+    s['settlement_at']={t:at for t,at in s['settlement_at'].items() if t in held}
     choices=suite.enabled_profiles('market_maker')
     if not choices:return
     limits=suite.monitoring_snapshot(now)
@@ -138,7 +139,7 @@ async def maker_once(host):
                 spread=1-bid-no;volume=float(raw.get('volume_24h_fp') or raw.get('volume_24h') or 0)
                 if not (.1<=bid<=.9 and 0.019<=spread<=.25 and volume>=30):continue
                 score=spread*math.log1p(volume)/(max(.1,bid)*max(1,math.sqrt((ts(raw['close_time'])-now)/86400)))
-                s['candidates'][raw['ticker']]=dict(raw=raw,event={k:event[k] for k in ('series_ticker','title','category') if k in event},category=group,score=score,at=now,milestones=result.get('milestones',[]))
+                s['candidates'][raw['ticker']]=dict(s['candidates'].get(raw['ticker'],{}),raw={k:raw[k] for k in ('ticker','event_ticker','open_time','close_time','status','yes_bid_dollars','no_bid_dollars','yes_bid','no_bid','volume_24h_fp','volume_24h','title','price_ranges') if k in raw},event={k:event[k] for k in ('series_ticker','title','category') if k in event},category=group,score=score,at=now,scheduled_events=schedule_times(result.get('milestones',[]),raw['event_ticker']))
             except (KeyError,TypeError,ValueError):continue
             if len(s['candidates'])>120:s['candidates']=dict(sorted(s['candidates'].items(),key=lambda x:-x[1]['score'])[:100])
     # Keep a broad, bounded near-miss pool; inspect only one ranked candidate per pass.
@@ -164,7 +165,7 @@ async def maker_once(host):
         book=await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker+'/orderbook',dict(depth=3));s['reads']+=1
         levels=book.get('orderbook_fp',{});depth=min(sum(float(x[1]) for x in levels.get(side+'_dollars',levels.get(side+'_dollars_fp',[]))) for side in ('yes','no'))
         if depth<max(p['contracts'] for p in ps)*4:row['reason']='insufficient_displayed_depth';continue
-        fee=await host.fee_policy(raw,{});schedule=schedule_times(row['milestones'],raw['event_ticker'])
+        fee=await host.fee_policy(raw,{});schedule=row.get('scheduled_events',[])
         await host.put('maker_market',dict(market=dict(ticker=ticker,event_ticker=raw['event_ticker'],series_ticker=row['event']['series_ticker'],title=raw.get('title',ticker),
             open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,market_maker=True,market_category=row['category'],
             maker_score=row['score'],trades_24h=count,scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
