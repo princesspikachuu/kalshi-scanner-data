@@ -1,3 +1,4 @@
+import {scalperMarkup} from '../apps/web/scalper-view.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -19,7 +20,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -348,4 +349,16 @@ test('Favorites research expansion survives refresh and reload',()=>{
  detail.ontoggle({target:detail});vm.runInContext('draw()',context);
  assert.equal(storage.get('moneytree-research-views'),'["favorites-research"]');
  const {nodes}=setup(fixture(),{storage});assert.match(nodes.get('groups').innerHTML,/data-research="favorites-research" open/);
+});
+
+test('scalper folders render research with escaped records and existing period controls',()=>{
+ const data=fixture(),base=data.bots[1];
+ data.folders.push({id:'volatility_scalper',name:'Volatility Scalper',description:'Paper only'});
+ data.bots.push({...base,id:'scalper_btc',series:'KXBTC15M',name:'BTC',folder_id:'volatility_scalper',strategy:'volatility_scalper',experiment:{message:'Paper entry submitted',scalper:{totals:{completed:2,win_rate:50,average_net:.01,rejections:{spread_or_depth:2}},config:{approach:'mean_reversion'},cells:[],recent:[{ticker:'<script>bad</script>',side:'yes',entered_at:100,exit_at:200,net:.02,verified:true}]}}});
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ for(const value of ['Volatility Scalper','Completed round trips','Candidate observations','data-folder-summary-period=']){
+   assert.ok(html.includes(value),value);
+ }
+ assert.ok(html.includes('&lt;script&gt;bad&lt;/script&gt;'));assert.ok(!html.includes('<script>bad'));
+ assert.ok(!html.includes('NaN'));assert.ok(!html.includes('Infinity'));
 });

@@ -20,6 +20,7 @@ from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope,initialize_restored_favorites
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
+from .scalper_install import initialize_scalper
 
 LOG=logging.getLogger('shadow-host')
 
@@ -38,6 +39,7 @@ class HostedRun(ForwardRun):
         initialize_scope(store,guard)
         initialize_restored_favorites(store,guard)
         initialize_comparison(store,guard)
+        initialize_scalper(store,guard)
         all_rows=store.rows('shadow/bot/',BOT_LIMIT)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
@@ -371,6 +373,19 @@ class HostedRun(ForwardRun):
                     self.health_log_at=time.monotonic()+30
                     print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                    for folder,(se,sf,_) in self.experiments.portfolios.items():
+                        if folder not in ('volatility_scalper','scalper_fixed','scalper_grid'):continue
+                        totals=[b.research['totals'] for b in sf.bots.values()]
+                        print(json.dumps(dict(event='volatility_scalper_health',folder=folder,
+                            monitored=sum(m['close']>now and not m.get('entry_parked') for m in se.markets.values()),
+                            fresh_books=sum(se.book_fresh(t) for t,m in se.markets.items() if m['close']>now),
+                            orders=sum(o.status in ('pending','resting') for o in se.orders.values()),
+                            positions=len(se.wallet.lots),cash=str(se.wallet.cash),
+                            observations=sum(v['opportunities'] for v in totals),submitted=sum(v['submitted'] for v in totals),
+                            entry_fills=sum(v['entry_fills'] for v in totals),completed=sum(v['completed'] for v in totals),
+                            carryovers=sum(v['settlement_carryovers'] for v in totals),
+                            reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets}}),
+                            real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                         valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
                     legacy_spot_required=legacy_needed,active_strategy_books=strategy_books,

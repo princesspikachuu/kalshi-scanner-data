@@ -4,8 +4,9 @@ from uuid import uuid4
 from .storage import put
 
 SEQUENTIAL_FOLDERS=('sequential','sequential_flexible','sequential_adaptive')
-EXPERIMENT_FOLDERS=(*SEQUENTIAL_FOLDERS,'complete_set','favorites')
-BOT_LIMIT=400
+from .scalper import SCALPER_FOLDERS
+EXPERIMENT_FOLDERS=(*SEQUENTIAL_FOLDERS,'complete_set','favorites',*SCALPER_FOLDERS)
+BOT_LIMIT=800
 
 def initialize_comparison(store,guard):
     if store.get('shadow/sequential-comparison-v1'):return

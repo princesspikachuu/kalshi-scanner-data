@@ -1,6 +1,7 @@
 """Verified hourly-series favorites; bounded fast scans on the shared read budget."""
 import asyncio,json,time
 from decimal import Decimal as D,ROUND_FLOOR
+ZERO=D(0)
 from .runner import ts
 from .schedules import session_wake
 from .discovery_budget import candidate_markets,next_profile
@@ -53,7 +54,14 @@ async def hourly_once(host):
         listed=[m for m in result.get('markets',[]) if m.get('ticker','').startswith(series+'-') and m.get('status')=='active'
                 and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=3600]
         scan['listed_markets']+=len(listed)
-        rows=[m for m in listed if m['ticker'] not in markets and suite.candidate_allowed(m['ticker'],now) and favorite_bid(m) is not None]
+        scalping=any(b.enabled and b.series==series for folder,(e,f,ps) in suite.portfolios.items()
+            if folder in ('volatility_scalper','scalper_fixed','scalper_grid') for b in f.bots.values())
+        def liquid_scalp(m):
+            if not scalping:return False
+            yes=D(str(m.get('yes_bid_dollars') or D(str(m.get('yes_bid') or 0))/100))
+            no=D(str(m.get('no_bid_dollars') or D(str(m.get('no_bid') or 0))/100))
+            return yes>0 and no>0 and ZERO<=1-yes-no<=D('.10')
+        rows=[m for m in listed if m['ticker'] not in markets and suite.candidate_allowed(m['ticker'],now) and (favorite_bid(m) is not None or liquid_scalp(m))]
         scan['eligible_markets']+=len(rows)
         capacity=suite.search_capacity('hourly',time.time(),staged+1)
         reason=('No active markets closing within one hour' if not listed else
