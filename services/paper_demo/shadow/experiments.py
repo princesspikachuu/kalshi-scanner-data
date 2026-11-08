@@ -9,7 +9,7 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
-from .market_maker import MarketMaker,MM_FOLDERS
+from .market_maker import MarketMaker,MM_FOLDERS,activity_deadline
 from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
@@ -200,6 +200,8 @@ class ExperimentSuite:
         self.rotation_exclusions={t:end for t,end in self.rotation_exclusions.items() if end>now}
         for t,m in list(self.feed_markets().items()):
             if now-m.get('discovered_at',now)<120 or protected(self,t,now):continue
+            if m.get('market_maker') and any(t in e.markets and now<activity_deadline(e,t,e.markets[t])
+                for folder,(e,_,_) in self.portfolios.items() if folder in MM_FOLDERS):continue
             if any(o.ticker==t and o.status in ('pending','resting') for e,_,_ in self.portfolios.values() for o in e.orders.values()):continue
             self.park_candidate(t,m,now)
     def prepare(self,e,source,payload,now):
@@ -283,7 +285,13 @@ class ExperimentSuite:
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
         if source=='maker_market':
             m=payload['market'];ticker=m['ticker']
-            if not self.extra_capacity([ticker],now):return
+            discovery=getattr(self,'maker_discovery',{})
+            row=discovery.get('candidates',{}).get(ticker)
+            if not self.extra_capacity([ticker],now):
+                if row is not None:
+                    row.update(reason='shared_admission_rejected_capacity',retry_at=now+30)
+                    discovery['state']='Verified candidate deferred by current capacity'
+                return
             self.extra[ticker]=ticker
             for folder in MM_FOLDERS:
                 e,f,ps=self.portfolios[folder]
@@ -293,6 +301,9 @@ class ExperimentSuite:
                     e.markets[ticker].update(m,entry_parked=False)
                     e.books[ticker].valid=False
                 e.handle('market',dict(payload,market=dict(m,bot_id=profile['id'],bot_name=profile['name'],bot_revision=profile['revision'],strategy_version=profile['version'])),now)
+            if row is not None:
+                row['reason']='admitted_to_shared_monitoring'
+                discovery['state']='Verified candidate admitted'
             return
         errors=[]
         # Runtime telemetry is timestamped after durable commits using wall

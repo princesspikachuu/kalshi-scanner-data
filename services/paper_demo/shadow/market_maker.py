@@ -1,5 +1,5 @@
 """Independent paper maker portfolios with covered inventory and bounded screening."""
-import asyncio,json,re,time,math
+import asyncio,json,re,time,math,statistics
 from decimal import Decimal as D
 from uuid import uuid4
 from .scalper import VolatilityScalper,CONFIGS,EXECUTION_DEFAULTS
@@ -8,6 +8,14 @@ from .runner import ts
 
 MM_FOLDERS=('market_maker','maker_competitive')
 CATEGORIES={'politics':'Politics','economics':'Economics / Finance','sports_futures':'Sports Futures','entertainment':'Entertainment / Culture'}
+
+def activity_deadline(engine,ticker,market):
+    # Slow makers need an observation window matched to actual trade cadence.
+    # Discovery prints are activity metadata only; never replay them as fills.
+    trades=engine.tape.markets.get(ticker,{}).get('trades',())
+    latest=max(market.get('discovered_at',0),market.get('maker_last_trade_at',0),max((t[0] for t in trades),default=0))
+    idle=max(900,min(3600,market.get('maker_idle_seconds',900)))
+    return latest+idle
 MM_CONFIG=dict(approach='market_maker',adaptive=True,mixed=False,maker_profit_exits=True,take_profit=.01,
     stop_loss=.08,min_hold=0,max_hold=14400,liquidate=3600,reduce_hold=21600,restrict_entries=86400,
     order_ttl=300,exit_ttl=120,reprice_seconds=30,reprice_ticks=2,eval_seconds=5,
@@ -70,7 +78,7 @@ class MarketMaker(VolatilityScalper):
         for t,m in self.e.markets.items():
             if not self.matches(t,m):continue
             paused=t in self.profile.get('paused_markets',[])
-            quiet=now-m.get('discovered_at',now)>300 and not any(now-print[0]<120 for print in self.e.tape.state(t)['trades'])
+            quiet=now>=activity_deadline(self.e,t,m)
             window=any(at-self.config['pre_event']<=now<=at+self.config['post_event'] for at in m.get('scheduled_events',[]))
             if paused or window or quiet:
                 for o in self.active_orders(t):
@@ -102,6 +110,9 @@ async def maker_event_page(host,s,now,minimum):
     return await event_page(host,s,now,minimum,category,CATEGORIES)
 
 def scan_report(s,now,listed=0,active=0):
+    # Admission is acknowledged on the serialized engine path after enqueue.
+    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),
+        reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s.get('candidates',{}).items())[:20]]
     print(json.dumps(dict(event='market_maker_scan',at=now,listed_events=listed,
         candidate_count=len(s.get('candidates',{})),state=s.get('state'),reads=s.get('reads',0),
         discovery_source=s.get('discovery_source'),page_limit=s.get('event_page_limit',50),
@@ -186,13 +197,18 @@ async def maker_once(host):
         levels=book.get('orderbook_fp',{});depth=min(sum(float(x[1]) for x in levels.get(side+'_dollars',levels.get(side+'_dollars_fp',[]))) for side in ('yes','no'))
         if depth<max(p['contracts'] for p in ps)*4:row['reason']='insufficient_displayed_depth';continue
         fee=await host.fee_policy(raw,{});schedule=row.get('scheduled_events',[])
+        times=sorted(ts(t['created_time']) for t in prints)
+        intervals=[b-a for a,b in zip(times,times[1:]) if b>a]
+        idle=max(900,min(3600,6*statistics.median(intervals))) if intervals else 900
+        row['reason']='awaiting_shared_admission'
+        s['state']='Verified candidate awaiting shared admission'
         await host.put('maker_market',dict(market=dict(ticker=ticker,event_ticker=raw['event_ticker'],series_ticker=row['event']['series_ticker'],title=raw.get('title',ticker),
             open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,market_maker=True,market_category=row['category'],
-            maker_score=row['score'],trades_24h=count,scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
+            maker_score=row['score'],trades_24h=count,maker_idle_seconds=idle,maker_last_trade_at=max(times,default=now),scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
             incentives=s['incentives'].get(ticker,[]),price_ranges=raw.get('price_ranges',[])),taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
-        row['reason']='submitted_for_shared_monitoring';s['state']='Verified candidate submitted';break
+        break
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
-    if s.get('state')!='Verified candidate submitted':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
+    if s.get('state')=='Inspecting candidates':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
     scan_report(s,now,len(result.get('events',[])),len(maker_active))
 
 async def discover_maker(host):

@@ -146,6 +146,8 @@ class DiscoveryTests(unittest.IsolatedAsyncioTestCase):
         host.verified_data.call.side_effect=lambda method,path,params=None:responses[path]
         await maker_once(host);self.assertEqual(host.verified_data.call.call_count,4)
         args=host.put.call_args.args;self.assertEqual(args[0],'maker_market');m=args[1]['market'];self.assertEqual(m['trades_24h'],30);self.assertEqual(m['incentives'][0]['id'],'program');self.assertNotIn('incentive_profit',m)
+        self.assertEqual(m['maker_idle_seconds'],900);self.assertAlmostEqual(m['maker_last_trade_at'],now-100,places=5)
+        self.assertEqual(suite.maker_discovery['candidates']['POL-X']['reason'],'awaiting_shared_admission')
 
 class ResearchWindowTests(unittest.TestCase):
     def test_minute_baselines_produce_deltas_and_signed_pnl(self):
