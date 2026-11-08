@@ -51,6 +51,7 @@ def bucket():
 class ScalperEngine(Engine):
     """Portfolio-local queue uncertainty, without changing other strategies."""
     covered_maker_sells=True
+    filter_unchanged_quotes=True
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs);self.tape=MarketTape();self._print_times=deque()
     def handle(self,source,payload,now):

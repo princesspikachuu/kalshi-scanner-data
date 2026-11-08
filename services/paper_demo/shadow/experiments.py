@@ -163,7 +163,7 @@ class ExperimentSuite:
         markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
         legacy={t for t,m in self.host.engine.markets.items() if m['close']>now}
         return dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
-            subscribed_markets=len(active|legacy),legacy_markets=len(legacy),coalesced_inputs=sum(getattr(e,'coalesced_inputs',0) for e,_,_ in self.portfolios.values()),
+            subscribed_markets=len(active|legacy),legacy_markets=len(legacy),coalesced_inputs=sum(getattr(e,'coalesced_inputs',0) for e,_,_ in self.portfolios.values()),filtered_quote_updates=sum(getattr(e,'filtered_quote_updates',0) for e,_,_ in self.portfolios.values()),
             categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set','market_maker')},
             rotated_markets=len(self.rotation_exclusions))
     def search_capacity(self,category,now,slots=1):
