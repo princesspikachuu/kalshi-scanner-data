@@ -5,6 +5,7 @@ from uuid import uuid4
 from .scalper import VolatilityScalper,CONFIGS,EXECUTION_DEFAULTS
 from .storage import entry
 from .runner import ts
+from .maker_opportunities import turnover_score,ranked_rows,retry_verified
 
 MM_FOLDERS=('market_maker','maker_competitive')
 CATEGORIES={'politics':'Politics','economics':'Economics / Finance','sports_futures':'Sports Futures','entertainment':'Entertainment / Culture'}
@@ -25,7 +26,7 @@ def quotable(bids,config):
         any(config.get('min_price',.20)<=p<=config.get('max_price',.80) for p in bids.values()))
 MM_CONFIG=dict(approach='market_maker',adaptive=True,mixed=False,maker_profit_exits=True,take_profit=.01,
     stop_loss=.08,min_hold=0,max_hold=14400,liquidate=3600,reduce_hold=21600,restrict_entries=86400,
-    order_ttl=300,exit_ttl=120,reprice_seconds=30,reprice_ticks=2,eval_seconds=5,
+    order_ttl=1800,exit_ttl=900,reprice_seconds=30,reprice_ticks=2,eval_seconds=5,
     min_remaining=86400,min_price=.20,max_price=.80,min_spread=.03,min_trades_24h=30,
     max_sigma=.025,depth_fraction=.20,market_exposure=.04,event_exposure=.08,category_exposure=.15,
     portfolio_exposure=.40,pre_event=900,post_event=300,category_phases={})
@@ -47,7 +48,7 @@ def profiles():
         for key,label in CATEGORIES.items():
             yield dict(id=folder+'_'+key,series='MM_'+key.upper(),name=label,asset='market_maker',market_category=key,
                 underlying=label,folder_id=folder,strategy='market_maker',contracts=5,live_enabled=False,
-                version='maker-1',config=dict(MM_CONFIG,**(dict(min_spread=.02,reprice_ticks=1) if folder=='maker_competitive' else {})))
+                version='maker-2',config=dict(MM_CONFIG,**(dict(min_spread=.02,reprice_ticks=1) if folder=='maker_competitive' else {})))
 
 def initialize_market_maker(store,guard):
     marker='shadow/market-maker-v1'
@@ -71,7 +72,9 @@ class MarketMaker(VolatilityScalper):
     def refresh_config(self):
         self.config=dict(EXECUTION_DEFAULTS,**MM_CONFIG);self.config.update(self.profile.get('config',{}))
     def phase(self,ticker):
-        c=dict(self.config);c['restrict_entries']=max(c['liquidate']+60,c['min_remaining']);return c
+        c=dict(self.config);c['restrict_entries']=max(c['liquidate']+60,c['min_remaining'])
+        c['order_ttl']=min(c['order_ttl'],max(900,min(1800,self.e.markets[ticker].get('maker_idle_seconds',1800)/2)))
+        return c
     def matches(self,ticker,market):return market.get('market_maker') and market.get('market_category')==self.profile['market_category']
     def decision(self,f):
         c=self.config
@@ -123,13 +126,13 @@ async def maker_event_page(host,s,now,minimum):
 
 def scan_report(s,now,listed=0,active=0):
     # Admission is acknowledged on the serialized engine path after enqueue.
-    s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),
-        reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s.get('candidates',{}).items())[:20]]
+    s['ranked']=ranked_rows(s)
     print(json.dumps(dict(event='market_maker_scan',at=now,listed_events=listed,
         candidate_count=len(s.get('candidates',{})),state=s.get('state'),reads=s.get('reads',0),
         discovery_source=s.get('discovery_source'),page_limit=s.get('event_page_limit',50),
         catalog_status=s.get('series_status'),catalog_series=len(s.get('series_pool',[])),
         split_event=bool(s.get('split_event')),ranked=s.get('ranked',[])[:8],shared_active=active,
+        cached_admission_retries=s.get('cached_admission_retries',0),cached_admission_expired=s.get('cached_admission_expired',0),
         reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
 
 async def maker_once(host):
@@ -137,6 +140,9 @@ async def maker_once(host):
     if not hasattr(suite,'maker_discovery'):
         suite.maker_discovery=dict(cursor='',candidates={},reads=0,next_at=0,incentive_at=0,incentives={},settlement_at={},rejected={})
     s=suite.maker_discovery
+    # Cached metadata can enter a brief healthy window without another HTTP
+    # round trip. Actual quotes still require fresh streaming books and fees.
+    if await retry_verified(host,s,now):return
     if now<s['next_at']:return
     # Settlement is independent of discovery/admission and survives closed books.
     held={t:m for folder,(e,_,_) in suite.portfolios.items() if folder in MM_FOLDERS for t,m in e.markets.items() if not m.get('paid')}
@@ -193,7 +199,7 @@ async def maker_once(host):
         s['state']='Shared capacity occupied; existing strategies preserved';scan_report(s,now,len(result.get('events',[])),len(maker_active));return
     checked=0;s['state']='Inspecting candidates'
     for ticker,row in sorted(s['candidates'].items(),key=lambda item:(item[1].get('inspected_at',0),-item[1]['score'])):
-        if ticker in active or now<row.get('retry_at',0):continue
+        if ticker in active or row.get('ready') or now<row.get('retry_at',0):continue
         ps=[p for p in choices if p['market_category']==row['category']]
         if not ps:continue
         if checked>=1:break
@@ -212,15 +218,22 @@ async def maker_once(host):
         if not any(quotable(bids,p.get('config',{})) for p in ps):
             row['reason']='current_price_or_spread_not_eligible';continue
         fee=await host.fee_policy(raw,{});schedule=row.get('scheduled_events',[])
+        economics=turnover_score(prints,now,bids,ps,fee,raw)
+        if economics is None:row['reason']='execution_economics';continue
+        row.update(economics)
         times=sorted(ts(t['created_time']) for t in prints)
         intervals=[b-a for a,b in zip(times,times[1:]) if b>a]
         idle=max(900,min(3600,6*statistics.median(intervals))) if intervals else 900
         row['reason']='awaiting_shared_admission'
         s['state']='Verified candidate awaiting shared admission'
-        await host.put('maker_market',dict(market=dict(ticker=ticker,event_ticker=raw['event_ticker'],series_ticker=row['event']['series_ticker'],title=raw.get('title',ticker),
+        payload=dict(market=dict(ticker=ticker,event_ticker=raw['event_ticker'],series_ticker=row['event']['series_ticker'],title=raw.get('title',ticker),
             open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,market_maker=True,market_category=row['category'],
-            maker_score=row['score'],trades_24h=count,maker_idle_seconds=idle,maker_last_trade_at=max(times,default=now),scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
-            incentives=s['incentives'].get(ticker,[]),price_ranges=raw.get('price_ranges',[])),taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
+            maker_score=row['execution_score'],maker_ranking=economics,trades_24h=count,maker_idle_seconds=idle,maker_last_trade_at=max(times,default=now),scheduled_events=schedule,schedule_source='Kalshi linked milestones' if schedule else 'unavailable; market-data protections active',
+            incentives=s['incentives'].get(ticker,[]),price_ranges=raw.get('price_ranges',[])),taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier))
+        verified=time.time();row['ready']=dict(payload=payload,verified_at=verified,next_try=verified+5)
+        cached=sorted((r for r in s['candidates'].values() if r.get('ready')),key=lambda r:r['ready']['verified_at'])
+        for old in cached[:-8]:old.pop('ready');old['reason']='verified_cache_capacity'
+        await host.put('maker_market',payload)
         break
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if s.get('state')=='Inspecting candidates':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'

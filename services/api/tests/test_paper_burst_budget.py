@@ -7,6 +7,25 @@ from services.paper_demo.shadow.scalper import VolatilityScalper,SCALPER_FOLDERS
 from services.paper_demo.shadow.market_maker import MM_FOLDERS
 
 class BurstTimeBudgetTests(unittest.IsolatedAsyncioTestCase):
+    async def test_large_backlog_uses_bounded_longer_batch_and_keeps_fifo(self):
+        run=object.__new__(HostedRun);run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
+        run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload
+        seen=[];commits=[];clock=[0.0]
+        def handle(source,payload,now):
+            seen.append(payload['n']);clock[0]+=.03
+            if len(seen)==12:run.done.set()
+        run.engine.handle=handle;run.audit.flush.side_effect=lambda:commits.append(len(seen))
+        for n in range(2500):await run.queue.put(('clock',dict(n=n),1000+n*.01))
+        with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:clock[0],time=time.time)):await run.consume()
+        self.assertEqual(seen,list(range(12)));self.assertEqual(commits,[6,12]);self.assertEqual(run.queue._unfinished_tasks,2488)
+    async def test_large_backlog_never_exceeds_1024_inputs_in_one_atomic_batch(self):
+        run=object.__new__(HostedRun);run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
+        run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload;seen=[]
+        run.engine.handle.side_effect=lambda source,payload,now:seen.append(payload['n'])
+        run.audit.flush.side_effect=run.done.set
+        for n in range(2500):await run.queue.put(('clock',dict(n=n),1000+n*.01))
+        with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:0,time=time.time)):await run.consume()
+        self.assertEqual(seen,list(range(1024)));self.assertEqual(run.queue._unfinished_tasks,1476)
     async def test_time_budget_yields_before_input_cap_and_preserves_every_input(self):
         run=object.__new__(HostedRun);run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
         run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload
