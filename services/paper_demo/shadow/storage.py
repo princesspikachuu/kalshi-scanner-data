@@ -36,7 +36,7 @@ class HostedAudit:
         data=encode(self.engine,self.fleet)
         if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
         if hasattr(self,'_frozen_discovery'):data['experiments']['_maker_discovery']=self._frozen_discovery
-        payload=pack_checkpoint(data)
+        payload=pack_checkpoint(data,binary=True)
         if payload.get('checkpoint_encoding') and time.monotonic()>=getattr(self,'codec_log_at',0):
             self.codec_log_at=time.monotonic()+30
             print(json.dumps(dict(event='shadow_checkpoint_size',encoding=payload['checkpoint_encoding'],
