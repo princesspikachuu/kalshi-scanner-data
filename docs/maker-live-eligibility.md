@@ -1,0 +1,7 @@
+# Admit only currently quotable Maker candidates
+
+The broad discovery pool intentionally includes near misses outside the configured price band and spread. A market could previously pass historical trade/depth verification and occupy one of the two shared Maker streams even when neither experiment could quote its current book. Stale event-summary prices made this worse. A November 8 public read of KXTIME-26-ABD returned 10¢ YES, 89¢ NO and a 1¢ spread, outside both experiments' entry criteria despite earlier qualifying discovery observations.
+
+Before admission, discovery now applies existing price-band and spread criteria to the already-fetched current order book for both YES and NO and every enabled configuration. It adds no API request. Near misses remain ranked with `current_price_or_spread_not_eligible`; they do not consume a stream. No entry threshold is lowered.
+
+When an admitted market becomes unquotable, a 60-second grace period avoids churning subscriptions for brief changes. If neither portfolio can quote again, normal rotation can release the flat market. Quote recovery clears the grace timer; real inventory and active orders retain existing protection, and vulnerable buys are canceled by the Maker quiet gate before release. This bounds occupancy without widening spreads, fabricating fills, increasing monitoring caps or taking capacity from another strategy's positions.
