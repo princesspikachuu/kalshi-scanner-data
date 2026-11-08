@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -20,7 +20,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -55,9 +55,9 @@ test('period overview uses deposit-adjusted history and labels incomplete covera
  assert.ok(html.includes('Waiting for balance history'));
  assert.ok(html.includes('data-folder-period="1H" aria-pressed="true"'));
 });
-test('unpriced P/L remains a range while committed position cost stays known',()=>{
+test('unpriced current P/L uses cost fallback while committed position cost stays known',()=>{
  const html=folderOverviewMarkup([{id:'favorites',name:'Favorites',accounting:{at:Date.now()/1000,portfolio:{equity:null,cash:'900',deposits:'1000',total_pnl:null,realized_pnl:'0',position_cost:'100',active_contracts:'200',pending_contracts:'0',position_value:null},positions:[]}}]);
- assert.ok(html.includes('Open/pending positions'));assert.ok(html.includes('$100.00'));assert.ok(html.includes('-$100.00 to $100.00'));assert.ok(!html.includes('$900.00 to $1,100.00'));
+ assert.ok(html.includes('Open/pending positions'));assert.ok(html.includes('$100.00'));assert.ok(html.includes('$0.00'));assert.ok(!/\$[\d,.]+ to /.test(html));assert.ok(!html.includes('$900.00 to $1,100.00'));
 });
 
 test('retired fifteen-minute favorites are collapsed and cannot be resumed from their card',()=>{
@@ -116,11 +116,11 @@ test('per-folder time controls do not open the folder and master controls reset 
  master.onclick();assert.deepEqual(JSON.parse(storage.get('moneytree-folder-views')).periods,{});
  assert.ok(nodes.get('groups').innerHTML.includes('P/L · 6h'));
 });
-test('short-period unpriced P/L is a range with realized results, never a blank zero',()=>{
- const data=fixture();data.folders[0].performance={'1H':{pnl:null,pnl_low:'-4.25',pnl_high:'8.50',unpriced:true,realized_pnl:'2.10',partial:true,since:1700000000}};
+test('short-period P/L shows the best estimate and labels partial history',()=>{
+ const data=fixture();data.folders[0].performance={'1H':{pnl:'2.65',pnl_low:'-4.25',pnl_high:'8.50',unpriced:true,realized_pnl:'2.10',partial:true,since:1700000000}};
  const html=folderOverviewMarkup(data.folders,'1H');
- assert.ok(html.includes('-$4.25 to $8.50'));assert.ok(html.includes('Realized $2.10'));
- assert.ok(html.includes('range includes unpriced positions'));assert.ok(html.includes('Tracked since'));
+ assert.ok(html.includes('$2.65'));assert.ok(!html.includes(' to $'));assert.ok(html.includes('Realized $2.10'));
+ assert.ok(!html.includes('range includes unpriced positions'));assert.ok(html.includes('Tracked since'));
  assert.ok(html.includes('data-label="Open bids"'));assert.ok(html.includes('data-label="Total P/L · 1h"'));
 });
 
@@ -158,11 +158,12 @@ test('each bot including experiments has six P/L windows visible while collapsed
   for(const p of ['all','1H','6H','24H','7D','30D'])assert.ok(html.includes(`data-bot-summary="${id}" data-summary-period="${p}"`),`${id} ${p}`);
  }
 });
-test('favorite timing research separates market series, event clocks and small-sample evidence',()=>{
- const html=favoriteTimingMarkup([{series:'KXNBAGAME',market_type:'sports',side:'yes',price:'.90',horizon:'10–15m',clock:'estimated_game_end',
- contracts:'10',open_contracts:'0',events:1,event_win_rate:100,break_even:90,net:'1',average_holding_minutes:'10',net_per_dollar_hour:'.66',unverified:'0'}]);
- for(const text of ['90¢','10–15m','KXNBAGAME','Estimated game end','market types are not pooled','not a verified 90%','Early sample'])assert.ok(html.includes(text),text);
- assert.ok(!html.includes('<table'));assert.ok(!html.includes('NaN'));
+test('favorite timing research combines contract sides using percentage tiers',()=>{
+ const row={series:'KXNBAGAME',market_type:'sports',side:'yes',price:'.90',horizon:'10–15m',clock:'estimated_game_end',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9',net:'1',holding_seconds:'6000'};
+ const html=favoriteTimingMarkup([row,{...row,side:'no',contracts:'5',closed:'5',resolved:'5',winners:'3',cost:'4.5',net:'-.5',holding_seconds:'3000'}]);
+ for(const text of ['90–99%','10–15m','estimated game end','80.0%','$0.50','15'])assert.ok(html.includes(text),text);
+ assert.equal((html.match(/<tbody><tr>/g)||[]).length,1);
+ assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));assert.ok(!html.includes('NaN'));
 });
 test('bot P/L separates total, realized and unrealized changes with honest coverage',()=>{
  const bot={id:'fav',account:{},performance:{'1H':{pnl:'2.5',realized_pnl:'1',partial:true,since:100}}};
@@ -286,10 +287,10 @@ test('subfolder totals combine bot P/L and current exposure across the selected 
  const html=marketTypeSummaryMarkup({label:'Crypto',bots},'1H');
  for(const token of ['Total P/L · 1h','$0.50','Open bids','$3.00','Open/pending positions','$10.00','Partial P/L history'])assert.ok(html.includes(token),token);
 });
-test('subfolder P/L keeps uncertainty bounds and does not silently omit missing bots',()=>{
- const bots=[{id:'a',account:{},performance:{'6H':{pnl_low:'-1',pnl_high:'2'}}},
+test('subfolder P/L uses single estimates and does not silently omit missing bots',()=>{
+ const bots=[{id:'a',account:{},performance:{'6H':{pnl:'.5',pnl_low:'-1',pnl_high:'2'}}},
   {id:'b',account:{},performance:{'6H':{pnl:'1'}}}];
- assert.deepEqual(marketTypeSummaryValues(bots,'6H').pnl,{low:0,high:3,unpriced:true});
+ assert.deepEqual(marketTypeSummaryValues(bots,'6H').pnl,{low:1.5,high:1.5,unpriced:false});
  bots[1].performance={};
  const v=marketTypeSummaryValues(bots,'6H');assert.equal(v.pnl,null);assert.equal(v.missing,1);
  assert.equal(v.account.unfilled_bids,null);
@@ -328,27 +329,30 @@ test('failed initial requests replace the checking status and remain retryable',
 });
 
 
-test('Favorites category research weights contracts and fees while keeping series sides clocks and horizons separate',()=>{
- const base={series:'WX',market_type:'weather_daily',side:'yes',clock:'market_close',horizon:'5–10m',price:'.90',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9.1',net:'-.1',unverified:'0'};
- const rows=favoriteCategoryRows([base,{...base,price:'.95',contracts:'2',closed:'2',resolved:'2',winners:'2',cost:'1.9',net:'.1'},
- {...base,horizon:'1–2h'},{...base,series:'SPORTS',market_type:'sports'},{...base,side:'no'},{...base,clock:'estimated_game_end'}]);
- assert.equal(rows.length,5);const combined=rows.find(r=>r.series==='WX'&&r.side==='yes'&&r.clock==='market_close'&&r.horizon==='5–10m');
- assert.equal(combined.band,'90–99¢');assert.equal(combined.contracts,12);assert.equal(combined.resolved,12);assert.equal(combined.winners,11);assert.equal(combined.cost,11);assert.equal(combined.net,0);
+test('category research pools series and both sides while keeping price and time tiers distinct',()=>{
+ const base={series:'KXBTCD',market_type:'hourly_price',side:'yes',clock:'market_close',horizon:'5–10m',price:'.90',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9.1',net:'-.1'};
+ const input=[base,{...base,series:'KXETHD',side:'no',price:'.95',contracts:'2',closed:'2',resolved:'2',winners:'2',cost:'1.9',net:'.1'},{...base,horizon:'1–2h'}];
+ const rows=favoriteCategoryRows(input,true);assert.equal(rows.length,2);
+ const r=rows.find(r=>r.horizon==='5–10m');assert.equal(r.band,'90–99%');assert.equal(r.contracts,12);assert.equal(r.winners,11);assert.equal(r.cost,11);assert.equal(r.net,0);
+ const html=favoriteCategoryResearchMarkup({id:'crypto-hourly',label:'Crypto · 1 hour',bots:input.map((r,i)=>({id:String(i),experiment:{entry_timing:[r]}}))});
+ assert.ok(html.includes('91.7%'));assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
+ assert.equal(favoriteCategoryResearchMarkup({id:'sports',bots:[]}), '');
 });
-test('Favorites research is accessible at folder level with honest pending outcomes and escaped bot labels',()=>{
+test('Favorites research sits within each non-sports category and keeps pending outcomes honest',()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.name='<img onerror=x>';
  bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'10–15m',price:'.90',contracts:'4',closed:'0',resolved:'0',winners:'0',cost:'3.6',net:'0'}];
  const {nodes}=setup(d),html=nodes.get('groups').innerHTML;
- for(const text of ['Research data · price category × time remaining','90–99¢','10–15m left','no closed contracts','Bids are still gathering data','independent of the P/L time selector'])assert.ok(html.includes(text),text);
+ for(const text of ['Combined data · time × percentage tier','90–99%','10–15m left','no closed contracts','Bids are still gathering data','independent of the P/L time selector'])assert.ok(html.includes(text),text);
  assert.ok(!html.includes('<img onerror'));assert.ok(!html.includes('NaN'));
- assert.ok(html.indexOf('Research data')<html.indexOf('data-market="favorites"'));
+ const group=html.indexOf('data-market-type="favorites::crypto-15m"'),research=html.indexOf('Combined data',group),card=html.indexOf('data-market="favorites"',group);
+ assert.ok(group<research&&research<card);
 });
-test('Favorites research expansion survives refresh and reload',()=>{
- const key='favorites-research',detail={dataset:{research:key},open:true,isConnected:true},storage=new Map();
+test('category research expansion survives refresh and reload',()=>{
+ const key='favorites-category-crypto-15m',detail={dataset:{research:key},open:true,isConnected:true},storage=new Map();
  const {context}=setup(fixture(),{storage,queries:{'details[data-research]':[detail]}});
  detail.ontoggle({target:detail});vm.runInContext('draw()',context);
- assert.equal(storage.get('moneytree-research-views'),'["favorites-research"]');
- const {nodes}=setup(fixture(),{storage});assert.match(nodes.get('groups').innerHTML,/data-research="favorites-research" open/);
+ assert.equal(storage.get('moneytree-research-views'),JSON.stringify([key]));
+ const {nodes}=setup(fixture(),{storage});assert.match(nodes.get('groups').innerHTML,/data-research="favorites-category-crypto-15m" open/);
 });
 
 test('scalper folders render research with escaped records and existing period controls',()=>{

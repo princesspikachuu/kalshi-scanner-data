@@ -35,9 +35,43 @@ def equity_bounds(row,positions=None):
             else:known+=value
     return cash+known,cash+known+missing
 
+def equity_estimate(row,positions=None):
+    """Use actual marks, then last-known/entry marks; never midpoint a payout range."""
+    def number(v):
+        try:
+            d=D(str(v));return d if d.is_finite() else None
+        except Exception:return None
+    for key in ('equity','equity_estimate'):
+        exact=number(row.get(key))
+        if exact is not None:return exact
+    cash=number(row.get('cash'))
+    if cash is not None:
+        if positions:
+            value=D(0);cost_covered=D(0)
+            for p in positions:
+                quantity=number(p.get('quantity')) or D(0)
+                mark=number(p.get('value'))
+                if mark is None:
+                    price=number(p.get('mark_price'))
+                    if price is None:price=number(p.get('price'))
+                    mark=quantity*price if price is not None else number(p.get('cost'))
+                if mark is None:return None
+                value+=mark;cost_covered+=number(p.get('cost')) or D(0)
+            # Old snapshots can omit individual lots; carry the uncovered cost.
+            cost=number(row.get('position_cost'))
+            return cash+value+(max(D(0),cost-cost_covered) if cost is not None else D(0))
+        cost=number(row.get('position_cost'))
+        if cost is not None:return cash+cost
+    # Older minute samples retained realized P/L but no per-lot quote. Use
+    # inventory at cost for that historical baseline instead of guessing $0/$1.
+    realized=number(row.get('realized_pnl'));deposits=number(row.get('deposits'))
+    if realized is not None and deposits is not None:return deposits+realized
+    return None
+
+
 def balance_sample(account,session):
-    row=account['portfolio'];bounds=equity_bounds(row,account.get('positions'))
-    return dict(session=session,**{k:row.get(k) for k in ('equity','cash','deposits','total_pnl','realized_pnl')},
+    row=account['portfolio'];bounds=equity_bounds(row,account.get('positions'));estimate=equity_estimate(row,account.get('positions'))
+    return dict(session=session,equity_estimate=str(estimate) if estimate is not None else None,**{k:row.get(k) for k in ('equity','cash','deposits','total_pnl','realized_pnl')},
         equity_low=str(bounds[0]) if bounds else None,equity_high=str(bounds[1]) if bounds else None)
 
 def record_balances(store,accounts,now):
@@ -79,7 +113,9 @@ def period_change(current,baseline,positions=None):
     funds=D(current['deposits'])-D(baseline['deposits'])
     low,high=a[0]-b[1]-funds,a[1]-b[0]-funds
     realized=str(D(current['realized_pnl'])-D(baseline['realized_pnl'])) if all(r.get('realized_pnl') is not None for r in (current,baseline)) else None
-    return dict(pnl=str(low) if low==high else None,pnl_low=str(low),pnl_high=str(high),unpriced=low!=high,realized_pnl=realized)
+    current_estimate=equity_estimate(current,positions);baseline_estimate=equity_estimate(baseline)
+    estimate=current_estimate-baseline_estimate-funds if current_estimate is not None and baseline_estimate is not None else None
+    return dict(pnl=str(estimate) if estimate is not None else None,pnl_low=str(low),pnl_high=str(high),unpriced=low!=high,realized_pnl=realized,estimated=low!=high)
 
 def folder_performance(pool,folders,now):
     with pool.connection() as c:

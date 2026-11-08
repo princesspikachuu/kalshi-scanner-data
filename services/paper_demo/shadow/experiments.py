@@ -289,10 +289,10 @@ class ExperimentSuite:
         active={t:a for b in bots for t,a in b.attempts.items() if b.trial_attempt(a) and not a.get('recorded')}
         realized=totals['net']+sum(float(e.wallet.stat(t).gross-e.wallet.stat(t).realized_fees-D(a['baseline'])) for t,a in active.items())
         positions=[p for p in money['positions'] if p['ticker'] in active]
-        unpriced=any(p['value'] is None for p in positions)
-        pnl=None if unpriced else realized+sum(float(D(p['value'])-D(p['cost'])) for p in positions)
+        unpriced=any(p['value'] is None or p.get('valuation_estimated') for p in positions)
+        pnl=None if any(p['value'] is None for p in positions) else realized+sum(float(D(p['value'])-D(p['cost'])) for p in positions)
         draw=self.comparison.setdefault(folder,dict(peak=0.,max_drawdown=0.,coverage_incomplete=False))
-        if pnl is None:draw['coverage_incomplete']=True
+        if pnl is None or unpriced:draw['coverage_incomplete']=True
         else:
             draw['peak']=max(draw['peak'],pnl);draw['max_drawdown']=max(draw['max_drawdown'],draw['peak']-pnl)
         return dict(started_at=min(b.trial['started_at'] for b in bots),variant=bots[0].profile.get('variant','baseline'),

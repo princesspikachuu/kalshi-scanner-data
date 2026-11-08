@@ -46,12 +46,30 @@ class AccountingTests(unittest.TestCase):
         e.markets['KXETH15M-test']['yes_payout_confirmed']='0'
         self.assertEqual(D(snapshot(e,PROFILES,1000)['portfolio']['pending_value']),0)
 
-    def test_missing_quote_is_unknown_value_not_zero_profit_or_zero_payout(self):
+    def test_missing_quote_uses_entry_price_only_when_no_verified_mark_is_saved(self):
         e=fixture();e.books['KXETH15M-test'].valid=False
-        a=snapshot(e,PROFILES,1000)['portfolio']
-        self.assertIsNone(a['equity']);self.assertIsNone(a['total_pnl'])
-        self.assertIsNone(a['pending_value']);self.assertEqual(a['pending_payout_state'],'unknown')
-        self.assertEqual(D(a['pending_max_payout']),10);self.assertEqual(D(a['realized_pnl']),D('-18.7'))
+        a=snapshot(e,PROFILES,1000)
+        self.assertEqual(D(a['portfolio']['equity']),D('90.3'))
+        self.assertEqual(D(a['portfolio']['pending_value']),D('.3'))
+        self.assertEqual(a['positions'][1]['valuation_source'],'entry_price')
+        self.assertEqual(a['portfolio']['pending_payout_state'],'estimated')
+    def test_missing_quote_retains_last_verified_bid_and_confirms_outcome_when_available(self):
+        e=fixture();snapshot(e,PROFILES,1000)
+        e.books['KXETH15M-test'].valid=False
+        a=snapshot(e,PROFILES,1001)
+        self.assertEqual(D(a['portfolio']['pending_value']),D('7'))
+        self.assertEqual(a['positions'][1]['valuation_source'],'last_verified_bid')
+        e.markets['KXETH15M-test']['yes_payout_confirmed']='0'
+        self.assertEqual(D(snapshot(e,PROFILES,1002)['portfolio']['pending_value']),0)
+
+    def test_best_estimate_never_enables_trading_on_an_invalid_book(self):
+        e=fixture();snapshot(e,PROFILES,1000)
+        book=e.books['KXBTC15M-test'];book.valid=False
+        # Corrupt remaining depth is not adopted over the saved verified mark.
+        book.levels={'yes':{D('.9'):D(100)},'no':{D('.9'):D(100)}}
+        result=snapshot(e,PROFILES,1001)
+        self.assertEqual(result['positions'][0]['mark_price'],'0.2')
+        self.assertFalse(book.valid)
 
     def test_open_entry_fees_are_unrealized_until_position_closes(self):
         e=Engine(Mock(),cash='100');e.advance(1000)

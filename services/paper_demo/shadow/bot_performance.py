@@ -5,7 +5,7 @@ of strategy evidence. No bot is assigned a fictitious slice of folder cash.
 """
 import base64,gzip,json
 from decimal import Decimal as D
-from .performance import WINDOWS,equity_bounds,period_change
+from .performance import WINDOWS,equity_bounds,equity_estimate,period_change
 from .storage import entry
 
 PREFIX='demo/shadow/bot-performance-history/'
@@ -20,7 +20,8 @@ def sample(account,positions,session):
     realized=D(account['realized_pnl']);cost=D(account['position_cost'])
     bounds=equity_bounds(dict(account,equity=account.get('total_pnl'),cash=str(realized-cost)),positions)
     if bounds is None:return None
-    return dict(session=session,equity=str(bounds[0]) if bounds[0]==bounds[1] else None,
+    estimate=equity_estimate(dict(account,equity=account.get('total_pnl'),cash=str(realized-cost)),positions)
+    return dict(session=session,equity_estimate=str(estimate) if estimate is not None else None,equity=str(bounds[0]) if bounds[0]==bounds[1] else None,
         equity_low=str(bounds[0]),equity_high=str(bounds[1]),deposits='0',realized_pnl=str(realized))
 
 def samples_for(bots,folders,now,legacy_positions=()):
@@ -72,7 +73,7 @@ def bot_performance(pool,bots,folders,now,legacy_positions=()):
     for b in bots:
         a=current.get(b['id']);result={}
         if a:
-            result['all']=dict(pnl=a['equity'],pnl_low=a['equity_low'],pnl_high=a['equity_high'],
+            result['all']=dict(pnl=a.get('equity_estimate',a['equity']),pnl_low=a['equity_low'],pnl_high=a['equity_high'],
                 realized_pnl=a['realized_pnl'],partial=False,missing_history=False,since=None,unpriced=a['equity'] is None)
         for period,seconds in WINDOWS.items():
             target=now-seconds;p=baselines[period];baseline=(p or {}).get('bots',{}).get(b['id']);at=(p or {}).get('at')
