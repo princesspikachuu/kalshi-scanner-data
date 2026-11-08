@@ -36,16 +36,20 @@ class SharedRiskBudgetTests(unittest.TestCase):
         suite.monitoring=MonitoringBudget();suite.monitoring.observe(1000,0,0,.1)
         with patch('services.paper_demo.shadow.experiments.time',Mock(time=lambda:1000.1)):
             fixture.delta(suite,200.2,2,'yes','.45','1')
+            self.assertTrue(suite.extra_capacity(['NEW-MARKET'],200.2))
+            self.assertTrue(suite.search_capacity('market_maker',200.2))
         self.assertFalse(any(b.resource_paused for folder,(_,fleet,_) in suite.portfolios.items()
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) for b in fleet.bots.values()))
         # Old or overloaded operational telemetry must still stop new entries.
         with patch('services.paper_demo.shadow.experiments.time',Mock(time=lambda:1011)):
             fixture.delta(suite,200.3,3,'yes','.45','1')
+            self.assertFalse(suite.extra_capacity(['NEW-MARKET'],200.3))
         self.assertTrue(all(b.resource_paused for folder,(_,fleet,_) in suite.portfolios.items()
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) for b in fleet.bots.values()))
         suite.monitoring.observe(1012,3000,3,.1)
         with patch('services.paper_demo.shadow.experiments.time',Mock(time=lambda:1012.1)):
             fixture.delta(suite,200.4,4,'yes','.45','1')
+            self.assertFalse(suite.extra_capacity(['NEW-MARKET'],200.4))
         self.assertTrue(all(b.resource_paused for folder,(_,fleet,_) in suite.portfolios.items()
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) for b in fleet.bots.values()))
     def test_unchanged_budget_avoids_rewriting_profiles_but_transitions_apply_immediately(self):

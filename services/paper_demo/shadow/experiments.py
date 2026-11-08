@@ -154,7 +154,7 @@ class ExperimentSuite:
         owners=[b for b in owners if b and b.enabled]
         return not owners or not all(b.attempts.get(ticker,{}).get('first') and not (isinstance(b,VolatilityScalper) and b.attempts[ticker].get('recorded')) for b in owners)
     def monitoring_snapshot(self,now):
-        limits=self.monitoring.limits(now)
+        limits=self.monitoring.limits(time.time())
         active={t for t,m in self.feed_markets().items() if m['close']>now}
         # Complete-set feeds have their own portfolio, outside feed_markets().
         active.update(t for e,_,_ in self.portfolios.values() for t,m in e.markets.items() if t in self.extra and m['close']>now and not m.get('entry_parked') and not m.get('paid'))
