@@ -30,3 +30,9 @@ Use live stage timings to identify the next measured bottleneck. A larger queue 
 ## Validation
 
 Regression coverage includes socket intake during a blocked commit, exclusion of concurrent state mutation, ordered durable wallet snapshots, failed-write acknowledgment, repeated cancellation, transaction/refill-marker integrity, the hosted control loop, idle spot suppression and independent Kalshi book validity after a spot disconnect. Full suite and live verification are recorded in the change report.
+
+## First live timing result and follow-up
+
+After the asynchronous I/O deployment, one roughly 30-second sample processed 42,110 inputs in 836 batches, recorded 10,741 ms in simulation and about 2 ms in audit flush calls (few auditable state transitions in that interval), and rejected zero stale inputs. Source counts were dominated by 43,198 book deltas and 2,279 trade frames; no BTC spot inputs were recorded. Fresh books were visible for all nine legacy market tickers and 18 active strategy book copies. These samples demonstrate continued feed reception and correct spot suppression, but do not establish sustained throughput or a trade-rate improvement.
+
+A queue still developed. The timing evidence identified remaining duplicate simulation: even with all legacy bots paused and no legacy exposure or outstanding orders, the base engine still applied every book/trade frame before forwarding it to Favorites. The follow-up skips that base-engine application and fee preparation only while the base engine is idle. The complete frame still reaches active portfolios in receipt order. Lifecycle, clock, market discovery and settlement continue, and legacy resume clears obsolete sequence state and requires a fresh snapshot. Idle legacy books are excluded from the shared snapshot selector to prevent needless replacement requests. `legacy_inputs_skipped` measures the duplicate work removed.
