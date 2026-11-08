@@ -115,21 +115,26 @@ async def maker_once(host):
         suite.maker_discovery=dict(cursor='',candidates={},reads=0,next_at=0,incentive_at=0,incentives={},settlement_at={},rejected={})
     s=suite.maker_discovery
     if now<s['next_at']:return
-    s['next_at']=now+30
     # Settlement is independent of discovery/admission and survives closed books.
     held={t:m for folder,(e,_,_) in suite.portfolios.items() if folder in MM_FOLDERS for t,m in e.markets.items() if not m.get('paid')}
-    for ticker,m in [(t,m) for t,m in held.items() if m['close']<=now and now>=s['settlement_at'].get(t,0)][:4]:
-        if m['close']>now or now<s['settlement_at'].get(ticker,0):continue
-        s['settlement_at'][ticker]=now+60
-        raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market'];s['reads']+=1
-        if raw.get('status') in ('settled','finalized') and raw.get('result') in ('yes','no'):
-            await host.put('experiment_settlement',dict(ticker=ticker,result=raw['result'],status=raw['status']))
+    if now>=s.get('settlement_poll_at',0):
+        s['settlement_poll_at']=now+30
+        for ticker,m in [(t,m) for t,m in held.items() if m['close']<=now and now>=s['settlement_at'].get(t,0)][:4]:
+            if m['close']>now or now<s['settlement_at'].get(ticker,0):continue
+            s['settlement_at'][ticker]=now+60
+            raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market'];s['reads']+=1
+            if raw.get('status') in ('settled','finalized') and raw.get('result') in ('yes','no'):
+                await host.put('experiment_settlement',dict(ticker=ticker,result=raw['result'],status=raw['status']))
     s['settlement_at']={t:at for t,at in s['settlement_at'].items() if t in held}
     choices=suite.enabled_profiles('market_maker')
     if not choices:return
     limits=suite.monitoring_snapshot(now)
     if not limits['admitting']:
-        s['state']='Discovery waits for healthy processing';scan_report(s,now);return
+        s['state']='Discovery waits for healthy processing'
+        if now>=s.get('paused_log_at',0):
+            s['paused_log_at']=now+30;scan_report(s,now)
+        return
+    s['next_at']=now+30
     if now>=s['incentive_at']:
         s['incentive_at']=now+3600
         try:
@@ -195,4 +200,4 @@ async def discover_maker(host):
         try:await maker_once(host)
         except asyncio.CancelledError:raise
         except Exception as exc:print(json.dumps(dict(event='market_maker_retry',error=type(exc).__name__,code=getattr(exc,'code',None),real_orders_enabled=False)),flush=True)
-        await asyncio.sleep(15)
+        await asyncio.sleep(1)
