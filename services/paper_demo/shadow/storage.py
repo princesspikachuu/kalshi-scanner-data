@@ -44,7 +44,20 @@ class HostedAudit:
         batch=[entry(KEY,{},data)]+getattr(self,'extra_writes',[])
         self.extra_writes=[]
         commands=[];written_events=[]
+        # Scalar comparisons share a source tick. Batch only their new
+        # opportunity records; preserve every decision without six job rows
+        # for the same two-sided quote. Existing strategy events are unchanged.
+        grouped={};compact=[]
         for now,kind,fields in records:
+            if kind=='EXPERIMENT' and fields.get('experiment_kind')=='SCALPER_OPPORTUNITY':
+                key=(now,fields.get('ticker'))
+                if key not in grouped:
+                    merged=dict(ticker=fields.get('ticker'),decisions=[])
+                    grouped[key]=merged;compact.append((now,'SCALPER_OBSERVATION_BATCH',merged))
+                grouped[key]['decisions'].append(dict(folder_id=fields['folder_id'],side=fields.get('side'),
+                    reason=fields.get('reason'),observation=json.loads(fields['details'])))
+            else:compact.append((now,kind,fields))
+        for now,kind,fields in compact:
             event=json.loads(json.dumps(dict(time=now,event=kind,**fields),default=str))
             event.setdefault('cash',str(self.engine.wallet.cash))
             if kind=='EXPERIMENT':event['event']=fields['experiment_kind']

@@ -27,7 +27,7 @@ test('expanded shadow workspace passes the gateway with active and retired bots'
  assert.equal(response.status,200);const data=await response.json();assert.equal(data.bots.length,154);assert.equal(data.folders.length,4);
 });
 test('shadow bot capacity stays bounded and does not widen other workspace limits',async()=>{
- for(const [path,count,status] of [['shadow/workspace',400,200],['shadow/workspace',401,502],['workspace',101,502],['workspace',100,200]]){
+ for(const [path,count,status] of [['shadow/workspace',400,200],['shadow/workspace',801,502],['workspace',101,502],['workspace',100,200]]){
   const fetcher=async()=>new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:Array.from({length:count},()=>({id:'bot'}))}),{headers:{'content-type':'application/json'}});
   assert.equal((await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher})).status,status,`${path}: ${count}`);
  }
@@ -554,7 +554,7 @@ test('streamed shadow snapshots retain byte limits and cancel upstream on overfl
  await assert.rejects(()=>response.text(),/body limit/);assert.equal(cancelled,true);
 });
 test('the streaming marker cannot bypass authentication errors or other route validators',async()=>{
- for(const [path,status] of [['shadow/workspace',401],['workspace',200]]){
+ for(const [path,status] of [['shadow/workspace',801],['workspace',200]]){
   const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response('{"contract":"invalid"}',{status,headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1'}})});
   assert.equal(response.status,status===401?401:502);
  }

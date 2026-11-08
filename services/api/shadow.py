@@ -12,6 +12,7 @@ from services.paper_demo.shadow.bot_performance import bot_performance
 from services.trading.mode import require_demo,ModeConflict
 
 from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIAL_FOLDERS
+from services.paper_demo.shadow.scalper import SCALPER_FOLDERS
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
@@ -222,7 +223,7 @@ def install_shadow(app,auth,mutate,pool):
     class Bulk(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
-        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites)$')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid)$')
     @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
@@ -240,7 +241,7 @@ def install_shadow(app,auth,mutate,pool):
     @app.post('/demo/shadow/folders/{folder}/reset')
     def reset_folder(folder:str,body:Reset,request:Request):
         mutate(request);query(request)
-        if folder not in ('convexity','complete_set','favorites',*SEQUENTIAL_FOLDERS) or not store.get('shadow/folder/'+folder):
+        if folder not in ('convexity','complete_set','favorites',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS) or not store.get('shadow/folder/'+folder):
             raise HTTPException(404,'Bot folder not found')
         with pool.connection() as c:
             key='demo/shadow/command/'+body.request_id

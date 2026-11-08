@@ -9,6 +9,7 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
+from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
 from .monitoring import MonitoringBudget,protected,category as market_category
 from .discovery_budget import CATEGORY_LIMITS
@@ -24,7 +25,7 @@ class ExperimentFleet(StrategyFleet):
     def __init__(self,engine,profiles,model,complete=False):
         self.e=engine;self.halted=set();self.bots={};self.complete=complete
         for p in profiles:
-            b=CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
+            b=VolatilityScalper(engine,p) if p.get('strategy')=='volatility_scalper' else CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
             b.halted=self.halted;self.bots[p['series']]=b
         engine.fill_callback=self.on_fill;engine.strategy=self
     def on_data_gap(self,ticker,reason):
@@ -48,7 +49,8 @@ class ExperimentSuite:
             model_data=(previous or {}).get(folder,{}).get('model')
             if model_data is None and folder=='sequential_flexible':model_data=deepcopy((previous or {}).get('sequential',{}).get('model'))
             model=(AdaptivePairModel if folder=='sequential_adaptive' else PairModel)(model_data)
-            e=Engine(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
+            engine_class=ScalperEngine if folder in SCALPER_FOLDERS else Engine
+            e=engine_class(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
             if getattr(host,'model_worker_latency',False) is True:e.wall_clock=time.time
             f=ExperimentFleet(e,ps,model,folder=='complete_set')
             state=(previous or {}).get(folder)
@@ -63,6 +65,7 @@ class ExperimentSuite:
                     if hasattr(b,'exit_evidence'):b.exit_evidence.cells=info.get('exit_evidence',{})
                     if isinstance(b,SequentialStrategy):b.trial=info.get('trial',b.trial)
                     if folder=='complete_set':b.groups=info.get('groups',{})
+                    if isinstance(b,VolatilityScalper):b.restore_state(info.get('scalper',{}))
             for p in ps:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
@@ -70,7 +73,7 @@ class ExperimentSuite:
         self.control(rows)
     def state(self):
         return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
-            strategies={s:dict(attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
+            strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
         for folder,(e,f,ps) in self.portfolios.items():
@@ -82,6 +85,7 @@ class ExperimentSuite:
                     for t in e.markets:
                         if f.owner(t) is b:e.cancel_buys(t)
                 b.enabled=enabled;b.contracts=D(row['parameters']['contracts'])
+                if isinstance(b,VolatilityScalper):p.update(row['parameters'])
     def add_set(self,payload,now):
         if not self.extra_capacity([p['market']['ticker'] for p in payload['markets']],now):return
         e,f,ps=self.portfolios['complete_set'];profile=ps[0]
@@ -106,7 +110,7 @@ class ExperimentSuite:
         for ticker,m in list(self.feed_markets().items()):
             if m['close']<=now:continue
             source=next(e for e,f,ps in self.portfolios.values() if ticker in e.markets)
-            for folder in (*SEQUENTIAL_FOLDERS,'favorites'):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets or folder in SEQUENTIAL_FOLDERS and m.get('hourly_price'):continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
@@ -120,7 +124,7 @@ class ExperimentSuite:
         now=time.time() if now is None else now
         for ticker,m in list(self.host.engine.markets.items()):
             if m.get('paid') or m['close']<=now:continue
-            for folder in (*SEQUENTIAL_FOLDERS,'favorites'):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets:continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
@@ -209,7 +213,7 @@ class ExperimentSuite:
         if source=='set_markets':self.add_set(payload,now);return
         if source=='sports_status':
             ticker=payload['ticker']
-            for folder in (*SEQUENTIAL_FOLDERS,'favorites'):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets:
                     self.prepare(e,'clock',{},now)
@@ -233,9 +237,12 @@ class ExperimentSuite:
                     # No trading intent, outstanding orders or exposure needs
                     # this duplicate book. Keep lifecycle/settlement processing.
                     e.idle_feed_suspended=True;continue
+            if folder in SCALPER_FOLDERS:
+                limits=self.monitoring.limits(now)
+                for bot in f.bots.values():bot.resource_paused=limits['backlog']>250 or (limits['lag_p95_seconds'] or 0)>2
             local=payload
             if source in ('market','weather_market','sports_market','hourly_market'):
-                if folder not in (*SEQUENTIAL_FOLDERS,'favorites') or source=='hourly_market' and folder!='favorites':continue
+                if folder not in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS) or source=='hourly_market' and folder not in ('favorites',*SCALPER_FOLDERS):continue
                 profile=next((p for p in ps if p['series']==payload['market']['ticker'].split('-')[0]),None)
                 if not profile or profile.get('retired'):continue
                 local=dict(payload,market=dict(payload['market'],bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile.get('version',folder+'-1'),bot_revision=profile['revision']))
@@ -310,6 +317,10 @@ class ExperimentSuite:
         result={}
         for folder,(e,f,ps) in self.portfolios.items():
             money=snapshot(e,ps,now)
+            if folder in SCALPER_FOLDERS:
+                for order in money['orders']:
+                    if order['purpose']=='scalper_maker_profit_exit':
+                        order.update(action='sell',side='no' if order['side']=='yes' else 'yes',price=str(1-D(order['price'])),execution='complementary maker netting')
             bots={}
             for p in ps:
                 b=f.bots[p['series']]
@@ -336,6 +347,7 @@ class ExperimentSuite:
                     unmatched=sum(1 for a in attempts if not a.get('complete') and not a.get('finished')) if folder=='complete_set' else sum(1 for a in attempts if a.get('first') and not a.get('recorded')),
                     decision=list(b.decisions.values())[-1] if getattr(b,'decisions',{}) else None,
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
+                    scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
                 assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
@@ -402,9 +414,11 @@ class ExperimentSuite:
                 e.pending=[item for item in e.pending if item[3] in e.orders]
                 e.closed_reports.discard(t);e.settled.discard(t);f.halted.discard(t);self.extra.pop(t,None)
                 if b:
-                    for name in ('phases','emergency','last_exit','history','decisions','exit_at'):
+                    for name in ('phases','emergency','last_exit','history','decisions','exit_at','last_eval'):
                         mapping=getattr(b,name,None)
                         if mapping is not None:mapping.pop(t,None)
+                    if isinstance(b,VolatilityScalper):
+                        b.last_signature={key:v for key,v in b.last_signature.items() if key[0]!=t}
             if folder=='complete_set':
                 b=next(iter(f.bots.values()))
                 for event,tickers in list(b.groups.items()):
@@ -431,6 +445,9 @@ class ExperimentSuite:
             if hasattr(b,'decisions'):b.decisions={}
             if hasattr(b,'exit_evidence'):b.exit_evidence.cells={}
             if isinstance(b,SequentialStrategy):b.reset_trial()
+            if isinstance(b,VolatilityScalper):
+                from .scalper import bucket
+                b.research=dict(totals=bucket(),cells={},recent=[]);b.history={};b.last_eval={};b.last_signature={}
             if hasattr(b,'scans'):b.scans=0;b.profitable=0
             if hasattr(b,'last_reason'):b.last_reason='Fresh paper session · waiting for eligible markets'
         f.halted.update(t for t,m in e.markets.items() if not m.get('paid'))
