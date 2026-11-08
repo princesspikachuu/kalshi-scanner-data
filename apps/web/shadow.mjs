@@ -3,6 +3,7 @@ import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferen
 import {createAuthClient} from './auth-client.mjs';
 import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteResearchMarkup,favoriteCategoryResearchMarkup,marketTypeGroups,marketTypeSummaryMarkup} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences(undefined,true);
+let loadError=null;
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null;
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
 if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
@@ -29,6 +30,7 @@ function marketTypeFolders(bots,status,folderId,search='',retired=false,allBots=
  }).join('');
 }
 const note=value=>$('message').textContent=value;
+const loadNote=value=>{loadError=value;note(value)};
 function botCard(bot,status){
   const selected=periods[bot.id]||'all',metrics=(bot.financial_metrics||bot.metrics).all,ticker=status.selected?.[bot.series];
   const market=status.market_states?.[ticker],active=market&&market.close>Date.now()/1000;
@@ -78,11 +80,12 @@ async function load(){
  if(busy)return;busy=true;clearTimeout(timer);
  try{
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
-  if(!result.installed){$('health').textContent='Worker initializing';note('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
+  if(!result.installed){$('health').textContent='Worker initializing';loadNote('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
+  if(loadError&&$('message').textContent===loadError)note('');loadError=null;
   data=result;draw();
-  try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{note('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
+  try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{loadNote('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
  }catch(error){
-  note(error.message);
+  loadNote(error.message);
   if(!data){$('health').textContent='Dashboard data unavailable';$('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>'}
  }finally{busy=false;timer=setTimeout(load,10000)}
 }
