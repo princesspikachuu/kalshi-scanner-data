@@ -19,7 +19,8 @@ PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
 
 
-def workspace_response(payload,*,compressed=False):
+def workspace_response(payload,*,compressed=False,request_started=None):
+    started=time.monotonic()
     # These copies are used to build the bot cards but are not read by the UI.
     # Keep the durable worker snapshot intact and send each accounting view once.
     status=dict(payload['status']);status.pop('experiments',None)
@@ -55,7 +56,8 @@ def workspace_response(payload,*,compressed=False):
             data=base64.b64encode(gzip.compress(raw,compresslevel=3,mtime=0)).decode('ascii')))
         result.headers['x-pocket-workspace-encoding']='gzip-base64-v1'
         print(json.dumps(dict(event='dashboard_transport',encoding='gzip-base64-v1',
-            decoded_bytes=len(raw),wire_bytes=len(result.body))),flush=True)
+            decoded_bytes=len(raw),wire_bytes=len(result.body),serialization_ms=(time.monotonic()-started)*1000,
+            request_ms=(time.monotonic()-request_started)*1000 if request_started is not None else None)),flush=True)
     result.headers['x-pocket-workspace-contract']='demo-v1'
     result.headers['x-pocket-workspace-sha256']=digest
     result.headers['x-pocket-workspace-bytes']=str(len(raw))
@@ -83,6 +85,7 @@ def install_shadow(app,auth,mutate,pool):
     @app.get('/demo/shadow/workspace')
     def workspace(request:Request,response:Response):
         global ACCOUNTING_LOG_AT
+        request_started=time.monotonic()
         auth(request);query(request,('version',))
         latest=request.query_params.get('version','latest')
         if latest not in ('latest','full'):raise HTTPException(422,'Invalid version')
@@ -202,7 +205,7 @@ def install_shadow(app,auth,mutate,pool):
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
             pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done'))),
-            compressed=request.headers.get('x-pocket-workspace-encoding')=='gzip-base64-v1')
+            compressed=request.headers.get('x-pocket-workspace-encoding')=='gzip-base64-v1',request_started=request_started)
 
     class Change(BaseModel):
         model_config=ConfigDict(extra='forbid',strict=True)

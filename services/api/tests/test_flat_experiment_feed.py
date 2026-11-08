@@ -1,7 +1,7 @@
 """Flat experiments reuse verified data; active orders retain causal independent books."""
-import unittest
+import unittest,time
 from decimal import Decimal as D
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 from services.api.tests.test_strategy_folders import QuietAudit,ready_suite,profile
 from services.paper_demo.shadow.scalper import SCALPER_FOLDERS
 T='KXBTC15M-test'
@@ -63,6 +63,24 @@ class FlatExperimentFeedTests(unittest.TestCase):
         for f in ('volatility_scalper','scalper_fixed','scalper_grid'):
             self.assertEqual(s.portfolios[f][0].books[T].levels['yes'][D('.45')],102)
             self.assertFalse(hasattr(s.portfolios[f][0],'coalesced_inputs'))
+
+    def test_admission_flags_change_once_without_skipping_book_updates(self):
+        from services.paper_demo.shadow.monitoring import MonitoringBudget
+        s=self.suite();s.monitoring=MonitoringBudget();s.monitoring.observe(time.time(),0,0,1)
+        with patch.object(s.monitoring,'limits',wraps=s.monitoring.limits) as limits:
+            self.book(s,200.1,1)
+            self.assertEqual(limits.call_count,1)
+        for folder in SCALPER_FOLDERS:
+            e,f,_=s.portfolios[folder]
+            self.assertFalse(f._resource_paused)
+            self.assertTrue(all(not b.resource_paused for b in f.bots.values()))
+        s.monitoring.observe(time.time(),5000,3,1)
+        self.delta(s,201.1,2,'yes','.45','2')
+        for folder in SCALPER_FOLDERS:
+            e,f,_=s.portfolios[folder]
+            self.assertTrue(f._resource_paused)
+            self.assertTrue(all(b.resource_paused for b in f.bots.values()))
+        self.assertEqual(s.portfolios['volatility_scalper'][0].books[T].levels['yes'][D('.45')],102)
 
     def test_discovery_progress_and_rejection_records_survive_restart(self):
         s=self.suite()

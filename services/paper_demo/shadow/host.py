@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from decimal import Decimal as D
 from services.paper_demo.exchange import credentials,ProductionData,Fees
 from services.paper_demo.read_budget import PRODUCTION_READS
+from services.paper_demo.telemetry import REQUESTS,ProcessMetrics,scoped
 from services.trading.mode import read_mode,write_mode,LOCK as MODE_LOCK
 from .core import Engine,StrategyFleet,FeePolicy
 from .runner import ForwardRun,ProductionData as PublicData
@@ -246,7 +247,23 @@ class HostedRun(ForwardRun):
         now=time.monotonic()
         if now<getattr(self,'pipeline_log_at',0):return
         self.pipeline_log_at=now+30
+        if not hasattr(self,'process_metrics'):self.process_metrics=ProcessMetrics()
+        experiments=getattr(self,'experiments',None)
+        strategies={}
+        if isinstance(experiments,ExperimentSuite):
+            for folder,(engine,fleet,_) in experiments.portfolios.items():
+                strategies[folder]=dict(getattr(experiments,'processing_costs',{}).get(folder,{}),
+                    markets=len(engine.markets),fresh_books=sum(engine.book_fresh(t) for t in engine.books),
+                    active_orders=sum(o.status in ('pending','resting') for o in engine.orders.values()),
+                    position_lots=len(engine.wallet.lots),orders_generated_total=engine.serial,
+                    coalesced_inputs_total=getattr(engine,'coalesced_inputs',0),
+                    observations_total=sum(getattr(b,'research',{}).get('totals',{}).get('opportunities',0) for b in fleet.bots.values()),
+                    round_trips_total=sum(getattr(b,'research',{}).get('totals',{}).get('completed',0) for b in fleet.bots.values()))
         print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
+            process=self.process_metrics.sample(),rest=REQUESTS.drain(),
+            strategy_processing=strategies,
+            audit_commits_total=getattr(self.audit,'commits',0) if isinstance(self.audit,HostedAudit) else None,
+            audit_rows_written_total=getattr(self.audit,'rows_written',0) if isinstance(self.audit,HostedAudit) else None,
             event_loop_lag_max_seconds=getattr(self,'loop_lag_max',0),
             last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
@@ -254,6 +271,7 @@ class HostedRun(ForwardRun):
             input_types=getattr(self,'input_counts',{}),real_orders_enabled=False)),flush=True)
         self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
         self.input_counts={};self.loop_lag_max=0
+        if isinstance(experiments,ExperimentSuite):experiments.processing_costs={}
 
     def state_mutex(self):
         if not hasattr(self,'_state_mutex'):self._state_mutex=asyncio.Lock()
@@ -506,8 +524,8 @@ class HostedRun(ForwardRun):
         # Called from the trading thread; the process signal handler owns stop.
         from .loop_monitor import LoopMonitor
         self.loop_monitor=LoopMonitor();self.loop_monitor.start()
-        coroutines=[self.loop_monitor.heartbeat(),self.discover(),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),self.fee_maintenance()]
-        if hasattr(self,'experiments'):coroutines.extend([discover_sets(self),discover_weather(self),discover_sports(self),discover_hourly(self),discover_maker(self)])
+        coroutines=[self.loop_monitor.heartbeat(),scoped('discovery',self.discover()),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),scoped('fees',self.fee_maintenance())]
+        if hasattr(self,'experiments'):coroutines.extend([scoped('complete_set',discover_sets(self)),scoped('weather',discover_weather(self)),scoped('sports',discover_sports(self)),scoped('hourly',discover_hourly(self)),scoped('market_maker',discover_maker(self))])
         workers=[asyncio.create_task(c) for c in coroutines]
         waiter=asyncio.create_task(self.done.wait())
         clean_stop=False
