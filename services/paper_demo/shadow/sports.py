@@ -1,5 +1,5 @@
 """Late-game favorites require fresh live status, never merely market close."""
-import asyncio,json,time,math
+import asyncio,json,time,math,traceback
 from uuid import uuid4
 from .runner import ts
 from .discovery_budget import candidate_markets,next_profile
@@ -144,8 +144,19 @@ async def sports_once(host):
     print(json.dumps(dict(event='paper_sports_scan',**scan,next_check_at=cache['retry_at'],real_orders_enabled=False)),flush=True)
 
 async def discover_sports(host):
+    next_error_log=0;errors=0
     while not host.done.is_set():
         try:await sports_once(host)
         except asyncio.CancelledError:raise
-        except Exception as exc:print(json.dumps(dict(event='paper_sports_retry',error=type(exc).__name__,code=getattr(exc,'code',None),real_orders_enabled=False)),flush=True)
+        except Exception as exc:
+            errors+=1
+            if time.monotonic()>=next_error_log:
+                next_error_log=time.monotonic()+30
+                # Log source locations and a schema-key allowlist, never provider
+                # bodies, frame locals, request parameters or exception text.
+                known={'sports_expected_end','close','milestone_id','start_date','id','ticker','open_time','event_ticker','refresh_at','market'}
+                field=exc.args[0] if isinstance(exc,KeyError) and exc.args and isinstance(exc.args[0],str) and exc.args[0] in known else None
+                frames=[dict(function=f.name,line=f.lineno) for f in traceback.extract_tb(exc.__traceback__)[-3:]]
+                print(json.dumps(dict(event='paper_sports_retry',error=type(exc).__name__,code=getattr(exc,'code',None),
+                    field=field,frames=frames,count=errors,real_orders_enabled=False)),flush=True)
         await asyncio.sleep(10)

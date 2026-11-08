@@ -449,7 +449,7 @@ class HostedRun(ForwardRun):
                         await self.audit.durable_io(record_balances,self.store,accounts,now)
                         await self.audit.durable_io(record_bot_balances,self.store,accounts,experiment_snapshot,now,positions)
                         self.balance_history_minute=int(now//60)
-                    await self.audit.durable_io(self.store.put,'shadow/status',dict(at=time.time(),selected=self.selected,
+                    await self.audit.durable_io(self.audit.publish_status,dict(at=time.time(),selected=self.selected,
                         equity=portfolio['equity'],accounting=money,
                         virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
                         open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),

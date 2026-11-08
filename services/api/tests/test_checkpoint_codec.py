@@ -122,3 +122,16 @@ class CheckpointPostgresTests(unittest.TestCase):
         new=Engine(Mock());nf=StrategyFleet(new,profiles());restore(new,nf,decoded)
         self.assertEqual(new.wallet.cash,e.wallet.cash);self.assertEqual(new.wallet.lots[0].quantity,D('2.25'))
         self.assertEqual(new.wallet.lots[0].price,D('.4211'));self.assertEqual(new.wallet.lots[0].entry_fee,D('.0032'))
+
+    def test_status_publication_is_lossless_and_preserves_plain_status_compatibility(self):
+        audit=HostedAudit(self.demo,lambda:None)
+        status=dict(at=123,status='ready',positions=[dict(quantity='2.87',value='1.2054')],
+            experiments={'scalper':dict(bots={'one':dict(research='x'*100000)})})
+        self.demo.put('shadow/status',status)
+        self.assertEqual(self.demo.get('shadow/status')['progress'],status)
+        audit.publish_status(status)
+        with self.demo.pool.connection() as c:
+            raw=c.execute("SELECT progress FROM research_job WHERE idempotency_key='demo/shadow/status'").fetchone()['progress']
+        self.assertEqual(raw['checkpoint_encoding'],BINARY_ENCODING)
+        self.assertEqual(self.demo.get('shadow/status')['progress'],status)
+        self.assertEqual(status['positions'][0]['quantity'],'2.87')
