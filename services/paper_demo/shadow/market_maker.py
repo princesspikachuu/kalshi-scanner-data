@@ -116,10 +116,11 @@ class MarketMaker(VolatilityScalper):
             paused=t in self.profile.get('paused_markets',[])
             quiet=now>=activity_deadline(self.e,t,m)
             window=any(at-self.config['pre_event']<=now<=at+self.config['post_event'] for at in m.get('scheduled_events',[]))
-            if paused or window or quiet:
+            reallocating=m.get('maker_replacement_pending',False)
+            if paused or window or quiet or reallocating:
                 for o in self.active_orders(t):
                     if o.action=='buy':self.e.cancel(o.id)
-            m['maker_entry_blocked']=paused or window or quiet;m['maker_event_window']=window
+            m['maker_entry_blocked']=paused or window or quiet or reallocating;m['maker_event_window']=window
         super().step(changed_ticker)
     def research_snapshot(self):
         result=super().research_snapshot()
@@ -154,6 +155,7 @@ def scan_report(s,now,listed=0,active=0):
         catalog_status=s.get('series_status'),catalog_series=len(s.get('series_pool',[])),
         split_event=bool(s.get('split_event')),ranked=s.get('ranked',[])[:8],shared_active=active,
         cached_admission_retries=s.get('cached_admission_retries',0),cached_admission_expired=s.get('cached_admission_expired',0),
+        screening_only=s.get('screening_only',False),
         reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
 
 async def maker_once(host):
@@ -179,13 +181,17 @@ async def maker_once(host):
     choices=suite.enabled_profiles('market_maker')
     if not choices:return
     limits=suite.monitoring_snapshot(now)
-    if not limits['admitting']:
+    screening_only=not limits['admitting']
+    bounded_screen=(limits.get('telemetry_fresh',False) and limits.get('backlog',10001)<=10000 and
+        limits.get('lag_p95_seconds',6)<5 and limits.get('processing_p95_ms',21)<20 and not limits.get('read_cooldown_seconds',1))
+    if screening_only and not (bounded_screen and s['candidates']):
         s['state']='Discovery waits for healthy processing'
         if now>=s.get('paused_log_at',0):
             s['paused_log_at']=now+30;scan_report(s,now)
         return
-    s['next_at']=now+30
-    if now>=s['incentive_at']:
+    s['next_at']=now+(60 if screening_only else 30)
+    s['screening_only']=screening_only
+    if not screening_only and now>=s['incentive_at']:
         s['incentive_at']=now+3600
         try:
             programs=await asyncio.to_thread(host.verified_data.call,'GET','/incentive_programs',dict(limit=100));s['reads']+=1
@@ -197,7 +203,7 @@ async def maker_once(host):
             s['incentives']=known
         except Exception:s['incentives']={};s['incentive_status']='unavailable; estimates disabled'
     minimum=max(21600,min(p.get('config',{}).get('min_remaining',86400) for p in choices))
-    result=await maker_event_page(host,s,now,minimum)
+    result=dict(events=[]) if screening_only else await maker_event_page(host,s,now,minimum)
     for event in result.get('events',[]):
         group=category(event)
         if not group:continue
@@ -215,11 +221,13 @@ async def maker_once(host):
     s['candidates']={t:r for t,r in sorted(s['candidates'].items(),key=lambda x:-x[1]['score']) if now-r['at']<3600 and ts(r['raw']['close_time'])>now}
     s['candidates']=dict(list(s['candidates'].items())[:100])
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
+    allocation=getattr(suite,'maker_allocation',{})
+    credits=allocation.get('credits',{}) if isinstance(allocation,dict) else {}
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),inspected_at=r.get('inspected_at'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
-    if not suite.search_capacity('market_maker',time.time()):
+    if not screening_only and not suite.search_capacity('market_maker',time.time()) and (not (maker_active or any(at>=now for at in credits.values())) or not suite.monitoring_snapshot(time.time())['admitting']):
         s['state']='Shared capacity occupied; existing strategies preserved';scan_report(s,now,len(result.get('events',[])),len(maker_active));return
     checked=0;s['state']='Inspecting candidates'
-    for ticker,row in sorted(s['candidates'].items(),key=lambda item:(item[1].get('inspected_at',0),-item[1]['score'])):
+    for ticker,row in sorted(s['candidates'].items(),key=lambda item:(0 if credits.get(item[0],0)>=now else 1,item[1].get('inspected_at',0),-item[1]['score'])):
         if ticker in active or row.get('ready') or now<row.get('retry_at',0):continue
         ps=[p for p in choices if p['market_category']==row['category']]
         if not ps:continue
@@ -254,7 +262,9 @@ async def maker_once(host):
         verified=time.time();row['ready']=dict(payload=payload,verified_at=verified,next_try=verified+5)
         cached=sorted((r for r in s['candidates'].values() if r.get('ready')),key=lambda r:r['ready']['verified_at'])
         for old in cached[:-8]:old.pop('ready');old['reason']='verified_cache_capacity'
-        await host.put('maker_market',payload)
+        if screening_only:
+            row['reason']='verified_waiting_for_capacity';s['state']='Read-only verification complete; admission remains paused'
+        else:await host.put('maker_market',payload)
         break
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if s.get('state')=='Inspecting candidates':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
