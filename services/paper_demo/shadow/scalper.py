@@ -190,7 +190,13 @@ class VolatilityScalper(ConvexityStrategy):
                 execution_not_guaranteed=True,reversal_probability=None)))
 
     def features(self,ticker,side):
-        book=self.e.books[ticker];raw=self.e.tape.sample(ticker,book,self.e.now)
+        book=self.e.books[ticker]
+        # Tape frames are cached for two seconds; live liquidity may disappear
+        # inside that frame. Never turn cached statistics into a missing quote.
+        bid,ask=book.bid(side),book.ask(side)
+        if bid is None or ask is None:return None
+        raw=self.e.tape.sample(ticker,book,self.e.now)
+        if raw is None:return None
         f=dict(raw);sign=1 if side=='yes' else -1
         if side=='no':
             for key in ('mean','support','resistance'):f[key]=1-raw[key]
@@ -322,7 +328,7 @@ class VolatilityScalper(ConvexityStrategy):
         fee=e.fees[ticker].charge(quantity,bid)/quantity
         net_move=float(bid-fee)-a['average_price']
         stop=net_move<=-c['stop_loss']
-        f=self.features(ticker,a['side']) if ticker in self.history and e.books[ticker].ask(a['side']) is not None else {}
+        f=(self.features(ticker,a['side']) or {}) if ticker in self.history else {}
         exhaustion=c['approach']=='momentum' and now-a['entered_at']>c['min_hold'] and f.get('trend',0)<-.01
         invalid=(f.get('trend',0)<-max(.04,3*f.get('sigma',0)) and f.get('trade_pressure',0)<-.5)
         urgent=urgent or exhaustion or invalid
@@ -365,9 +371,10 @@ class VolatilityScalper(ConvexityStrategy):
                 old=e.orders.get(a['order_id']);c=self.phase(ticker)
                 if old and old.status in ('pending','resting') and e.book_fresh(ticker):
                     current=e.books[ticker].bid(old.side)
-                    adverse=False
-                    if ticker in self.history and e.books[ticker].ask(old.side) is not None:
-                        fresh=self.features(ticker,old.side);adverse=self.decision(fresh)[1] or fresh.get('depth_withdrawal',0)>.5
+                    adverse=current is None or e.books[ticker].ask(old.side) is None
+                    if not adverse and ticker in self.history:
+                        fresh=self.features(ticker,old.side)
+                        adverse=fresh is None or self.decision(fresh)[1] or fresh.get('depth_withdrawal',0)>.5
                     moved=current is not None and abs(current-old.price)>=tick_size(m,old.price)*D(str(c['reprice_ticks']))
                     if adverse or now-old.created>=c['reprice_seconds'] and (moved or m['close']-now<=c['restrict_entries']):
                         before=len(e.pending);e.cancel(old.id)
@@ -408,7 +415,9 @@ class VolatilityScalper(ConvexityStrategy):
             c=self.phase(ticker)
             candidates=[]
             for side in ('yes','no'):
-                f=self.features(ticker,side);signal,falling,target=self.decision(f)
+                f=self.features(ticker,side)
+                if f is None:continue
+                signal,falling,target=self.decision(f)
                 reason=None
                 if getattr(self,'resource_paused',False):reason='worker_processing_backlog'
                 elif f['seconds_remaining']<=c['restrict_entries']:reason='entry_cutoff'
