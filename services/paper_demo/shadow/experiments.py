@@ -27,6 +27,9 @@ class ExperimentFleet(StrategyFleet):
             b=CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
             b.halted=self.halted;self.bots[p['series']]=b
         engine.fill_callback=self.on_fill;engine.strategy=self
+    def on_data_gap(self,ticker,reason):
+        owner=self.owner(ticker);callback=getattr(owner,'on_data_gap',None)
+        if callback:callback(ticker,reason)
     def owner(self,ticker):return next(iter(self.bots.values()),None) if self.complete else super().owner(ticker)
     def step(self,changed_ticker=None):
         if self.complete:
@@ -46,6 +49,7 @@ class ExperimentSuite:
             if model_data is None and folder=='sequential_flexible':model_data=deepcopy((previous or {}).get('sequential',{}).get('model'))
             model=(AdaptivePairModel if folder=='sequential_adaptive' else PairModel)(model_data)
             e=Engine(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
+            if getattr(host,'model_worker_latency',False) is True:e.wall_clock=time.time
             f=ExperimentFleet(e,ps,model,folder=='complete_set')
             state=(previous or {}).get(folder)
             if state:
@@ -54,6 +58,8 @@ class ExperimentSuite:
                     if series not in f.bots:continue
                     b=f.bots[series]
                     b.attempts=info.get('attempts',{})
+                    if hasattr(b,'on_data_gap'):
+                        for ticker in b.attempts:b.on_data_gap(ticker,'worker restarted during trial')
                     if hasattr(b,'exit_evidence'):b.exit_evidence.cells=info.get('exit_evidence',{})
                     if isinstance(b,SequentialStrategy):b.trial=info.get('trial',b.trial)
                     if folder=='complete_set':b.groups=info.get('groups',{})
@@ -316,7 +322,9 @@ class ExperimentSuite:
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
-                assumptions=dict(latency_ms=150,independent_paper_portfolio=True,real_orders_enabled=False))
+                assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
+                    execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
+                    independent_paper_portfolio=True,real_orders_enabled=False))
         return result
     def maintain(self):
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open

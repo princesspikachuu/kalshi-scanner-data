@@ -34,7 +34,7 @@ def execution_report(engine,ticker):
     s=engine.wallet.stat(ticker)
     return dict(model='public-L2 FIFO estimate; trade-volume bounded; arrival-book IOC',
         measured=s.execution_measured,scope='Orders submitted since execution measurement upgrade in this cycle',
-        latency_ms=engine.latency*1000,orders=s.execution_orders,rejections=s.rejected_orders,
+        latency_ms=engine.latency*1000,worker_delay_included=bool(engine.wall_clock),orders=s.execution_orders,rejections=s.rejected_orders,
         maker_requested=str(s.maker_requested),maker_filled=str(s.maker_filled),
         maker_fill_rate=str(100*s.maker_filled/s.maker_requested) if s.maker_requested else None,
         taker_requested=str(s.taker_requested),ioc_attempts=s.ioc_attempts,

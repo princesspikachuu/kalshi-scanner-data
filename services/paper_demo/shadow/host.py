@@ -42,6 +42,8 @@ class HostedRun(ForwardRun):
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
+        self.engine.wall_clock=time.time
+        self.model_worker_latency=True
         self.allow_rest_settlement_recovery=True  # Approved fallback for missed WS settlement notifications.
         self.settlement_checks={}
         self.strategy=StrategyFleet(self.engine,self.profiles)
