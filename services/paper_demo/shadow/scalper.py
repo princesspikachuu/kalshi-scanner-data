@@ -37,6 +37,11 @@ def bucket():
 
 class ScalperEngine(Engine):
     """Portfolio-local queue uncertainty, without changing other strategies."""
+    def handle(self,source,payload,now):
+        self._scalper_source=source
+        try:return super().handle(source,payload,now)
+        finally:self._scalper_source=None
+
     def arrive(self,order):
         super().arrive(order)
         if order.maker and order.status=='resting':
@@ -267,10 +272,15 @@ class VolatilityScalper(ConvexityStrategy):
                 if now>=a.get('retry_at',0):self.manage(ticker,a)
                 continue
             if m.get('paid') or now>=m['close'] or m.get('entry_parked') or not self.enabled:continue
+            # Sample all markets/variants on the same shared clock frame. This
+            # keeps two-second causal observations but amortizes the durable
+            # checkpoint over the whole frame instead of one DB write per tick.
+            # Position protection above still runs on every relevant book event.
+            if getattr(e,'_scalper_source',None) not in (None,'clock'):continue
             if now-self.last_eval.get(ticker,-1e9)<2:continue
             if not e.book_fresh(ticker):
                 self.last_reason='Waiting for fresh verified book';continue
-            self.last_eval[ticker]=now
+            self.last_eval[ticker]=int(now//2)*2
             book=e.books[ticker]
             if book.bid('yes') is None or book.bid('no') is None:
                 self.last_reason='No two-sided liquidity';continue
