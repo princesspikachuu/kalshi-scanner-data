@@ -172,6 +172,16 @@ class FolderPostgres(unittest.TestCase):
         self.assertEqual(data['contract'],'demo-v1');self.assertEqual(len(data['bots']),85)
         self.assertEqual(len(data['folders']),4);self.assertFalse(data['real_orders_enabled'])
 
+    def test_research_download_preserves_full_cell_evidence_and_accepts_only_reads(self):
+        full=dict(totals=dict(completed=3),cells=[dict(dimensions=dict(underlying='BTC'),maker_fills=7,net=.12)])
+        self.demo.put('shadow/status',dict(at=123,experiments=dict(scalper=dict(bots=dict(test_bot=dict(scalper=full))))))
+        r=self.client.get('/demo/shadow/research/test_bot')
+        self.assertEqual(r.status_code,200);self.assertEqual(r.json()['research'],full)
+        self.assertFalse(r.json()['real_orders_enabled'])
+        self.assertEqual(self.client.get('/demo/shadow/research/test_bot?secret=x').status_code,422)
+        self.assertEqual(self.client.get('/demo/shadow/research/missing').status_code,404)
+        self.assertEqual(self.client.post('/demo/shadow/research/test_bot').status_code,405)
+
     def test_worker_reset_archives_and_checkpoints_one_session_atomically(self):
         from services.paper_demo.shadow.host import HostedRun
         from services.paper_demo.shadow.storage import HostedAudit

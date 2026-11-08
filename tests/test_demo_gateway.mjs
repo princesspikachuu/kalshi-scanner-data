@@ -19,6 +19,13 @@ test('Every page entrypoint and imported module is served through the real gatew
  assert.equal((await gateway.fetch(new Request('https://app.test/not-an-app-module.mjs'),environment)).status,404);
 });
 const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
+test('full shadow research is available through an owner-authenticated GET route only',async()=>{
+ let seen;const fetcher=async(url,options)=>{seen={url,options};return Response.json({contract:'demo-v1',research:{cells:[{net:.12,maker_fills:7}]},real_orders_enabled:false})};
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/research/test_bot',{headers:{cookie:'session=test'}}),env,{fetcher});
+ assert.equal(response.status,200);assert.match(seen.url,/\/demo\/shadow\/research\/test_bot$/);assert.equal(seen.options.method,'GET');
+ assert.equal((await response.json()).research.cells[0].maker_fills,7);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research/test_bot',{method:'POST',headers:{origin:env.APP_ORIGIN}}),env,{fetcher})).status,405);
+});
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
 test('expanded shadow workspace passes the gateway with active and retired bots',async()=>{
  const bots=Array.from({length:154},(_,i)=>({id:'bot-'+i,retired:i<28}));
