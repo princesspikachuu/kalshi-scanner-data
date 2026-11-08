@@ -40,9 +40,12 @@ def fill(strategy,order,quantity,entry_key):
             side=order.side,price=str(price),horizon=horizon(remaining),clock=basis))
         add(row,'contracts',quantity);add(row,'cost',cost)
         if not verified:add(row,'unverified',quantity)
+        if order.execution_model=='worker-delay-v1':
+            add(row,'latency_observed_contracts',quantity)
+            add(row,'worker_delay_seconds',quantity*D(str(order.worker_delay_seconds)))
         previous=a['entry_fills'][-1] if a['entry_fills'] else None
         if (previous and previous['key']==key and previous['verified']==verified and previous['remaining']==previous['quantity']
-                and previous['at']==e.now and D(previous['cost'])*quantity==cost*D(previous['quantity'])):
+                and previous['at']==e.now and previous.get('order_id')==order.id and D(previous['cost'])*quantity==cost*D(previous['quantity'])):
             old_q=D(previous['quantity']);old_cost=D(previous['cost'])
             previous['at']=float((D(str(previous['at']))*old_q+D(str(e.now))*quantity)/(old_q+quantity))
             previous['cost_at']=float((D(str(previous.get('cost_at',previous['at'])))*old_cost+D(str(e.now))*cost)/(old_cost+cost))
@@ -50,7 +53,9 @@ def fill(strategy,order,quantity,entry_key):
             return
         a['entry_fills'].append(dict(key=key,at=e.now,cost_at=e.now,price=str(price),quantity=str(quantity),remaining=str(quantity),
             cost=str(cost),remaining_cost=str(cost),seconds_to_market_close=max(0,m['close']-e.now),
-            seconds_to_event_end=remaining,clock=basis,verified=verified,order_id=order.id))
+            seconds_to_event_end=remaining,clock=basis,verified=verified,order_id=order.id,
+            execution_model=order.execution_model,worker_delay_seconds=order.worker_delay_seconds,
+            decision_at=order.decision_at,arrival_at=order.arrives))
         e.log('FAVORITE_ENTRY_COHORT',order,quantity=quantity,price=price,fee=fee,
             details=__import__('json').dumps(a['entry_fills'][-1]))
     elif a.get('entry_fills'):
@@ -82,6 +87,7 @@ def settle(strategy,ticker,observe):
     for chunk in a.get('entry_fills',[]):
         row=cell(strategy.exit_evidence.cells,chunk['key']);q=D(chunk['quantity'])
         add(row,'resolved',q);add(row,'winners',q*payout)
+        if not strategy.trial_valid(ticker,a):add(row,'execution_unverified_contracts',q)
         if chunk['verified']:observe(strategy.exit_evidence.cells,chunk['key'],m.get('event_ticker',ticker),payout)
     a['timing_finalized']=True
 
@@ -91,7 +97,8 @@ def rows(cells):
         if not key.startswith(METRICS):continue
         events=cells.get(row['key'],{}).get('events',{})
         closed=D(row['closed']);hours=D(row['dollar_hours']);qty=D(row['contracts'])
-        result.append(dict(row,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
+        measured=D(row.get('latency_observed_contracts','0'))
+        result.append(dict(row,average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
             break_even=str(100*D(row['cost'])/qty) if qty else None,
             average_holding_minutes=str(D(row['holding_seconds'])/closed/60) if closed else None,
             net_per_dollar_hour=str(D(row['net'])/hours) if hours else None,

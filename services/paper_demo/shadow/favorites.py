@@ -12,6 +12,21 @@ class FavoritesStrategy(ConvexityStrategy):
         super().__init__(engine,profile['contracts'],False,profile['series'],profile['name'])
         self.profile=profile;self.attempts={};self.decisions={};self.exit_evidence=ExitEvidence();self.exit_at={}
         self.last_reason=('Waiting for verified live sport · final two estimated hours' if profile.get('asset')=='sports' else 'Waiting for a 70–95¢ favorite · maker entry with evidence-based risk exits')
+    def on_data_gap(self,ticker,reason):
+        a=self.attempts.get(ticker);window=a.get('data_window') if a else None
+        if window and window.get('valid') and not window.get('ended_at') and self.e.now<self.e.markets[ticker]['close']:
+            window.update(valid=False,gap_at=self.e.now,reason=reason)
+
+    def trial_valid(self,ticker,a):
+        window=a.get('data_window')
+        return window.get('valid',False) if window else self.e.wallet.stat(ticker).valid
+
+    def finish_data_window(self,ticker,a):
+        window=a.get('data_window')
+        if window and a.get('first') and not any(l.ticker==ticker for l in self.e.wallet.lots) and not any(
+                o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting') for o in self.e.orders.values()):
+            window.setdefault('ended_at',self.e.now)
+
     def on_fill(self,order,quantity):
         a=self.attempts.get(order.ticker)
         favorite_timing.fill(self,order,quantity,entry_key)
@@ -22,6 +37,7 @@ class FavoritesStrategy(ConvexityStrategy):
                     if other.ticker==order.ticker and other.action=='buy' and other.id!=order.id:self.e.cancel(other.id)
                 return
         self.e.cancel_buys(order.ticker)
+        if a and order.action=='sell':self.finish_data_window(order.ticker,a)
     def retain_partial_entry(self,ticker,m,a,lots):
         active=[o for o in self.e.orders.values() if o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')]
         if not active:return
@@ -46,6 +62,8 @@ class FavoritesStrategy(ConvexityStrategy):
         if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):return
         expiry=min(self.e.now+30,a['entry_deadline'])
         if expiry<=self.e.now+self.e.latency:return
+        if not a.get('first'):
+            a['data_window']=dict(started_at=self.e.now,valid=self.entry_ready(ticker),scope='entry-through-exit-or-close-v1')
         a.update(price=str(q['price']),quantity=str(q['quantity']),entry_key=q['key'],
             entry_mode=q['mode'],entry_estimate=q['estimate'],entry_policy=q['policy'],last_submit=self.e.now,
             price_band='70–79¢' if q['price']<D('.80') else '80–89¢' if q['price']<D('.90') else '90–95¢',
@@ -53,11 +71,14 @@ class FavoritesStrategy(ConvexityStrategy):
         self.last_reason=(f"{q['quantity']:f}-contract maker data trial at {q['price']*100:.0f}¢ · collecting outcomes" if q['mode']=='paper_exploration' else
             f"Value-qualified maker at {q['price']*100:.0f}¢ · {q['estimate']['samples']} settled events")
         ident=self.e.place(ticker,a['side'],'buy',q['quantity'],q['price'],maker=True,expiry=expiry)
+        request=self.e.orders[ident]
         self.e.log('FAVORITE_ENTRY_DECISION',ticker=ticker,order_id=ident,reason=self.last_reason,details=json.dumps(dict(
-            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),estimate=q['estimate'],ceiling=q['ceiling'])))
+            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),estimate=q['estimate'],ceiling=q['ceiling'],execution_model=request.execution_model,
+            worker_delay_ms=request.worker_delay_seconds*1000,decision_at=request.decision_at,arrival_at=request.arrives)))
         if q['mode']=='paper_exploration':
             print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
-                price=str(q['price']),policy=q['policy'],maker=True,real_orders_enabled=False)),flush=True)
+                price=str(q['price']),policy=q['policy'],maker=True,execution_model=request.execution_model,
+                worker_delay_ms=request.worker_delay_seconds*1000,arrival_at=request.arrives,real_orders_enabled=False)),flush=True)
     def entry_allowed(self,m,now):
         if self.profile.get('retired'):return False
         return not m.get('sports') or (m.get('sports_live') is True and
@@ -86,14 +107,19 @@ class FavoritesStrategy(ConvexityStrategy):
                 if not a or a.get('recorded'):continue
                 s=self.e.wallet.stat(ticker)
                 favorite_timing.settle(self,ticker,observe)
-                if s.valid and a['first'] and m.get('yes_payout_confirmed') in ('0','1'):
+                trial_valid=self.trial_valid(ticker,a)
+                if trial_valid and a['first'] and m.get('yes_payout_confirmed') in ('0','1'):
                     payout=int(m['yes_payout_confirmed']==('1' if a['side']=='yes' else '0'))
                     for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
                     if a.get('entry_key') and not a.get('entry_fills'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout)
+                self.e.log('FAVORITE_TRIAL_QUALITY',ticker=ticker,details=json.dumps(dict(
+                    cycle_valid=s.valid,execution_window_valid=trial_valid,window=a.get('data_window'),
+                    verified_entry_chunks=sum(bool(c.get('verified')) for c in a.get('entry_fills',[])))))
                 a.update(recorded=True,completed=a['first'],net=str(s.gross-s.realized_fees))
                 self.last_reason='Favorite trial settled; result includes all fees'
                 continue
             if a and a.get('first'):
+                self.finish_data_window(ticker,a)
                 lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
                 if a.get('entry_policy')=='favorites-paper-data-v3':self.retain_partial_entry(ticker,m,a,lots)
                 else:self.e.cancel_buys(ticker)

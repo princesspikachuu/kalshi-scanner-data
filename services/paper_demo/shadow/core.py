@@ -47,22 +47,27 @@ class FeePolicy:
 class PriceLevels(dict):
     """Depth map with an incrementally maintained best bid."""
     def __init__(self,values=()):
-        super().__init__(values);self.best=max(self,default=None)
+        super().__init__(values);self.best=max(self,default=None);self._ordered=None
     def __setitem__(self,key,value):
+        if key not in self:self._ordered=None
         super().__setitem__(key,value)
         if self.best is None or key>self.best:self.best=key
     def __delitem__(self,key):
-        super().__delitem__(key)
+        super().__delitem__(key);self._ordered=None
         if key==self.best:self.best=max(self,default=None)
     def pop(self,key,*default):
-        value=super().pop(key,*default)
+        exists=key in self;value=super().pop(key,*default)
+        if exists:self._ordered=None
         if key==self.best:self.best=max(self,default=None)
         return value
     def popitem(self):
-        key,value=super().popitem()
+        key,value=super().popitem();self._ordered=None
         if key==self.best:self.best=max(self,default=None)
         return key,value
-    def clear(self):super().clear();self.best=None
+    def clear(self):super().clear();self.best=None;self._ordered=None
+    def ordered_prices(self):
+        if self._ordered is None:self._ordered=tuple(sorted(self,reverse=True))
+        return self._ordered
     def update(self,values=(),**kwargs):
         for key,value in dict(values,**kwargs).items():self[key]=value
     def setdefault(self,key,default=None):
@@ -144,13 +149,17 @@ class Book:
         bid = self.bid('no' if side == 'yes' else 'yes')
         return 1-bid if bid is not None else None
 
-    def depth(self, side: str, action: str):
-        if action == 'sell':
-            return sorted(((p, max(ZERO, q-self.used[side].get(p, ZERO)))
-                           for p,q in self.levels[side].items()), reverse=True)
-        opposite = 'no' if side == 'yes' else 'yes'
-        return sorted((1-p, max(ZERO, q-self.used[opposite].get(p, ZERO)))
-                      for p,q in self.levels[opposite].items())
+    def iter_depth(self,side:str,action:str):
+        book_side=side if action=='sell' else 'no' if side=='yes' else 'yes'
+        levels=self.levels[book_side]
+        if not isinstance(levels,PriceLevels):
+            levels=self.levels[book_side]=PriceLevels(levels)
+        # Quantity changes do not change price ordering. Calculate the shadow
+        # overlay only for levels the caller actually needs.
+        for price in levels.ordered_prices():
+            yield (price if action=='sell' else 1-price),max(ZERO,levels[price]-self.used[book_side].get(price,ZERO))
+
+    def depth(self,side:str,action:str):return list(self.iter_depth(side,action))
 
     def consume(self, side: str, action: str, price: D, quantity: D):
         book_side, level = (side, price) if action == 'sell' else (
@@ -305,6 +314,10 @@ class Order:
     stress_episode: int = -1
     opposing_fill_race: bool = False
     purpose: str = 'strategy'
+    decision_at: float = 0.0
+    worker_delay_seconds: float = 0.0
+    transport_latency_seconds: float = 0.0
+    execution_model: str = 'fixed-latency-v1'
 
 
 class Audit:
@@ -419,6 +432,7 @@ class Engine:
         self.gap_reasons = {}
         self.safety_until = 0.0
         self.book_feed_at = {}
+        self.wall_clock = None
 
     def book_fresh(self,ticker):
         book=self.books[ticker]
@@ -449,6 +463,12 @@ class Engine:
         return self.wallet.cash-sum((o.reserved for o in self.orders.values()
                                     if o.status in ('pending','resting')), ZERO)
 
+    def request_timing(self):
+        decision=max(self.now,self.wall_clock()) if self.wall_clock else self.now
+        return dict(decision_at=decision,worker_delay_seconds=decision-self.now,
+            transport_latency_seconds=self.latency,
+            execution_model='worker-delay-v1' if self.wall_clock else 'fixed-latency-v1')
+
     def place(self, ticker: str, side: str, action: str, quantity: D, price: D,
               maker=True, phase=1, expiry=None, targets=None, purpose='strategy') -> str:
         quantity, price = D(quantity), D(price)
@@ -462,9 +482,10 @@ class Engine:
         ident = f'S{self.serial:09d}'
         book = self.books[ticker]
         reference = book.bid(side) if action == 'sell' else book.ask(side)
+        timing=self.request_timing()
         order = Order(ident, ticker, side, action, quantity, price, maker, phase,
-                      self.now, self.now+self.latency, expiry or market['close'], reference,
-                      targets=targets, remaining=quantity,purpose=purpose)
+                      self.now, timing['decision_at']+self.latency, expiry or market['close'], reference,
+                      targets=targets, remaining=quantity,purpose=purpose,**timing)
         stat=self.wallet.stat(ticker)
         stat.execution_measured=True
         stat.execution_orders+=1
@@ -479,7 +500,7 @@ class Engine:
         if order.status == 'pending':
             heapq.heappush(self.pending, (order.arrives, self.serial, 'arrive', ident))
         self.log('ORDER_SUBMITTED' if order.status == 'pending' else 'ORDER_REJECTED', order,
-                 quantity=quantity, price=price, reference=reference, reason='latency scheduled')
+                 quantity=quantity, price=price, reference=reference, reason='latency scheduled',details=json.dumps(timing))
         return ident
 
     def cancel(self, ident: str):
@@ -487,8 +508,9 @@ class Engine:
         if order.status in ('pending','resting') and not any(
                 action=='cancel' and target==ident for _,_,action,target in self.pending):
             self.serial += 1
-            heapq.heappush(self.pending, (self.now+self.latency, self.serial, 'cancel', ident))
-            self.log('CANCEL_SUBMITTED', order)
+            timing=self.request_timing()
+            heapq.heappush(self.pending, (timing['decision_at']+self.latency, self.serial, 'cancel', ident))
+            self.log('CANCEL_SUBMITTED', order,details=json.dumps(timing))
 
     def cancel_buys(self, ticker: str):
         for order in self.orders.values():
@@ -564,7 +586,7 @@ class Engine:
             l.side == order.side and (order.targets is None or l.id in order.targets)), ZERO)
         budget = min(order.remaining, target_qty) if order.action == 'sell' else order.remaining
         total, slippage = ZERO, ZERO
-        for price, depth in book.depth(order.side, order.action):
+        for price, depth in book.iter_depth(order.side, order.action):
             if budget <= 0:
                 break
             if (order.action == 'sell' and price < order.price or
@@ -631,7 +653,9 @@ class Engine:
             order.status, order.reserved = 'filled', ZERO
         self.log('FILL', order, quantity=quantity, price=price, fee=fee,
                  reference=order.reference, slippage=slippage, reason=reason,
-                 details=json.dumps(dict(purpose=order.purpose,latency_ms=self.latency*1000)))
+                 details=json.dumps(dict(purpose=order.purpose,latency_ms=order.transport_latency_seconds*1000,
+                     worker_delay_ms=order.worker_delay_seconds*1000,decision_at=order.decision_at,
+                     arrival_at=order.arrives,execution_model=order.execution_model)))
         if self.fill_callback:
             self.fill_callback(order, quantity)
 
@@ -691,6 +715,8 @@ class Engine:
             self.books[ticker].valid = False
             self.books[ticker].snapshot_at = 0.0
             self.wallet.stat(ticker).valid = False
+            callback=getattr(self.strategy,'on_data_gap',None)
+            if callback:callback(ticker,reason)
             self.cancel_buys(ticker)
             if not duplicate:self.log('DATA_GAP', ticker=ticker, reason=reason)
 

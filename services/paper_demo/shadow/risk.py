@@ -24,7 +24,7 @@ class ExitEvidence:
 
 def liquidation(engine,ticker,side,quantity):
     left=quantity;net=ZERO
-    for price,depth in engine.books[ticker].depth(side,'sell'):
+    for price,depth in engine.books[ticker].iter_depth(side,'sell'):
         take=min(left,depth)
         if take:
             net+=take*price-engine.fees[ticker].charge(take,price,False);left-=take
