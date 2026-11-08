@@ -37,7 +37,7 @@ def dimensions(profile,market):
 
 
 def horizon(seconds):
-    return '0–1m' if seconds<=60 else '1–3m' if seconds<=180 else '3–5m' if seconds<=300 else '5–10m' if seconds<=600 else '10m+'
+    return '0–1m' if seconds<=60 else '1–3m' if seconds<=180 else '3–5m' if seconds<=300 else '5–10m' if seconds<=600 else '10–15m' if seconds<=900 else '15–60m' if seconds<=3600 else '1–6h' if seconds<=21600 else '6–24h' if seconds<=86400 else '1–7d' if seconds<=604800 else '7–30d' if seconds<=2592000 else '30d+'
 
 
 def bucket():
@@ -363,7 +363,7 @@ class VolatilityScalper(ConvexityStrategy):
                     if ticker in self.history and e.books[ticker].ask(old.side) is not None:
                         fresh=self.features(ticker,old.side);adverse=self.decision(fresh)[1] or fresh.get('depth_withdrawal',0)>.5
                     moved=current is not None and abs(current-old.price)>=tick_size(m,old.price)*D(str(c['reprice_ticks']))
-                    if now-old.created>=c['reprice_seconds'] and (moved or adverse or m['close']-now<=c['restrict_entries']):
+                    if adverse or now-old.created>=c['reprice_seconds'] and (moved or m['close']-now<=c['restrict_entries']):
                         before=len(e.pending);e.cancel(old.id)
                         if len(e.pending)>before:
                             self.increment(a['meta'],repriced=int(moved));a['replace_reason']='adverse_selection' if adverse else 'quote_moved' if moved else 'expiration_phase'

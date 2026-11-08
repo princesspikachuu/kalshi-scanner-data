@@ -208,3 +208,9 @@ class SchedulingTests(unittest.TestCase):
             self.assertTrue(b.decision(features)[0],folder)
         momentum=VolatilityScalper(e,p('scalper_momentum'))
         self.assertFalse(momentum.decision(dict(f,bid=.9,mean=.4))[0])
+
+
+class HorizonTests(unittest.TestCase):
+    def test_remaining_time_bands_distinguish_fast_and_long_market_research(self):
+        from services.paper_demo.shadow.scalper import horizon
+        self.assertEqual(horizon(600),'5–10m');self.assertEqual(horizon(800),'10–15m');self.assertEqual(horizon(7200),'1–6h');self.assertEqual(horizon(172800),'1–7d');self.assertEqual(horizon(40*86400),'30d+')
