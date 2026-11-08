@@ -322,7 +322,9 @@ class ExperimentSuite:
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
-                assumptions=dict(latency_ms=150,independent_paper_portfolio=True,real_orders_enabled=False))
+                assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
+                    execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
+                    independent_paper_portfolio=True,real_orders_enabled=False))
         return result
     def maintain(self):
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
