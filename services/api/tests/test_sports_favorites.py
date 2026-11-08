@@ -1,7 +1,7 @@
 import unittest,time
 from decimal import Decimal as D
 from datetime import datetime,timezone
-from unittest.mock import Mock,AsyncMock
+from unittest.mock import Mock,AsyncMock,patch
 from services.paper_demo.shadow.sports import live_gate,sports_profiles,initialize_sports,sports_once
 from services.paper_demo.shadow.weather import initialize_weather
 from services.paper_demo.shadow.favorites import FavoritesStrategy
@@ -9,6 +9,7 @@ from services.api.tests import test_strategy_folders as existing
 from services.api.tests import test_weather_favorites as weather
 from services.api.tests import test_demo_postgres as fixture
 from services.paper_demo.shadow.experiments import ExperimentSuite
+from services.paper_demo.shadow.sports import discover_sports
 
 def inputs(now=10000):
     raw=dict(ticker='KXNBAGAME-TEST-YES',event_ticker='KXNBAGAME-TEST',status='active',open_time=9000,close_time=200000,expected_expiration_time=13600)
@@ -39,6 +40,7 @@ class SportsGates(unittest.TestCase):
     def test_no_fallback_from_missing_game_end_to_market_close(self):
         raw,m,l=inputs();raw['expected_expiration_time']=None;raw['close_time']=11000
         self.assertFalse(live_gate(raw,m,l,10000)['sports_live'])
+
     def test_sports_order_expires_before_its_live_verification_becomes_stale(self):
         e=existing.Engine(existing.QuietAudit(),cash='1000');e.advance(10000)
         p=dict(sports_profiles()[0],revision=1);p['series']='KXNBAGAME'
@@ -54,6 +56,25 @@ class SportsGates(unittest.TestCase):
         t='KXNBAGAME-TEST';existing.market(e,t,yes='.79',no='.19',close=200000)
         e.markets[t].update(sports=True,sports_live=True,sports_start=9000,sports_expected_end=19000,sports_verified_until=10030)
         b.step();self.assertFalse(e.orders)
+
+class SportsRetryDiagnostics(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_names_only_known_schema_fields_and_rate_limits_without_changing_cadence(self):
+        import asyncio,io,json
+        from contextlib import redirect_stdout
+        for key,wanted in [('sports_expected_end','sports_expected_end'),('private-provider-secret',None)]:
+            host=Mock();host.done=asyncio.Event();attempts=[]
+            async def fail(_):attempts.append(1);raise KeyError(key)
+            async def pause(seconds):
+                self.assertEqual(seconds,10)
+                if len(attempts)==3:host.done.set()
+            out=io.StringIO()
+            with patch('services.paper_demo.shadow.sports.sports_once',fail),patch('services.paper_demo.shadow.sports.asyncio.sleep',pause),redirect_stdout(out):
+                await discover_sports(host)
+            rows=[json.loads(line) for line in out.getvalue().splitlines()]
+            self.assertEqual(len(attempts),3);self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0]['field'],wanted);self.assertTrue(rows[0]['frames'])
+            self.assertNotIn('private-provider-secret',out.getvalue())
+
 
 class SportsDiscovery(unittest.IsolatedAsyncioTestCase):
     async def test_verified_late_game_uses_read_only_milestone_and_live_endpoints(self):

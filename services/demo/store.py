@@ -8,7 +8,7 @@ class DemoStore:
     def get(self,key):
         with self.pool.connection() as c:
             row=c.execute('SELECT id::text,parameters,progress,created_at,finished_at FROM research_job WHERE idempotency_key=%s',(self.namespace+'/'+key,)).fetchone()
-        if row and key=='shadow/checkpoint':
+        if row and key in ('shadow/checkpoint','shadow/status'):
             from services.paper_demo.shadow.checkpoint_codec import unpack_checkpoint
             row=dict(row,progress=unpack_checkpoint(row['progress']))
         return row
