@@ -15,7 +15,14 @@ def activity_deadline(engine,ticker,market):
     trades=engine.tape.markets.get(ticker,{}).get('trades',())
     latest=max(market.get('discovered_at',0),market.get('maker_last_trade_at',0),max((t[0] for t in trades),default=0))
     idle=max(900,min(3600,market.get('maker_idle_seconds',900)))
-    return latest+idle
+    deadline=latest+idle
+    if market.get('maker_unquotable_since') is not None:deadline=min(deadline,market['maker_unquotable_since']+60)
+    return deadline
+
+def quotable(bids,config):
+    spread=1-bids['yes']-bids['no']
+    return (config.get('min_spread',.03)-1e-9<=spread<=.10+1e-9 and
+        any(config.get('min_price',.20)<=p<=config.get('max_price',.80) for p in bids.values()))
 MM_CONFIG=dict(approach='market_maker',adaptive=True,mixed=False,maker_profit_exits=True,take_profit=.01,
     stop_loss=.08,min_hold=0,max_hold=14400,liquidate=3600,reduce_hold=21600,restrict_entries=86400,
     order_ttl=300,exit_ttl=120,reprice_seconds=30,reprice_ticks=2,eval_seconds=5,
@@ -77,6 +84,11 @@ class MarketMaker(VolatilityScalper):
         now=self.e.now
         for t,m in self.e.markets.items():
             if not self.matches(t,m):continue
+            if self.e.book_fresh(t):
+                bids={side:self.e.books[t].bid(side) for side in ('yes','no')}
+                if all(p is not None for p in bids.values()):
+                    if quotable({side:float(p) for side,p in bids.items()},self.config):m.pop('maker_unquotable_since',None)
+                    else:m.setdefault('maker_unquotable_since',now)
             paused=t in self.profile.get('paused_markets',[])
             quiet=now>=activity_deadline(self.e,t,m)
             window=any(at-self.config['pre_event']<=now<=at+self.config['post_event'] for at in m.get('scheduled_events',[]))
@@ -196,6 +208,9 @@ async def maker_once(host):
         book=await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker+'/orderbook',dict(depth=3));s['reads']+=1
         levels=book.get('orderbook_fp',{});depth=min(sum(float(x[1]) for x in levels.get(side+'_dollars',levels.get(side+'_dollars_fp',[]))) for side in ('yes','no'))
         if depth<max(p['contracts'] for p in ps)*4:row['reason']='insufficient_displayed_depth';continue
+        bids={side:max((float(x[0]) for x in levels.get(side+'_dollars',levels.get(side+'_dollars_fp',[]))),default=0) for side in ('yes','no')}
+        if not any(quotable(bids,p.get('config',{})) for p in ps):
+            row['reason']='current_price_or_spread_not_eligible';continue
         fee=await host.fee_policy(raw,{});schedule=row.get('scheduled_events',[])
         times=sorted(ts(t['created_time']) for t in prints)
         intervals=[b-a for a,b in zip(times,times[1:]) if b>a]
