@@ -14,8 +14,8 @@ def category(m):
 
 class MonitoringBudget:
     def __init__(self):
-        self.samples=deque(maxlen=600);self.healthy_since=None;self.level=0;self.last_at=None
-    def observe(self,now,backlog,lag_seconds,per_input_ms,cooldown=0):
+        self.samples=deque(maxlen=600);self.service_samples=deque(maxlen=600);self.healthy_since=None;self.level=0;self.last_at=None
+    def observe(self,now,backlog,lag_seconds,per_input_ms,cooldown=0,input_count=None):
         if self.last_at is None or now-self.last_at>10:
             self.healthy_since=None;self.level=0
         self.samples.append((now,max(0,lag_seconds),max(0,per_input_ms)))
@@ -25,7 +25,21 @@ class MonitoringBudget:
         self.lag_p95=recent[at];self.processing_p95=costs[at];self.backlog=backlog;self.cooldown=cooldown
         # A recent overload resets the growth window. Stale telemetry cannot
         # authorize discovery, even if the previous sample looked healthy.
-        self.queue_seconds=backlog*self.processing_p95/1000
+        # A tiny batch pays a whole checkpoint's fixed cost. Multiplying its
+        # per-input cost by a large queue exaggerates drain time. Use measured
+        # committed burst throughput only with enough fresh supporting inputs.
+        if input_count is not None and input_count>=32:
+            self.service_samples.append((now,input_count,max(0,per_input_ms)*input_count))
+        while self.service_samples and now-self.service_samples[0][0]>60:self.service_samples.popleft()
+        fresh_service=[s for s in self.service_samples if now-s[0]<=5]
+        self.service_inputs=sum(s[1] for s in fresh_service)
+        self.queue_cost_basis='p95 per-input fallback';self.service_ms=self.processing_p95
+        if self.service_inputs>=128:
+            recent_cost=sum(s[2] for s in fresh_service)/self.service_inputs
+            long_cost=sum(s[2] for s in self.service_samples)/sum(s[1] for s in self.service_samples)
+            self.service_ms=max(recent_cost,long_cost)
+            self.queue_cost_basis='committed burst throughput; slower of 5s and 60s'
+        self.queue_seconds=backlog*self.service_ms/1000
         overloaded=backlog>2000 or self.queue_seconds>.5 or self.lag_p95>2 or self.processing_p95>100 or cooldown>0
         healthy=backlog<=50 and self.lag_p95<.5 and self.processing_p95<20 and not cooldown
         if overloaded:self.level=0;self.healthy_since=None
@@ -41,6 +55,7 @@ class MonitoringBudget:
             admitting=fresh and not self.overloaded,telemetry_fresh=fresh,level=level,
             reason='Waiting for current load measurements' if not fresh else 'Discovery paused: processing lag or read cooldown' if self.overloaded else 'Measured capacity available',
             backlog=getattr(self,'backlog',0),estimated_queue_seconds=getattr(self,'queue_seconds',None),lag_p95_seconds=getattr(self,'lag_p95',None),
+            queue_cost_basis=getattr(self,'queue_cost_basis',None),queue_service_ms=getattr(self,'service_ms',None),service_sample_inputs=getattr(self,'service_inputs',0),
             processing_p95_ms=getattr(self,'processing_p95',None),read_cooldown_seconds=getattr(self,'cooldown',0))
 
 def protected(suite,ticker,now):
