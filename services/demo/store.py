@@ -7,7 +7,11 @@ class DemoStore:
     def __init__(self,pool):self.pool=pool
     def get(self,key):
         with self.pool.connection() as c:
-            return c.execute('SELECT id::text,parameters,progress,created_at,finished_at FROM research_job WHERE idempotency_key=%s',(self.namespace+'/'+key,)).fetchone()
+            row=c.execute('SELECT id::text,parameters,progress,created_at,finished_at FROM research_job WHERE idempotency_key=%s',(self.namespace+'/'+key,)).fetchone()
+        if row and key=='shadow/checkpoint':
+            from services.paper_demo.shadow.checkpoint_codec import unpack_checkpoint
+            row=dict(row,progress=unpack_checkpoint(row['progress']))
+        return row
     def put(self,key,data,*,parameters=None):
         with self.pool.connection() as c:
             return c.execute("""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)

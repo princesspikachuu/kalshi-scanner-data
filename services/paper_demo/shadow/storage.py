@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 from psycopg.types.json import Jsonb
 from .state import encode
+from .checkpoint_codec import pack_checkpoint
 
 KEY='demo/shadow/checkpoint'
 
@@ -28,6 +29,17 @@ class HostedAudit:
         data=encode(self.engine,self.fleet)
         if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
         return json.loads(json.dumps(data,default=str))
+    def checkpoint_snapshot(self):
+        # Serialize the hot state once, without a full JSON decode/re-encode
+        # before psycopg. Audit events and this payload still commit together.
+        data=encode(self.engine,self.fleet)
+        if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
+        payload=pack_checkpoint(data)
+        if payload.get('checkpoint_encoding') and time.monotonic()>=getattr(self,'codec_log_at',0):
+            self.codec_log_at=time.monotonic()+30
+            print(json.dumps(dict(event='shadow_checkpoint_size',encoding=payload['checkpoint_encoding'],
+                decoded_bytes=payload['bytes'],stored_bytes=len(payload['data']),real_orders_enabled=False)),flush=True)
+        return payload
     def begin(self):self.buffer=[]
     def abort(self):self.buffer=None
     def log(self,now,kind,wallet,**fields):
@@ -40,7 +52,7 @@ class HostedAudit:
         records=self.buffer;self.buffer=None
         if records:self.commit(records)
     def prepare(self,records):
-        started=time.monotonic();data=self.snapshot()
+        started=time.monotonic();data=self.checkpoint_snapshot()
         batch=[entry(KEY,{},data)]+getattr(self,'extra_writes',[])
         self.extra_writes=[]
         commands=[];written_events=[]
@@ -113,6 +125,6 @@ class HostedAudit:
         with self.store.pool.connection() as c:put(c,KEY,{},data)
         self.last_snapshot=time.monotonic()
     async def checkpoint_async(self):
-        await self.durable_io(self.write_checkpoint,self.snapshot())
-    def checkpoint(self):self.write_checkpoint(self.snapshot())
+        await self.durable_io(self.write_checkpoint,self.checkpoint_snapshot())
+    def checkpoint(self):self.write_checkpoint(self.checkpoint_snapshot())
     def close(self):pass

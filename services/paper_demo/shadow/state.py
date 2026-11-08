@@ -17,6 +17,8 @@ def encode(engine, fleet):
 
 
 def restore(engine,fleet,data):
+    from .checkpoint_codec import unpack_checkpoint
+    data=unpack_checkpoint(data)
     if data.get('schema') != 1:
         raise ValueError('Unsupported shadow checkpoint')
     def tuples(value):return tuple(tuples(v) for v in value) if isinstance(value,list) else value
