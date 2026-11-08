@@ -15,8 +15,7 @@ from .folders import initialize_folders
 from .experiments import ExperimentSuite
 from .set_discovery import discover_sets
 from .weather import initialize_weather,discover_weather
-from .performance import record_balances
-from .bot_performance import record_bot_balances
+from .history_sampling import MinuteHistory
 from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope,initialize_restored_favorites
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
@@ -349,6 +348,7 @@ class HostedRun(ForwardRun):
             return c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/command/' AND idempotency_key<'demo/shadow/command/zzzz' AND progress->>'done' IS DISTINCT FROM 'true' ORDER BY created_at LIMIT 100").fetchall()
 
     async def control(self):
+        history=MinuteHistory()
         while not self.done.is_set():
             if self.outer_stop.is_set():self.done.set();return
             # Read-only configuration fetches may overlap the execution commit.
@@ -358,6 +358,7 @@ class HostedRun(ForwardRun):
                 self.audit.durable_io(read_mode,self.store.pool),
                 self.audit.durable_io(self.store.rows,'shadow/bot/',BOT_LIMIT))
             mode=mode_row.get('mode','demo')
+            history_sample=None
             async with self.state_mutex():
                 control_started=time.monotonic()
                 await self.audit.durable_io(self.guard)
@@ -444,11 +445,9 @@ class HostedRun(ForwardRun):
                                               real_orders_enabled=False)),flush=True)
                     await self.audit.durable_io(self.store.put,'health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
                     experiment_snapshot=self.experiments.snapshot(time.time())
-                    if int(now//60)!=getattr(self,'balance_history_minute',None):
+                    if history.due(now):
                         accounts=dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()})
-                        await self.audit.durable_io(record_balances,self.store,accounts,now)
-                        await self.audit.durable_io(record_bot_balances,self.store,accounts,experiment_snapshot,now,positions)
-                        self.balance_history_minute=int(now//60)
+                        history_sample=history.freeze(accounts,experiment_snapshot,now,positions)
                     await self.audit.durable_io(self.audit.publish_status,dict(at=time.time(),selected=self.selected,
                         equity=portfolio['equity'],accounting=money,
                         virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
@@ -487,6 +486,10 @@ class HostedRun(ForwardRun):
                             write_mode(c,dict(current['progress'],mode='live',demo_drained_at=time.time()))
                     self.done.set();return
                 self.last_control_ms=(time.monotonic()-control_started)*1000
+            # The frozen reporting sample never reads or mutates live wallet
+            # state. Slow history queries must not hold the execution mutex.
+            if history_sample is not None:
+                await history.write(self.audit,self.store,history_sample)
             if time.time()>=self.maintenance_at:
                 from services.demo.maintenance import maintenance
                 import os
