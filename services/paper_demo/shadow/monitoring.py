@@ -38,7 +38,7 @@ class MonitoringBudget:
         fresh=self.last_at is not None and 0<=now-self.last_at<=10
         level=self.level if fresh else 0
         return dict(total=32+8*level,entry_candidates=12+4*level,per_category=4+4*level,
-            admitting=fresh and not self.overloaded,level=level,
+            admitting=fresh and not self.overloaded,telemetry_fresh=fresh,level=level,
             reason='Waiting for current load measurements' if not fresh else 'Discovery paused: processing lag or read cooldown' if self.overloaded else 'Measured capacity available',
             backlog=getattr(self,'backlog',0),estimated_queue_seconds=getattr(self,'queue_seconds',None),lag_p95_seconds=getattr(self,'lag_p95',None),
             processing_p95_ms=getattr(self,'processing_p95',None),read_cooldown_seconds=getattr(self,'cooldown',0))

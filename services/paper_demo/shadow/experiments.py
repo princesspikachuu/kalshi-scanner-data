@@ -10,6 +10,7 @@ from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
 from .market_maker import MarketMaker,MM_FOLDERS,activity_deadline
+from . import maker_allocation
 from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
@@ -82,10 +83,11 @@ class ExperimentSuite:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
+        self.maker_allocation=deepcopy((previous or {}).get('_maker_allocation') or dict(pending={},credits={},next_at=0))
         self.control(rows)
         if isinstance((previous or {}).get('_maker_discovery'),dict):self.maker_discovery=deepcopy(previous['_maker_discovery'])
     def state(self):
-        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
+        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_maker_allocation=self.maker_allocation,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
             strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
@@ -168,7 +170,11 @@ class ExperimentSuite:
             rotated_markets=len(self.rotation_exclusions))
         stats['maker_entry_limit']=maker_entry_limit(stats)
         stats['maker_slots_free']=max(0,stats['maker_entry_limit']-stats['categories']['market_maker']) if stats['admitting'] else 0
+        stats['maker_reallocations_pending']=len(self.maker_allocation['pending'])
+        stats['maker_reallocations_completed']=self.maker_allocation.get('completed',0)
         return stats
+    def can_replace_maker_market(self,payload,now):
+        return maker_allocation.credited_capacity(self,payload['market']['ticker'],now) or maker_allocation.replacement(self,payload['market'],now) is not None
     def search_capacity(self,category,now,slots=1):
         stats=self.monitoring_snapshot(now)
         limit=maker_entry_limit(stats) if category=='market_maker' else (4 if category=='complete_set' else min(CATEGORY_LIMITS.get(category,stats['per_category']),stats['per_category']))
@@ -308,19 +314,23 @@ class ExperimentSuite:
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
         if source=='maker_market':
             m=payload['market'];ticker=m['ticker']
+            maker_allocation.finalize(self,now)
             discovery=getattr(self,'maker_discovery',{})
             row=discovery.get('candidates',{}).get(ticker)
             if ticker not in self.extra and not any(p['market_category']==m['market_category'] and ticker not in p.get('paused_markets',[])
                 for p in self.enabled_profiles('market_maker')):
                 if row is not None:row.pop('ready',None);row['reason']='strategy_paused'
                 return
-            if (ticker not in self.extra and not self.search_capacity('market_maker',now)) or not self.extra_capacity([ticker],now):
+            capacity=ticker in self.extra or self.search_capacity('market_maker',now) or maker_allocation.credited_capacity(self,ticker,now)
+            if not capacity or not self.extra_capacity([ticker],now):
+                replacing=maker_allocation.begin(self,m,now) if not capacity else False
                 if row is not None:
-                    row.update(reason='shared_admission_rejected_capacity',retry_at=now+30)
+                    row.update(reason='maker_replacement_cancel_pending' if replacing else 'shared_admission_rejected_capacity',retry_at=now+30)
                     if row.get('ready'):row['ready']['next_try']=time.time()+5
                     discovery['state']='Verified candidate deferred by current capacity'
                 return
             self.extra[ticker]=ticker
+            self.maker_allocation['credits'].pop(ticker,None)
             for folder in MM_FOLDERS:
                 e,f,ps=self.portfolios[folder]
                 profile=next((p for p in ps if p['market_category']==m['market_category']),None)
@@ -415,6 +425,7 @@ class ExperimentSuite:
                 if t in e.markets and msg.get('event_type')=='settled' and msg.get('result') in ('yes','no'):
                     e.markets[t]['yes_payout_confirmed']='1' if msg['result']=='yes' else '0'
                     e.handle('settlement',dict(ticker=t,yes_payout=e.markets[t]['yes_payout_confirmed']),now)
+        if source=='clock' and self.maker_allocation['pending']:maker_allocation.finalize(self,now)
         if errors:raise errors[0]
     def comparison_snapshot(self,folder,e,f,money,now):
         bots=[b for b in f.bots.values() if isinstance(b,SequentialStrategy)]

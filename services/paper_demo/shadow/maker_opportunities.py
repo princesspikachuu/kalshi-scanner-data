@@ -37,7 +37,7 @@ def turnover_score(prints,now,bids,profiles,fee,market):
 
 def ranked_rows(state):
     def rank(item):
-        _,r=item;good=r.get('reason') in ('awaiting_shared_admission','cached_admission_retry','admitted_to_shared_monitoring')
+        _,r=item;good=r.get('reason') in ('awaiting_shared_admission','cached_admission_retry','admitted_to_shared_monitoring','maker_replacement_cancel_pending','reallocation_slot_ready','verified_waiting_for_capacity')
         return (0 if good else 1 if not r.get('inspected_at') else 2,-r.get('execution_score',r['score']))
     return [dict(ticker=t,category=r['category'],score=r.get('execution_score',r['score']),
         score_basis='verified turnover estimate' if 'execution_score' in r else 'discovery prior',
@@ -59,8 +59,9 @@ async def retry_verified(host,state,now):
         if not any(p['market_category']==row['category'] and ticker not in p.get('paused_markets',[]) for p in choices):
             row.pop('ready');row['reason']='strategy_paused';continue
         if now>=cached['next_try']:ready.append((ticker,row,cached))
-    if not ready or now<state.get('next_cached_try',0) or not host.experiments.search_capacity('market_maker',now):return False
+    if not ready or now<state.get('next_cached_try',0):return False
     ticker,row,cached=max(ready,key=lambda item:item[1].get('execution_score',item[1]['score']))
+    if not host.experiments.search_capacity('market_maker',now) and host.experiments.can_replace_maker_market(cached['payload'],now) is not True:return False
     cached['next_try']=now+5;row['reason']='cached_admission_retry'
     state['next_cached_try']=now+5
     state['cached_admission_retries']=state.get('cached_admission_retries',0)+1
