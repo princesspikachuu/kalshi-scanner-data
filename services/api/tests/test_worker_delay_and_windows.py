@@ -92,6 +92,13 @@ class LazyDepth(unittest.TestCase):
         self.assertEqual(next(book.iter_depth('yes','sell')),(D('.90'),D(3)))
         levels[D('.95')]=D(1);self.assertEqual(next(book.iter_depth('yes','sell')),(D('.95'),D(1)))
         levels.pop(D('.95'));self.assertEqual(next(book.iter_depth('yes','sell')),(D('.90'),D(3)))
+    def test_top_level_liquidation_does_not_sort_the_rest_of_the_book(self):
+        from unittest.mock import patch
+        e,b,book=fixture.MakerEntries().setup_bot()
+        book.levels={'yes':{D('.90'):D(100),D('.80'):D(100)},'no':{D('.09'):D(100)}}
+        with patch.object(book.levels['yes'],'ordered_prices',side_effect=AssertionError('unnecessary full sort')):
+            self.assertEqual(liquidation(e,fixture.MakerEntries.ticker,'yes',D(10)),D('8.9370'))
+
     def test_liquidation_stops_at_needed_depth_and_preserves_fee_and_shadow_overlay(self):
         e,b,book=fixture.MakerEntries().setup_bot()
         book.levels={'yes':{D('.90'):D(3),D('.80'):D(4),D('.70'):D(20)},'no':{D('.09'):D(100)}}

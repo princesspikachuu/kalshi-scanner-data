@@ -156,7 +156,11 @@ class Book:
             levels=self.levels[book_side]=PriceLevels(levels)
         # Quantity changes do not change price ordering. Calculate the shadow
         # overlay only for levels the caller actually needs.
+        best=levels.best
+        if best is None:return
+        yield (best if action=='sell' else 1-best),max(ZERO,levels[best]-self.used[book_side].get(best,ZERO))
         for price in levels.ordered_prices():
+            if price==best:continue
             yield (price if action=='sell' else 1-price),max(ZERO,levels[price]-self.used[book_side].get(price,ZERO))
 
     def depth(self,side:str,action:str):return list(self.iter_depth(side,action))
