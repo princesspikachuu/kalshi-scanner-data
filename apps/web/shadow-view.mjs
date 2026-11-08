@@ -104,6 +104,36 @@ function exposureHeaderMarkup(a){
  const x=summaryExposure(a);
  return `<span class="exposure-header-value"><span class="folder-card-label">Open bids</span><strong>${e(dollars(x.bids))}</strong><small>Reserved for buys · now</small></span><span class="exposure-header-value"><span class="folder-card-label">Open/pending positions</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))} · pending ${e(dollars(x.pending))}</small><small>Money committed · includes entry fees</small></span>`;
 }
+export function marketTypeSummaryValues(bots,period='all',positions=[]){
+ if(!Object.hasOwn(folderPeriods,period))period='all';
+ let low=0,high=0,missing=0,partial=false;
+ const exposure=bots.map(b=>summaryExposure(b.account));
+ const sum=field=>exposure.every(x=>finite(x[field]))?exposure.reduce((n,x)=>n+x[field],0):null;
+ for(const bot of bots){
+  const r=bot.performance?.[period],a=bot.account;
+  partial ||= !!r?.partial;
+  let bounds=!r?.missing_history&&finite(r?.pnl)?{low:Number(r.pnl),high:Number(r.pnl)}:
+   !r?.missing_history&&finite(r?.pnl_low)&&finite(r?.pnl_high)?{low:Number(r.pnl_low),high:Number(r.pnl_high)}:null;
+  if(!bounds&&period==='all'){
+   if(finite(a?.total_pnl))bounds={low:Number(a.total_pnl),high:Number(a.total_pnl)};
+   else if(finite(a?.realized_pnl)&&finite(a?.position_cost)){
+    const owned=positions.filter(p=>p.bot_id?p.bot_id===bot.id:p.ticker?.startsWith(bot.series+'-'));
+    bounds=shifted(valueBounds(a,owned),Number(a.realized_pnl)-Number(a.position_cost));
+   }
+  }
+  if(!bounds||bounds.low>bounds.high)missing++;
+  else{low+=bounds.low;high+=bounds.high}
+ }
+ const pnl=missing?null:{low,high,unpriced:low!==high};
+ return {period,pnl,missing,partial,account:{unfilled_bids:sum('bids'),active_cost:sum('active'),
+  pending_cost:sum('pending'),position_cost:sum('positions')}};
+}
+export function marketTypeSummaryMarkup(group,period='all',positions=[],shown=null){
+ const v=marketTypeSummaryValues(group.bots,period,positions);
+ const running=group.bots.filter(b=>b.desired==='running').length;
+ const coverage=v.missing?`${v.missing} ${v.missing===1?'bot':'bots'} missing P/L history`:v.partial?'Partial P/L history':v.period==='all'?'Current session':'Rolling '+folderPeriods[v.period];
+ return `<span class="market-type-heading"><span class="market-type-name">${e(group.label)}</span><span class="badge">${group.bots.length} bots · ${running} running${shown!==null?' · '+shown+' shown':''}</span><span class="market-type-disclosure" aria-hidden="true"></span></span><span class="folder-card-values market-type-values"><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${rangeClass(v.pnl)} ${v.pnl?.unpriced?'value-range':''}">${e(rangeText(v.pnl))}</strong><small>${e(coverage)} · after fees</small></span>${exposureHeaderMarkup(v.account)}</span><span class="small market-type-coverage">P/L follows the folder’s time selector. Exposure shows current amounts for all bots in this subfolder.</span>`;
+}
 export function folderSummaryValues(f,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
  const account=f.accounting,a=account?.portfolio,positions=account?.positions||[];

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  marketTypeGroups,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -267,4 +267,36 @@ test('market type subfolders remember state independently per strategy and searc
  assert.deepEqual(JSON.parse(storage.get('moneytree-market-type-views')),[]);
  nodes.get('find').value='';vm.runInContext('draw()',context);
  assert.ok(nodes.get('groups').innerHTML.includes('data-market-type="favorites::crypto-15m" >'));
+});
+
+test('subfolder totals combine bot P/L and current exposure across the selected window',()=>{
+ const bots=[{id:'a',desired:'running',account:{total_pnl:'5',unfilled_bids:'1',active_cost:'2',pending_cost:'1'},performance:{'1H':{pnl:'1',partial:true}}},
+  {id:'b',desired:'paused',account:{total_pnl:'-2',unfilled_bids:'2',active_cost:'3',pending_cost:'4'},performance:{'1H':{pnl:'-.5'}}}];
+ const all=marketTypeSummaryValues(bots),hour=marketTypeSummaryValues(bots,'1H');
+ assert.equal(all.pnl.low,3);assert.equal(all.pnl.high,3);
+ assert.equal(hour.pnl.low,.5);assert.equal(hour.partial,true);
+ assert.deepEqual(hour.account,{unfilled_bids:3,active_cost:5,pending_cost:5,position_cost:10});
+ const html=marketTypeSummaryMarkup({label:'Crypto',bots},'1H');
+ for(const token of ['Total P/L · 1h','$0.50','Open bids','$3.00','Open/pending positions','$10.00','Partial P/L history'])assert.ok(html.includes(token),token);
+});
+test('subfolder P/L keeps uncertainty bounds and does not silently omit missing bots',()=>{
+ const bots=[{id:'a',account:{},performance:{'6H':{pnl_low:'-1',pnl_high:'2'}}},
+  {id:'b',account:{},performance:{'6H':{pnl:'1'}}}];
+ assert.deepEqual(marketTypeSummaryValues(bots,'6H').pnl,{low:0,high:3,unpriced:true});
+ bots[1].performance={};
+ const v=marketTypeSummaryValues(bots,'6H');assert.equal(v.pnl,null);assert.equal(v.missing,1);
+ assert.equal(v.account.unfilled_bids,null);
+ const html=marketTypeSummaryMarkup({label:'Crypto',bots},'6H');
+ assert.ok(html.includes('1 bot missing P/L history'));assert.ok(!html.includes('NaN'));
+});
+test('search keeps full market-type totals and subfolders follow their parent P/L window',()=>{
+ const data=fixture(),btc=data.bots.find(b=>b.id==='favorites');
+ btc.account={total_pnl:'3',unfilled_bids:'1',active_cost:'1',pending_cost:'0'};
+ btc.performance={'1H':{pnl:'1'}};
+ data.bots.push({...btc,id:'eth-fav',series:'KXETH15M',name:'Ethereum',account:{...btc.account,total_pnl:'7'},performance:{'1H':{pnl:'2'}}});
+ const {context,nodes}=setup(data);nodes.get('find').value='KXBTC';vm.runInContext('draw()',context);
+ const header=()=>{const html=nodes.get('groups').innerHTML,start=html.indexOf('data-market-type="favorites::crypto-15m"');return html.slice(start,html.indexOf('<div class="bot-list">',start))};
+ assert.ok(header().includes('$10.00'));assert.ok(header().includes('2 bots · 2 running · 1 shown'));
+ vm.runInContext("folderSummaryPeriods.favorites='1H';draw()",context);
+ assert.ok(header().includes('Total P/L · 1h'));assert.ok(header().includes('$3.00'));
 });
