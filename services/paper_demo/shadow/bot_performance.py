@@ -34,7 +34,10 @@ def samples_for(bots,folders,now,legacy_positions=()):
         f=sessions.get(b.get('folder_id','convexity'))
         if not f or now<max(f.get('reset_at',0),f.get('created_at',0)):continue
         s=sample(b.get('account'),positions.get(b['id'],[]),f['session'])
-        if s is not None:current[b['id']]=s
+        if s is not None:
+            research=(b.get('experiment') or {}).get('scalper')
+            if research:s['research']={k:v for k,v in research.get('totals',{}).items() if isinstance(v,(int,float)) or isinstance(v,dict)}
+            current[b['id']]=s
     return current,sessions
 
 def record(c,bots,current,sessions,now):
@@ -84,9 +87,19 @@ def bot_performance(pool,bots,folders,now,legacy_positions=()):
             result[period]=dict(**period_change(a or {},baseline if usable else None),since=at if usable else None,
                 partial=bool(usable and at>target),missing_history=not usable,approximate=True)
         b['performance']=result
+        research=(b.get('experiment') or {}).get('scalper')
+        if research:
+            reports={'all':research['totals']}
+            for period in WINDOWS:
+                baseline=(baselines.get(period) or {}).get('bots',{}).get(b['id'])
+                if baseline is None or not a or baseline.get('session')!=a['session']:
+                    baseline=origins.get(b['id'],(None,None))[1]
+                old=(baseline or {}).get('research')
+                reports[period]=research_delta(research['totals'],old) if old and not result[period]['missing_history'] else None
+            research['periods']=reports
 
 def record_bot_balances(store,accounts,experiments,now,legacy_positions=()):
-    folders=[dict(r['parameters'],**r['progress'],accounting=accounts.get(r['parameters']['id'])) for r in store.rows('shadow/folder/',10)]
+    folders=[dict(r['parameters'],**r['progress'],accounting=accounts.get(r['parameters']['id'])) for r in store.rows('shadow/folder/',24)]
     reset=next((f.get('reset_at',0) for f in folders if f['id']=='convexity'),0)
     legacy=accounts.get('convexity') or {};cycles=legacy.get('current_cycles',{})
     bots=[]
@@ -102,9 +115,19 @@ def record_bot_balances(store,accounts,experiments,now,legacy_positions=()):
             for ident,row in (account.get('bots') or {}).items():
                 realized=net.get(ident,D(0)) if folder=='convexity' else D(experiments[folder]['bots'].get(ident,{}).get('net_realized_pnl','0'))
                 total=str(realized+D(row['unrealized_pnl'])) if row.get('unrealized_pnl') is not None else None
-                bots.append(dict(id=ident,folder_id=folder,account=dict(row,realized_pnl=str(realized),total_pnl=total)))
+                bots.append(dict(id=ident,folder_id=folder,experiment=experiments.get(folder,{}).get('bots',{}).get(ident),account=dict(row,realized_pnl=str(realized),total_pnl=total)))
         current,sessions=samples_for(bots,folders,now,legacy_positions)
         record(c,bots,current,sessions,now)
 
     print(json.dumps(dict(event='paper_bot_balances_sampled',at=now,bots=len(current),
         compressed_bytes=len(pack(dict(at=now,bots=current))),real_orders_enabled=False)),flush=True)
+
+
+def research_delta(current,baseline):
+    # Reuse existing minute snapshots; no additional read/write stream.
+    counters=('maker_entry_orders_filled','maker_submitted','taker_submitted','spread_sum','spread_rounds','completed','wins','round_net','holding_seconds','fill_seconds','fill_events','opportunities','submitted','entry_orders_filled','entry_fills','exit_fills','maker_fills','taker_fills','maker_net','taker_net','partial_fills','canceled','repriced','missed','risk_rejected','economics_rejected','adverse_losses','settlement_carryovers','net','dollar_hours')
+    r={k:current.get(k,0)-baseline.get(k,0) for k in counters}
+    n=r['completed'];f=r['fill_events']
+    r.update(maker_fill_rate=r['maker_entry_orders_filled']/r['maker_submitted'] if r['maker_submitted'] else None,average_spread=r['spread_sum']/r['spread_rounds'] if r['spread_rounds'] else None,win_rate=100*r['wins']/n if n else None,average_net=r['round_net']/n if n else None,average_holding_seconds=r['holding_seconds']/n if n else None,average_fill_seconds=r['fill_seconds']/f if f else None,execution_success=r['entry_orders_filled']/r['submitted'] if r['submitted'] else None,net_per_dollar_hour=r['net']/r['dollar_hours'] if r['dollar_hours'] else None)
+    r['rejections']={k:v-baseline.get('rejections',{}).get(k,0) for k,v in current.get('rejections',{}).items() if v>baseline.get('rejections',{}).get(k,0)}
+    return r

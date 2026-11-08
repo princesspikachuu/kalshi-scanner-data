@@ -43,6 +43,21 @@ def snapshot(engine,profiles,now):
         orders.append(dict(id=order.id,bot_id=owner(order.ticker),ticker=order.ticker,side=order.side,action=order.action,
             quantity=order.remaining,price=order.price,status=order.status,maker=order.maker,
             reserved=order.reserved,principal=principal,purpose=order.purpose))
+    depth_marks={}
+    if getattr(engine,'covered_maker_sells',False):
+        from .execution import depth_quote
+        quantities={}
+        for lot in engine.wallet.lots:
+            key=(lot.ticker,lot.side);quantities[key]=quantities.get(key,ZERO)+lot.quantity
+        for (ticker,side),quantity in quantities.items():
+            if now>=engine.markets[ticker]['close'] or not engine.book_fresh(ticker):continue
+            q=depth_quote(engine,ticker,side,'sell',quantity,ZERO)
+            if q['quantity']>0:
+                # Residual unavailable depth is marked at the last executable
+                # level, explicitly estimated, never represented as a fill.
+                last=q['last_price'] if q['quantity']<quantity else ZERO
+                value=q['gross']-q['fees']+(quantity-q['quantity'])*last
+                depth_marks[(ticker,side)]=(value/quantity,q['quantity']>=quantity)
     for lot in engine.wallet.lots:
         market=engine.markets[lot.ticker];pending=now>=market['close']
         cost=lot.quantity*lot.price+lot.entry_fee;book=engine.books.get(lot.ticker)
@@ -63,12 +78,15 @@ def snapshot(engine,profiles,now):
             mark=book.bid(lot.side);quote_at=book.at
             if mark is not None:source='last_verified_bid'
         if mark is None:mark=lot.price
+        depth=depth_marks.get((lot.ticker,lot.side))
+        if source=='current_bid' and depth:
+            mark=depth[0];source='executable_depth_net_fees' if depth[1] else 'depth_with_residual_estimate'
         value=lot.quantity*mark
         kind='pending' if pending else 'active'
         for row in buckets(lot.ticker):
             row[kind+'_cost']+=cost;row['position_cost']+=cost
             row[kind+'_contracts']+=lot.quantity
-            if source not in ('current_bid','confirmed_outcome'):row['estimated_contracts']+=lot.quantity
+            if source not in ('current_bid','executable_depth_net_fees','confirmed_outcome'):row['estimated_contracts']+=lot.quantity
             if value is None:row[kind+'_value_known']=False
             else:row[kind+'_value']+=value
             if pending:
@@ -78,7 +96,7 @@ def snapshot(engine,profiles,now):
             quantity=lot.quantity,price=lot.price,entry_fee=lot.entry_fee,cost=cost,
             value=value,mark_price=mark,valuation_source=source,quote_at=quote_at,
             state=kind,is_armed=lot.is_armed,phase_origin=lot.phase_origin,
-            valuation_estimated=source not in ('current_bid','confirmed_outcome'),
+            valuation_estimated=source not in ('current_bid','executable_depth_net_fees','confirmed_outcome'),
             recovery_cost=lot.recovery_cost,recovery_proceeds=lot.recovery_proceeds,
             bot_revision=market.get('bot_revision',1)))
     total=finish(total);groups={k:finish(v) for k,v in groups.items()}

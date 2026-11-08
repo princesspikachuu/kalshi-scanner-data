@@ -20,7 +20,10 @@ from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope,initialize_restored_favorites
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
-from .scalper_install import initialize_scalper
+from .scalper_install import initialize_scalper,initialize_scalper_upgrade
+from .scalper import SCALPER_FOLDERS
+from .market_maker import MM_FOLDERS
+from .market_maker import initialize_market_maker,discover_maker
 
 LOG=logging.getLogger('shadow-host')
 
@@ -40,6 +43,8 @@ class HostedRun(ForwardRun):
         initialize_restored_favorites(store,guard)
         initialize_comparison(store,guard)
         initialize_scalper(store,guard)
+        initialize_scalper_upgrade(store,guard)
+        initialize_market_maker(store,guard)
         all_rows=store.rows('shadow/bot/',BOT_LIMIT)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
@@ -264,6 +269,8 @@ class HostedRun(ForwardRun):
             item=await self.queue.get()
             async with self.state_mutex():
                 self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
+                burst=self.queue.qsize()>128
+                max_inputs,max_simulation=(256,.040) if burst else (128,.020)
                 try:
                     while True:
                         source,payload,received=item
@@ -296,7 +303,7 @@ class HostedRun(ForwardRun):
                         completed+=1
                         # Preserve every event and its cash value, but avoid a DB
                         # round trip/checkpoint for each partial fill in a burst.
-                        if self.done.is_set() or self.queue.empty() or completed>=128 or time.monotonic()-started>=.020:
+                        if self.done.is_set() or self.queue.empty() or completed>=max_inputs or time.monotonic()-started>=max_simulation:
                             break
                         item=self.queue.get_nowait()
                     simulated=time.monotonic()
@@ -374,9 +381,9 @@ class HostedRun(ForwardRun):
                     print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
                     for folder,(se,sf,_) in self.experiments.portfolios.items():
-                        if folder not in ('volatility_scalper','scalper_fixed','scalper_grid'):continue
+                        if folder not in (*SCALPER_FOLDERS,*MM_FOLDERS):continue
                         totals=[b.research['totals'] for b in sf.bots.values()]
-                        print(json.dumps(dict(event='volatility_scalper_health',folder=folder,
+                        print(json.dumps(dict(event='market_maker_health' if folder in MM_FOLDERS else 'volatility_scalper_health',folder=folder,
                             monitored=sum(m['close']>now and not m.get('entry_parked') for m in se.markets.values()),
                             fresh_books=sum(se.book_fresh(t) for t,m in se.markets.items() if m['close']>now),
                             orders=sum(o.status in ('pending','resting') for o in se.orders.values()),
@@ -384,7 +391,7 @@ class HostedRun(ForwardRun):
                             observations=sum(v['opportunities'] for v in totals),submitted=sum(v['submitted'] for v in totals),
                             entry_fills=sum(v['entry_fills'] for v in totals),completed=sum(v['completed'] for v in totals),
                             carryovers=sum(v['settlement_carryovers'] for v in totals),
-                            reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets}}),
+                            reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets} or folder in MM_FOLDERS and any(m.get('bot_id')==b.profile['id'] for m in se.markets.values())}),
                             real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                         valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
@@ -497,7 +504,7 @@ class HostedRun(ForwardRun):
         from .loop_monitor import LoopMonitor
         self.loop_monitor=LoopMonitor();self.loop_monitor.start()
         coroutines=[self.loop_monitor.heartbeat(),self.discover(),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),self.fee_maintenance()]
-        if hasattr(self,'experiments'):coroutines.extend([discover_sets(self),discover_weather(self),discover_sports(self),discover_hourly(self)])
+        if hasattr(self,'experiments'):coroutines.extend([discover_sets(self),discover_weather(self),discover_sports(self),discover_hourly(self),discover_maker(self)])
         workers=[asyncio.create_task(c) for c in coroutines]
         waiter=asyncio.create_task(self.done.wait())
         clean_stop=False

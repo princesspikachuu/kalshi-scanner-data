@@ -21,6 +21,13 @@ class BudgetTests(unittest.TestCase):
             with self.subTest(values=values):
                 b=MonitoringBudget();b.observe(100,*values)
                 self.assertFalse(b.limits(100)['admitting']);self.assertEqual(b.limits(100)['level'],0)
+    def test_fast_burst_does_not_block_admission_by_count_alone(self):
+        b=MonitoringBudget();b.observe(100,600,.002,.2)
+        self.assertTrue(b.limits(100)['admitting']);self.assertAlmostEqual(b.limits(100)['estimated_queue_seconds'],.12)
+        slow=MonitoringBudget();slow.observe(101,600,.002,2);self.assertFalse(slow.limits(101)['admitting'])
+    def test_large_burst_retains_hard_cap_even_with_fast_measured_processing(self):
+        b=MonitoringBudget();b.observe(100,2001,.002,.01)
+        self.assertFalse(b.limits(100)['admitting'])
     def test_one_healthy_sample_after_overload_cannot_immediately_restore_expansion(self):
         b=MonitoringBudget();b.observe(0,300,.1,1);b.observe(65,0,.1,1)
         self.assertEqual(b.limits(65)['total'],32)
