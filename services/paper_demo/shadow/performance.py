@@ -1,6 +1,7 @@
 """Compact minute balance history for deposit-adjusted folder returns."""
 import json
 from decimal import Decimal as D
+from psycopg.errors import InsufficientPrivilege
 from .storage import entry,put
 
 PREFIX='demo/shadow/balance-history/'
@@ -53,8 +54,16 @@ def record_balances(store,accounts,now):
                 ON CONFLICT(idempotency_key) DO NOTHING""",
                     entry('demo/shadow/'+prefix+'/'+folder+'/'+sample['session'],{},dict(at=now,**sample)))
         if int(now//60)%60==0:
-            c.execute('DELETE FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s',(PREFIX,history_key(now-35*86400)))
-            c.execute('DELETE FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s',('demo/shadow/bot-performance-history/','demo/shadow/bot-performance-history/'+f'{int((now-35*86400)//60):012d}'))
+            try:
+                # Optional pruning cannot abort the earlier financial snapshots.
+                # Preserve the DB role boundary; use a savepoint for permission
+                # failures instead of granting a trading worker history deletion.
+                with c.transaction():
+                    c.execute('DELETE FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s',(PREFIX,history_key(now-35*86400)))
+                    c.execute('DELETE FROM research_job WHERE idempotency_key>=%s AND idempotency_key<%s',('demo/shadow/bot-performance-history/','demo/shadow/bot-performance-history/'+f'{int((now-35*86400)//60):012d}'))
+            except InsufficientPrivilege:
+                print(json.dumps(dict(event='paper_balance_retention_deferred',at=now,
+                    reason='worker_role_cannot_delete_history',real_orders_enabled=False)),flush=True)
 
     print(json.dumps(dict(event='paper_folder_balances_sampled',at=now,folders=len(samples),bounded_folders=sum(equity_bounds(s) is not None for s in samples.values()),unpriced_folders=sum(s['equity'] is None and equity_bounds(s) is not None for s in samples.values()),real_orders_enabled=False)),flush=True)
 

@@ -57,6 +57,33 @@ class PerformancePostgres(unittest.TestCase):
         self.assertTrue(fav['performance']['1H']['partial'])
         self.assertEqual(fav['performance']['1H']['since'],15660)
         self.assertEqual(self.demo.get('shadow/balance-origin/favorites/new-session')['progress']['equity'],'1000')
+    def test_denied_cleanup_rolls_back_only_savepoint_and_keeps_snapshots(self):
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        self.seed();folders=self.folders()
+        self.record(folders,60)
+        actual_pool=self.demo.pool
+        class DeniedCleanupConnection:
+            def __init__(self,c):self.c=c
+            def transaction(self):return self.c.transaction()
+            def execute(self,sql,args=None):
+                if sql.startswith('DELETE '):
+                    # A real PostgreSQL error aborts this subtransaction. The
+                    # savepoint must recover it without losing earlier inserts.
+                    return self.c.execute("DO $$ BEGIN RAISE insufficient_privilege; END $$")
+                return self.c.execute(sql,args)
+        @contextmanager
+        def connection():
+            with actual_pool.connection() as c:yield DeniedCleanupConnection(c)
+        store=SimpleNamespace(rows=self.demo.rows,pool=SimpleNamespace(connection=connection))
+        with patch('builtins.print') as log:
+            record_balances(store,{f['id']:f['accounting'] for f in folders},36*86400)
+        self.assertIsNotNone(self.demo.get(history_key(60)[5:]))
+        saved=self.demo.get(history_key(36*86400)[5:])
+        self.assertEqual(saved['progress']['folders']['favorites']['equity'],'1000')
+        self.assertTrue(any('paper_balance_retention_deferred' in str(call) for call in log.call_args_list))
+        self.assertTrue(any('paper_folder_balances_sampled' in str(call) for call in log.call_args_list))
     def test_bounded_retention_and_unknown_equity(self):
         self.seed();folders=self.folders();self.record(folders,60)
         self.record(folders,36*86400)
