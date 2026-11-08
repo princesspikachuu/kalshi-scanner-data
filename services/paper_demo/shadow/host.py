@@ -60,6 +60,7 @@ class HostedRun(ForwardRun):
         self.revisions={p['id']:p['revision'] for p in self.profiles}
         self.fee_slots=asyncio.Semaphore(4);self.fee_locks={}
         self.status={};self.data_versions={};self.health_log_at=0
+        self.suspend_idle_feeds=True
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
         self.experiments.share_external_markets()
         self.experiments.share_legacy_markets()
@@ -80,7 +81,8 @@ class HostedRun(ForwardRun):
     def subscription_books(self):
         books=dict(self.engine.books)
         if hasattr(self,'experiments'):
-            for e,_,_ in self.experiments.portfolios.values():
+            for e,f,_ in self.experiments.portfolios.values():
+                if getattr(self,'suspend_idle_feeds',False) is True and self.experiments.idle_feed(e,f):continue
                 for ticker,book in e.books.items():
                     # A healthy copy must not hide another portfolio's need for
                     # a replacement snapshot on the shared subscription.

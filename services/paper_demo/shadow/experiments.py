@@ -177,6 +177,11 @@ class ExperimentSuite:
                 if e.books[ticker].valid:e.data_gap(ticker,'current fee schedule unverified')
                 if source=='kalshi' and payload.get('msg',{}).get('market_ticker')==ticker:return dict(payload,type='fee_blocked')
         return payload
+    @staticmethod
+    def idle_feed(e,f):
+        return (not any(b.enabled for b in f.bots.values()) and not e.wallet.lots
+            and not any(o.status in ('pending','resting') for o in e.orders.values()))
+
     def handle(self,source,payload,now):
         if source=='set_markets':self.add_set(payload,now);return
         if source=='sports_status':
@@ -192,6 +197,17 @@ class ExperimentSuite:
             self.extra[payload['market']['ticker']]=payload['market']['ticker']
         errors=[]
         for folder,(e,f,ps) in self.portfolios.items():
+            if getattr(self.host,'suspend_idle_feeds',False) is True:
+                idle=self.idle_feed(e,f)
+                if not idle and getattr(e,'idle_feed_suspended',False):
+                    e.sequences.clear();e.book_feed_at.clear()
+                    for ticker in e.books:
+                        if ticker not in e.settled:e.data_gap(ticker,'portfolio resumed; fresh snapshot required')
+                    e.idle_feed_suspended=False
+                if idle and (source=='book_heartbeat' or source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade')):
+                    # No trading intent, outstanding orders or exposure needs
+                    # this duplicate book. Keep lifecycle/settlement processing.
+                    e.idle_feed_suspended=True;continue
             local=payload
             if source in ('market','weather_market','sports_market','hourly_market'):
                 if folder not in (*SEQUENTIAL_FOLDERS,'favorites') or source=='hourly_market' and folder!='favorites':continue
