@@ -291,7 +291,7 @@ class VolatilityScalper(ConvexityStrategy):
         for cell in self.cells(a['meta']):
             cell['peak']=max(cell['peak'],cell['net'])
             cell['max_drawdown']=max(cell['max_drawdown'],cell['peak']-cell['net'])
-        self.increment(a['meta'],**{('maker_net' if a.get('entry_execution',a['meta'].get('execution'))=='maker' else 'taker_net'):net},adverse_losses=min(0,net) if a.get('exit_reason') in ('stop_loss','thesis_invalid','momentum_exhaustion') else 0)
+        self.increment(a['meta'],**{('maker_net' if a.get('entry_execution',a['meta'].get('execution'))=='maker' else 'taker_net'):net},adverse_losses=min(0,net) if a.get('exit_reason') in ('stop_loss','thesis_invalid','momentum_exhaustion','maker_adverse_selection') else 0)
         row=dict(a,ticker=ticker,exit_at=self.e.now,exit_remaining=max(0,self.e.markets[ticker]['close']-self.e.now))
         compact={k:v for k,v in row.items() if k not in ('entry_features','config')}
         self.research['recent']=(self.research['recent']+[compact])[-20:]
@@ -311,7 +311,10 @@ class VolatilityScalper(ConvexityStrategy):
         if bid is not None:
             move=float(bid)-a['average_price']
             a['mfe']=max(a['mfe'],move);a['mae']=min(a['mae'],move)
-        urgent=remaining<=c['liquidate'] or now-a['entered_at']>=c['max_hold'] or m.get('maker_event_window',False)
+        maker_features=(self.features(ticker,a['side']) or {}) if c['approach']=='market_maker' and ticker in self.history else {}
+        maker_adverse=bool(maker_features) and (maker_features.get('trend',0)<-max(.025,2*maker_features.get('sigma',0)) or
+            maker_features.get('trade_pressure',0)<-.7 or maker_features.get('depth_withdrawal',0)>.5)
+        urgent=remaining<=c['liquidate'] or now-a['entered_at']>=c['max_hold'] or m.get('maker_event_window',False) or maker_adverse
         if urgent:e.cancel_buys(ticker)
         if remaining<=0 or bid is None or bid<=0:
             reason='closed_before_liquidation' if remaining<=0 else 'liquidation_missing_fresh_bid'
@@ -348,7 +351,7 @@ class VolatilityScalper(ConvexityStrategy):
         if not (urgent or stop or take or trail):return
         if take and not urgent and not stop and not a.get('partial_taken') and quantity>=2:
             quantity=(quantity/2).to_integral_value(rounding=ROUND_FLOOR)
-        reason='thesis_invalid' if invalid else 'momentum_exhaustion' if exhaustion else 'time_liquidation' if urgent else 'stop_loss' if stop else 'trailing_exit' if trail else 'partial_profit' if quantity<sum((l.quantity for l in lots),ZERO) else 'take_profit'
+        reason='maker_adverse_selection' if maker_adverse else 'thesis_invalid' if invalid else 'momentum_exhaustion' if exhaustion else 'time_liquidation' if urgent else 'stop_loss' if stop else 'trailing_exit' if trail else 'partial_profit' if quantity<sum((l.quantity for l in lots),ZERO) else 'take_profit'
         a['exit_reason']=reason
         e.log('SCALPER_EXIT_DECISION',ticker=ticker,reason=reason,details=json.dumps(dict(
             time_remaining=remaining,net_move=net_move,unfavorable_liquidation=urgent and net_move<0,

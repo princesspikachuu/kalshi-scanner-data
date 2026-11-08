@@ -192,6 +192,10 @@ class ExperimentSuite:
         return False
     def park_candidate(self,t,m,now):
         self.rotation_exclusions[t]=min(m['close'],now+60)
+        if m.get('market_maker'):
+            row=getattr(self,'maker_discovery',{}).get('candidates',{}).get(t)
+            if row is not None:
+                row.pop('ready',None);row.update(reason='current_quotes_no_longer_eligible' if m.get('maker_unquotable_since') is not None else 'monitoring_released',retry_at=now+60)
         for folder,(e,f,ps) in self.portfolios.items():
             if t not in e.markets or folder=='complete_set':continue
             b=f.owner(t);a=b.attempts.get(t,{}) if b else {}
@@ -306,9 +310,14 @@ class ExperimentSuite:
             m=payload['market'];ticker=m['ticker']
             discovery=getattr(self,'maker_discovery',{})
             row=discovery.get('candidates',{}).get(ticker)
+            if ticker not in self.extra and not any(p['market_category']==m['market_category'] and ticker not in p.get('paused_markets',[])
+                for p in self.enabled_profiles('market_maker')):
+                if row is not None:row.pop('ready',None);row['reason']='strategy_paused'
+                return
             if (ticker not in self.extra and not self.search_capacity('market_maker',now)) or not self.extra_capacity([ticker],now):
                 if row is not None:
                     row.update(reason='shared_admission_rejected_capacity',retry_at=now+30)
+                    if row.get('ready'):row['ready']['next_try']=time.time()+5
                     discovery['state']='Verified candidate deferred by current capacity'
                 return
             self.extra[ticker]=ticker
@@ -321,6 +330,7 @@ class ExperimentSuite:
                     e.books[ticker].valid=False
                 e.handle('market',dict(payload,market=dict(m,bot_id=profile['id'],bot_name=profile['name'],bot_revision=profile['revision'],strategy_version=profile['version'])),now)
             if row is not None:
+                row.pop('ready',None)
                 row['reason']='admitted_to_shared_monitoring'
                 discovery['state']='Verified candidate admitted'
             return

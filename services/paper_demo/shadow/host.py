@@ -24,6 +24,7 @@ from .scalper_install import initialize_scalper,initialize_scalper_upgrade
 from .scalper import SCALPER_FOLDERS
 from .market_maker import MM_FOLDERS
 from .market_maker import initialize_market_maker,discover_maker
+from .maker_quote_policy import initialize_quote_policy
 
 LOG=logging.getLogger('shadow-host')
 
@@ -45,6 +46,7 @@ class HostedRun(ForwardRun):
         initialize_scalper(store,guard)
         initialize_scalper_upgrade(store,guard)
         initialize_market_maker(store,guard)
+        initialize_quote_policy(store,guard)
         all_rows=store.rows('shadow/bot/',BOT_LIMIT)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
@@ -290,8 +292,9 @@ class HostedRun(ForwardRun):
                 burst=self.queue.qsize()>128
                 # Amortize full-state checkpoint/database cost during bursts.
                 # Every input remains ordered; sockets and controls regain the
-                # event loop at the 80 ms budget or 512-input boundary.
-                max_inputs,max_simulation=(512,.080) if burst else (128,.020)
+                # event loop at a bounded simulation/time boundary. Large
+                # backlogs amortize the measured full-checkpoint cost further.
+                max_inputs,max_simulation=(1024,.160) if self.queue.qsize()>2000 else (512,.080) if burst else (128,.020)
                 try:
                     while True:
                         source,payload,received=item
