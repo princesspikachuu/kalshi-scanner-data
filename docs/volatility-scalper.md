@@ -27,7 +27,10 @@ entry policy is unchanged. Inactive series remain subject to shared backoff.
 Other market categories can be added through the profile registry; unregistered
 sports, weather and long-duration markets are not scanned by this release.
 
-Each strategy evaluates at most once per ticker every two seconds. Windows hold
+Each strategy evaluates entries at most once per ticker every two seconds,
+aligned across all markets and variants on the shared clock. This batches
+opportunity journaling and full checkpoints per frame; position protection
+still reacts to each relevant book event. Windows hold
 at most 60 samples over 120 seconds and require five fresh samples. New entries
 pause under measured worker backlog/lag; held inventory retains protective exits.
 Per-portfolio public-book copies provide isolated hypothetical depth overlays;

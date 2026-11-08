@@ -161,6 +161,23 @@ class ScalperTests(unittest.TestCase):
         self.assertEqual(config,b.config)
         self.assertIn(before['split'],('training','validation'))
         self.assertTrue(all(not p.get('live_enabled') for p in scalper_profiles()))
+    def test_entry_observations_align_to_clock_frames_and_exits_stay_event_driven(self):
+        e,b=self.setup_bot()
+        def book(at,seq,price):
+            e.handle('kalshi',dict(type='orderbook_snapshot',sid=1,seq=seq,msg=dict(market_ticker=T,yes_dollars_fp=[[str(price),'100']],no_dollars_fp=[[str(1-D(str(price))-D('.02')),'100']])),at)
+        book(201,1,.6)
+        self.assertFalse(b.history)
+        e.handle('clock',{},202)
+        self.assertEqual(len(b.history[T]),1)
+        book(202.1,2,.5);e.handle('clock',{},202.2)
+        self.assertEqual(len(b.history[T]),1)
+        e.handle('clock',{},204)
+        self.assertEqual(len(b.history[T]),2)
+        # A held position's stop reacts to the next book event, not its frame.
+        e,b=self.setup_bot();self.warm(e,b);self.fill_entry(e,b)
+        book(209,1,.20)
+        self.assertTrue(any(o.action=='sell' for o in e.orders.values()))
+
     def test_opportunity_batch_preserves_every_variant_and_existing_events(self):
         from services.paper_demo.shadow.storage import HostedAudit
         from services.paper_demo.shadow.core import StrategyFleet
