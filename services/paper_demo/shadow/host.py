@@ -479,7 +479,9 @@ class HostedRun(ForwardRun):
             print(json.dumps(dict(event='shadow_fee_warmup',markets=len(restored),verified=sum(results),
                                   real_orders_enabled=False)),flush=True)
         # Called from the trading thread; the process signal handler owns stop.
-        coroutines=[self.discover(),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),self.fee_maintenance()]
+        from .loop_monitor import LoopMonitor
+        self.loop_monitor=LoopMonitor();self.loop_monitor.start()
+        coroutines=[self.loop_monitor.heartbeat(),self.discover(),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),self.fee_maintenance()]
         if hasattr(self,'experiments'):coroutines.extend([discover_sets(self),discover_weather(self),discover_sports(self),discover_hourly(self)])
         workers=[asyncio.create_task(c) for c in coroutines]
         waiter=asyncio.create_task(self.done.wait())
@@ -491,6 +493,7 @@ class HostedRun(ForwardRun):
             clean_stop=self.done.is_set()
         finally:
             self.done.set()
+            self.loop_monitor.stop()
             for task in workers+[waiter]:task.cancel()
             await asyncio.gather(*workers,waiter,return_exceptions=True)
             # A failed commit must not be followed by an un-audited checkpoint

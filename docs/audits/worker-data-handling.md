@@ -51,3 +51,11 @@ The hosted paper executor now schedules order and cancel arrival at actual worke
 Favorites now track execution-window quality from a verified entry request through exit or market close. An earlier cycle gap remains invalid in historical cycle metrics but does not poison a new clean execution window. A gap while orders/exposure remain active, or a restart during an open window, excludes execution/exit learning. Verified entry-price forecasts still use their fresh fill observation and authoritative final outcome independently of interim execution gaps. Financial results retain every trade. No prior unknown window is backfilled as verified.
 
 Liquidation and IOC depth traversal now calculate only needed levels. Price ordering is cached until price membership changes; quantity changes and hypothetical depth-use overlays are read fresh. This avoids sorting and evaluating an entire book for every position check while preserving price priority, fees, partial fills and shadow depth accounting. Burst telemetry remains the measure of live throughput; this optimization is not a guarantee of zero queues under every feed load.
+
+## Root cause of residual multi-second stalls
+
+The shared REST limiter's `wait()` held its threading lock while sleeping for the next read slot. The trading consumer, discovery admission checks and fee maintenance synchronously call `remaining()`, which acquires the same lock. Contending REST threads could therefore make the supposedly cheap cooldown read block the entire event loop for several pacing intervals, even with low measured simulation and database time.
+
+The limiter now holds its lock only while checking cooldown and claiming a read slot. It sleeps outside the lock, then rechecks both slot eligibility and newly imposed cooldowns. The configured three-reads-per-second pacing remains unchanged. Rate-limit rejection can be applied immediately while other callers sleep. A regression holds a REST waiter asleep and verifies that cooldown updates/reads finish before that waiter is released, and that the sleeping request then rejects the newly imposed cooldown.
+
+A bounded independent loop watchdog records only code locations, GC timings and CPU counters if a stall exceeds one second. It records no frame locals, provider bodies or credentials and makes no trading decisions.
