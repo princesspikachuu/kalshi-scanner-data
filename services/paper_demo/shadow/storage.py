@@ -150,11 +150,14 @@ class HostedAudit:
         # Reuse the lossless codec instead of asking PostgreSQL to parse and
         # rewrite megabytes of repeated research counters every five seconds.
         started=time.monotonic();payload=pack_checkpoint(data,binary=True)
-        prepared=time.monotonic();self.store.put('shadow/status',payload)
+        prepared=time.monotonic();self.store.put('shadow/status',payload);finished=time.monotonic()
         if time.monotonic()>=getattr(self,'status_log_at',0):
+            # One startup reference gives a same-document wire-size comparison;
+            # do not reserialize the large JSON view on every publication.
+            reference=len(json.dumps(data,default=str).encode()) if not hasattr(self,'status_log_at') else None
             self.status_log_at=time.monotonic()+30
             print(json.dumps(dict(event='shadow_status_cost',encoding=payload.get('checkpoint_encoding','json'),
                 decoded_bytes=payload.get('bytes'),stored_bytes=len(payload.get('data','')),
-                prepare_ms=(prepared-started)*1000,write_ms=(time.monotonic()-prepared)*1000,
+                reference_json_bytes=reference,prepare_ms=(prepared-started)*1000,write_ms=(finished-prepared)*1000,
                 real_orders_enabled=False)),flush=True)
     def close(self):pass
