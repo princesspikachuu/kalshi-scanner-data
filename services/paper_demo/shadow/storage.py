@@ -1,5 +1,6 @@
 """Atomic hosted wallet/checkpoint and audit records under the existing trading fence."""
 import asyncio,json,time,tempfile
+from copy import deepcopy
 from collections import Counter
 from pathlib import Path
 from uuid import uuid4
@@ -34,6 +35,7 @@ class HostedAudit:
         # before psycopg. Audit events and this payload still commit together.
         data=encode(self.engine,self.fleet)
         if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
+        if hasattr(self,'_frozen_discovery'):data['experiments']['_maker_discovery']=self._frozen_discovery
         payload=pack_checkpoint(data)
         if payload.get('checkpoint_encoding') and time.monotonic()>=getattr(self,'codec_log_at',0):
             self.codec_log_at=time.monotonic()+30
@@ -124,12 +126,23 @@ class HostedAudit:
         # The caller holds the state mutex until this entire operation finishes.
         # Encoding/compression is CPU work too: leave the socket loop free while
         # freezing state, without permitting the next wallet mutation to race it.
-        if records:await self.durable_io(self.commit,records)
+        if records:
+            self.freeze_discovery()
+            try:await self.durable_io(self.commit,records)
+            finally:self.__dict__.pop('_frozen_discovery',None)
+    def freeze_discovery(self):
+        # Discovery coroutines update their operational cursor/cache outside the
+        # wallet mutex. Freeze that bounded cache on its owning event loop; all
+        # financial/research state remains protected by the caller's mutex.
+        experiments=getattr(self,'experiments',None)
+        if experiments is not None:self._frozen_discovery=deepcopy(getattr(experiments,'maker_discovery',None))
     def write_checkpoint(self,data):
         self.guard()
         with self.store.pool.connection() as c:put(c,KEY,{},data)
         self.last_snapshot=time.monotonic()
     async def checkpoint_async(self):
-        await self.durable_io(self.checkpoint)
+        self.freeze_discovery()
+        try:await self.durable_io(self.checkpoint)
+        finally:self.__dict__.pop('_frozen_discovery',None)
     def checkpoint(self):self.write_checkpoint(self.checkpoint_snapshot())
     def close(self):pass
