@@ -4,7 +4,7 @@ from collections import OrderedDict
 import msgpack
 
 class CheckpointSegments:
-    def __init__(self,max_bytes=16*1024*1024,max_entries=128,min_bytes=4096):
+    def __init__(self,max_bytes=16*1024*1024,max_entries=512,min_bytes=4096):
         self.max_bytes=max_bytes;self.max_entries=max_entries;self.min_bytes=min_bytes
         self.cache=OrderedDict();self.bytes=0;self.hits=0;self.misses=0;self.evictions=0
     @staticmethod

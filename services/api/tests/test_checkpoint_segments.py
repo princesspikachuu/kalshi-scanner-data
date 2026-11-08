@@ -17,6 +17,12 @@ def dataset():
                 attempts={'live':dict(quantity='1.25',price='.42')},scalper=dict(research=research,config=dict(order_ttl=1800)))))))
 
 class CheckpointSegmentTests(unittest.TestCase):
+    def test_default_cache_covers_the_full_scalper_and_maker_profile_population(self):
+        data=dict(experiments=dict(strategy=dict(strategies={str(i):dict(scalper=dict(research=dict(padding='x'*5000))) for i in range(273)})))
+        cache=CheckpointSegments();pack_checkpoint(data,threshold=0,binary=True,segments=cache)
+        before=cache.metrics();value=pack_checkpoint(data,threshold=0,binary=True,segments=cache)
+        self.assertEqual(cache.metrics()['hits']-before['hits'],273)
+        self.assertEqual(unpack_checkpoint(value),data)
     def test_decoded_bytes_hash_schema_money_and_research_are_identical(self):
         data=dataset();cache=CheckpointSegments()
         whole=pack_checkpoint(data,threshold=0,binary=True)
