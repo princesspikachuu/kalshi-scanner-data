@@ -23,7 +23,7 @@ class ProductionData:
         self.reads=0;self.cooldown=0;self.next_read=0;self.before_read=None
     def close(self):self.client.close()
     def call(self,method,path,params=None):
-        if method!='GET' or not (path in ('/incentive_programs','/milestones','/events','/markets','/markets/trades','/series/fee_changes','/events/fee_changes','/exchange/status','/api_keys','/account/limits') or re.fullmatch(r'/(?:markets/[A-Za-z0-9][A-Za-z0-9.-]{0,127}(?:/orderbook)?|series/[A-Za-z0-9-]{1,128}|live_data/milestone/[A-Za-z0-9-]{1,128})',path)):
+        if method!='GET' or not (path in ('/series','/incentive_programs','/milestones','/events','/markets','/markets/trades','/series/fee_changes','/events/fee_changes','/exchange/status','/api_keys','/account/limits') or re.fullmatch(r'/(?:markets/[A-Za-z0-9][A-Za-z0-9.-]{0,127}(?:/orderbook)?|series/[A-Za-z0-9-]{1,128}|live_data/milestone/[A-Za-z0-9-]{1,128})',path)):
             raise ExchangeFailure('paper_network_write_forbidden')
         if self.before_read:self.before_read()
         if time.monotonic()<self.cooldown:raise ExchangeFailure('paper_data_rate_limited')
