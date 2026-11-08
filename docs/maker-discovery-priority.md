@@ -19,3 +19,7 @@ GET /series is explicitly permitted by the GET-only adapter. Catalogues use cate
 A public read on November 8, 2026 verified that the Football-tagged Sports catalogue returned 604 series in approximately 0.98 MB, below the unchanged 4 MiB cap. If the full Sports catalogue fails, one conditional Football-tagged catalogue query is allowed per hour, still at most one catalogue query per pass. The total maximum is seven catalogue queries per hour. The tagged query uses the same ranking, current-trade verification and shared stream as other candidates.
 
 The futures classifier includes championships, conferences/divisions, season awards, playoff qualification, trophies and Super Bowl futures. It excludes game, half, quarter, period, inning, spread, touchdown and yardage series, including misleading first-half and quarter names containing “winner.” A bare unclassified “winner” is not sufficient futures evidence. Minimum remaining time, current liquidity, executed-trade counts and execution economics remain required.
+
+## Healthy-window scheduling
+
+Paused discovery checks cached worker health once per second without consuming the 30-second data-fetch timer. A newly healthy window can therefore run the next due scan promptly. Actual discovery requests remain limited to one pass per 30 seconds; settlement remains limited to four markets per 30 seconds and one check per ticker per 60 seconds. Paused diagnostics are emitted at most once per 30 seconds. Resource admission thresholds are unchanged.
