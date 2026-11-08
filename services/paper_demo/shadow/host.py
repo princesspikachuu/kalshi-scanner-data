@@ -82,8 +82,22 @@ class HostedRun(ForwardRun):
         return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
             or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
 
+    def legacy_input_needed(self,source,payload):
+        if getattr(self,'suspend_idle_feeds',False) is not True:return True
+        needed=self.spot_required()
+        if needed and getattr(self,'legacy_feed_suspended',False):
+            self.engine.sequences.clear();self.engine.book_feed_at.clear()
+            for ticker in self.engine.books:
+                if ticker not in self.engine.settled:self.engine.data_gap(ticker,'legacy resumed; fresh snapshot required')
+            self.legacy_feed_suspended=False
+        if not needed and (source=='book_heartbeat' or source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade')):
+            self.legacy_feed_suspended=True
+            self.legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0)+1
+            return False
+        return True
+
     def subscription_books(self):
-        books=dict(self.engine.books)
+        books=dict(self.engine.books) if getattr(self,'suspend_idle_feeds',False) is not True or self.spot_required() else {}
         if hasattr(self,'experiments'):
             for e,f,_ in self.experiments.portfolios.values():
                 if getattr(self,'suspend_idle_feeds',False) is True and self.experiments.idle_feed(e,f):continue
@@ -227,7 +241,7 @@ class HostedRun(ForwardRun):
             event_loop_lag_max_seconds=getattr(self,'loop_lag_max',0),
             last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
-            last_control_ms=getattr(self,'last_control_ms',None),
+            last_control_ms=getattr(self,'last_control_ms',None),legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0),
             input_types=getattr(self,'input_counts',{}),real_orders_enabled=False)),flush=True)
         self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
         self.input_counts={};self.loop_lag_max=0
@@ -254,7 +268,8 @@ class HostedRun(ForwardRun):
                         if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
                         last=now
                         try:
-                            payload=self.prepare_fees(source,payload,now)
+                            legacy_input=self.legacy_input_needed(source,payload)
+                            if legacy_input:payload=self.prepare_fees(source,payload,now)
                             if source=='rest_settlement_confirmed':
                                 if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
                                 ticker=payload['ticker']
@@ -268,7 +283,7 @@ class HostedRun(ForwardRun):
                                     self.engine.cancel_buys(ticker)
                                     self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
                                     recovered.append(ticker)
-                            elif source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
+                            elif legacy_input and source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
                                 try:self.engine.handle(source,payload,now)
                                 except ValueError as exc:self.reject_input(source,payload,exc)
                             if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
