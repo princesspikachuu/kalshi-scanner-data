@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -19,7 +19,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -156,6 +156,12 @@ test('each bot including experiments has six P/L windows visible while collapsed
  for(const id of ['complete_set','sequential','favorites','convexity']){
   for(const p of ['all','1H','6H','24H','7D','30D'])assert.ok(html.includes(`data-bot-summary="${id}" data-summary-period="${p}"`),`${id} ${p}`);
  }
+});
+test('favorite timing research separates market series, event clocks and small-sample evidence',()=>{
+ const html=favoriteTimingMarkup([{series:'KXNBAGAME',market_type:'sports',side:'yes',price:'.90',horizon:'10–15m',clock:'estimated_game_end',
+ contracts:'10',open_contracts:'0',events:1,event_win_rate:100,break_even:90,net:'1',average_holding_minutes:'10',net_per_dollar_hour:'.66',unverified:'0'}]);
+ for(const text of ['90¢','10–15m','KXNBAGAME','Estimated game end','market types are not pooled','not a verified 90%','Early sample'])assert.ok(html.includes(text),text);
+ assert.ok(!html.includes('<table'));assert.ok(!html.includes('NaN'));
 });
 test('bot P/L separates total, realized and unrealized changes with honest coverage',()=>{
  const bot={id:'fav',account:{},performance:{'1H':{pnl:'2.5',realized_pnl:'1',partial:true,since:100}}};

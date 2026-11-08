@@ -9,6 +9,7 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
+from .favorite_timing import rows as favorite_timing_rows
 from .monitoring import MonitoringBudget,protected,category as market_category
 from .discovery_budget import CATEGORY_LIMITS
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
@@ -313,7 +314,7 @@ class ExperimentSuite:
                     unmatched=sum(1 for a in attempts if not a.get('complete') and not a.get('finished')) if folder=='complete_set' else sum(1 for a in attempts if a.get('first') and not a.get('recorded')),
                     decision=list(b.decisions.values())[-1] if getattr(b,'decisions',{}) else None,
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
-                    scans=getattr(b,'scans',None),calibration=calibration)
+                    scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else None,
                 assumptions=dict(latency_ms=150,independent_paper_portfolio=True,real_orders_enabled=False))
         return result

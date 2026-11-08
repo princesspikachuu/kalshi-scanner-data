@@ -6,13 +6,13 @@ price and time; correlated thresholds from one event count only once per cell.
 """
 import math
 from decimal import Decimal as D, ROUND_FLOOR
+from .favorite_timing import horizon,clock
 
 TICK = D('.01')
 
 
-def entry_key(series, side, bid, remaining):
-    horizon = 'under5' if remaining < 300 else 'under15' if remaining < 900 else 'under60' if remaining < 3600 else 'daily'
-    return f'entry|{series}|{side}|{int(bid * 20)}|{horizon}'
+def entry_key(series, side, bid, remaining, basis='market_close'):
+    return f'entry-v2|{series}|{side}|{int(bid*100)}|{horizon(remaining)}|{basis}'
 
 
 def observe(cells, key, event, payout):
@@ -46,7 +46,9 @@ def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
     if bid is None or ask is None or bid >= ask:
         return None
     exploration = profile.get('paper_exploration', True) is not False
-    key = ('paper-data-v3|' if exploration else '')+entry_key(profile['series'], side, bid, engine.markets[ticker]['close']-engine.now)
+    remaining,basis=clock(engine.markets[ticker],engine.now)
+    candidate=min(bid+TICK,ask-TICK,D('.95'))
+    key = ('paper-data-v3|' if exploration else '')+entry_key(profile['series'],side,candidate,remaining,basis)
     value = estimate(cells, key)
     buffer = max(TICK, D(str(profile.get('entry_edge_buffer', '.02'))))
     ceiling = D('.95')
@@ -59,11 +61,14 @@ def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
         quantity = contracts
         mode = 'paper_exploration'
     else:
-        if value['lower'] is None:return None
-        ceiling = min(ceiling, D(str(value['lower']))-buffer)
-        price = min(bid+TICK, ask-TICK, ceiling)
-        quantity = contracts
-        mode = 'calibrated_maker'
+        price=min(bid+TICK,ask-TICK,ceiling).quantize(TICK,rounding=ROUND_FLOOR)
+        while price>=D('.70'):
+            key=entry_key(profile['series'],side,price,remaining,basis);value=estimate(cells,key)
+            if value['lower'] is not None and price+engine.fees[ticker].charge(contracts,price,True)/contracts+buffer<=D(str(value['lower'])):break
+            price-=TICK
+        if price<D('.70'):return None
+        quantity=contracts
+        mode='calibrated_maker'
     price = price.quantize(TICK, rounding=ROUND_FLOOR)
     if not D('.70') <= price <= D('.95'):
         return None
@@ -76,15 +81,15 @@ def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
     fee = engine.fees[ticker].charge(quantity, price, True)
     # Walk price down for the actual series fee, including rounding.
     if not exploration:
-        while price >= D('.70') and price+fee/quantity+buffer > D(str(value['lower'])):
-            price -= TICK
-            fee = engine.fees[ticker].charge(quantity, price, True)
-        if price < D('.70'):
+        if price+fee/quantity+buffer > D(str(value['lower'])):
             return None
     if quantity*price+fee > available:
         quantity=min(quantity,(available/(price+fee/quantity)).to_integral_value(rounding=ROUND_FLOOR))
         if quantity<1:return None
         fee=engine.fees[ticker].charge(quantity,price,True)
         if quantity*price+fee>available:return None
+    if not exploration and price+fee/quantity+buffer>D(str(value['lower'])):return None
+    if exploration:
+        key='paper-data-v3|'+entry_key(profile['series'],side,price,remaining,basis);value=estimate(cells,key)
     return dict(price=price, quantity=quantity, fee=fee, mode=mode,
                 estimate=value, key=key, ceiling=str(ceiling),policy='favorites-paper-data-v3' if exploration else 'favorites-value-v2')

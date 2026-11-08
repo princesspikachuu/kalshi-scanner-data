@@ -20,7 +20,7 @@ class MakerEntries(unittest.TestCase):
         return e,b,book
 
     def seed(self,b,n=200,wins=200):
-        key=('paper-data-v3|' if b.profile.get('paper_exploration',True) is not False else '')+entry_key('KXBTCD','yes',D('.79'),800)
+        key=('paper-data-v3|' if b.profile.get('paper_exploration',True) is not False else '')+entry_key('KXBTCD','yes',D('.80'),800)
         for i in range(n):observe(b.exit_evidence.cells,key,str(i),int(i<wins))
         return key
 

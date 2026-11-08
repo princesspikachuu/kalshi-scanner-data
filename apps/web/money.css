@@ -105,3 +105,5 @@
 .market-type-heading .market-type-name{flex:1 1 180px}
 .market-type-values strong{font-size:22px}
 .market-type-coverage{font-size:11px;line-height:1.5}
+
+.favorite-timing{margin:18px 0}.favorite-timing>summary{font-weight:700;cursor:pointer}.favorite-timing .comparison-grid{margin-top:12px}

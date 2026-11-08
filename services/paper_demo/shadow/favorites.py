@@ -3,7 +3,8 @@ import json
 from decimal import Decimal as D
 from .core import ConvexityStrategy,ZERO
 from .risk import ExitEvidence,assess
-from .favorite_entries import quote,observe
+from .favorite_entries import quote,observe,entry_key
+from . import favorite_timing
 
 class FavoritesStrategy(ConvexityStrategy):
     recover_fresh_entries=True
@@ -13,6 +14,7 @@ class FavoritesStrategy(ConvexityStrategy):
         self.last_reason=('Waiting for verified live sport · final two estimated hours' if profile.get('asset')=='sports' else 'Waiting for a 70–95¢ favorite · maker entry with evidence-based risk exits')
     def on_fill(self,order,quantity):
         a=self.attempts.get(order.ticker)
+        favorite_timing.fill(self,order,quantity,entry_key)
         if a and order.action=='buy':
             a['first']=True
             if a.get('entry_policy')=='favorites-paper-data-v3':
@@ -83,10 +85,11 @@ class FavoritesStrategy(ConvexityStrategy):
             if m.get('paid'):
                 if not a or a.get('recorded'):continue
                 s=self.e.wallet.stat(ticker)
+                favorite_timing.settle(self,ticker,observe)
                 if s.valid and a['first'] and m.get('yes_payout_confirmed') in ('0','1'):
                     payout=int(m['yes_payout_confirmed']==('1' if a['side']=='yes' else '0'))
                     for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
-                    if a.get('entry_key'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout)
+                    if a.get('entry_key') and not a.get('entry_fills'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout)
                 a.update(recorded=True,completed=a['first'],net=str(s.gross-s.realized_fees))
                 self.last_reason='Favorite trial settled; result includes all fees'
                 continue
