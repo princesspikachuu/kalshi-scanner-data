@@ -1,5 +1,7 @@
 # Money Tree worker resource audit — November 8, 2026
 
+Latest follow-up, approximately **09:44 Pacific**: recurring dashboard status payloads are about 83% smaller, the diagnosed sports retry bug is fixed and live scans are succeeding, and Competitive Maker has a confirmed paper round trip. The final section records the follow-up; earlier sections preserve their original measurement windows and limitations.
+
 ## A. Measured resource usage and architecture
 
 This audit changes no service tier, instance count, trading settings, risk limits, retention policy or historical data. The existing paper worker was already upgraded separately to **1 CPU / 2 GiB** at 06:21 Pacific. Measurements from its previous 0.5-CPU / 512-MiB tier are not used to claim optimization savings.
@@ -205,3 +207,34 @@ Tests cover causal book updates, public-depth/partial-fill execution, independen
 - Processing bursts still delay inputs by seconds, and disconnect/stale-book gaps were observed during earlier rollout intervals. Freshness gates, admission pauses, queue simulation and unavailable-liquidation records remain active. The next performance priority is reducing repeated unchanged checkpoint work and diagnosing sports metadata failures, rather than buying more compute or weakening checks.
 
 No additional Render services, instances or paid tiers were created or enabled. No real-money execution was enabled. The observed improvements reduce known waste, but do not establish that the current configuration can sustain unlimited market growth or that any trading strategy is profitable.
+
+## Follow-up: recurring status writes and sports discovery
+
+Work resumed around 09:10 Pacific. The worker still had multi-second queue bursts, successful REST requests, approximately 620 MB resident process memory and repeated full derived-status writes every five seconds. This follow-up keeps the existing compute tier, accounting persistence, trading parameters, freshness protections and monitoring limits.
+
+[PR #109](https://github.com/princesspikachuu/kalshi-scanner-data/pull/109) compresses the derived `shadow/status` document with the existing bounded lossless codec. Both legacy plain status documents and compressed documents are decoded transparently by `DemoStore`. API readers were deployed and readiness verified before deploying the worker writer. This is separate from financial checkpoint/audit transactions; their fencing and atomicity are unchanged.
+
+The first live same-document measurement at **09:27:08 Pacific** was **6,138,421 bytes as the previous JSON representation versus 1,063,832 bytes of compressed base64 payload**, excluding the small envelope overhead: approximately **82.7% smaller**. Preparation took 60.3 ms and the database write took 73.0 ms in that sample. Subsequent sampled status preparations were approximately 42–61 ms; sampled writes were 78–232 ms. The JSON reference is serialized only once at startup, avoiding recurring measurement overhead. This measures payload size, not physical database disk-space reclamation.
+
+| Short observational window | Before: 09:14–09:20 | After: 09:28–09:32 |
+|---|---:|---:|
+| Approximately 30-second pipeline windows | 13 | 9 |
+| Mean inputs processed / window | 32,607 | 40,680 |
+| Preparation + commit wall ms / 1,000 inputs | 332.6 | 280.4 |
+| Mean window maximum queue delay | 4.08 s | 2.02 s |
+| Worst queue delay within window | 7.59 s | 4.88 s |
+| Mean sampled last control-cycle duration | 412.4 ms | 64.7 ms |
+
+These windows have different traffic, positions and market phases. The control-cycle figure samples the most recent cycle when a pipeline log is emitted; it is not a complete distribution of all control cycles. Several post-rollover windows had subsecond queue delay, but later trade records still measured approximately two seconds of worker delay. The observations support reduced reporting overhead, not a claim that all queue bursts are fixed. Other concurrent Maker lifecycle work was preserved and changes the market mix, further limiting causal attribution beyond the same-document byte comparison.
+
+The same release added rate-limited sports diagnostics containing source function/line and only allowlisted schema-key names. No provider bodies, frame locals or exception text are logged. The existing ten-second retry cadence is unchanged. A live retry at **09:27:28 Pacific** identified `sports_once`, line 143: its final retry calculation indexed state for every listed event, although successful admission or the three-event processing budget can leave later events unvisited. The missing key was an event identifier, so it was correctly withheld by the diagnostics allowlist.
+
+[PR #111](https://github.com/princesspikachuu/kalshi-scanner-data/pull/111) uses a safe lookup and leaves unvisited events immediately eligible for the next fair series pass. Regression tests reproduce the successful-first-admission case with two listed events and a five-event scheduled batch capped at three metadata checks. The fix does not weaken live-game verification, add polling, alter eligibility thresholds, or bypass the processing budget.
+
+The integrated local suite passed **1,278 tests** with **247 database-dependent tests skipped**. PostgreSQL CI validates the status codec's exact readback and legacy-format compatibility. Live logs after compressed publication continue to show current books, orders, fractional fills and completed Scalper round trips. Competitive Maker now has **one confirmed paper entry fill and one completed round trip** in its retained health counters, superseding the earlier no-confirmed-fills limitation. One trade is not evidence of reliable profitability.
+
+The sports fix passed **1,278 tests in PostgreSQL CI**. The final combined source, including concurrently merged Maker lifecycle/eligibility and reporting-timeout isolation fixes, passed **1,287 local tests**, with **249 database-dependent tests skipped locally**. The API reader deployment and worker writer deployment both reached `live`; the API readiness request returned HTTP 200 before the compressed writer was deployed.
+
+After the fixed worker resumed at approximately 09:37 Pacific, successful sports scans were observed repeatedly across tennis, NBA, NFL, NHL, baseball and college football through at least 09:43. The three-event path and successful scan completion were visible; no `paper_sports_retry` or `trading_router_recovery` records appeared in that observed post-fix interval. A second warmup during this interval corresponded to a concurrent Maker deployment, not a logged worker exception. Current books and paper fills continued afterward. This is a bounded live verification window, not a guarantee against every future metadata error.
+
+The concurrent reporting-isolation change moves frozen minute-history database work outside the execution mutex and defers reporting-only statement timeouts. It was preserved and tested; its effects are not attributed to status compression alone. Historical financial checkpoint/audit failure behavior remains strict. Burst latency still warrants further work, especially repeated full checkpoints and historical aggregation costs. No paid compute, worker instance counts, trading thresholds or historical retention settings were changed by this follow-up. No new authenticated visual dashboard verification was available in this browser.
