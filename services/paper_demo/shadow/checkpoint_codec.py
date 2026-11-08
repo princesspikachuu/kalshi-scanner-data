@@ -7,7 +7,7 @@ MAX_BYTES=64*1024*1024
 
 def reject_extension(code,data):raise ValueError('Unsupported checkpoint value')
 
-def pack_checkpoint(data,threshold=65536,*,binary=False):
+def pack_checkpoint(data,threshold=65536,*,binary=False,segments=None):
     # encode()/ExperimentSuite.state() supply string-keyed maps, JSON scalars
     # and Decimal amounts. Binary doubles avoid repeatedly formatting research
     # floats as decimal strings; Decimal money still becomes an exact string.
@@ -16,10 +16,23 @@ def pack_checkpoint(data,threshold=65536,*,binary=False):
         def fallback(value):
             if isinstance(value,int):raise OverflowError('Integer exceeds MessagePack capacity')
             return str(value)
-        try:raw=msgpack.packb(data,use_bin_type=True,default=fallback)
+        parts=None
+        try:
+            if segments is not None:
+                parts=segments.parts(data,fallback)
+                raw=None
+            else:raw=msgpack.packb(data,use_bin_type=True,default=fallback)
         except (OverflowError,TypeError,ValueError):
-            raw=json.dumps(data,default=str,separators=(',',':')).encode();encoding=ENCODING
+            raw=json.dumps(data,default=str,separators=(',',':')).encode();encoding=ENCODING;parts=None
     else:raw=json.dumps(data,default=str,separators=(',',':')).encode()
+    if binary and parts is not None:
+        size=sum(len(raw_part) for raw_part,_ in parts)
+        if size>MAX_BYTES:raise ValueError('Paper checkpoint exceeds supported capacity')
+        if size<threshold:return json.loads(json.dumps(data,default=str))
+        digest=hashlib.sha256()
+        for raw_part,_ in parts:digest.update(raw_part)
+        compressed=b''.join(encoded if encoded is not None else gzip.compress(raw_part,compresslevel=1,mtime=0) for raw_part,encoded in parts)
+        return dict(checkpoint_encoding=encoding,bytes=size,sha256=digest.hexdigest(),data=base64.b64encode(compressed).decode())
     if len(raw)>MAX_BYTES:raise ValueError('Paper checkpoint exceeds supported capacity')
     if len(raw)<threshold:return json.loads(json.dumps(data,default=str)) if encoding==BINARY_ENCODING else json.loads(raw)
     return dict(checkpoint_encoding=encoding,bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest(),

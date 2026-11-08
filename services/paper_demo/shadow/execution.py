@@ -38,11 +38,16 @@ def size(engine,ticker,contracts,price,features,config):
     liquidity=min(features['depth'],features['exit_depth'])*config.get('depth_fraction',.25)
     return max(ZERO,min(D(contracts)*D(str(volatility)),D(str(liquidity)),capital_quantity).to_integral_value(rounding=ROUND_FLOOR))
 
+def passive_entry_price(market,bid,ask,features,config):
+    tick=tick_size(market,bid)
+    improve=(config.get('adaptive',True) and ask-bid>=2*tick and (features.get('trade_count',0)>0 or features.get('last_change',0)>0))
+    if config.get('approach')=='market_maker' and config.get('adaptive',True) and ask-bid>=2*tick:improve=True
+    return min(ask-tick,bid+(tick if improve else ZERO))
+
 def choose(engine,ticker,side,features,quantity,target,config):
     book=engine.books[ticker];bid,ask=book.bid(side),book.ask(side)
     tick=tick_size(engine.markets[ticker],bid);fee=engine.fees[ticker]
-    improve=(config.get('adaptive',True) and ask-bid>=2*tick and (features.get('trade_count',0)>0 or features['last_change']>0))
-    maker_price=min(ask-tick,bid+(tick if improve else ZERO))
+    maker_price=passive_entry_price(engine.markets[ticker],bid,ask,features,config)
     future=min(D('.99'),D(str(max(features['resistance'],float(ask)+target if config['approach']=='momentum' else features['resistance']))))
     if config['approach']=='market_maker':future=max(maker_price+tick,ask-tick)
     maker_fee=fee.charge(quantity,maker_price,True)+fee.charge(quantity,future,config.get('maker_profit_exits',False))
