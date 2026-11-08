@@ -295,6 +295,7 @@ class ExperimentSuite:
                 e.handle('market',dict(payload,market=dict(m,bot_id=profile['id'],bot_name=profile['name'],bot_revision=profile['revision'],strategy_version=profile['version'])),now)
             return
         errors=[]
+        resource_paused=not self.monitoring.limits(now)['admitting']
         for folder,(e,f,ps) in self.portfolios.items():
             if getattr(self.host,'suspend_idle_feeds',False) is True:
                 idle=self.idle_feed(e,f)
@@ -308,8 +309,12 @@ class ExperimentSuite:
                     # this duplicate book. Keep lifecycle/settlement processing.
                     e.idle_feed_suspended=True;continue
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
-                limits=self.monitoring.limits(now)
-                for bot in f.bots.values():bot.resource_paused=not limits['admitting']
+                # The budget is identical across portfolios on this input.
+                # Propagate only transitions instead of rewriting hundreds of
+                # inactive profiles for every raw book delta.
+                if getattr(f,'_resource_paused',None) is not resource_paused:
+                    for bot in f.bots.values():bot.resource_paused=resource_paused
+                    f._resource_paused=resource_paused
             if folder in ('scalper_momentum','scalper_dislocation'):
                 if source=='clock':
                     pending=getattr(e,'coalesced_tickers',set())

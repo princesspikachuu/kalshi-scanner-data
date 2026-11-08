@@ -270,7 +270,10 @@ class HostedRun(ForwardRun):
             async with self.state_mutex():
                 self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
                 burst=self.queue.qsize()>128
-                max_inputs,max_simulation=(256,.040) if burst else (128,.020)
+                # Amortize full-state checkpoint/database cost during bursts.
+                # Every input remains ordered; sockets and controls regain the
+                # event loop at the 80 ms budget or 512-input boundary.
+                max_inputs,max_simulation=(512,.080) if burst else (128,.020)
                 try:
                     while True:
                         source,payload,received=item

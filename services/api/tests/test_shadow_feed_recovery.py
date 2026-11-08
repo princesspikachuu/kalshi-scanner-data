@@ -94,17 +94,17 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
         seen=[];socket_observed=[]
         def handle(source,payload,now):
             seen.append(payload['n'])
-            if len(seen)==384:run.done.set()
+            if len(seen)==768:run.done.set()
         run.engine.handle=handle
-        for n in range(384):await run.queue.put(('clock',{'n':n},1000+n*.01))
+        for n in range(768):await run.queue.put(('clock',{'n':n},1000+n*.01))
         async def socket_reader():socket_observed.append(len(seen))
         reader=asyncio.create_task(socket_reader())
         await run.consume();await reader
-        self.assertEqual(seen,list(range(384)))
-        self.assertLess(socket_observed[0],384)
+        self.assertEqual(seen,list(range(768)))
+        self.assertLess(socket_observed[0],768)
         self.assertGreaterEqual(run.audit.flush.call_count,2)
-        self.assertLessEqual(socket_observed[0],256)
-        self.assertLess(run.audit.flush.call_count,384)
+        self.assertLessEqual(socket_observed[0],512)
+        self.assertLess(run.audit.flush.call_count,768)
 
     async def test_failed_batch_does_not_acknowledge_uncertain_inputs(self):
         run=object.__new__(HostedRun)
