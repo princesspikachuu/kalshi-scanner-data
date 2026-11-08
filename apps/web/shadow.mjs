@@ -72,8 +72,15 @@ function draw(){
 }
 async function load(){
  if(busy)return;busy=true;clearTimeout(timer);
- try{const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));if(!result.installed){note('Shadow engine is initializing. Reload after the worker finishes its handover.');return}data=result;try{events=(await demoCall('shadow/events')).items}catch{}draw()}
- catch(error){note(error.message)}finally{busy=false;timer=setTimeout(load,10000)}
+ try{
+  const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
+  if(!result.installed){$('health').textContent='Worker initializing';note('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
+  data=result;draw();
+  try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{note('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
+ }catch(error){
+  note(error.message);
+  if(!data){$('health').textContent='Dashboard data unavailable';$('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>'}
+ }finally{busy=false;timer=setTimeout(load,10000)}
 }
 async function change(id,fields){try{const bot=data.bots.find(b=>b.id===id);await demoCall('shadow/bots/'+id,{revision:bot.revision,...fields});note('Saved. New entries follow the worker’s next verified update; existing risk management continues.');await load()}catch(error){note(error.message)}}
 $('find').oninput=()=>{if(data)draw()};$('latest').onchange=load;$('reload').onclick=load;
