@@ -536,3 +536,26 @@ test('slow shadow workspace reads get time to finish without extending activity 
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/events'),env,{fetcher,timeoutMs:1})).status,504);
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/bulk',{method:'POST',headers:{origin:env.APP_ORIGIN,'content-type':'application/json'},body:'{}'}),env,{fetcher,timeoutMs:1})).status,504);
 });
+
+
+test('trusted shadow snapshots stream without buffering or parsing at the edge',async()=>{
+ let reads=0;let finish;
+ const body=new ReadableStream({pull(controller){reads++;if(reads===1)controller.enqueue(new TextEncoder().encode('{"contract":"demo-v1","bots":['));else finish=()=>{controller.enqueue(new TextEncoder().encode(']}'));controller.close()}}});
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher:async()=>new Response(body,{headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1','set-cookie':'untrusted=x'}})});
+ assert.equal(response.status,200);assert.equal(response.headers.get('set-cookie'),null);
+ const reader=response.body.getReader();const first=await reader.read();assert.equal(new TextDecoder().decode(first.value),'{"contract":"demo-v1","bots":[');
+ while(!finish)await new Promise(resolve=>setImmediate(resolve));finish();
+ assert.equal(new TextDecoder().decode((await reader.read()).value),']}');assert.equal((await reader.read()).done,true);
+});
+test('streamed shadow snapshots retain byte limits and cancel upstream on overflow',async()=>{
+ let cancelled=false;
+ const body=new ReadableStream({start(c){c.enqueue(new Uint8Array(8388609))},cancel(){cancelled=true}});
+ const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher:async()=>new Response(body,{headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1'}})});
+ await assert.rejects(()=>response.text(),/body limit/);assert.equal(cancelled,true);
+});
+test('the streaming marker cannot bypass authentication errors or other route validators',async()=>{
+ for(const [path,status] of [['shadow/workspace',401],['workspace',200]]){
+  const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response('{"contract":"invalid"}',{status,headers:{'content-type':'application/json','x-pocket-workspace-contract':'demo-v1'}})});
+  assert.equal(response.status,status===401?401:502);
+ }
+});

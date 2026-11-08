@@ -136,3 +136,5 @@ Entry cohorts persist through partial fills, exits, settlement and restarts. The
 Previously held inventory with no actual timing cohort is kept in the wallet and excluded from the new timing attribution. No old timestamp is guessed, no account is reset, and an early sample is not presented as an established profitable entry rule. The old price-only display is superseded once actual timing cohorts exist for a bot.
 
 Optional history pruning runs in a savepoint. If the database role denies deletion, the worker logs `paper_balance_retention_deferred`, preserves the history, and commits fresh snapshots without interrupting trading. Database permissions are not expanded automatically.
+
+Large shadow workspace responses carry an API-generated `x-pocket-workspace-contract: demo-v1` marker after owner authentication. The gateway streams these responses with an 8 MiB byte cap, upstream cancellation, no-store headers, and the existing deadline instead of parsing and reserializing the snapshot at the edge. Unmarked responses retain the existing contract validation during rollout; authentication errors and other routes cannot opt into this path.

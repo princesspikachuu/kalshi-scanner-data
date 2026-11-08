@@ -2,7 +2,7 @@
 import csv,io,json,time
 from uuid import uuid4
 from decimal import Decimal as D
-from fastapi import Request,HTTPException
+from fastapi import Request,Response,HTTPException
 from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
@@ -34,11 +34,12 @@ def install_shadow(app,auth,mutate,pool):
         if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):
             raise HTTPException(422,'Invalid filters')
     @app.get('/demo/shadow/workspace')
-    def workspace(request:Request):
+    def workspace(request:Request,response:Response):
         global ACCOUNTING_LOG_AT
         auth(request);query(request,('version',))
         latest=request.query_params.get('version','latest')
         if latest not in ('latest','full'):raise HTTPException(422,'Invalid version')
+        response.headers['x-pocket-workspace-contract']='demo-v1'
         marker=store.get('shadow/installed')
         if not marker:return dict(contract='demo-v1',installed=False,bots=[],real_orders_enabled=False)
         health=store.get('health');status=store.get('shadow/status')

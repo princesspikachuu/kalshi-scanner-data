@@ -151,6 +151,7 @@ class FolderPostgres(unittest.TestCase):
         self.assertEqual(self.client.post('/demo/shadow/folders/complete_set/reset',json=body).status_code,409)
     def test_workspace_returns_strategy_folders_without_losing_legacy_bots(self):
         self.seed();r=self.client.get('/demo/shadow/workspace');self.assertEqual(r.status_code,200)
+        self.assertEqual(r.headers['x-pocket-workspace-contract'],'demo-v1')
         data=r.json();self.assertEqual(len(data['bots']),85);self.assertEqual(len(data['folders']),4)
         self.assertFalse(data['real_orders_enabled'])
 

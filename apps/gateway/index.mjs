@@ -18,6 +18,25 @@ async function boundedBody(stream,max){
  try{while(true){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>max){await reader.cancel();throw new RangeError('body limit')}parts.push(value)}}finally{reader.releaseLock()}
  const body=new Uint8Array(length);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.length}return body;
 }
+// Only the owner-authenticated API can opt its workspace into this path.
+// Keep large snapshots as bytes: reparsing and serializing them here can exceed
+// the edge CPU budget even though the API already produced the contract.
+function boundedResponse(stream,max,complete){
+ if(!stream){complete();return null}
+ const reader=stream.getReader();let length=0;
+ return new ReadableStream({
+  async pull(controller){
+   try{
+    const {done,value}=await reader.read();
+    if(done){complete();reader.releaseLock();controller.close();return}
+    length+=value.byteLength;
+    if(length>max)throw new RangeError('body limit');
+    controller.enqueue(value);
+   }catch(error){complete();controller.error(error);try{await reader.cancel(error)}finally{reader.releaseLock()}}
+  },
+  async cancel(reason){complete();try{await reader.cancel(reason)}finally{reader.releaseLock()}}
+ });
+}
 function successBody(path,data){
  if(path==='/api/auth/challenge'){
   if(typeof data.client_id!=='string'||!data.client_id||data.client_id.length>2048||
@@ -141,6 +160,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  }
  const readOnlySetup=demo&&['/api/demo/connection','/api/demo/paper-connection'].includes(url.pathname)||liveBots&&['/api/live/connection','/api/live/preflight','/api/live/onboarding'].includes(url.pathname);
  const shadowWorkspace=method==='GET'&&url.pathname==='/api/demo/shadow/workspace';
+ let streaming=false;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),shadowWorkspace?Math.max(timeoutMs,45000):readOnlySetup?Math.max(timeoutMs,30000):timeoutMs);
  try{
   const upstream=await fetcher(api+url.pathname.slice(4)+url.search,{method,headers,body,redirect:'manual',signal:controller.signal,cache:'no-store'});
@@ -162,13 +182,19 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
+   if(shadowWorkspace&&upstream.headers.get('x-pocket-workspace-contract')==='demo-v1'){
+    if(Number(upstream.headers.get('content-length'))>8388608){await upstream.body?.cancel();throw new RangeError('body limit')}
+    streaming=true;
+    return new Response(boundedResponse(upstream.body,8388608,()=>clearTimeout(timer)),
+     {status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   }
    const text=new TextDecoder().decode(await boundedBody(upstream.body,shadowWorkspace?8388608:(demo||liveBots)?2097152:(research||collection||paper)?262144:32768));
    response=new Response(JSON.stringify(liveBots?liveBotsBody(JSON.parse(text)):demo?demoBody(JSON.parse(text),url.pathname):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;
  }catch(error){return problem(controller.signal.aborted?504:502,demo?(controller.signal.aborted?'Demo data request timed out. Please retry.':error instanceof RangeError?'Demo data exceeds the dashboard response limit.':'Unable to load Demo data. Please retry.'):'Sign-in connection unavailable')}
- finally{clearTimeout(timer)}
+ finally{if(!streaming)clearTimeout(timer)}
 }
 export default {
  async fetch(request,env){
