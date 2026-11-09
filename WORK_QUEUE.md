@@ -1016,7 +1016,7 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 ---
 
 ## MT-013 — Fix persistent storage compaction retry loop
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-013 implementation  
 **Claimed:** 2026-11-09 14:15 UTC  
 **Urgency:** U1 — URGENT  
@@ -1044,6 +1044,10 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 - Compaction batch size reduced from 1000 rows to 100 rows under the existing 5-second statement timeout.
 - Repeated failures now use exponential backoff from 5 minutes up to 6 hours and log safe `error_type`, `sqlstate`, retry interval, and consecutive failure count.
 - Keep IN PROGRESS until post-deploy logs confirm either successful compaction or the new sane backoff behavior.
+
+
+### Completion notes
+_DONE. Persistent retry waste is contained. Live collector logs confirm the exact failure is PostgreSQL `QueryCanceled` / SQLSTATE `57014`; retries now back off 300 → 600 → 1200 → 2400 → 4800 → 9600 seconds instead of hammering the database every few minutes. Original records remain intact. Actual compaction success is separated into MT-017._
 
 ---
 
@@ -1116,7 +1120,7 @@ The system is using all maker capacity without producing enough fills/trades.
 ---
 
 ## MT-016 — Reduce redundant fee-verification REST traffic
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-016 implementation  
 **Claimed:** 2026-11-09 14:50 UTC  
 **Urgency:** U1 — URGENT  
@@ -1149,6 +1153,10 @@ MT-012 baseline telemetry exposed another significant resource consumer:
 - More provider/read capacity is available for discovery and active strategy monitoring.
 - Tests cover cache reuse, invalidation, and fail-closed behavior.
 
+
+
+### Completion notes
+_DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, and deployed on the processing worker before later descendant commits. Same-event fee-change reads are deduplicated without changing freshness or fail-closed safety._
 
 ---
 
