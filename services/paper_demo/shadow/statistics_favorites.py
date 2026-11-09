@@ -20,7 +20,7 @@ class StatisticsFavoritesStrategy(StatisticsFavoritesMixin,FavoritesStrategy):
             if bid is None or ask is None or bid>=ask:continue
             price=min(bid+D('.01'),ask-D('.01'),D('.95'))
             if not D('.70')<=price<=D('.95'):continue
-            key=('market_type_price_time_side',(market_type(self.profile,market),side,price_bucket(price),horizon(remaining)))
+            key=('exact',(self.profile['series'],market_type(self.profile,market),side,price_bucket(price),horizon(remaining)))
             exact=groups.get(key)
             n=len(exact['events']) if exact else 0
             # Data gaps are prioritized; remaining evidence and maker spread
