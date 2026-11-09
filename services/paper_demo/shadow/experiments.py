@@ -85,8 +85,15 @@ class ExperimentSuite:
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
         if 'favorites_statistics' in self.portfolios and 'favorites' in self.portfolios:
             collectors=self.portfolios['favorites'][1].bots
-            for series,bot in self.portfolios['favorites_statistics'][1].bots.items():
-                bot.set_statistics_source(lambda s=series: collectors[s].exit_evidence.cells if s in collectors else {})
+            # A common evidence source enables real category-level fallback
+            # across series; collector state remains owned by its own portfolio.
+            def collector_evidence():
+                cells={}
+                for source in collectors.values():
+                    cells.update(source.exit_evidence.cells)
+                return cells
+            for bot in self.portfolios['favorites_statistics'][1].bots.values():
+                bot.set_statistics_source(collector_evidence)
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.maker_allocation=deepcopy((previous or {}).get('_maker_allocation') or dict(pending={},credits={},next_at=0))
         self.control(rows)
