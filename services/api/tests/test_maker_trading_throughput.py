@@ -3,10 +3,33 @@ import time,unittest
 from unittest.mock import Mock,AsyncMock,patch
 from services.api.tests import test_market_maker as fixture
 from services.paper_demo.shadow.maker_opportunities import retry_verified,turnover_score,ranked_rows
-from services.paper_demo.shadow.market_maker import profiles
+from services.paper_demo.shadow.market_maker import profiles,maker_funnel_snapshot,scan_report
 from services.paper_demo.shadow.core import FeePolicy
 from decimal import Decimal as D
 T=fixture.T
+
+class MakerFunnelTests(unittest.TestCase):
+    def test_rejected_and_ready_candidates_are_counted_without_repricing_or_reads(self):
+        state=dict(candidates={
+            'A':dict(reason='current_price_or_spread_not_eligible',category='politics',inspected_at=100),
+            'B':dict(reason='insufficient_executed_trade_frequency',category='economics',inspected_at=100),
+            'C':dict(reason='insufficient_executed_trade_frequency',category='economics',inspected_at=110),
+            'D':dict(reason='awaiting_shared_admission',category='politics',inspected_at=115,
+                ready=dict(verified_at=115)),
+            'E':dict(category='entertainment')
+        })
+        before=repr(state)
+        snapshot=maker_funnel_snapshot(state,120)
+        self.assertEqual(snapshot['total_candidates'],5)
+        self.assertEqual(snapshot['verified_candidates'],4)
+        self.assertEqual(snapshot['cached_admission_candidates'],1)
+        self.assertEqual(snapshot['reason_counts']['insufficient_executed_trade_frequency'],2)
+        self.assertEqual(snapshot['reason_counts']['current_price_or_spread_not_eligible'],1)
+        self.assertEqual(snapshot['reason_counts']['unverified'],1)
+        self.assertEqual(snapshot['category_counts']['economics'],2)
+        self.assertEqual(repr(state),before)
+    def test_empty_funnel_is_valid(self):
+        self.assertEqual(maker_funnel_snapshot({},5)['total_candidates'],0)
 
 class QuoteLifetimeTests(unittest.TestCase):
     def test_valid_quote_keeps_identity_queue_and_reservation_past_five_minutes(self):
