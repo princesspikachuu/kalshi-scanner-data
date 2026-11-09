@@ -34,24 +34,50 @@ export function favoriteResearchMarkup(bots,open=new Set()){
  }).join('');
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
-/** Collector statistics are a first-class section, never hidden inside bot cards. */
+/** Add a complementary 2D price x time view; keep every existing research table intact. */
 export function favoriteCollectorOverviewMarkup(bots=[]){
+ const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
+ const PRICES=[70,75,80,85,90,95];
  const groups=marketTypeGroups(bots.filter(bot=>!bot.retired));
- if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · collected statistics</h3><p class="small">No active collector profiles yet. Historical reports remain attached to their bot cards.</p></section>';
- const sections=groups.map(group=>{
-  if(group.id==='sports'){
-   const tables=group.bots.map(bot=>{
-    const rows=favoriteCategoryRows(bot.experiment?.entry_timing||[]);
-    return '<details class="favorite-research" open><summary>'+e(bot.name)+' · '+rows.length+' observed tiers</summary>'+researchTable(rows)+'</details>';
-   }).join('');
-   return '<details class="favorite-collector-category" open><summary>'+e(group.label)+'</summary>'+tables+'</details>';
+ const matrix=(rows,label)=>{
+  const cells=new Map();
+  for(const row of favoriteCategoryRows(rows,true)){
+   if(!HORIZONS.includes(row.horizon)||!PRICES.includes(row.low))continue;
+   const key=row.low+'|'+row.horizon;
+   if(!cells.has(key))cells.set(key,{purchased:0,settled:0,winners:0,closed:0,net:0,cost:0,holding:0});
+   const current=cells.get(key);
+   current.purchased+=row.contracts;current.settled+=row.resolved;
+   current.winners+=row.winners;current.closed+=row.closed;
+   current.net+=row.net;current.cost+=row.cost;current.holding+=row.holding_seconds;
   }
-  const rows=favoriteCategoryRows(group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]),true);
-  return '<details class="favorite-collector-category" open><summary>'+e(group.label)+' · '+rows.length+' price/time tiers</summary>'+
-   '<p class="small">Combined across '+group.bots.length+' collector bots in this market category.</p>'+researchTable(rows)+'</details>';
+  const head=HORIZONS.map(h=>'<th scope="col">'+e(h)+'</th>').join('');
+  const body=PRICES.map(low=>{
+   const bucket=low+'–'+Math.min(low+4,95)+'¢';
+   return '<tr><th scope="row">'+e(bucket)+'</th>'+HORIZONS.map(h=>{
+    const x=cells.get(low+'|'+h);
+    if(!x||x.purchased===0)return '<td class="stat-empty">—</td>';
+    const pending=Math.max(0,x.purchased-x.settled);
+    const win=x.settled?(100*x.winners/x.settled).toFixed(1)+'%':'—';
+    const pnl=x.closed?dollars(x.net):'—';
+    const detail='Purchased '+x.purchased+' · settled '+x.settled+' · still open/unsettled '+pending+
+       ' · net P/L '+pnl+' · win rate '+win;
+    return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+'"><details><summary><strong>'+e(win)+'</strong><small>n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small></summary><p class="small">'+e(detail)+'</p></details></td>';
+   }).join('')+'</tr>';
+  }).join('');
+  return '<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+ };
+ if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
+ const sections=groups.map(group=>{
+  const rows=group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]);
+  if(group.id==='sports'){
+   return '<details class="favorite-collector-category" open><summary>'+e(group.label)+'</summary>'+
+      group.bots.map(bot=>matrix(bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
+  }
+  return '<details class="favorite-collector-category" open><summary>'+e(group.label)+'</summary>'+matrix(rows,group.label)+'</details>';
  }).join('');
- return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites collected statistics"><h3>High-Probability Favorites · entry statistics</h3>'+
- '<p class="small">Statistics are organized by market type, entry price in 5-cent increments and time to expiration. Original collected outcomes, including pending settlements, are retained. These tables are independent of the statistical trading strategy.</p>'+researchNote+sections+'</section>';
+ return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
+ '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows the settled win rate, number settled, and realized P/L. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
+ sections+'</section>';
 }
 
 export function favoriteTimingMarkup(rows){
