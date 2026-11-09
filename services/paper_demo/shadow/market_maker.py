@@ -218,7 +218,8 @@ async def maker_once(host):
                 s['candidates'][raw['ticker']]=dict(s['candidates'].get(raw['ticker'],{}),raw={k:raw[k] for k in ('ticker','event_ticker','open_time','close_time','status','yes_bid_dollars','no_bid_dollars','yes_bid','no_bid','volume_24h_fp','volume_24h','title','price_ranges') if k in raw},event={k:event[k] for k in ('series_ticker','title','category') if k in event},category=group,score=score,at=now,scheduled_events=schedule_times(result.get('milestones',[]),raw['event_ticker']))
             except (KeyError,TypeError,ValueError):continue
             if len(s['candidates'])>120:s['candidates']=dict(sorted(s['candidates'].items(),key=lambda x:-x[1]['score'])[:100])
-    # Keep a broad, bounded near-miss pool; inspect only one ranked candidate per pass.
+    # Keep a broad, bounded near-miss pool. Healthy processing can verify a
+    # few candidates in one pass, but never more than currently free Maker slots.
     s['candidates']={t:r for t,r in sorted(s['candidates'].items(),key=lambda x:-x[1]['score']) if now-r['at']<3600 and ts(r['raw']['close_time'])>now}
     s['candidates']=dict(list(s['candidates'].items())[:100])
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
@@ -227,12 +228,13 @@ async def maker_once(host):
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),inspected_at=r.get('inspected_at'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if not screening_only and not suite.search_capacity('market_maker',time.time()) and (not (maker_active or any(at>=now for at in credits.values())) or not suite.monitoring_snapshot(time.time())['admitting']):
         s['state']='Shared capacity occupied; existing strategies preserved';scan_report(s,now,len(result.get('events',[])),len(maker_active));return
+    inspection_limit=1 if screening_only else max(1,min(3,limits.get('maker_slots_free',1)))
     checked=0;s['state']='Inspecting candidates'
     for ticker,row in sorted(s['candidates'].items(),key=lambda item:(0 if credits.get(item[0],0)>=now else 1,item[1].get('inspected_at',0),-item[1]['score'])):
         if ticker in active or row.get('ready') or now<row.get('retry_at',0):continue
         ps=[p for p in choices if p['market_category']==row['category']]
         if not ps:continue
-        if checked>=1:break
+        if checked>=inspection_limit:break
         checked+=1
         row['retry_at']=now+300;row['inspected_at']=now;raw=row['raw']
         trades=await asyncio.to_thread(host.verified_data.call,'GET','/markets/trades',dict(ticker=ticker,min_ts=int(now-86400),limit=100));s['reads']+=1
@@ -266,7 +268,7 @@ async def maker_once(host):
         if screening_only:
             row['reason']='verified_waiting_for_capacity';s['state']='Read-only verification complete; admission remains paused'
         else:await host.put('maker_market',payload)
-        break
+        if screening_only:break
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if s.get('state')=='Inspecting candidates':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
     scan_report(s,now,len(result.get('events',[])),len(maker_active))
