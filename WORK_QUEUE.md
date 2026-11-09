@@ -520,8 +520,8 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 
 ### Implementation progress
 - Claimed 2026-11-09 22:22 UTC. Initial live Render monitoring (22:19–22:23 UTC) found two physical Maker subscriptions, intermittent admission due to processing lag/backlog, 9–12 retained discovery candidates, and repeated low-volume/unstable-price/current-quote-ineligible rejection reasons. Both Maker portfolios were running (four profiles each), but neither had open inventory in the sampled health reports.
-- Open PR [#165](https://github.com/princesspikachuu/kalshi-scanner-data/pull/165): adds bounded in-process candidate rejection/verification/category histogram to existing `market_maker_scan` records, with unit tests; no new API traffic or strategy/risk changes.
-- Live diagnosis and remaining acceptance work documented at `docs/audits/mt-004-maker-funnel-2026-11-09.md`. Full CI on PR head underway. Keep task IN PROGRESS until comparable opportunity-to-quote-to-fill measurements and actual improvement are verified.
+- PR [#165](https://github.com/princesspikachuu/kalshi-scanner-data/pull/165) **merged** as `2ae70a206d832adea3af0074a34047c6e0bf5c0d`: adds bounded in-process candidate rejection/verification/category histogram to existing `market_maker_scan` records, with unit tests; no new API traffic or strategy/risk changes.
+- Live diagnosis and remaining acceptance work documented at `docs/audits/mt-004-maker-funnel-2026-11-09.md`. Full PR CI completed successfully (run 42711608106); combined post-merge branch checks underway. Keep task IN PROGRESS until comparable opportunity-to-quote-to-fill measurements and actual improvement are verified.
 - Coordinate slot allocation changes with MT-015; do not independently raise monitoring limits or change shared scheduler while the bottleneck remains partially processing-bound.
 
 
@@ -541,6 +541,7 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 - Original CI-green PR #164 was closed after newer parallel merges made it non-mergeable.
 - The same MT-010 patch was rebuilt on current base `7482f452591e4e5ba29b15994d62d7a9f769ebec` as PR #167: https://github.com/princesspikachuu/kalshi-scanner-data/pull/167
 - PR #167 is mergeable; focused checks are green and the full PostgreSQL/API suite is running.
+- Concurrent PR #135 changed Competitive Maker's post-only inside-quote behavior and merged immediately before MT-004. This is a separate execution improvement and should be included in the before/after quote/fill comparison; do not attribute its outcome to the MT-004 telemetry addition.
 
 ---
 
