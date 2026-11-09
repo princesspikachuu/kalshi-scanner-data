@@ -31,6 +31,18 @@ class MakerAdaptiveCapacityTests(unittest.TestCase):
         s.handle('maker_market',dict(payload,market=dict(payload['market'],ticker='POL-NEW')),201)
         self.assertEqual(len(s.feed_markets()),8);self.assertEqual(s.monitoring_snapshot(201)['maker_slots_free'],0)
 
+    def test_overload_blocks_new_admission_but_does_not_pause_existing_maker_execution(self):
+        s,payload=lifecycle.MakerActivityLifecycleTests().suite()
+        s.handle('maker_market',payload,200)
+        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=12,per_category=4,admitting=False,level=0)
+        s.handle('clock',{},201)
+        for folder in MM_FOLDERS:
+            _,fleet,_=s.portfolios[folder]
+            self.assertTrue(all(getattr(bot,'resource_paused',False) is False for bot in fleet.bots.values()))
+        blocked=dict(payload,market=dict(payload['market'],ticker='POL-NEW'))
+        s.handle('maker_market',blocked,201)
+        self.assertNotIn('POL-NEW',s.feed_markets())
+
 class MakerTransportTests(unittest.TestCase):
     def suite(self):
         s,p=lifecycle.MakerActivityLifecycleTests().suite();s.handle('maker_market',p,200);return s
