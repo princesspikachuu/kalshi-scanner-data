@@ -81,8 +81,10 @@ class DataMode(unittest.TestCase):
         self.assertEqual(orders[-1].price,D('.83'))
         self.assertEqual(b.attempts[first.ticker]['repeat_entries'],1)
         self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(10))
-        # A static unchanged signal is not submitted on every worker cycle.
-        b.step();self.assertEqual(len(e.orders),2)
+        # Once filled, an unchanged qualifying state must not create a third entry.
+        e.advance(213);e.fill(orders[-1],D(10),orders[-1].price,'TEST')
+        e.advance(224);book.at=224;b.step()
+        self.assertEqual(len(e.orders),2)
         self.assertGreater(b.attempts[first.ticker]['repeat_duplicate_suppressed'],0)
 
     def test_repeat_entry_stops_at_bounded_market_inventory(self):
