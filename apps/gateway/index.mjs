@@ -31,7 +31,9 @@ function boundedResponse(stream,max,complete){
     if(done){complete();reader.releaseLock();controller.close();return}
     length+=value.byteLength;
     if(length>max)throw new RangeError('body limit');
-    controller.enqueue(value.slice());
+    // A ReadableStream chunk is already owned by the upstream reader; avoid
+    // copying each chunk of a potentially multi-megabyte dashboard response.
+    controller.enqueue(value);
    }catch(error){complete();controller.error(error);try{await reader.cancel(error)}finally{reader.releaseLock()}}
   },
   async cancel(reason){complete();try{await reader.cancel(reason)}finally{reader.releaseLock()}}
