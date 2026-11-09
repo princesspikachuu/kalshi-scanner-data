@@ -107,7 +107,7 @@ def statistics_quote(engine,profile,contracts,ticker,side,cells,max_price=None,g
                   min_expected_roi=str(min_roi),basis=basis,horizon=horizon(remaining))
     # A scarce exact market/price/time/side cell is worth a small controlled
     # paper probe even when the pooled confidence interval is too wide.
-    exact_key=('market_type_price_time_side',(market_type(profile,engine.markets[ticker]),side,
+    exact_key=('exact',(profile['series'],market_type(profile,engine.markets[ticker]),side,
         price_bucket(price),horizon(remaining)))
     exact=groups.get(exact_key) if groups is not None else aggregate(cells).get(exact_key)
     exact_n=len(exact['events']) if exact else 0
