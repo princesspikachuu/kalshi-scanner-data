@@ -37,6 +37,8 @@ class NoCapture:
 
 PROCESSING_YIELD_SECONDS=.080
 PROCESSING_YIELD_INPUTS=256
+PROCESSING_COALESCE_SECONDS=.005
+PROCESSING_COALESCE_QUEUE=8
 
 def processing_batch_budget(backlog):
     """Amortize durable checkpoints without monopolizing the event loop."""
@@ -361,7 +363,14 @@ class HostedRun(ForwardRun):
         while not self.done.is_set():
             item=await self.queue.get()
             async with self.state_mutex():
-                self.audit.begin();completed=0;recovered=[];started=time.monotonic();slice_started=started;max_lag=0.
+                self.audit.begin()
+                # When the queue is nearly empty, give imminent feed frames a
+                # few milliseconds to join this same durable checkpoint. Hold
+                # the state fence so controls cannot overtake an already-received
+                # trading input; producers can still enqueue during the yield.
+                if self.queue.qsize()<PROCESSING_COALESCE_QUEUE and not self.done.is_set():
+                    await asyncio.sleep(PROCESSING_COALESCE_SECONDS)
+                completed=0;recovered=[];started=time.monotonic();slice_started=started;max_lag=0.
                 backlog=self.queue.qsize()
                 # Amortize full-state checkpoint/database cost during bursts.
                 # Every input remains ordered and inside one durable transaction.
