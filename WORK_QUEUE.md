@@ -1084,6 +1084,43 @@ The system is using all maker capacity without producing enough fills/trades.
 
 
 
+---
+
+## MT-016 — Reduce redundant fee-verification REST traffic
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Why this is urgent
+MT-012 baseline telemetry exposed another significant resource consumer:
+- fee maintenance currently treats active-market fee cache entries as stale after roughly 25–30 seconds,
+- sampled 30-second windows showed dozens of calls across `/series/fee_changes`, `/events/fee_changes`, and `/series/:series`,
+- some individual provider requests took multiple seconds,
+- this traffic shares provider/read capacity with discovery and trading-support reads.
+
+### Required work
+- Measure fee-refresh request volume by market/series and cache-hit rate.
+- Verify how often fee schedules actually change and what live/event notifications already invalidate fee state.
+- Eliminate duplicate series/event fee lookups across markets sharing the same series/event.
+- Prefer event-driven invalidation plus a conservative longer TTL where safe.
+- Preserve fail-closed behavior: an unverified/changed fee schedule must never allow an economically invalid paper trade.
+- Reuse verified series/event fee metadata across markets rather than independently fetching identical data.
+- Measure before/after provider calls, read-budget occupancy, discovery latency, and fee correctness.
+
+### Guardrails
+- Do not weaken fee verification simply to reduce request counts.
+- Fee-change events must invalidate affected cached assumptions promptly.
+- Unknown/stale fee state remains non-tradable until verified.
+
+### Acceptance criteria
+- Material reduction in fee-related REST calls.
+- No regression in fee-change detection or simulated trade economics.
+- More provider/read capacity is available for discovery and active strategy monitoring.
+- Tests cover cache reuse, invalidation, and fail-closed behavior.
+
+
 # Coordination notes
 
 - MT-012 through MT-015 are U1 remediation tasks discovered by MT-011 and may be worked in parallel where files/infrastructure do not overlap.
