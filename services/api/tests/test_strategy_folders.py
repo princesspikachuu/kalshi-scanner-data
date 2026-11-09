@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from services.paper_demo.shadow.core import Engine,FeePolicy,Wallet,Lot
 from services.paper_demo.shadow.sequential import SequentialStrategy,PairModel
 from services.paper_demo.shadow.complete_set import CompleteSetStrategy
-from services.paper_demo.shadow.experiments import ExperimentSuite
+from services.paper_demo.shadow.experiments import ExperimentSuite,ExperimentFleet
 from services.paper_demo.shadow.scalper import SCALPER_FOLDERS
 from services.paper_demo.shadow.folders import initialize_folders,FOLDERS
 from services.api.tests import test_demo_postgres as fixture
@@ -29,6 +29,18 @@ def ready_suite(host,rows,previous=None):
         reason='Test load measurements',backlog=0,lag_p95_seconds=0,processing_p95_ms=0,read_cooldown_seconds=0)
     if not isinstance(host.engine.markets,dict):host.engine.markets={}
     return suite
+
+class FleetClockDispatchTests(unittest.TestCase):
+    def test_regular_experiment_clock_dispatches_each_market_once_to_its_owner(self):
+        e=Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0);e.advance(200)
+        ps=[profile(series='KXAAA',id='aaa'),profile(series='KXBBB',id='bbb')]
+        f=ExperimentFleet(e,ps,PairModel())
+        for ticker in ('KXAAA-one','KXAAA-two','KXBBB-one'):
+            e.add_market(dict(ticker=ticker,close=1000,open=100,event_ticker='TEST',bot_id='x'),FeePolicy())
+        for bot in f.bots.values():bot.step=Mock()
+        f.step()
+        self.assertEqual([call.args[0] for call in f.bots['KXAAA'].step.call_args_list],['KXAAA-one','KXAAA-two'])
+        self.assertEqual([call.args[0] for call in f.bots['KXBBB'].step.call_args_list],['KXBBB-one'])
 
 class StrategyTests(unittest.TestCase):
     def engine(self):return Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
