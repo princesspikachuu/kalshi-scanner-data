@@ -197,7 +197,17 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
      {status:200,headers:streamHeaders});
    }
    const text=new TextDecoder().decode(await boundedBody(upstream.body,shadowWorkspace?8388608:(demo||liveBots)?2097152:(research||collection||paper)?262144:32768));
-   response=new Response(JSON.stringify(liveBots?liveBotsBody(JSON.parse(text)):demo?demoBody(JSON.parse(text),url.pathname):paper?paperBody(JSON.parse(text)):collection?collectionBody(JSON.parse(text)):research?researchBody(url.pathname,JSON.parse(text)):successBody(url.pathname,JSON.parse(text))),{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   // Validate once, but avoid a second JSON serialization for pass-through
+   // contracts. Large Demo responses may otherwise exhaust the 10ms Free CPU
+   // allowance even when the authenticated API has already produced the bytes.
+   const parsed=JSON.parse(text);
+   if(liveBots)liveBotsBody(parsed);
+   else if(demo)demoBody(parsed,url.pathname);
+   else if(paper)paperBody(parsed);
+   else if(collection)collectionBody(parsed);
+   else if(research)researchBody(url.pathname,parsed);
+   const payload=(liveBots||demo||paper||collection||research)?text:JSON.stringify(successBody(url.pathname,parsed));
+   response=new Response(payload,{status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
   }
   for(const value of setCookies)response.headers.append('set-cookie',value);
   return response;
