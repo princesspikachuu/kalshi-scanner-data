@@ -7,7 +7,10 @@ assert.equal(config.main,'../apps/gateway/index.mjs');
 assert.equal(config.workers_dev,true);
 assert.equal(config.preview_urls,false);
 assert.equal(config.keep_vars,true);
-assert.deepEqual(config.assets,{directory:'../apps/web',binding:'ASSETS',run_worker_first:true});
+assert.deepEqual(config.assets,{directory:'../apps/web',binding:'ASSETS',run_worker_first:['/api/*','/live-paper']});
+const headers=fs.readFileSync('apps/web/_headers','utf8');
+assert.match(headers,/Cache-Control: no-store/);
+assert.match(headers,/frame-ancestors 'none'/);
 assert.deepEqual(config.vars,{
  APP_ORIGIN:'https://pocket-analytics-staging.ezrealrose831.workers.dev',
  API_ORIGIN:'https://pocket-api-staging.onrender.com'
