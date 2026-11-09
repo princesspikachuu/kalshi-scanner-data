@@ -48,10 +48,16 @@ def workspace_response(payload,*,compressed=False,request_started=None):
         bot.pop('latest_report',None)
         if bot.get('experiment') is not None:
             experiment=bot['experiment']
+            # Large research histories belong behind the existing per-bot
+            # research endpoint. The initial workspace only needs compact
+            # counters/decision summaries to render cards and folder totals.
+            compact_experiment={k:v for k,v in experiment.items()
+                if k not in ('entry_timing','calibration')}
             if experiment.get('scalper') is not None:
                 research=experiment['scalper']
-                bot['experiment']=dict(experiment,scalper=dict(research,
-                    cells=[{k:v for k,v in cell.items() if k in cell_fields} for cell in research.get('cells',[])]))
+                compact_experiment['scalper']={k:v for k,v in research.items()
+                    if k not in ('cells',)}
+            bot['experiment']=compact_experiment
             for field in ('metrics','financial_metrics'):
                 if field in bot:
                     bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
