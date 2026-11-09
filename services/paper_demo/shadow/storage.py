@@ -94,14 +94,38 @@ class HostedAudit:
         batch,commands,written_events=prepared
         started=time.monotonic();self.guard()
         with self.store.pool.connection() as c:
+            acquired=time.monotonic()
             # Pipeline the event burst; wallet/checkpoint, all audit rows, reports
             # and refill completion markers still commit in one transaction.
             with c.cursor() as cur:
                 cur.executemany(UPSERT,batch)
+                upserted=time.monotonic()
                 if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
-        self.write_ms=(time.monotonic()-started)*1000
+                commands_written=time.monotonic()
+        # This timestamp follows the pool context exit: transaction commit has
+        # completed. No instrumentation can report a failed commit as successful.
+        finished=time.monotonic()
+        self.write_ms=(finished-started)*1000
         self.commits=getattr(self,'commits',0)+1
         self.rows_written=getattr(self,'rows_written',0)+len(batch)+len(commands)
+        profile=getattr(self,'durability_profile',None)
+        if profile is None:profile=self.durability_profile=Counter()
+        profile['commits']+=1
+        profile['checkpoint_bytes']+=len(getattr(batch[0][2],'obj',{}).get('data','')) if batch else 0
+        profile['audit_and_extra_rows']+=max(0,len(batch)-1)
+        profile['command_rows']+=len(commands)
+        profile['prepare_ms']+=getattr(self,'snapshot_ms',0)
+        profile['pool_wait_ms']+=(acquired-started)*1000
+        profile['upsert_ms']+=(upserted-acquired)*1000
+        profile['commands_ms']+=(commands_written-upserted)*1000
+        profile['transaction_finalize_ms']+=(finished-commands_written)*1000
+        profile['total_write_ms']+=(finished-started)*1000
+        profile['worst_write_ms']=max(profile['worst_write_ms'],(finished-started)*1000)
+        if finished>=getattr(self,'durability_log_at',0):
+            self.durability_log_at=finished+30
+            print(json.dumps(dict(event='shadow_durability_cost',
+                **dict(profile),real_orders_enabled=False)),flush=True)
+            self.durability_profile=Counter()
         counts=Counter(e['event'] for e in written_events)
         if any(k in counts for k in ('ORDER_SUBMITTED','MAKER_RESTING','FILL','CANCELLED','SPOT_SAFETY_CANCEL','SAFETY_REENTRY_READY','IOC_COMPLETE','DATA_GAP')):
             print(json.dumps(dict(event='shadow_audit_committed',counts=dict(counts),
