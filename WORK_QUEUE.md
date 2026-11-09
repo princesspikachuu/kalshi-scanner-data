@@ -108,8 +108,15 @@ This is important because **we are currently dissatisfied with the amount of dat
 - Automated tests cover repeated-entry allowed + duplicate-cycle suppressed behavior.
 - Verification includes a paper-trading run or deterministic simulation showing repeated observations from the same market.
 
+### Implementation progress
+- Branch: `feature/mt001-repeat-favorites-observations` (based on live app source branch `build/google-auth-foundation`, not repository `main`).
+- PR: https://github.com/princesspikachuu/kalshi-scanner-data/pull/137
+- Added bounded same-market Favorites paper re-entry keyed by entry price/time bucket, with duplicate and risk suppressions, existing fill-cohort accounting, and targeted tests.
+- **Pending:** full CI results, independent review of re-entry accounting, and paper-run verification before merge/deployment. Do not mark DONE or assume deployed.
+- The default `main` branch contains the research scanner and this queue; the paper engine source is on `build/google-auth-foundation`.
+
 ### Completion notes
-_Fill in when done._
+_Fill in once verified._
 
 ---
 
