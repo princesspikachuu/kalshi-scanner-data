@@ -533,6 +533,95 @@ _Fill in when done._
 
 ---
 
+# URGENT — Dashboard snapshot size failure
+
+## MT-008 — Fix "Dashboard snapshot exceeds its supported size"
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Priority:** Urgent / user-visible blocker
+
+### Current failure
+The dashboard is surfacing the error:
+
+> Dashboard snapshot exceeds its supported size
+
+This appeared after recent growth in strategy/dashboard data, including Statistics-Backed Favorites and richer diagnostics. Treat this as a dashboard delivery/serialization/storage problem, **not** as permission to delete collected trading data.
+
+### Goal
+Restore reliable dashboard loading while preserving the underlying strategy, trade, observation, and learning datasets.
+
+### Required investigation
+Trace the exact snapshot path end-to-end and identify the real size limit and where it is enforced:
+- database row/document size,
+- API response/body limit,
+- cache/KV/object storage limit,
+- Cloudflare/worker serialization or response limit,
+- frontend hydration/state limit,
+- snapshot encoder/compressor,
+- an application-defined defensive limit,
+- or another transport/storage boundary.
+
+Instrument and record:
+- total serialized snapshot bytes,
+- compressed bytes if compression is used,
+- size by top-level section,
+- largest strategy/folder payloads,
+- largest repeated arrays/objects,
+- count and size contribution of open orders, positions, history, statistics matrices, diagnostics, and learning data.
+
+Do not guess which section is responsible. Measure it.
+
+### Preferred fix
+The dashboard snapshot should contain the **minimum data needed for the initial dashboard view**, with heavy details fetched separately/lazily.
+
+Implement the safest appropriate combination of:
+1. **Summary/detail separation**
+   - Keep summary cards, aggregate P/L, counts, statuses, and compact active-state data in the initial snapshot.
+   - Move large historical/diagnostic/statistical detail into separate endpoints or on-demand requests.
+2. **Pagination / bounded windows**
+   - Do not serialize unlimited trade/order/history arrays into every dashboard refresh.
+   - Use pagination or recent-N windows for list views, with explicit "load more" behavior.
+3. **Lazy strategy detail**
+   - Statistics matrices, Data/Learning diagnostics, detailed market histories, and other expanded panels should load when the relevant folder/panel is opened where practical.
+4. **Deduplication**
+   - Avoid embedding the same market metadata, strategy metadata, or historical records repeatedly in multiple folders/cards.
+5. **Compact aggregation**
+   - Send aggregated statistics rather than raw observations when the UI only needs an aggregate.
+6. **Compression**, if supported and useful, only after structural payload reduction. Do not rely on compression alone if the unbounded snapshot will simply grow past the limit again.
+
+### Important guardrails
+- **Do not delete or truncate canonical trading/history data to make the dashboard load.**
+- Do not reset Favorites, Statistics-Backed Favorites, Market Maker, or other strategy history.
+- Do not remove useful diagnostics entirely; make heavy detail lazy/paginated instead.
+- Preserve mobile behavior.
+- Preserve current pause state and open/settling positions.
+- Initial dashboard summary values must remain internally consistent with detail endpoints.
+- A partial failure of one heavy detail panel must not make the entire dashboard unusable.
+
+### UI behavior
+If detailed data is still loading separately:
+- render the dashboard shell and summary cards first,
+- show a bounded loading state inside the specific detail panel,
+- display an actionable error only for that panel if its fetch fails,
+- do **not** replace the whole dashboard with the snapshot-size error.
+
+### Acceptance criteria
+- The dashboard loads successfully with the current production/staging dataset that previously triggered the size error.
+- Snapshot size is measured before and after, with the reduction documented.
+- Initial snapshot size is bounded as history continues growing.
+- Heavy sections can grow without linearly inflating the initial dashboard payload.
+- Statistics-Backed Favorites matrix remains accessible.
+- MT-007 Data/Learning panels can be added without reintroducing the same class of failure.
+- Existing historical data remains intact.
+- Tests cover an oversized synthetic dataset and verify the dashboard initial response stays below the supported limit.
+- Verify on mobile and desktop.
+
+### Completion notes
+_Fill in when done._
+
+---
+
 # Coordination notes
 
 - MT-001 and MT-002 may be worked on by different chats at the same time.
@@ -541,4 +630,5 @@ _Fill in when done._
 - MT-005 should use evidence from MT-003/MT-004 when available. If another task is already changing shared scheduler/monitoring infrastructure, do not create a parallel conflicting implementation; coordinate through this file.
 - MT-006 is UI-focused and is a good independent task for a separate chat.
 - MT-007 can be implemented incrementally by strategy, but its shared UI/data-contract work must not conflict with active MT-001/MT-002 schema changes.
+- MT-008 is an urgent user-visible dashboard blocker and should be claimed before lower-priority READY UI/diagnostic work. MT-007 should use the lazy/paginated detail architecture established by MT-008 rather than expanding the initial dashboard snapshot again.
 - If MT-002 needs data-schema fields that MT-001 is already changing, coordinate through this file rather than independently creating conflicting schemas.
