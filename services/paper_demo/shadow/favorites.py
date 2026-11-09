@@ -73,6 +73,7 @@ class FavoritesStrategy(ConvexityStrategy):
             price_band='70–79¢' if q['price']<D('.80') else '80–89¢' if q['price']<D('.90') else '90–95¢',
             breakeven_probability=str(q['price']+q['fee']/q['quantity']))
         self.last_reason=(f"{q['quantity']:f}-contract maker data trial at {q['price']*100:.0f}¢ · collecting outcomes" if q['mode']=='paper_exploration' else
+            f"{q['quantity']:f}-contract targeted statistical learning probe at {q['price']*100:.0f}¢ · not a proven edge" if q['mode']=='statistics_exploration' else
             f"Value-qualified maker at {q['price']*100:.0f}¢ · {q['estimate']['samples']} settled events")
         ident=self.e.place(ticker,a['side'],'buy',q['quantity'],q['price'],maker=True,expiry=expiry)
         request=self.e.orders[ident]
