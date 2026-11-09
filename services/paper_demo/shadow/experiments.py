@@ -9,6 +9,7 @@ from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
 from .complete_set import CompleteSetStrategy
 from .favorites import FavoritesStrategy
+from .statistics_favorites import StatisticsFavoritesStrategy
 from .market_maker import MarketMaker,MM_FOLDERS,activity_deadline
 from . import maker_allocation
 from .microstructure import MarketTape
@@ -28,7 +29,7 @@ class ExperimentFleet(StrategyFleet):
     def __init__(self,engine,profiles,model,complete=False):
         self.e=engine;self.halted=set();self.bots={};self.complete=complete
         for p in profiles:
-            b=MarketMaker(engine,p) if p.get('strategy')=='market_maker' else VolatilityScalper(engine,p) if p.get('strategy')=='volatility_scalper' else CompleteSetStrategy(engine,p) if complete else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
+            b=MarketMaker(engine,p) if p.get('strategy')=='market_maker' else VolatilityScalper(engine,p) if p.get('strategy')=='volatility_scalper' else CompleteSetStrategy(engine,p) if complete else StatisticsFavoritesStrategy(engine,p) if p.get('strategy')=='favorites_statistics' else FavoritesStrategy(engine,p) if p.get('strategy')=='favorites' else (AdaptiveSequentialStrategy if p.get('variant')=='adaptive' else SequentialStrategy)(engine,p,model)
             b.halted=self.halted;self.bots[p['series']]=b
         engine.fill_callback=self.on_fill;engine.strategy=self
     def on_data_gap(self,ticker,reason):
@@ -82,6 +83,10 @@ class ExperimentSuite:
             for p in ps:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
+        if 'favorites_statistics' in self.portfolios and 'favorites' in self.portfolios:
+            collectors=self.portfolios['favorites'][1].bots
+            for series,bot in self.portfolios['favorites_statistics'][1].bots.items():
+                bot.set_statistics_source(lambda s=series: collectors[s].exit_evidence.cells if s in collectors else {})
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.maker_allocation=deepcopy((previous or {}).get('_maker_allocation') or dict(pending={},credits={},next_at=0))
         self.control(rows)
@@ -134,7 +139,7 @@ class ExperimentSuite:
         for ticker,m in list(self.feed_markets().items()):
             if m['close']<=now:continue
             source=next(e for e,f,ps in self.portfolios.values() if ticker in e.markets)
-            for folder in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites','favorites_statistics',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets or folder in SEQUENTIAL_FOLDERS and m.get('hourly_price'):continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
@@ -148,7 +153,7 @@ class ExperimentSuite:
         now=time.time() if now is None else now
         for ticker,m in list(self.host.engine.markets.items()):
             if m.get('paid') or m['close']<=now:continue
-            for folder in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites','favorites_statistics',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets:continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
@@ -357,7 +362,7 @@ class ExperimentSuite:
         if source=='set_markets':self.add_set(payload,now);return
         if source=='sports_status':
             ticker=payload['ticker']
-            for folder in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS):
+            for folder in (*SEQUENTIAL_FOLDERS,'favorites','favorites_statistics',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
                 if ticker in e.markets:
                     self.prepare(e,'clock',{},now)
@@ -534,7 +539,7 @@ class ExperimentSuite:
                 closed+=D(past.get('closed','0'));won+=D(past.get('won','0'))
                 attempts=list(b.attempts.values())
                 calibration=[]
-                if folder=='favorites':
+                if folder in ('favorites','favorites_statistics'):
                     for band in ('70–79¢','80–89¢','90–95¢'):
                         selected=[(t,a) for t,a in b.attempts.items() if a.get('price_band')==band and e.markets[t].get('paid')]
                         band_past=past.get('bands',{}).get(band,{})
@@ -551,7 +556,9 @@ class ExperimentSuite:
                     decision=list(b.decisions.values())[-1] if getattr(b,'decisions',{}) else None,
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
-                    scans=getattr(b,'scans',None),calibration=calibration,entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder=='favorites' else [])
+                    scans=getattr(b,'scans',None),calibration=calibration,
+                    statistics=b.statistics_snapshot() if isinstance(b,StatisticsFavoritesStrategy) else None,
+                    entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder in ('favorites','favorites_statistics') else [])
                 if isinstance(b,VolatilityScalper):
                     retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
             result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else {k:v for k,v in getattr(self,'maker_discovery',{}).items() if k in ('state','ranked','reads')} if folder in MM_FOLDERS else None,
@@ -564,7 +571,7 @@ class ExperimentSuite:
         # execution state plus constant-size cumulative totals.
         self.rotate_candidates(max((e.now for e,_,_ in self.portfolios.values()),default=0))
         for folder,(e,f,ps) in self.portfolios.items():
-            if folder in ('favorites',*SEQUENTIAL_FOLDERS):
+            if folder in ('favorites','favorites_statistics',*SEQUENTIAL_FOLDERS):
                 for t,m in list(e.markets.items()):
                     if not (m.get('weather_category') or m.get('sports') or m.get('hourly_price')) or e.now-m.get('discovered_at',e.now)<(120 if m.get('entry_parked') else 300):continue
                     b=f.owner(t);a=b.attempts.get(t,{})
@@ -630,7 +637,7 @@ class ExperimentSuite:
                 a=b.attempts.pop(t,None) if b and folder!='complete_set' else None
                 if a:
                     for key,value in dict(attempts=1,cycles=bool(a.get('recorded')),completed=bool(a.get('completed'))).items():totals[key]=totals.get(key,0)+value
-                    if folder=='favorites':
+                    if folder in ('favorites','favorites_statistics'):
                         band=totals.setdefault('bands',{}).setdefault(a['price_band'],{})
                         for key,value in dict(closed=s.closed,won=s.closed if p.get('yes_payout_confirmed')==('1' if a['side']=='yes' else '0') else ZERO,cost=D(a['price'])*s.closed+s.fees_paid,net=s.gross-s.realized_fees).items():band[key]=str(D(band.get(key,'0'))+value)
                 for mapping in (e.markets,e.books,e.fees,e.wallet.stats,e.gap_reasons):mapping.pop(t,None)
