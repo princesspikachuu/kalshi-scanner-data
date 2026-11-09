@@ -23,9 +23,24 @@ def replacement(suite,market,now):
         # A shared market owned by another strategy is never reclaimed here.
         if any(ticker in e.markets and not e.markets[ticker].get('entry_parked') for folder,(e,_,_) in suite.portfolios.items() if folder not in MM_FOLDERS):continue
         engines=[e for folder,(e,_,_) in suite.portfolios.items() if folder in MM_FOLDERS and ticker in e.markets]
-        trades=[t[0] for e in engines for t in e.tape.markets.get(ticker,{}).get('trades',())]
-        if any(at>=now-300 for at in trades):continue
-        last=max(m.get('discovered_at',0),m.get('maker_last_trade_at',0),max(trades,default=0))
+        trades=[t for e in engines for t in e.tape.markets.get(ticker,{}).get('trades',())]
+        active_buys=[o for e in engines for o in e.orders.values()
+            if o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')]
+        # Recent tape protects a slot only when it could actually have reached
+        # the quote we are resting. Non-executable prints are activity, but not
+        # evidence that this particular maker order has a realistic fill path.
+        def executable(t):
+            for o in active_buys:
+                resting=o.side;limit=float(o.price)
+                trade_side='no' if t[3]>0 else 'yes'
+                traded=t[1] if resting=='yes' else 1-t[1]
+                if trade_side==resting and traded<=limit+1e-9:return True
+            return False
+        recent=[t for t in trades if t[0]>=now-300]
+        if active_buys and any(executable(t) for t in recent):continue
+        if not active_buys and recent:continue
+        last_exec=max((t[0] for t in trades if executable(t)),default=0) if active_buys else max((t[0] for t in trades),default=0)
+        last=max(m.get('discovered_at',0),last_exec)
         old=m.get('maker_ranking',{}).get('execution_score',0)*(.5**min(20,max(0,now-last)/300))
         if score>max(.001,old*2):choices.append((old,ticker))
     return min(choices)[1] if choices else None
