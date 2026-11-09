@@ -47,6 +47,10 @@ def processing_batch_budget(backlog):
     return 256,.040
 
 class HostedRun(ForwardRun):
+    # Kalshi's 100 ms server-side conflation preserves exact net L2 changes and
+    # contiguous subscription sequence while collapsing repeated price-level churn.
+    # Public trades remain on their separate real-time channel.
+    book_update_interval_ms=100
     def __init__(self,store,guard,stop,signer):
         self.store,self.guard,self.outer_stop=store,guard,stop
         self.audit=HostedAudit(store,guard)
@@ -308,7 +312,8 @@ class HostedRun(ForwardRun):
             last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_control_ms=getattr(self,'last_control_ms',None),legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0),
-            input_types=getattr(self,'input_counts',{}),real_orders_enabled=False)),flush=True)
+            input_types=getattr(self,'input_counts',{}),book_update_interval_ms=getattr(self,'book_update_interval_ms',0),
+            real_orders_enabled=False)),flush=True)
         self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
         self.input_counts={};self.loop_lag_max=0
         if isinstance(experiments,ExperimentSuite):experiments.processing_costs={}

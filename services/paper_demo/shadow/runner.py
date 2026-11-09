@@ -242,8 +242,10 @@ class ForwardRun:
                         if additions and (not subscribed or (book_sid is not None and trade_sid is not None)):
                             for channel,sid in (('orderbook_delta',book_sid),('trade',trade_sid)):
                                 if sid is None:
-                                    command=dict(id=ident,cmd='subscribe',params=dict(
-                                        channels=[channel],market_tickers=sorted(additions)))
+                                    params=dict(channels=[channel],market_tickers=sorted(additions))
+                                    if channel=='orderbook_delta' and getattr(self,'book_update_interval_ms',0):
+                                        params['update_interval_ms']=self.book_update_interval_ms
+                                    command=dict(id=ident,cmd='subscribe',params=params)
                                 else:
                                     command=dict(id=ident,cmd='update_subscription',params=dict(
                                         sid=sid,market_tickers=sorted(additions),action='add_markets'))
