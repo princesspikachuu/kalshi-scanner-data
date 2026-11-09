@@ -68,6 +68,41 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(report['event_kinds'].values())+report['event_kinds_other'],20)
         audit.store.pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value.executemany.assert_called_once()
 
+    async def test_large_gap_burst_stays_durable_but_diagnostic_log_is_bounded(self):
+        import json
+        from unittest.mock import MagicMock,patch
+        audit=self.audit()
+        audit.store.pool.connection.return_value=MagicMock()
+        audit.begin()
+        for i in range(250):
+            audit.log(1000+i*.001,'DATA_GAP',audit.engine.wallet,
+                ticker='MARKET-'+str(i),reason='shared websocket reconnect')
+        for i in range(12):
+            audit.log(1001+i*.001,'FILL',audit.engine.wallet,
+                ticker='FILL-'+str(i),quantity='1')
+        with patch('builtins.print') as output:
+            audit.flush()
+        logs=[json.loads(c.args[0]) for c in output.call_args_list
+              if c.args and isinstance(c.args[0],str) and
+                 'shadow_audit_committed' in c.args[0]]
+        self.assertEqual(len(logs),1)
+        summary=logs[0]
+        self.assertEqual(summary['counts']['DATA_GAP'],250)
+        self.assertEqual(summary['counts']['FILL'],12)
+        self.assertEqual(len(summary['gaps']),8)
+        self.assertEqual(summary['gaps_omitted'],242)
+        self.assertEqual(len(summary['fills']),8)
+        self.assertEqual(summary['fills_omitted'],4)
+        self.assertEqual(audit.rows_written,263)
+        # Every original event plus the single checkpoint is still written
+        # in the same transaction, with its original time/details.
+        cur=audit.store.pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        batch=cur.executemany.call_args.args[1]
+        self.assertEqual(len(batch),263)
+        self.assertEqual(sum(e[2].obj.get('event')=='DATA_GAP' for e in batch[1:]),250)
+        self.assertEqual(sum(e[2].obj.get('event')=='FILL' for e in batch[1:]),12)
+        self.assertLess(len(json.dumps(summary)),4000)
+
     async def test_checkpoint_preparation_leaves_socket_loop_responsive(self):
         audit=self.audit();started=threading.Event();release=threading.Event()
         original=audit.prepare
