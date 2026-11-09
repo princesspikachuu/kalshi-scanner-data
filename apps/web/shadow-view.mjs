@@ -34,6 +34,26 @@ export function favoriteResearchMarkup(bots,open=new Set()){
  }).join('');
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
+/** Collector statistics are a first-class section, never hidden inside bot cards. */
+export function favoriteCollectorOverviewMarkup(bots=[]){
+ const groups=marketTypeGroups(bots.filter(bot=>!bot.retired));
+ if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · collected statistics</h3><p class="small">No active collector profiles yet. Historical reports remain attached to their bot cards.</p></section>';
+ const sections=groups.map(group=>{
+  if(group.id==='sports'){
+   const tables=group.bots.map(bot=>{
+    const rows=favoriteCategoryRows(bot.experiment?.entry_timing||[]);
+    return '<details class="favorite-research" open><summary>'+e(bot.name)+' · '+rows.length+' observed tiers</summary>'+researchTable(rows)+'</details>';
+   }).join('');
+   return '<details class="favorite-collector-category" open><summary>'+e(group.label)+'</summary>'+tables+'</details>';
+  }
+  const rows=favoriteCategoryRows(group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]),true);
+  return '<details class="favorite-collector-category" open><summary>'+e(group.label)+' · '+rows.length+' price/time tiers</summary>'+
+   '<p class="small">Combined across '+group.bots.length+' collector bots in this market category.</p>'+researchTable(rows)+'</details>';
+ }).join('');
+ return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites collected statistics"><h3>High-Probability Favorites · entry statistics</h3>'+
+ '<p class="small">Statistics are organized by market type, entry price in 5-cent increments and time to expiration. Original collected outcomes, including pending settlements, are retained. These tables are independent of the statistical trading strategy.</p>'+researchNote+sections+'</section>';
+}
+
 export function favoriteTimingMarkup(rows){
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
  return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${researchTable(favoriteCategoryRows(rows))}</details>`;
