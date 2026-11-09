@@ -1,5 +1,7 @@
-import unittest
+import json,unittest
 from decimal import Decimal as D
+from types import SimpleNamespace
+from unittest.mock import patch
 from services.paper_demo.shadow.favorite_entries import entry_key,observe
 from services.paper_demo.shadow.favorite_timing import cell
 from services.paper_demo.shadow.favorite_statistics import select,statistics_quote,aggregate,statistics_matrix,price_bucket,PRICE_BUCKETS,select_groups
@@ -43,6 +45,32 @@ class StatisticsEvidence(unittest.TestCase):
         self.assertEqual(order.quantity,D(2))
         self.assertEqual(b.attempts['KXBTCD-test']['entry_mode'],'statistics_exploration')
         self.assertEqual(b.attempts['KXBTCD-test']['entry_policy'],'favorites-statistics-learn-v2')
+
+    def test_default_six_market_cap_blocks_seventh_but_wider_cap_allows_it(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-new',yes='.79',no='.19',close=1000)
+        e.orders={str(i):SimpleNamespace(ticker=f'OTHER-{i}',action='buy',status='resting',reserved=D('1')) for i in range(6)}
+        base=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+                  statistics_active_learning=True,statistics_exploration_contracts=2)
+        q,blocked=statistics_quote(e,dict(base,statistics_exploration_max_open_markets=6),D(10),'KXBTCD-new','yes',{})
+        self.assertIsNone(q);self.assertEqual(blocked['reason'],'exploration_open_market_limit')
+        q,allowed=statistics_quote(e,dict(base,statistics_exploration_max_open_markets=12),D(10),'KXBTCD-new','yes',{})
+        self.assertIsNotNone(q);self.assertEqual(allowed['decision_type'],'exploration')
+
+    def test_strategy_counts_decision_reasons_and_logs_submitted_statistics_entry(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-test',yes='.79',no='.19',close=1000)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True,statistics_exploration_contracts=2,
+               statistics_exploration_max_open_markets=12)
+        b=StatisticsFavoritesStrategy(e,p);b.set_statistics_source(lambda:{});e.strategy=b;e.fill_callback=b.on_fill
+        printed=[]
+        with patch('builtins.print',side_effect=lambda value,**kwargs:printed.append(value)):
+            b.step()
+        self.assertEqual(b.decision_counts.get('exploration_missing_cell'),1)
+        self.assertTrue(any(json.loads(line).get('event')=='favorite_statistics_entry' for line in printed))
+        snapshot=b.statistics_snapshot()
+        self.assertEqual(snapshot['decision_counts'].get('exploration_missing_cell'),1)
 
     def test_exploration_caps_total_open_risk_and_does_not_claim_edge(self):
         e=Engine(QuietAudit(),cash='1000');e.advance(200)
