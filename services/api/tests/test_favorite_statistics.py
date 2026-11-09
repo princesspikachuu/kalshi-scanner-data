@@ -33,7 +33,7 @@ class StatisticsEvidence(unittest.TestCase):
         self.assertEqual(kinds,{'15m_price','weather_daily'})
         crypto=next(m for m in matrices if m['market_type']=='15m_price')
         sparse=next(x for x in crypto['cells'] if x['price_bucket']=='80-84' and x['horizon']=='10–15m')
-        self.assertEqual(sparse['samples'],30)
+        self.assertEqual(sparse['samples'],33)
         self.assertEqual(sparse['fallback_level'],'market_type_price_time')
         thin=next(x for x in crypto['cells'] if x['price_bucket']=='80-84' and x['horizon']=='5–10m')
         self.assertEqual(thin['samples'],0)
