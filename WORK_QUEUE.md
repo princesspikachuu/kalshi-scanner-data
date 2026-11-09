@@ -809,9 +809,9 @@ _DONE. Live post-deploy requests now succeed. The dashboard workspace fell from 
 # PRIORITY 10 — System-wide efficiency audit and remediation
 
 ## MT-011 — Audit and eliminate avoidable size/resource waste
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-011 systems audit  
+**Claimed:** 2026-11-09 22:25 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
