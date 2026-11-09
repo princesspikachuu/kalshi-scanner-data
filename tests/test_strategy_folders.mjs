@@ -407,6 +407,42 @@ test('maker discovery displays ranked candidates and actual admission rejection 
  assert.ok(!html.includes('<candidate>'));
 });
 
+test('Favorites collector and statistics category tables respect persisted closed state',()=>{
+ const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');
+ bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',price:'.80',contracts:'2',closed:'2',resolved:'2',winners:'2',cost:'1.6',net:'.4'}];
+ const collectorClosed=favoriteCollectorOverviewMarkup([bot],new Set());
+ assert.match(collectorClosed,/data-research="favorites-collector-crypto-15m"/);
+ assert.doesNotMatch(collectorClosed,/data-research="favorites-collector-crypto-15m" open/);
+ const collectorOpen=favoriteCollectorOverviewMarkup([bot],new Set(['favorites-collector-crypto-15m']));
+ assert.match(collectorOpen,/data-research="favorites-collector-crypto-15m" open/);
+ const stats={min_samples:20,matrix:[{market_type:'weather_daily',price_buckets:['70-74'],time_buckets:['5–10m'],cells:[]}]};
+ assert.doesNotMatch(favoriteStatisticsMatrixMarkup(stats,new Set()),/data-research="favorites-stat-weather_daily" open/);
+ assert.match(favoriteStatisticsMatrixMarkup(stats,new Set(['favorites-stat-weather_daily'])),/data-research="favorites-stat-weather_daily" open/);
+});
+
+test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
+ const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.experiment.entry_timing=[];
+ const detail={dataset:{folder:'favorites'},open:false,isConnected:true},storage=new Map();
+ const {context,nodes}=setup(d,{storage,queries:{'details[data-folder]':[detail]}});
+ let calls=0;
+ context.demoCall=async path=>{
+  if(path==='shadow/research-folder/favorites'){
+   calls++;
+   return {contract:'demo-v1',folder_id:'favorites',at:123,bots:{favorites:{entry_timing:[
+    {series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',cost:'4',net:'.2'}
+   ]}}};
+  }
+  return {};
+ };
+ detail.open=true;detail.ontoggle();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls,1);
+ const html=nodes.get('groups').innerHTML;
+ assert.ok(html.includes('80–84¢'));
+ assert.ok(html.includes('n=4 settled'));
+ assert.ok(html.includes('High-Probability Favorites · price × time matrix'));
+});
+
 test('statistics-backed Favorites renders a category-separated 5-cent by time matrix with sparse and fallback labels',()=>{
  const stats={min_samples:20,matrix:[{market_type:'weather_daily',price_buckets:['70-74','75-79','95-95'],time_buckets:['5–10m','10–15m'],cells:[
   {price_bucket:'70-74',horizon:'5–10m',samples:32,win_rate:.9,realized_roi:.08,realized_net:'4',lower:.79,level:'market_type_price_time',fallback_level:'market_type_price_time',fallback_samples:32,eligibility:'evidence_candidate'},

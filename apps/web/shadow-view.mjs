@@ -35,7 +35,7 @@ export function favoriteResearchMarkup(bots,open=new Set()){
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
 /** Add a complementary 2D price x time view; keep every existing research table intact. */
-export function favoriteCollectorOverviewMarkup(bots=[]){
+export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
  const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const PRICES=[70,75,80,85,90,95];
  const groups=marketTypeGroups(bots.filter(bot=>!bot.retired));
@@ -69,11 +69,12 @@ export function favoriteCollectorOverviewMarkup(bots=[]){
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
   const rows=group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]);
+  const key='favorites-collector-'+group.id;
   if(group.id==='sports'){
-   return '<details class="favorite-collector-category" open><summary>'+e(group.label)+'</summary>'+
+   return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+
       group.bots.map(bot=>matrix(bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
   }
-  return '<details class="favorite-collector-category" open><summary>'+e(group.label)+'</summary>'+matrix(rows,group.label)+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+matrix(rows,group.label)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
  '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows the settled win rate, number settled, and realized P/L. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
@@ -85,7 +86,7 @@ export function favoriteTimingMarkup(rows){
  return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${researchTable(favoriteCategoryRows(rows))}</details>`;
 }
 
-export function favoriteStatisticsMatrixMarkup(statistics){
+export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
@@ -93,7 +94,8 @@ export function favoriteStatisticsMatrixMarkup(statistics){
  return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
-   return '<details class="favorite-stat-market" open><summary>'+e(grid.market_type)+'</summary><div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+
+   const key='favorites-stat-'+grid.market_type;
+   return '<details class="favorite-stat-market" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(grid.market_type)+'</summary><div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+
    (grid.time_buckets||[]).map(time=>'<th scope="col">'+e(time)+'</th>').join('')+'</tr></thead><tbody>'+
    (grid.price_buckets||[]).map(price=>'<tr><th scope="row">'+e(price.replace('-', '–'))+'¢</th>'+
     (grid.time_buckets||[]).map(time=>{

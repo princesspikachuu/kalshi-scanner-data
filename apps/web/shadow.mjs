@@ -10,6 +10,23 @@ if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
 let folderViews={open:[],periods:{}};try{folderViews=JSON.parse(localStorage.getItem('moneytree-folder-views')||'{}')}catch{}
 let researchViews=[];try{researchViews=JSON.parse(localStorage.getItem('moneytree-research-views')||'[]')}catch{}
 const openResearch=new Set(Array.isArray(researchViews)?researchViews.filter(k=>typeof k==='string'):[]);
+const folderResearch=new Map(),folderResearchLoadedAt=new Map(),loadingFolderResearch=new Set();
+function researchBot(bot){
+ const folder=bot.folder_id||'convexity',extra=folderResearch.get(folder)?.[bot.id];
+ return extra?{...bot,experiment:{...(bot.experiment||{}),...extra}}:bot;
+}
+async function loadFolderResearch(folder){
+ if(!['favorites','favorites_statistics'].includes(folder)||loadingFolderResearch.has(folder))return;
+ const loaded=folderResearchLoadedAt.get(folder)||0;if(Date.now()-loaded<30000)return;
+ loadingFolderResearch.add(folder);
+ try{
+  const result=await demoCall('shadow/research-folder/'+folder);
+  folderResearch.set(folder,result?.bots&&typeof result.bots==='object'?result.bots:{});
+  folderResearchLoadedAt.set(folder,Date.now());
+  if(data)draw();
+ }catch(error){note('Research detail unavailable: '+error.message)}
+ finally{loadingFolderResearch.delete(folder)}
+}
 const pendingFolders=new Set();
 const openFolders=new Set(Array.isArray(folderViews?.open)?folderViews.open:[]);
 const folderSummaryPeriods=Object.fromEntries(Object.entries(folderViews?.periods||{}).filter(([,period])=>Object.hasOwn(folderPeriods,period)));
@@ -65,7 +82,7 @@ function draw(){
   return Number(running(b))-Number(running(a));
  });
  $('groups').innerHTML=folders.map(folder=>{
-  const folderBots=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id);
+  const folderBots=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id).map(researchBot);
   const activeFolderBots=folderBots.filter(b=>!b.retired);
   const matching=folderBots.filter(b=>(b.name+' '+b.series).toLowerCase().includes(find));
   const bots=matching.filter(b=>!b.retired),retired=matching.filter(b=>b.retired);
@@ -74,12 +91,12 @@ function draw(){
   // A collapsed folder does not need to build dozens of hidden, detailed bot cards.
   // On opening, the toggle handler redraws and restores every detailed card.
   const expandContent=openFolders.has(folder.id)||!!find||folderBots.length<=15;
-  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button>${folder.id==='volatility_scalper'?'<button data-volatility-family="pause" class="secondary">Pause all volatility</button><button data-volatility-family="resume" class="secondary">Resume all volatility</button>':''}<button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.id==='favorites_statistics'?favoriteStatisticsMatrixMarkup(folder.statistics):''}${folder.id==='favorites'&&expandContent?favoriteCollectorOverviewMarkup(activeFolderBots):''}${folder.strategy==='market_maker'?makerDiscoveryMarkup(folder.scanner):folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}${expandContent?marketTypeFolders(bots,local,folder.id,find,false,activeFolderBots):'<p class="small">Expand this folder to load its bot details, research, and positions.</p>'}${retired.length&&expandContent?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary>${marketTypeFolders(retired,local,folder.id,find,true,folderBots.filter(b=>b.retired))}</details>`:''}</details>`;
+  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button>${folder.id==='volatility_scalper'?'<button data-volatility-family="pause" class="secondary">Pause all volatility</button><button data-volatility-family="resume" class="secondary">Resume all volatility</button>':''}<button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.id==='favorites_statistics'?favoriteStatisticsMatrixMarkup(folder.statistics,openResearch):''}${folder.id==='favorites'&&expandContent?favoriteCollectorOverviewMarkup(activeFolderBots,openResearch):''}${folder.strategy==='market_maker'?makerDiscoveryMarkup(folder.scanner):folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}${expandContent?marketTypeFolders(bots,local,folder.id,find,false,activeFolderBots):'<p class="small">Expand this folder to load its bot details, research, and positions.</p>'}${retired.length&&expandContent?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary>${marketTypeFolders(retired,local,folder.id,find,true,folderBots.filter(b=>b.retired))}</details>`:''}</details>`;
  }).join('');
  for(const detail of document.querySelectorAll('details[data-research]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false)return;const key=detail.dataset.research;if(detail.open)openResearch.add(key);else openResearch.delete(key);try{localStorage.setItem('moneytree-research-views',JSON.stringify([...openResearch]))}catch{}};
  for(const detail of document.querySelectorAll('details[data-market-type]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false||$('find').value.trim())return;const key=detail.dataset.marketType;if(detail.open)openMarketTypes.add(key);else openMarketTypes.delete(key);saveMarketTypeViews()};
  for(const detail of document.querySelectorAll('details[data-market]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false)return;const id=detail.dataset.market;if(detail.open)openMarkets.add(id);else openMarkets.delete(id);saveMarketViews()};
- for(const detail of document.querySelectorAll('details[data-folder]'))detail.ontoggle=()=>{if(detail.isConnected===false)return;const id=detail.dataset.folder;const changed=detail.open?!openFolders.has(id):openFolders.has(id);if(detail.open)openFolders.add(id);else openFolders.delete(id);saveFolderViews();if(changed)draw()};
+ for(const detail of document.querySelectorAll('details[data-folder]'))detail.ontoggle=()=>{if(detail.isConnected===false)return;const id=detail.dataset.folder;const changed=detail.open?!openFolders.has(id):openFolders.has(id);if(detail.open)openFolders.add(id);else openFolders.delete(id);saveFolderViews();if(changed){const opening=detail.open;draw();if(opening)void loadFolderResearch(id)}};
  for(const b of document.querySelectorAll('[data-folder-summary-period]'))b.onclick=event=>{event.preventDefault();event.stopPropagation();folderSummaryPeriods[b.dataset.summaryFolder]=b.dataset.folderSummaryPeriod;saveFolderViews();draw()};
  for(const b of document.querySelectorAll('[data-folder-pause]')){b.disabled=pendingFolders.has(b.dataset.folderPause);b.onclick=event=>{event?.preventDefault();event?.stopPropagation();return folderControl(b.dataset.folderPause,'pause')}}
  for(const b of document.querySelectorAll('[data-folder-resume]')){b.disabled=pendingFolders.has(b.dataset.folderResume);b.onclick=event=>{event?.preventDefault();event?.stopPropagation();return folderControl(b.dataset.folderResume,'resume')}}
@@ -104,6 +121,7 @@ async function load(){
   if(!result.installed){$('health').textContent='Worker initializing';loadNote('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
   if(loadError&&$('message').textContent===loadError)note('');loadError=null;
   data=result;draw();
+  for(const folder of openFolders)void loadFolderResearch(folder);
   try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{loadNote('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
  }catch(error){
   loadNote(error.message);
