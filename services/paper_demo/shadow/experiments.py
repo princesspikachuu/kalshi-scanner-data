@@ -446,9 +446,11 @@ class ExperimentSuite:
                     for ticker in e.books:
                         if ticker not in e.settled:e.data_gap(ticker,'portfolio resumed; fresh snapshot required')
                     e.idle_feed_suspended=False
-                if idle and (source=='book_heartbeat' or source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade')):
+                if idle and (source=='clock' or source=='book_heartbeat' or source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade')):
                     # No trading intent, outstanding orders or exposure needs
-                    # this duplicate book. Keep lifecycle/settlement processing.
+                    # hot book traffic or 10 Hz strategy clocks. Keep lifecycle,
+                    # settlement and control processing so the portfolio can
+                    # resume safely when enabled again.
                     e.idle_feed_suspended=True;continue
             if getattr(self.host,'suspend_idle_feeds',False) is True and self.skip_paused_ticker_input(e,f,source,payload,now):continue
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
