@@ -60,3 +60,15 @@ Read-only Postgres SQL through Render connector was blocked: empty external IP a
 - Before/after proof of recovered capacity: **pending**.
 
 Continue this task as IN PROGRESS. The audit itself has not yet met all acceptance criteria.
+
+## Follow-up sampled worker baseline: 23:00–23:30 UTC (before PR #171 deploy)
+
+The following sums cover 30-minute windows of **57** `shadow_durability_cost` records, **58** `shadow_pipeline_cost` records and **59** `shadow_checkpoint_size` records from Render. Window endpoints are aligned but different metric emitters may have small scheduling jitter; do not interpret individual sums as an exact causal breakdown.
+
+- Durability telemetry: **1,286 successful commits**, ~**2,807,020,340 encoded checkpoint character-bytes** (~2.81 GB, mostly base64 transport) across 56 non-null reports; **7,580** audit/extra rows. This is cumulative write *traffic* reported by the application, not persisted database growth.
+- Durability time totals: **321.17 s upsert**, **346.76 s total database write**, **242.17 s checkpoint preparation**, **4.85 s connection-pool wait** across the reporting interval. These are cumulative execution timings, not end-to-end wall time; individual 30-second reported window p50 was ~6.22 seconds of upsert time.
+- Checkpoint size: 59 sampled records, median **10,979,476 decoded bytes**, **2,224,640 encoded text characters**, 95th-percentile sample ~11.04 MB decoded. The cached cold `scalper_research` section remains ~6.31 MB raw with 164 members; segment-cache hits were 60,678 at the most recent sample.
+- Pipeline: **636,345 total processed inputs** across 58 sample windows; median reported queue backlog **41**, 95th percentile **1,695**. This is substantially better than earlier 13,770 backlog examples, so do not attribute old backlog figures to the current code without time alignment.
+- PR #171 introduces counters `checkpoint_upserts`, `checkpoint_unchanged_skips` and `checkpoint_bytes_avoided` for genuine before/after savings measurement. It was not deployed during this baseline window.
+
+This baseline shows the full-checkpoint persistence pipeline is a large recurring cost, but **does not prove how many snapshots are byte-identical**. Before claiming a material improvement, compare post-deploy skip ratio, checkpoint bytes, mean write duration/commit, CPU use and actual maker/Favorites throughput for similarly active market windows.
