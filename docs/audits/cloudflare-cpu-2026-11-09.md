@@ -1,6 +1,6 @@
 # MT-017 — Cloudflare Workers CPU limit audit (2026-11-09)
 
-Status: **partial code-path audit with one measured synthetic optimization; actual Cloudflare invocation analytics unavailable**.
+Status: **partial code-path audit with synthetic CPU benchmark and a confirmed integrity constraint; actual Cloudflare invocation analytics unavailable**.
 
 ## Incident and scope
 
@@ -21,17 +21,17 @@ The actual alert recipient Worker is **unknown**. The Worker name must be establ
 
 1. **Staging static-asset CPU work existed prior to PR #155.** Previously `run_worker_first: true` invoked Worker JavaScript for every static request. PR #155 (`6346ee1d783439ff510cd51170e9006c7f24dac0`) narrowed Worker-first routes to `/api/*` plus `/live-paper`. Static responses receive equivalent CSP/no-store/security headers through `apps/web/_headers`. Cloudflare documents this asset-first behavior. This reduces Worker invocation count for static requests but does **not** establish an improvement in per-request API CPU.
 2. **Redundant gateway JSON serialization was eliminated in PR #155.** Most authenticated API routes still parse response JSON to enforce their contract, but non-transformed responses now forward their original text instead of parsing and then serializing again. The largest authenticated dashboard workspace has a special **8 MiB byte-bounded stream** path when the API returns `x-pocket-workspace-contract: demo-v1`; it avoids parsing/restringifying at Cloudflare altogether.
-3. **Bounded streaming copied every upstream byte chunk.** `boundedResponse` previously used `value.slice()` on each chunk, allocating/copying data after it had already been read. MT-017 changes this to enqueue the original chunk, retaining cumulative byte bounds and upstream cancellation on overflow. No trading code, stored records or auth routing changes.
+3. **A tempting stream-copy optimization is unsafe.** `boundedResponse` copies each upstream chunk using `value.slice()` before enqueueing it. MT-017 tested bypassing that copy, but the existing regression test demonstrated that a mutable upstream buffer could be zeroed before the downstream consumer read it, corrupting dashboard bytes. **The copy was intentionally retained.** The benchmark documents its synthetic CPU cost, but integrity takes precedence. Any future lower-copy design requires provably immutable ownership/transfer semantics.
 4. **Dashboard refreshes generate legitimate gateway calls:** `apps/web/shadow.mjs` has a 10-second refresh timer and loads workspace then events, potentially **12 sequential API invocations per minute per open tab** when both requests complete quickly. This is a code-derived maximum for the normal polling path, not an observed request rate. Reducing polling could reduce request volume, but won't fix a CPU-heavy *individual* invocation; do not silently lower monitoring freshness.
 5. **Legacy research reports are relatively modest in repository size**: the largest audited report `backtests/LOSS_PREVENTION.json` is 90,707 bytes, with `EXECUTION_BY_BID_OFFSET.csv` 31,432 bytes and `AVERAGES_BY_TIME_AND_PRICE.csv` 10,834 bytes. File sizes are from `main` Git metadata, not observed Worker response payloads. `await result.text()` on each report is a possible minor CPU hotspot, not a proven incident cause.
 6. **Post-deploy smoke check is not a CPU measurement.** Cloudflare's staging deployment step completed after PR #155, while an unauthenticated public check returned HTTP 403, as in previous deploys. That may reflect access policy and cannot be labeled a CPU failure without independent evidence.
 
 ## Verification and quantitative evidence
 
-- Test coverage: `tests/test_demo_gateway.mjs` checks static asset configuration, authorization/proxy contract and stream-overflow cancellation, and now verifies that streamed chunks are forwarded without extra copying.
+- Test coverage: `tests/test_demo_gateway.mjs` checks static asset configuration, authorization/proxy contract, stream-overflow cancellation and byte ownership under mutable upstream buffers. The attempted no-copy change **failed this existing test**, so it was reverted rather than weakening the test.
 - Reproducible local measurement: `node tools/benchmark_gateway_cpu.mjs` prints Node process CPU consumption for 100 synthetic 2-MiB byte copies versus by-reference access, plus a 10-request 2-MiB stream through `proxyAuth`. Values are intentionally reported as **synthetic local CPU**, not Cloudflare usage. Results appear in the PR CI log.
 - No Cloudflare request-level traces, CPU quantiles or `exceededCpu` series were accessible. **Before/after Cloudflare error reduction is not verified and must not be claimed.**
-- No new paid service, fee, trading cap, retention change or reduced trading/monitoring cadence.
+- No new paid service, fee, trading cap, retention change or reduced trading/monitoring cadence. MT-017 has not shipped a new runtime CPU reduction beyond previously merged PR #155; it has produced an audit and benchmark with an explicitly documented blocked optimization.
 
 ## Remaining required measurement (blocking completion)
 
