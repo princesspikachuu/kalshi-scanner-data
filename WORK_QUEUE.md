@@ -985,8 +985,14 @@ Create a concise audit report in the repo containing:
 - Persistent maintenance retry loops are either fixed or safely backed off.
 - Redundant services are either justified or retired safely.
 
+### Implementation progress (2026-11-09)
+- Initial measured Render architecture/CPU/memory/connection baseline and live worker/database durability samples captured in [audit report](docs/audits/MT-011-initial-systems-efficiency-audit-2026-11-09.md) (commit `c88f1161732609c20b974dd46ae5ff8cc351ca9d`).
+- Leading issues: ~10.8 MB decoded shadow checkpoint (~6.3 MB scalper research), sampled ~1.97 s durability writes and 612 ms preparation, repeated research collection failures, and main worker 71–88% CPU utilization. These observations need instrumentation and before/after verification; no data deleted or strategy states changed.
+- Direct PostgreSQL queries blocked by existing empty external IP allowlist; no security settings altered.
+- Next: implement or audit checkpoint dirty-section write suppression and sampled write-latency histograms without overlapping MT-004/MT-015. Keep this task IN PROGRESS.
+
 ### Completion notes
-_Fill in when done._
+_In progress; baseline recorded, no code remediation deployed yet._
 
 
 ---
