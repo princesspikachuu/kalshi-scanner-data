@@ -93,6 +93,7 @@ class FavoritesStrategy(ConvexityStrategy):
         if self.profile.get('paper_exploration',True) is False or a.get('entry_policy')!='favorites-paper-data-v3':
             return
         if a.get('exit_reason') or not self.enabled or m.get('entry_parked'):
+            a['repeat_qualified']=False
             return
         if not self.entry_allowed(m,self.e.now) or not self.entry_ready(ticker) or m['close']-self.e.now<=60:
             a['repeat_qualified']=False
@@ -111,10 +112,12 @@ class FavoritesStrategy(ConvexityStrategy):
         if a.get('repeat_qualified') and signal==a.get('last_repeat_signal'):
             a['repeat_duplicate_suppressed']=a.get('repeat_duplicate_suppressed',0)+1
             return
+        a['repeat_opportunities_detected']=a.get('repeat_opportunities_detected',0)+1
         inventory=sum((l.quantity for l in lots if l.side==a['side']),ZERO)
         max_inventory=self.contracts*D(str(self.profile.get('paper_repeat_inventory_multiplier',5)))
         if inventory+q['quantity']>max_inventory:
             a['repeat_risk_suppressed']=a.get('repeat_risk_suppressed',0)+1
+            a['last_repeat_suppression']=dict(reason='inventory_cap',signal=signal,at=self.e.now)
             return
         if self.e.now-a.get('last_submit',0)<10:
             return
@@ -129,7 +132,9 @@ class FavoritesStrategy(ConvexityStrategy):
         self.e.log('FAVORITE_REPEAT_OPPORTUNITY',ticker=ticker,details=json.dumps(dict(
             opportunity_key=signal,repeat_entries=a['repeat_entries'],
             inventory_before=str(inventory),max_inventory=str(max_inventory),
-            price=str(q['price']),quantity=str(q['quantity'])))
+            price=str(q['price']),quantity=str(q['quantity']),
+            entries_attempted=a['repeat_entries'],
+            opportunities_detected=a['repeat_opportunities_detected'])))
 
     def entry_allowed(self,m,now):
         if self.profile.get('retired'):return False
