@@ -4,10 +4,10 @@ export function favoriteCategoryRows(rows=[],combineSeries=false){
  const groups=new Map(),bands=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  for(const r of rows){
   if(r.price==null||!Number.isFinite(Number(r.price)))continue;
-  const low=Math.floor((Number(r.price)*100+1e-7)/10)*10;
+  const low=Math.floor((Number(r.price)*100+1e-7)/5)*5;
   const series=combineSeries?'combined':String(r.series||'');
   const key=JSON.stringify([series,combineSeries?'category':r.market_type,r.clock,low,r.horizon]);
-  if(!groups.has(key))groups.set(key,{series,market_type:r.market_type,clock:r.clock,low,band:`${low}–${low+9}%`,horizon:r.horizon,contracts:0,closed:0,resolved:0,winners:0,cost:0,net:0,unverified:0,holding_seconds:0,dollar_hours:0});
+  if(!groups.has(key))groups.set(key,{series,market_type:r.market_type,clock:r.clock,low,band:`${low}–${Math.min(low+4,95)}¢`,horizon:r.horizon,contracts:0,closed:0,resolved:0,winners:0,cost:0,net:0,unverified:0,holding_seconds:0,dollar_hours:0});
   const g=groups.get(key);
   for(const field of ['contracts','closed','resolved','winners','cost','net','unverified','holding_seconds','dollar_hours']){
    const n=Number(r[field]??0);if(Number.isFinite(n))g[field]+=n;
@@ -38,6 +38,34 @@ export function favoriteTimingMarkup(rows){
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
  return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${researchTable(favoriteCategoryRows(rows))}</details>`;
 }
+
+export function favoriteStatisticsMatrixMarkup(statistics){
+ const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
+ if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
+ const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
+ const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
+ return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table uses settled Data-Collection Favorites outcomes for one market category. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
+ grids.map(grid=>{
+   const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
+   return '<details class="favorite-stat-market" open><summary>'+e(grid.market_type)+'</summary><div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+
+   (grid.time_buckets||[]).map(time=>'<th scope="col">'+e(time)+'</th>').join('')+'</tr></thead><tbody>'+
+   (grid.price_buckets||[]).map(price=>'<tr><th scope="row">'+e(price.replace('-', '–'))+'¢</th>'+
+    (grid.time_buckets||[]).map(time=>{
+      const cell=byCell.get(price+'|'+time);
+      if(!cell||!cell.samples)return '<td class="stat-empty"><span class="small">No settled events</span></td>';
+      const enough=cell.samples>=min,capable=cell.eligibility==='evidence_candidate';
+      const label=status(cell);
+      const fallback=cell.fallback_level!==cell.level&&cell.fallback_level!=='insufficient_samples'?
+        'Fallback available: '+cell.fallback_level.replaceAll('_',' ')+' · n='+cell.fallback_samples:
+        cell.fallback_level==='insufficient_samples'?'No reliable fallback':'Exact category/time evidence';
+      const detail=['Confidence lower bound: '+num(cell.lower===null?null:cell.lower*100),
+        'Net P/L: '+dollars(cell.realized_net),'Level: '+cell.level.replaceAll('_',' '),fallback,
+        'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
+      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
+    }).join('')+'</tr>').join('')+'</tbody></table></div></details>';
+ }).join('')+'</section>';
+}
+
 export const pnlClass=value=>value===null||value===undefined?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
 export function executionMarkup(x){
  if(!x||!x.measured)return '<p class="small">Execution measurements will appear with the next worker snapshot.</p>';
