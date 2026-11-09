@@ -13,10 +13,17 @@ class BurstBatchBudgetTests(unittest.TestCase):
         self.assertEqual(processing_batch_budget(128),(256,.040))
         self.assertEqual(processing_batch_budget(129),(512,.240))
         self.assertEqual(processing_batch_budget(2001),(4096,.640))
-        self.assertEqual(processing_batch_budget(10001),(4096,.640))
+        self.assertEqual(processing_batch_budget(8000),(4096,.640))
+        self.assertEqual(processing_batch_budget(8001),(4096,.900))
+        self.assertEqual(processing_batch_budget(10001),(4096,.900))
+        self.assertEqual(processing_batch_budget(20000),(4096,.900))
         self.assertLessEqual(PROCESSING_YIELD_SECONDS,.080)
         self.assertLessEqual(PROCESSING_YIELD_INPUTS,256)
         self.assertLess(PROCESSING_YIELD_SECONDS,processing_batch_budget(20000)[1])
+        # Queue saturation may increase amortization but cannot increase the
+        # amount of processing before cooperative socket yields.
+        self.assertLessEqual(processing_batch_budget(20000)[0],4096)
+        self.assertLessEqual(processing_batch_budget(20000)[1],1.0)
 
 class ProcessingBudgetTests(unittest.TestCase):
     def fixture(self):
