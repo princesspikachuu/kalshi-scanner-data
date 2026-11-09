@@ -564,7 +564,7 @@ class ExperimentSuite:
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,
-                    statistics=dict(b.statistics_snapshot(),matrix=[]) if isinstance(b,StatisticsFavoritesStrategy) else None,
+                    statistics=dict(min_samples=int(b.profile.get('statistics_min_samples',20)),latest_decisions=list(b.decisions.values())[-20:]) if isinstance(b,StatisticsFavoritesStrategy) else None,
                     entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder in ('favorites','favorites_statistics') else [])
                 if isinstance(b,VolatilityScalper):
                     retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
