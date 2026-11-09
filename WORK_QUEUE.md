@@ -768,6 +768,191 @@ If detailed data is still loading separately:
 _In progress — second-stage compaction is deployed live. Keep U0 until a real post-deploy dashboard request succeeds below the supported size._
 ---
 
+---
+
+# PRIORITY 10 — System-wide efficiency audit and remediation
+
+## MT-011 — Audit and eliminate avoidable size/resource waste
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Goal
+Perform a full systems-efficiency audit across the active Money Tree / Kalshi stack. The purpose is to recover useful dashboard, worker, API, database, network, and monitoring capacity **without reducing useful trading activity or deleting collected evidence**.
+
+This task must distinguish:
+- legitimate load caused by useful trading/data collection,
+- unavoidable platform/provider limits,
+- and avoidable waste caused by duplicate work, oversized state, unbounded histories, repeated serialization, redundant services, polling, unnecessary DB reads/writes, or inefficient queue handling.
+
+### Confirmed preliminary findings
+1. **Initial dashboard workspace was structurally oversized**
+   - Pre-fix live workspace reached ~8.65 MiB.
+   - The `bots` section alone was ~8.46 MiB across 602 bots.
+   - Large research/history fields were being embedded in every initial dashboard response even though they belong behind detail/lazy endpoints.
+   - MT-008 is actively removing this waste; continue auditing for similar patterns elsewhere.
+
+2. **Paper processing is experiencing real queue/backlog pressure**
+   - Live `paper_monitoring_capacity` telemetry showed examples of:
+     - backlog ~13,770 inputs,
+     - estimated queue time ~245 seconds in one sample,
+     - later backlog ~4,268,
+     - discovery/admission paused because of processing lag/capacity.
+   - This directly reduces the ability to admit more Market Maker/Favorites monitoring opportunities.
+
+3. **Huge volume of quote updates is being filtered after entering the pipeline**
+   - Live telemetry showed `filtered_quote_updates` above 600,000.
+   - Audit whether these updates can be coalesced/suppressed earlier, before consuming queue/processing/serialization work.
+
+4. **Market Maker is capacity-starved despite low useful trading**
+   - Live telemetry showed:
+     - maker entry limit 8,
+     - maker slots free 0,
+     - only ~6 maker entry markets/subscriptions,
+     - discovery paused by measured capacity.
+   - This suggests the strategy may be consuming scarce monitoring slots inefficiently while still failing to fill/trade.
+
+5. **Legacy research worker appears to be repeatedly retrying failed storage compaction**
+   - `pocket-research-staging` logs show `storage_compaction_deferred` repeatedly, approximately every 5–7 minutes for hours.
+   - Determine why compaction is persistently failing and whether this service is still required in the current architecture.
+   - Do not disable a service until its role and dependencies are verified.
+
+6. **Potential duplicated worker/runtime footprint**
+   - Render currently has both:
+     - `pocket-processing-staging` running `services.research.runtime`,
+     - `pocket-research-staging` also running `services.research.runtime`.
+   - Audit WORKER_ROLE/env/runtime responsibility to confirm whether these are intentionally distinct or overlapping/legacy.
+   - If one is obsolete/redundant, retire it safely only after proving no unique work is owned by it.
+
+### Audit areas
+
+#### A. Dashboard/API payloads
+Measure:
+- initial workspace decoded/wire size,
+- payload contribution by section,
+- per-bot and per-folder byte distribution,
+- repeated metadata,
+- raw history embedded where aggregates would suffice,
+- data fetched/rendered but unused by frontend,
+- refresh cadence and bytes transferred per minute.
+
+Fix:
+- lazy detail endpoints,
+- pagination,
+- bounded summaries,
+- stable IDs instead of repeated metadata,
+- cacheable aggregates,
+- conditional fetches only when panels are open.
+
+#### B. Worker queue and event processing
+Measure:
+- incoming events/sec,
+- processed events/sec,
+- backlog depth/time,
+- processing p50/p95/p99,
+- event types by volume,
+- dropped/coalesced/filtered counts,
+- queue occupancy by strategy/market,
+- time spent processing events that produce no state change.
+
+Specifically investigate the >600k filtered quote updates and move filtering/coalescing as close to ingestion as safely possible.
+
+#### C. Market subscriptions/monitoring
+Measure:
+- subscribed markets by strategy,
+- slot utilization,
+- active useful positions vs idle subscriptions,
+- updates/sec by market,
+- opportunity yield per monitored market,
+- fills/trades per slot-hour,
+- slots consumed by paused or low-yield strategies.
+
+Reallocate capacity toward active/high-yield strategies rather than simply increasing hard limits.
+
+#### D. Database
+Audit:
+- `research_job` growth by key family,
+- largest JSONB `parameters` / `progress` rows,
+- repeated large payloads,
+- table/index/dead-tuple size,
+- slow/repeated queries,
+- full-history scans,
+- write amplification from frequent checkpoint/report updates,
+- connection-pool usage,
+- query cancellations/timeouts,
+- compaction failures.
+
+Preserve canonical history. Prefer derived/materialized aggregates and compact mutable state over destructive deletion.
+
+#### E. Storage/compaction
+- Determine why `storage_compaction_deferred` repeats continuously.
+- Capture the actual failure category safely without leaking credentials/data.
+- Verify whether compaction work is fighting with live trading/database queries.
+- Use bounded backoff; do not retry an unchanged failure every few minutes forever.
+- Separate optional maintenance from latency-sensitive paper trading.
+
+#### F. Service architecture
+For every Render service:
+- document runtime role,
+- unique responsibility,
+- CPU/memory allocation,
+- DB pool allocation,
+- provider/API usage,
+- whether work overlaps another service,
+- whether it is still needed.
+
+Pay special attention to the two services invoking `services.research.runtime`.
+
+#### G. Polling/recomputation
+Find repeated work where inputs have not changed:
+- dashboard polling,
+- performance calculations,
+- balance snapshots,
+- Favorites aggregates,
+- bot/folder performance windows,
+- statistics recalculation,
+- market discovery,
+- metadata/fee lookups.
+
+Introduce:
+- dirty flags/version hashes,
+- TTL caching,
+- incremental updates,
+- event-driven refresh where practical.
+
+### Guardrails
+- Do not delete trading or research history to make size numbers look better.
+- Do not reduce useful monitoring or trading just to lower CPU.
+- Do not unpause paused strategies.
+- Do not disable a service until its unique responsibilities are verified.
+- Do not increase external API usage to compensate for internal inefficiency.
+- Paper/live safety boundaries remain unchanged.
+
+### Deliverables
+Create a concise audit report in the repo containing:
+- measured baseline,
+- top waste sources ranked by estimated impact,
+- quick wins,
+- architectural fixes,
+- service/resource map,
+- before/after metrics for each implemented remediation,
+- follow-up queue items for anything not completed in this task.
+
+### Acceptance criteria
+- We can explain where worker time, DB work, network bytes, and dashboard payload size are going.
+- At least the top 3 avoidable waste sources are measured, not guessed.
+- Quick wins are implemented and verified where low risk.
+- Queue/backlog and dashboard size improve without reducing useful trading/data collection.
+- Market Maker/Favorites have more usable capacity after remediation.
+- Persistent maintenance retry loops are either fixed or safely backed off.
+- Redundant services are either justified or retired safely.
+
+### Completion notes
+_Fill in when done._
+
+
 # Coordination notes
 
 - MT-001 and MT-002 may be worked on by different chats at the same time.
