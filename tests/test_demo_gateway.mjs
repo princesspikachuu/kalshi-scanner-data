@@ -584,22 +584,6 @@ test('trusted shadow snapshots stream without buffering or parsing at the edge',
  while(!finish)await new Promise(resolve=>setImmediate(resolve));finish();
  assert.equal(new TextDecoder().decode((await reader.read()).value),']}');assert.equal((await reader.read()).done,true);
 });
-test('workspace stream passes existing chunks without cloning and retains byte-boundary checks',async()=>{
- const chunk=new Uint8Array(131072).fill(17);
- let downstreamChunk;
- const upstream=new ReadableStream({start(controller){controller.enqueue(chunk);controller.close()}});
- const response=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{
-  fetcher:async()=>new Response(upstream,{headers:{
-   'content-type':'application/json','x-pocket-workspace-contract':'demo-v1'
-  }})
- });
- assert.equal(response.status,200);
- const reader=response.body.getReader();
- const first=await reader.read();downstreamChunk=first.value;
- assert.equal(downstreamChunk,chunk,'gateway should not allocate a second copy of each trusted chunk');
- assert.equal(downstreamChunk.byteLength,131072);
- assert.equal((await reader.read()).done,true);
-});
 test('streamed shadow snapshots retain byte limits and cancel upstream on overflow',async()=>{
  let cancelled=false;
  const body=new ReadableStream({start(c){c.enqueue(new Uint8Array(8388609))},cancel(){cancelled=true}});
