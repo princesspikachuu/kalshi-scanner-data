@@ -34,6 +34,7 @@ class NoCapture:
     def close(self):pass
 
 PROCESSING_YIELD_SECONDS=.080
+PROCESSING_YIELD_INPUTS=256
 
 def processing_batch_budget(backlog):
     """Amortize durable checkpoints without monopolizing the event loop."""
@@ -366,7 +367,7 @@ class HostedRun(ForwardRun):
                         # round trip/checkpoint for each partial fill in a burst.
                         if self.done.is_set() or self.queue.empty() or completed>=max_inputs or time.monotonic()-started>=max_simulation:
                             break
-                        if time.monotonic()-slice_started>=PROCESSING_YIELD_SECONDS:
+                        if completed%PROCESSING_YIELD_INPUTS==0 or time.monotonic()-slice_started>=PROCESSING_YIELD_SECONDS:
                             await asyncio.sleep(0);slice_started=time.monotonic()
                         item=self.queue.get_nowait()
                     simulated=time.monotonic()
