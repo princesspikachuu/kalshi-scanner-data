@@ -89,7 +89,7 @@ export function favoriteStatisticsMatrixMarkup(statistics){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
- const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
+ const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='exploration_candidate'?'Exploration opportunity · sparse':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
  return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table uses settled Data-Collection Favorites outcomes for one market category. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
