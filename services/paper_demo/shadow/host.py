@@ -458,6 +458,7 @@ class HostedRun(ForwardRun):
                 await self.audit.durable_io(self.guard)
                 self.experiments.control(all_rows,mode)
                 self.experiments.maintain()
+                self.book_update_interval_ms=book_conflation_interval(self.experiments)
                 rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
                 for row in rows:
                     p=row['parameters'];bot=self.strategy.bots[p['series']]
