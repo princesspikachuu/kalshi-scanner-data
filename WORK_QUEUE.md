@@ -131,7 +131,7 @@ _Code complete and 1,356-test suite passing; blocked solely on live paper-worker
 # PRIORITY 2 — Build Statistics-Backed Favorites concurrently
 
 ## MT-002 — Add a Statistics-Backed Favorites strategy alongside Data-Collection Favorites
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-002 implementation  
 **Claimed:** 2026-11-09 04:37 UTC  
 **Priority:** High
@@ -241,13 +241,13 @@ Still expose, where practical:
 - P/L and open-position accounting for the two Favorites strategies remain separate.
 
 ### Completion notes
-- Implementation branch: `work/mt-002-statistics-favorites`
-- PR: #138 (`MT-002: add statistics-backed Favorites`)
-- Current implementation: separate `favorites_statistics` portfolio with independent paper cash/P&L; reads pooled settled collector evidence without modifying the collector; hierarchical fallback across series/market-type/side/price/time segments; configurable sample/confidence/ROI thresholds; per-decision trade/skip diagnostics; shared 30-second evidence cache across statistics bots; separate workspace statistics payload and segment leaderboard.
-- New MT-002 additions: complete 70–95¢ range displayed in 5-cent buckets (95¢ terminal cell), market-type-specific price × entry-time matrix, exact event count/win rate/ROI/confidence, evidence eligibility, clearly labeled sparse cells and broader fallback samples, responsive scrollable UI, and separate folder pause/resume/reset support. Existing Favorites category research also uses 5-cent buckets.
-- Tests added: sparse fallback, tiny-sample rejection, new settled evidence changing a future decision, and read-only consumption of collector evidence.
-- Verification: initial PR #138 CI passed before new matrix requirements; updated browser matrix tests pass; full API/PostgreSQL CI for updated head `2115afaebe338adb07b3449f29559aead2f3a83d` is running. Do not merge or deploy until it passes.
-- Status remains IN PROGRESS until CI completes and any failures are resolved.
+- **DONE (implementation and deployment):** PR [#138](https://github.com/princesspikachuu/kalshi-scanner-data/pull/138) merged by squash to `build/google-auth-foundation` at commit `8c44d6c5d2aff4dc8731eee316b1b294c0428b87`.
+- **Code:** Separate `favorites_statistics` paper portfolio and account, alongside unchanged broad `favorites` collector; pooled, read-only collector evidence; market/series/side/5-cent-price/time grouping; hierarchical fallback with distinct-event counts and Wilson lower confidence bound; configurable sample, positive EV, ROI, fee/slippage and risk gates; traceable trade/skip decisions.
+- **User-requested matrix:** Distinct market-type matrices, value tiers 70–74 through 90–94 plus a 95¢ terminal cell, unchanged entry-time tiers, sample/win rate/ROI/net/confidence, evidence candidate vs sparse vs rejected, explicit fallback labels, responsive scroll container. Existing Favorites time/price research now also displays 5-cent bands.
+- **Performance:** One 30-second cached evidence aggregation shared by statistical bots; no history deletion/reset; historical P/L and pending positions kept separate.
+- **Tests:** GitHub Actions run [42564105494](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/42564105494) **success** on PR head `7ed1ce01635afb1d6faa1070a07f809ad6469fd5`: browser matrix tests, targeted statistical tests, full API/PostgreSQL suite (~1,358 tests), and Blueprint validation.
+- **Deployment:** Render API `pocket-api-staging` deploy `dep-dbol5315efls73e7giag` **live**; worker `pocket-processing-staging` deploy `dep-dbol542jnfac73f8laog` **live**, both on merged commit. Exclusive worker handoff verified: new worker logged `demo_worker_ready` then `statistics_favorites_initialized` with **75** paper-bot profiles on 2026-11-09 04:59:42 UTC.
+- **UI access caveat / follow-up:** Cloudflare staging gateway build and deploy step succeeded in run [42564499457](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/42564499457), but the public unauthenticated staging sign-in-assets smoke check returned HTTP **403** (expected 200). Access protection may be intentional; do not weaken security blindly. An authenticated, end-user browser check remains unverified. This does not negate successful backend deploy and worker initialization. Monitor post-deploy actual orders/decisions separately from code acceptance.
 
 ---
 
