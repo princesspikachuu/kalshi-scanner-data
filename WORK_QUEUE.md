@@ -1011,7 +1011,14 @@ Create a concise audit report in the repo containing:
 - PR opened; CI/workflow result was **not yet available** when checked. **Do not claim deployment or throughput improvement** until checks pass, merge/deploy is confirmed, and live before/after samples are measured.
 
 ### Completion notes
-_In progress; implementation PR opened but not merged or deployed._
+_In progress; PR #171 merged and CI verified, worker deployment/live before-after metrics pending._
+### PR #171 validation and merge (2026-11-09)
+- Initial 1,410-test validation had one newly introduced **test assertion** failure: it expected two SQL write groups instead of the existing checkpoint-row + event-row grouping. Fixed the test without altering original SQL ordering or audit-write semantics.
+- Follow-up GitHub Actions run [42721056626](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/42721056626) **SUCCESS** on commit `f77c376f9f554693f2dde5479790326c6adec027`.
+- PR [#171](https://github.com/princesspikachuu/kalshi-scanner-data/pull/171) squash-merged to `build/google-auth-foundation` as `edd87e8d463168a73e790525dc46c5078babadcd`.
+- Render processing worker deployment `dep-dbp5nqp42hec73bll880` was **pre_deploy_in_progress** for older Market Maker commit `aa056ef9a90b76d58bd4b488650ec75fdd235227` at the time of verification. **Do not claim PR #171 live** until a deployed commit contains `edd87e8d`; avoid interrupting the overlapping Market Maker deployment.
+- Added a 23:00–23:30 UTC measured pre-deploy baseline to [audit report](docs/audits/MT-011-initial-systems-efficiency-audit-2026-11-09.md): 1,286 commits and 2.81 GB encoded checkpoint traffic over 30 minutes, plus 321.17 seconds cumulative upsert time; no causal savings asserted yet.
+
 
 
 ---
