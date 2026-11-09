@@ -864,7 +864,7 @@ class Engine:
                     self.data_gap(ticker, 'market/spot data stale')
         if self.strategy:
             if source in ('clock','refill'):self.strategy.step()
-            elif not getattr(self,'clock_only_strategy_steps',False):
+            elif not (getattr(self,'clock_only_strategy_steps',False) and source=='kalshi'):
                 for affected in changed:self.strategy.step(affected)
         for ticker, market in self.markets.items():
             if now >= market['close'] and ticker not in self.closed_reports:
