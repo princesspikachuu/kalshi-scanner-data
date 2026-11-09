@@ -20,6 +20,22 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertLess(len(response.body),2000)
         self.assertEqual(response.headers['x-pocket-workspace-sha256'],hashlib.sha256(response.body).hexdigest())
         self.assertEqual(response.headers['x-pocket-workspace-bytes'],str(len(response.body)))
+
+    def test_unused_latest_reports_do_not_inflate_initial_dashboard_snapshot(self):
+        import base64,gzip
+        huge='x'*1200000
+        bots=[dict(id='bot-'+str(i),name='Bot '+str(i),latest_report=dict(raw_detail=huge),
+            experiment=dict(attempts=i,completed=i//2)) for i in range(8)]
+        payload=dict(status={},folders=[],bots=bots)
+        self.assertGreater(len(json.dumps(payload)),8388608)
+        response=workspace_response(payload,compressed=True)
+        envelope=json.loads(response.body)
+        result=json.loads(gzip.decompress(base64.b64decode(envelope['data'])))
+        self.assertLess(envelope['bytes'],10000)
+        self.assertTrue(all('latest_report' not in bot for bot in result['bots']))
+        self.assertEqual([bot['experiment'] for bot in result['bots']],
+            [bot['experiment'] for bot in bots])
+
     def test_nonfinite_values_fail_before_response_is_sent(self):
         with self.assertRaises(ValueError):workspace_response(dict(status={},folders=[],bots=[],invalid=float('nan')))
     def test_repeated_research_above_transport_limit_is_sent_once(self):
