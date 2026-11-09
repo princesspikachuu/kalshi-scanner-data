@@ -20,7 +20,8 @@ def quote_diagnostics(engine,now):
         matching=[t for t in sample if ('no' if t[3]>0 else 'yes')==resting and
             (t[1] if resting=='yes' else 1-t[1])<=limit+1e-9]
         book=engine.books[order.ticker]
-        owner=engine.strategy.owner(order.ticker) if getattr(engine,'strategy',None) else None
+        strategy=getattr(engine,'strategy',None)
+        owner=strategy.owner(order.ticker) if hasattr(strategy,'owner') else strategy if hasattr(strategy,'config') else None
         policy=getattr(owner,'config',{})
         result.append(dict(ticker=order.ticker,order_id=order.id,side=order.side,action=order.action,
             status=order.status,price=str(order.price),remaining=str(order.remaining),queue_ahead=str(order.ahead),
