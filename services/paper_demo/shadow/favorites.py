@@ -134,7 +134,7 @@ class FavoritesStrategy(ConvexityStrategy):
             inventory_before=str(inventory),max_inventory=str(max_inventory),
             price=str(q['price']),quantity=str(q['quantity']),
             entries_attempted=a['repeat_entries'],
-            opportunities_detected=a['repeat_opportunities_detected']))))
+            opportunities_detected=a['repeat_opportunities_detected'])))
 
     def entry_allowed(self,m,now):
         if self.profile.get('retired'):return False
