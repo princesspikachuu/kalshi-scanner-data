@@ -539,7 +539,7 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 
 ### Rebase / validation update
 - Original CI-green PR #164 was closed after newer parallel merges made it non-mergeable.
-- The same MT-010 patch was rebuilt on current base `7482f452591e4e5ba29b15994d62d7a9f769ebec` as PR #167: https://github.com/princesspikachuu/kalshi-scanner-data/pull/167
+- The same MT-010 patch was rebuilt on current base as PR #167: https://github.com/princesspikachuu/kalshi-scanner-data/pull/167
 - PR #167 is mergeable; focused checks are green and the full PostgreSQL/API suite is running.
 - Concurrent PR #135 changed Competitive Maker's post-only inside-quote behavior and merged immediately before MT-004. This is a separate execution improvement and should be included in the before/after quote/fill comparison; do not attribute its outcome to the MT-004 telemetry addition.
 
