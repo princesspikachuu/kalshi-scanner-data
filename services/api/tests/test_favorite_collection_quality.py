@@ -1,6 +1,8 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
 from decimal import Decimal as D
+from services.paper_demo.shadow.core import Engine,FeePolicy
 from services.paper_demo.shadow.favorite_entries import observe
 from services.paper_demo.shadow.favorite_timing import cell
 from services.paper_demo.shadow.favorite_collection_quality import collection_quality
@@ -64,6 +66,39 @@ class FavoritesCollectionQualityTests(unittest.TestCase):
         self.assertEqual(len(cells['one']['event_times']),500)
         self.assertNotIn('0',cells['one']['event_times'])
         self.assertEqual(cells['one']['event_times']['504'],504.0)
+
+
+
+class FavoritesBookFilterTests(unittest.TestCase):
+    def test_unchanged_top_book_deltas_are_applied_without_extra_strategy_evaluation(self):
+        engine=Engine(Mock());engine.filter_unchanged_quotes=True
+        engine.add_market(dict(ticker='TEST',close=2000),FeePolicy())
+        calls=[]
+        engine.strategy=SimpleNamespace(step=lambda ticker=None:calls.append(ticker))
+        snapshot=dict(type='orderbook_snapshot',sid=3,seq=1,sending_ts_ms=1000000,
+            msg=dict(market_ticker='TEST',yes_dollars_fp=[['.70','100']],no_dollars_fp=[['.20','100']]))
+        engine.handle('kalshi',snapshot,1000)
+        self.assertEqual(calls,['TEST'])
+        # All deltas are still applied in order; a below-best price level cannot
+        # change a maker quote until clock/time or top-of-book quality changes.
+        delta=dict(type='orderbook_delta',sid=3,seq=2,sending_ts_ms=1000500,
+            msg=dict(market_ticker='TEST',side='yes',price_dollars='.60',delta_fp='10'))
+        engine.handle('kalshi',delta,1000.5)
+        self.assertEqual(engine.books['TEST'].levels['yes'][D('.60')],D(10))
+        self.assertEqual(calls,['TEST'])
+        delta.update(seq=3,sending_ts_ms=1000600,
+            msg=dict(market_ticker='TEST',side='yes',price_dollars='.70',delta_fp='5'))
+        engine.handle('kalshi',delta,1000.6)
+        self.assertEqual(calls,['TEST'])
+        # Material depth changes must trigger immediate review.
+        delta.update(seq=4,sending_ts_ms=1000700,
+            msg=dict(market_ticker='TEST',side='yes',price_dollars='.70',delta_fp='30'))
+        engine.handle('kalshi',delta,1000.7)
+        self.assertEqual(calls,['TEST','TEST'])
+        # The regular clock reevaluates unchanged books and time bands.
+        engine.handle('clock',{},1000.8)
+        self.assertEqual(calls,['TEST','TEST',None])
+        self.assertEqual(engine.sequences[3],4)
 
 
 if __name__=='__main__':unittest.main()
