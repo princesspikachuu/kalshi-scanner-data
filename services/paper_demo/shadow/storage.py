@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 from .state import encode
 from .checkpoint_codec import pack_checkpoint
 from .checkpoint_segments import CheckpointSegments
+from .audit_bulk import persist_audit_rows
 
 KEY='demo/shadow/checkpoint'
 
@@ -98,7 +99,10 @@ class HostedAudit:
             # Pipeline the event burst; wallet/checkpoint, all audit rows, reports
             # and refill completion markers still commit in one transaction.
             with c.cursor() as cur:
-                cur.executemany(UPSERT,batch)
+                # Keep the same transaction, idempotency keys, and row order;
+                # group only consecutive append-only audit rows into bounded
+                # multi-row UPSERT statements to reduce per-row SQL overhead.
+                sql_batch=persist_audit_rows(cur,batch,UPSERT)
                 upserted=time.monotonic()
                 if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
                 commands_written=time.monotonic()
@@ -116,6 +120,7 @@ class HostedAudit:
         if isinstance(compressed,str):profile['checkpoint_bytes']+=len(compressed)
         else:profile['inline_checkpoint_commits']+=1
         profile['audit_and_extra_rows']+=max(0,len(batch)-1)
+        for field,value in sql_batch.items():profile[field]+=value
         profile['command_rows']+=len(commands)
         profile['prepare_ms']+=getattr(self,'snapshot_ms',0)
         profile['pool_wait_ms']+=(acquired-started)*1000
