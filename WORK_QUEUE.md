@@ -671,7 +671,7 @@ _Fill in when done._
 # URGENT — Dashboard snapshot size failure
 
 ## MT-008 — Fix "Dashboard snapshot exceeds its supported size"
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-008 implementation  
 **Claimed:** 2026-11-09 12:49 UTC  
 **Urgency:** U0 — BLOCKER  
@@ -765,7 +765,7 @@ If detailed data is still loading separately:
 - The next authenticated dashboard request should be checked for `dashboard_transport` decoded bytes. If `dashboard_snapshot_oversize` still appears, use the new diagnostics to continue stripping non-initial detail rather than raising the 8 MiB ceiling or deleting history.
 
 ### Completion notes
-_In progress — second-stage compaction is deployed live. Keep U0 until a real post-deploy dashboard request succeeds below the supported size._
+_DONE. Live post-deploy requests now succeed. The dashboard workspace fell from ~8.65 MiB decoded to ~4.24 MiB decoded, with ~0.50 MiB gzip/base64 wire payload. Multiple authenticated requests logged successful `dashboard_transport` events and no post-fix oversize failures._
 ---
 
 ---
@@ -958,9 +958,9 @@ _Fill in when done._
 # PRIORITY 11 — Urgent efficiency remediations from MT-011 audit
 
 ## MT-012 — Reduce event-queue waste and early-coalesce quote updates
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-012 implementation  
+**Claimed:** 2026-11-09 13:53 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
