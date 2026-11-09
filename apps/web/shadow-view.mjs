@@ -35,7 +35,7 @@ export function favoriteResearchMarkup(bots,open=new Set()){
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
 /** Add a complementary 2D price x time view; keep every existing research table intact. */
-export function favoriteCollectorOverviewMarkup(bots=[]){
+export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
  const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const PRICES=[70,75,80,85,90,95];
  const groups=marketTypeGroups(bots.filter(bot=>!bot.retired));
@@ -85,7 +85,7 @@ export function favoriteTimingMarkup(rows){
  return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${researchTable(favoriteCategoryRows(rows))}</details>`;
 }
 
-export function favoriteStatisticsMatrixMarkup(statistics){
+export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
