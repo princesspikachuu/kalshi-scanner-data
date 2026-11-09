@@ -94,9 +94,15 @@ class ExperimentSuite:
                 return cells
             from .favorite_statistics import aggregate
             shared=dict(at=-1e9,groups={})
+            stats_bots=self.portfolios['favorites_statistics'][1].bots
             def shared_groups(now):
                 if now-shared['at']>=30:
-                    shared['groups']=aggregate(collector_evidence())
+                    # The statistical portfolio contributes *its own* settled
+                    # observations, while event IDs deduplicate correlated
+                    # outcomes shared with the collector portfolio.
+                    sources=[b.exit_evidence.cells for b in collectors.values()]
+                    sources.extend(b.exit_evidence.cells for b in stats_bots.values())
+                    shared['groups']=aggregate(sources)
                     shared['at']=now
                 return shared['groups']
             for bot in self.portfolios['favorites_statistics'][1].bots.values():
