@@ -6,7 +6,7 @@ from .storage import put
 SEQUENTIAL_FOLDERS=('sequential','sequential_flexible','sequential_adaptive')
 from .scalper import SCALPER_FOLDERS
 from .market_maker import MM_FOLDERS
-EXPERIMENT_FOLDERS=(*SEQUENTIAL_FOLDERS,'complete_set','favorites',*SCALPER_FOLDERS,*MM_FOLDERS)
+EXPERIMENT_FOLDERS=(*SEQUENTIAL_FOLDERS,'complete_set','favorites','favorites_statistics',*SCALPER_FOLDERS,*MM_FOLDERS)
 BOT_LIMIT=800
 
 def initialize_comparison(store,guard):
