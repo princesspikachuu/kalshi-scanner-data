@@ -1,5 +1,8 @@
 name: Validate future API and infrastructure (no deployment)
 on:
+  # Run checks on the exact commit Render would deploy, not only on PR heads.
+  push:
+    branches: [build/google-auth-foundation]
   pull_request:
     paths:
       - 'services/api/**'
