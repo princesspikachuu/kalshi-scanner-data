@@ -58,6 +58,18 @@ class FavoritesCollectionQualityTests(unittest.TestCase):
         self.assertEqual(report['unique_verified_outcomes'],1)
         self.assertEqual(report['price_time_cells'][0]['unique_verified_outcomes'],1)
 
+    def test_global_count_does_not_double_count_shared_event_across_market_types(self):
+        a,b={},{}
+        evidence(a,'a','AA','weather_daily','.83','>=2h')
+        evidence(b,'b','BB','15m_price','.81','5–10m')
+        observe(a,'a','EVENT-1',1,observed_at=9500)
+        observe(b,'b','EVENT-1',0,observed_at=9600)
+        report=collection_quality([bot(a),bot(b)],now=10000)
+        self.assertEqual(report['unique_verified_outcomes'],1)
+        self.assertEqual(report['unique_verified_1h'],1)
+        self.assertEqual(sum(v['unique_verified_outcomes'] for v in report['by_market_type'].values()),2)
+        self.assertFalse(report['rolling_counts_are_lower_bounds'])
+
     def test_timestamp_metadata_is_bounded_with_evidence(self):
         cells={}
         for i in range(505):
