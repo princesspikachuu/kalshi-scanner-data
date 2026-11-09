@@ -21,6 +21,9 @@ def collection_quality(bots, now):
     all_1h=set()
     all_24h=set()
     cell_events=defaultdict(set)
+    cell_1h=defaultdict(set)
+    cell_24h=defaultdict(set)
+    cell_timestamped=defaultdict(set)
     for bot in bots:
         cells=bot.exit_evidence.cells
         for row_key, row in cells.items():
@@ -48,21 +51,25 @@ def collection_quality(bots, now):
                 # No fabricated history, no future timestamps.
                 if not 0<=at<=now:continue
                 timestamped[mt].add(identity)
+                cell_timestamped[group].add(identity)
                 if now-at<=86400:
                     rolling_24h[mt].add(identity)
                     all_24h.add(identity)
+                    cell_24h[group].add(identity)
                 if now-at<=3600:
                     rolling_1h[mt].add(identity)
                     all_1h.add(identity)
+                    cell_1h[group].add(identity)
     categories={}
     for mt in sorted(events_by_type):
-        all_events=events_by_type[mt]
-        categories[mt]=dict(unique_verified_outcomes=len(all_events),
+        category_events=events_by_type[mt]
+        missing_time=category_events-timestamped[mt]
+        categories[mt]=dict(unique_verified_outcomes=len(category_events),
             timestamped_outcomes=len(timestamped[mt]),
-            unknown_time_outcomes=len(all_events-timestamped[mt]),
+            unknown_time_outcomes=len(missing_time),
             unique_verified_1h=len(rolling_1h[mt]),
             unique_verified_24h=len(rolling_24h[mt]),
-            rolling_window_complete=len(all_events-timestamped[mt])==0)
+            rolling_window_complete=not missing_time)
     return dict(cohort_contracts=str(totals['cohort_contracts']),
         unverified_entry_contracts=str(totals['unverified_entry_contracts']),
         settled_cohort_contracts=str(totals['settled_cohort_contracts']),
@@ -75,6 +82,12 @@ def collection_quality(bots, now):
         # Legacy outcomes were retained without timestamps; do not fabricate
         # their confirmation times to make rolling windows appear complete.
         rolling_counts_are_lower_bounds=bool(all_events-set().union(*timestamped.values())),
+        unknown_time_outcomes=len(all_events-set().union(*timestamped.values())),
         by_market_type=categories,
-        price_time_cells=[dict(market_type=mt,price_bucket=price,horizon=h,unique_verified_outcomes=len(events))
+        price_time_cells=[dict(market_type=mt,price_bucket=price,horizon=h,
+            unique_verified_outcomes=len(events),
+            unique_verified_1h=len(cell_1h[mt,price,h]),
+            unique_verified_24h=len(cell_24h[mt,price,h]),
+            unknown_time_outcomes=len(events-cell_timestamped[mt,price,h]),
+            rolling_window_complete=events<=cell_timestamped[mt,price,h])
             for (mt,price,h),events in sorted(cell_events.items()) if events])
