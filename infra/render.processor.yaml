@@ -10,7 +10,7 @@ services:
   # Owner-approved capacity upgrade: 1 CPU / 2 GB, $25/month.
   plan: 1c-2g
   numInstances: 1
-  autoDeployTrigger: 'off'
+  autoDeployTrigger: checksPass
   maxShutdownDelaySeconds: 120
   buildCommand: pip install -r services/api/requirements.txt
   preDeployCommand: python -m services.api.manage verify-runtime --profile research
