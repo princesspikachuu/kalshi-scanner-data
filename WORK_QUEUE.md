@@ -123,9 +123,9 @@ _Fill in once verified._
 # PRIORITY 2 — Build Statistics-Backed Favorites concurrently
 
 ## MT-002 — Add a Statistics-Backed Favorites strategy alongside Data-Collection Favorites
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-002 implementation  
+**Claimed:** 2026-11-09 04:37 UTC  
 **Priority:** High
 
 ### Goal
