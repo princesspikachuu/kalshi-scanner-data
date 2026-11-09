@@ -416,8 +416,9 @@ class VolatilityScalper(ConvexityStrategy):
                 else:continue
             raw=e.tape.sample(ticker,book,now)
             self.history[ticker]=list(e.tape.state(ticker)['prices'])
-            if raw is None or raw['observations']<5:
-                self.last_reason=f"Warming up · {raw['observations'] if raw else 0}/5 price samples";continue
+            minimum_observations=max(3,int(self.config.get('min_observations',5)))
+            if raw is None or raw['observations']<minimum_observations:
+                self.last_reason=f"Warming up · {raw['observations'] if raw else 0}/{minimum_observations} price samples";continue
             c=self.phase(ticker)
             candidates=[]
             for side in ('yes','no'):

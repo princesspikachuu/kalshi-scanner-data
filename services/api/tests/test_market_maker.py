@@ -28,6 +28,18 @@ class MakerTests(unittest.TestCase):
         yes_price=o.price if o.side=='yes' else 1-o.price
         taker=o.side if o.action=='sell' else ('no' if o.side=='yes' else 'yes')
         e.trade(T,dict(trade_id=ident,taker_side=taker,yes_price_dollars=str(yes_price),count_fp=str(o.ahead+(quantity or o.remaining)),ts_ms=e.now*1000))
+    def test_market_maker_warms_after_three_fresh_samples(self):
+        e=ScalperEngine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0,seed=1);e.advance(200)
+        p=dict(next(profiles()),revision=1)
+        market(e,T,yes='.42',no='.52',close=200000)
+        e.markets[T].update(market_maker=True,market_category='politics',bot_id=p['id'],discovered_at=200)
+        b=MarketMaker(e,p)
+        for at in (200,206):
+            e.books[T].at=at;e.advance(at);b.step(T)
+        self.assertFalse(e.orders);self.assertIn('/3 price samples',b.last_reason)
+        e.books[T].at=212;e.advance(212);b.step(T)
+        self.assertTrue(e.orders)
+
     def test_category_filters_exclude_short_crypto_weather_and_sports_games(self):
         cases=[('Politics','Presidential nomination','politics'),('Economics','Next Fed decision','economics'),('Sports','World Cup champion','sports_futures'),('Entertainment','Academy Awards','entertainment'),('Sports','Lakers game winner',None),('Financials','Bitcoin target',None),('Weather','Daily temperature',None),('Economics','Hourly GDP',None),('Other','Something',None)]
         for primary,title,want in cases:self.assertEqual(category(dict(category=primary,title=title)),want)

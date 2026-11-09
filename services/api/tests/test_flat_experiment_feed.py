@@ -58,11 +58,18 @@ class FlatExperimentFeedTests(unittest.TestCase):
         self.assertEqual(p.books[T].used['no'][D('.50')],77)
         self.delta(s,204.1,3,'no','.50','-100');s.handle('clock',{},206)
         self.assertNotIn(D('.50'),e.books[T].used['no'])
-    def test_other_existing_experiments_keep_processing_every_book_frame(self):
+    def test_flat_secondary_scalpers_coalesce_verified_shared_frames(self):
         s=self.suite();self.book(s,200.1,1);self.delta(s,200.2,2,'yes','.45','2')
-        for f in ('volatility_scalper','scalper_fixed','scalper_grid'):
-            self.assertEqual(s.portfolios[f][0].books[T].levels['yes'][D('.45')],102)
-            self.assertFalse(hasattr(s.portfolios[f][0],'coalesced_inputs'))
+        primary=s.portfolios['volatility_scalper'][0]
+        self.assertEqual(primary.books[T].levels['yes'][D('.45')],102)
+        self.assertFalse(hasattr(primary,'coalesced_inputs'))
+        for folder in ('scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation'):
+            e=s.portfolios[folder][0]
+            self.assertEqual(e.coalesced_inputs,2)
+            self.assertFalse(e.books[T].valid)
+        s.handle('clock',{},202)
+        for folder in ('scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation'):
+            self.assertEqual(s.portfolios[folder][0].books[T].levels['yes'][D('.45')],102)
 
     def test_admission_flags_change_once_without_skipping_book_updates(self):
         from services.paper_demo.shadow.monitoring import MonitoringBudget
