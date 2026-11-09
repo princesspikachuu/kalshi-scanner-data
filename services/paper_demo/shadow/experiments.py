@@ -369,7 +369,7 @@ class ExperimentSuite:
                     for bot in f.bots.values():bot.resource_paused=resource_paused
                     f._resource_paused=resource_paused
             if folder in MM_FOLDERS and self.skip_unrelated_flat_maker(e,source,payload):continue
-            if folder in ('scalper_momentum','scalper_dislocation'):
+            if folder in ('scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation'):
                 if source=='clock':
                     pending=getattr(e,'coalesced_tickers',set())
                     due=any((b:=f.owner(t)) and b.enabled and now-b.last_eval.get(t,-1e9)>=b.config['eval_seconds'] for t in pending)
