@@ -99,7 +99,7 @@ class DataMode(unittest.TestCase):
         chunks=b.attempts[first.ticker]['entry_fills']
         self.assertEqual(len(chunks),2)
         self.assertEqual({c['order_id'] for c in chunks},{first.id,second.id})
-        self.assertEqual({c['price'] for c in chunks},{'.80','.83'})
+        self.assertEqual({D(c['price']) for c in chunks},{D('.80'),D('.83')})
         e.markets[first.ticker].update(paid=True,yes_payout_confirmed='1')
         b.step()
         self.assertEqual(b.attempts[first.ticker]['timing_finalized'],True)
