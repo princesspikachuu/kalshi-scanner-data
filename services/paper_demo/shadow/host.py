@@ -27,6 +27,7 @@ from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 
 LOG=logging.getLogger('shadow-host')
+FEE_REFRESH_AFTER=50  # schedule() remains fail-closed after 60 seconds.
 
 class NoCapture:
     def write(self,data):pass
@@ -203,7 +204,7 @@ class HostedRun(ForwardRun):
                 await asyncio.sleep(min(5,remaining));continue
             now=time.time()
             due=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and
-                 t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
+                 t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>FEE_REFRESH_AFTER]
             if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
             await asyncio.sleep(1)
 
