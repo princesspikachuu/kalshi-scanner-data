@@ -46,6 +46,28 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(audit.durability_profile),before)
         self.assertEqual(audit.commits,2)
 
+    async def test_event_kind_attribution_is_bounded_without_losing_audit_rows(self):
+        import json
+        from unittest.mock import MagicMock,patch
+        audit=self.audit()
+        audit.store.pool.connection.return_value=MagicMock()
+        audit.begin()
+        for i in range(20):
+            audit.log(1000,'TEST_EVENT_'+str(i),audit.engine.wallet)
+        with patch('builtins.print') as output:
+            audit.flush()
+        events=[json.loads(call.args[0]) for call in output.call_args_list
+                if call.args and isinstance(call.args[0],str) and
+                'shadow_durability_cost' in call.args[0]]
+        self.assertEqual(len(events),1)
+        report=events[0]
+        self.assertEqual(report['commits'],1)
+        self.assertEqual(report['audit_and_extra_rows'],20)
+        self.assertEqual(len(report['event_kinds']),16)
+        self.assertEqual(report['event_kinds_other'],4)
+        self.assertEqual(sum(report['event_kinds'].values())+report['event_kinds_other'],20)
+        audit.store.pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value.executemany.assert_called_once()
+
     async def test_checkpoint_preparation_leaves_socket_loop_responsive(self):
         audit=self.audit();started=threading.Event();release=threading.Event()
         original=audit.prepare
