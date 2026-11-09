@@ -34,14 +34,33 @@ class CheckpointSegments:
                 self.bytes-=len(previous)+len(compressed);self.evictions+=1
             self.cache[path]=(raw,encoded);self.bytes+=size
         return encoded
+    @staticmethod
+    def section(path):
+        # Bounded, nonsensitive categories: never print raw evidence, series IDs,
+        # or state values in operator telemetry.
+        if len(path)==2:return 'shared_summary'
+        if len(path)==3:return 'calibration_models'
+        if len(path)==5:return 'verified_exit_evidence'
+        if len(path)==6:return 'scalper_research'
+        return 'other_cold'
+
     def parts(self,data,fallback):
         packer=msgpack.Packer(use_bin_type=True,default=fallback);buffer=bytearray();parts=[]
+        sections={}
         def walk(value,path=()):
             if self.cold(path):
                 raw=packer.pack(value)
                 if len(raw)>=self.min_bytes:
                     if buffer:parts.append((bytes(buffer),None));buffer.clear()
-                    parts.append((raw,self.member(path,raw)));return
+                    compressed=self.member(path,raw)
+                    # Aggregation only; it does not affect encoded bytes or
+                    # cache eviction, which continue to depend on exact content.
+                    name=self.section(path)
+                    row=sections.setdefault(name,dict(raw_bytes=0,compressed_bytes=0,members=0))
+                    row['raw_bytes']+=len(raw)
+                    row['compressed_bytes']+=len(compressed)
+                    row['members']+=1
+                    parts.append((raw,compressed));return
                 buffer.extend(raw);return
             if isinstance(value,dict) and len(path)<=5:
                 buffer.extend(packer.pack_map_header(len(value)))
@@ -52,7 +71,14 @@ class CheckpointSegments:
             else:buffer.extend(packer.pack(value))
         walk(data)
         if buffer:parts.append((bytes(buffer),None))
+        # Small blocks and MessagePack headers are joined in the regular hot
+        # stream; the codec compresses these separately after this function.
+        hot=sum(len(raw) for raw,compressed in parts if compressed is None)
+        sections['hot_and_small']=dict(raw_bytes=hot,compressed_bytes=None,
+                                       members=sum(encoded is None for _,encoded in parts))
+        self.last_state_sections=sections
         return parts
     def metrics(self):
         return dict(hits=self.hits,misses=self.misses,evictions=self.evictions,
-            entries=len(self.cache),retained_bytes=self.bytes,max_bytes=self.max_bytes)
+            entries=len(self.cache),retained_bytes=self.bytes,max_bytes=self.max_bytes,
+            last_state_sections=getattr(self,'last_state_sections',{}))

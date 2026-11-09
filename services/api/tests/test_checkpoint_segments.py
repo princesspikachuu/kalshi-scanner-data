@@ -23,6 +23,27 @@ class CheckpointSegmentTests(unittest.TestCase):
         before=cache.metrics();value=pack_checkpoint(data,threshold=0,binary=True,segments=cache)
         self.assertEqual(cache.metrics()['hits']-before['hits'],273)
         self.assertEqual(unpack_checkpoint(value),data)
+    def test_section_sizes_explain_exact_raw_bytes_without_leaking_state(self):
+        data=dataset();cache=CheckpointSegments()
+        encoded=pack_checkpoint(data,threshold=0,binary=True,segments=cache)
+        sections=cache.metrics()['last_state_sections']
+        self.assertEqual(sum(s['raw_bytes'] for s in sections.values()),encoded['bytes'])
+        self.assertIn('hot_and_small',sections)
+        self.assertIn('shared_summary',sections)
+        self.assertIn('calibration_models',sections)
+        self.assertIn('verified_exit_evidence',sections)
+        self.assertIn('scalper_research',sections)
+        self.assertEqual(sections['hot_and_small']['compressed_bytes'],None)
+        self.assertTrue(all(value['members']>=1 for value in sections.values()))
+        self.assertTrue(all(value['raw_bytes']>=0 for value in sections.values()))
+        self.assertNotIn('MM',str(sections))
+        self.assertNotIn('reason',str(sections))
+        # Collecting the metric must not alter checkpoint identity or reuse.
+        before=cache.metrics();again=pack_checkpoint(data,threshold=0,binary=True,segments=cache)
+        self.assertEqual(again,encoded)
+        self.assertEqual(cache.metrics()['last_state_sections'],before['last_state_sections'])
+        self.assertGreater(cache.metrics()['hits'],before['hits'])
+
     def test_decoded_bytes_hash_schema_money_and_research_are_identical(self):
         data=dataset();cache=CheckpointSegments()
         whole=pack_checkpoint(data,threshold=0,binary=True)
