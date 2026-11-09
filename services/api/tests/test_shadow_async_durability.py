@@ -66,7 +66,13 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report['event_kinds']),16)
         self.assertEqual(report['event_kinds_other'],4)
         self.assertEqual(sum(report['event_kinds'].values())+report['event_kinds_other'],20)
-        audit.store.pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value.executemany.assert_called_once()
+        cursor=audit.store.pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.executemany.assert_called_once()  # one unchanged checkpoint row
+        self.assertEqual(len(cursor.executemany.call_args.args[1]),1)
+        cursor.execute.assert_called_once()  # one 20-event SQL statement
+        self.assertEqual(len(cursor.execute.call_args.args[1]),20*4)
+        self.assertEqual(report['bulk_event_rows'],20)
+        self.assertEqual(report['bulk_event_groups'],1)
 
     async def test_checkpoint_preparation_leaves_socket_loop_responsive(self):
         audit=self.audit();started=threading.Event();release=threading.Event()
