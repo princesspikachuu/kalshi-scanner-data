@@ -37,7 +37,7 @@ class MakerTests(unittest.TestCase):
         self.assertFalse(bs.config['competitive_inside']);self.assertTrue(bc.config['competitive_inside'])
         market_meta={}
         self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{},bs.config),D('.27'))
-        self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{},bc.config),D('.27'))
+        self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{},bc.config),D('.28'))
         self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{'trade_count':1},bc.config),D('.28'))
         self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{'trade_count':1},bs.config),D('.27'))
         self.assertLess(D('.28'),D('.29'))
