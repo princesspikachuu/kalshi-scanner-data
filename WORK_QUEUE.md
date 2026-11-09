@@ -1150,6 +1150,39 @@ MT-012 baseline telemetry exposed another significant resource consumer:
 - Tests cover cache reuse, invalidation, and fail-closed behavior.
 
 
+---
+
+## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Problem
+Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Workers CPU limit exceeded." The affected Worker and per-route CPU measurements have not yet been verified. Free-tier CPU exhaustion can interrupt the authenticated Money Tree dashboard, even while the Kalshi paper-trading engine continues running separately on Render.
+
+### Work required
+1. Identify which Cloudflare Worker(s) are generating CPU-limit errors (staging gateway versus legacy research Worker, or both). Check Cloudflare dashboard Metrics/Observability: exceededCpu counts, request CPU percentiles, invocations, routes, error trends and exact spike times.
+2. Correlate limit spikes with recent releases, dashboard refreshes, endpoint traffic, static-asset requests, large workspace responses, and authentication flow. Distinguish per-invocation CPU exhaustion from daily request quota, origin/network latency and Render worker CPU.
+3. Verify that merged PR #155 (commit `6346ee1d783439ff510cd51170e9006c7f24dac0`) actually serves static assets without Worker invocation, while retaining route security/CSP. Check that the Cloudflare staging deployment succeeded; its historical unauthenticated public smoke check returned HTTP 403 and may reflect access restrictions rather than CPU.
+4. Measure the CPU effects of API JSON validation and large dashboard payloads. Audit any remaining avoidable parsing, serialization, copying, logging, response transformations, repeated calls and unusually expensive routes. Consider safe streaming, bounded validation, request deduplication, and caching only when compatible with user-specific authentication and freshness.
+5. Implement only measured, safe optimizations that preserve access control and data integrity. Do not reduce useful trading activity, monitoring fidelity, or collection volume just to hide usage.
+6. Add focused tests, performance/CPU regression checks and visibility into affected routes. Record before/after exceededCpu errors, CPU percentiles, requests and dashboard reliability.
+
+### Acceptance criteria
+- Confirm the affected Worker(s), routes and source of CPU-limit errors with metrics or clearly document any unavailable measurements.
+- Cloudflare requests stay reliably within the applicable tier limits or provide a quantified, evidence-based paid-tier decision if unavoidable.
+- Full dashboard and auth behavior work, including signed-in access.
+- Existing paper-trading services, recorded data and security boundaries remain unchanged.
+- Add follow-up work for residual hotspots rather than claiming success solely because deployment completed.
+
+### Context
+- PR #155 removed Worker invocation from static asset requests and redundant JSON stringification for pass-through API responses; automated tests passed and staging deployment step succeeded.
+- PR #155 is a mitigation, **not** proof that all CPU-limit errors stopped. Inspect Cloudflare CPU analytics to verify.
+- Coordinate with MT-008 (dashboard payload/performance) and other infrastructure tasks; avoid duplicate edits.
+
+
 # Coordination notes
 
 - MT-012 through MT-015 are U1 remediation tasks discovered by MT-011 and may be worked in parallel where files/infrastructure do not overlap.
