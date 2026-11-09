@@ -44,6 +44,38 @@ class CheckpointSegmentTests(unittest.TestCase):
         self.assertEqual(cache.metrics()['last_state_sections'],before['last_state_sections'])
         self.assertGreater(cache.metrics()['hits'],before['hits'])
 
+    def test_cold_scalper_compression_reduces_repeated_checkpoint_bytes_without_schema_change(self):
+        data=dataset()
+        fast=CheckpointSegments(scalper_cold_level=1)
+        compact=CheckpointSegments(scalper_cold_level=6)
+        baseline=pack_checkpoint(data,threshold=0,binary=True,segments=fast)
+        optimized=pack_checkpoint(data,threshold=0,binary=True,segments=compact)
+        self.assertEqual((baseline['bytes'],baseline['sha256']),
+                         (optimized['bytes'],optimized['sha256']))
+        self.assertEqual(unpack_checkpoint(optimized),unpack_checkpoint(baseline))
+        old_bytes=fast.metrics()['last_state_sections']['scalper_research']['compressed_bytes']
+        new_bytes=compact.metrics()['last_state_sections']['scalper_research']['compressed_bytes']
+        self.assertLess(new_bytes,old_bytes)
+        self.assertLess(len(optimized['data']),len(baseline['data']))
+        previous=compact.metrics()
+        self.assertEqual(pack_checkpoint(data,threshold=0,binary=True,segments=compact),optimized)
+        self.assertGreater(compact.metrics()['hits'],previous['hits'])
+        self.assertEqual(compact.metrics()['misses'],previous['misses'])
+
+    def test_mutating_active_scalper_research_uses_fast_level_one_compression(self):
+        cache=CheckpointSegments()
+        path=('experiments','maker','strategies','MM','scalper','research')
+        original=b'A'*20000+b'B'*10000
+        with patch('services.paper_demo.shadow.checkpoint_segments.gzip.compress',
+                   wraps=gzip.compress) as compress:
+            cache.member(path,original)
+            self.assertEqual(compress.call_args.kwargs['compresslevel'],6)
+            cache.member(path,original+b'C')
+            self.assertEqual(compress.call_args.kwargs['compresslevel'],1)
+            before=compress.call_count
+            cache.member(path,original+b'C')
+            self.assertEqual(compress.call_count,before)
+
     def test_decoded_bytes_hash_schema_money_and_research_are_identical(self):
         data=dataset();cache=CheckpointSegments()
         whole=pack_checkpoint(data,threshold=0,binary=True)
