@@ -117,7 +117,8 @@ class ExperimentSuite:
         return list(found.values())
     def feed_markets(self):
         return {t:m for e,f,ps in self.portfolios.values() for t,m in e.markets.items()
-                if not m.get('entry_parked') and not m.get('paid') and (m.get('weather_category') or m.get('sports') or m.get('hourly_price') or m.get('market_maker'))}
+                if self.ticker_feed_needed(e,f,t) and not m.get('entry_parked') and not m.get('paid')
+                and (m.get('weather_category') or m.get('sports') or m.get('hourly_price') or m.get('market_maker'))}
     def share_external_markets(self):
         # A newly added strategy must join already subscribed weather/games;
         # waiting for another discovery would strand it behind filled positions.
