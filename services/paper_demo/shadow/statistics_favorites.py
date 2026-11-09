@@ -9,7 +9,7 @@ class StatisticsFavoritesStrategy(StatisticsFavoritesMixin,FavoritesStrategy):
     def __init__(self,engine,profile):
         super().__init__(engine,profile)
         self.last_reason='Learning from settled outcomes and small targeted paper probes'
-        self._decision_signatures={};self._statistics_groups=None;self._statistics_groups_at=-1e9
+        self._decision_signatures={};self.decision_counts={};self._statistics_groups=None;self._statistics_groups_at=-1e9
     def choose_entry_side(self,ticker,quotes):
         """Prioritize a maker-fillable, under-sampled side, not just the higher bid."""
         market=self.e.markets[ticker];remaining,_=clock(market,self.e.now)
@@ -33,6 +33,7 @@ class StatisticsFavoritesStrategy(StatisticsFavoritesMixin,FavoritesStrategy):
     def entry_quote(self,ticker,side,max_price=None):
         q,decision=statistics_quote(self.e,self.profile,self.contracts,ticker,side,self._source_cells(),max_price,self.statistics_groups())
         decision=dict(decision,ticker=ticker,side=side,policy='favorites-statistics-v1',traded=bool(q))
+        reason=decision.get('reason') or 'unknown';self.decision_counts[reason]=self.decision_counts.get(reason,0)+1
         self.decisions[ticker]=decision
         signature=json.dumps({k:decision.get(k) for k in ('reason','level','samples','exact_samples','price','side','decision_type')},sort_keys=True)
         if self._decision_signatures.get(ticker)!=signature:
@@ -42,6 +43,13 @@ class StatisticsFavoritesStrategy(StatisticsFavoritesMixin,FavoritesStrategy):
             self.last_reason=f"Statistics skip · {decision.get('reason')} · n={decision.get('samples',0)}" 
         return q
     def submit_entry(self,ticker,a,q):
+        before=set(self.e.orders)
         super().submit_entry(ticker,a,q)
-        d=dict(self.decisions.get(ticker,{}),traded=True)
+        created=[self.e.orders[i] for i in set(self.e.orders)-before if i in self.e.orders]
+        if created:
+            order=created[-1]
+            print(json.dumps(dict(event='favorite_statistics_entry',ticker=ticker,order_id=order.id,
+                quantity=str(order.quantity),price=str(order.price),mode=q.get('mode'),policy=q.get('policy'),
+                decision_reason=self.decisions.get(ticker,{}).get('reason'),real_orders_enabled=False)),flush=True)
+        d=dict(self.decisions.get(ticker,{}),traded=bool(created) or self.decisions.get(ticker,{}).get('traded',False))
         self.decisions[ticker]=d
