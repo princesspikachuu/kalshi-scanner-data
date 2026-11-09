@@ -363,6 +363,16 @@ Do not undo MT-008 by stuffing all research history back into the initial dashbo
 ### Completion notes
 _Fill in when done._
 
+
+### Implementation progress
+- PR #159: https://github.com/princesspikachuu/kalshi-scanner-data/pull/159
+- Added lazy owner-authenticated folder research endpoint for `favorites` and `favorites_statistics`; full `entry_timing` / `calibration` evidence is fetched only while those folders are open instead of being reintroduced into the 10-second workspace snapshot.
+- Frontend hydrates open Favorites bots with lazy research and refreshes that detail on a bounded 30-second cadence.
+- Removed hard-coded `open` state from collector and Statistics-Backed category tables; these now use the existing persisted `moneytree-research-views` state so user collapse choices survive redraws/polls.
+- Added regressions for lazy full-data restoration and closed/open persistence.
+- Initial CI failure was only a syntax typo in the new test fixture; corrected.
+- Latest run `42687341474`: gateway/browser checks and focused Statistics-Favorites regressions are passing; full PostgreSQL/API suite is still running.
+
 ---
 
 # PRIORITY 9 — Increase Statistics-Backed Favorites trading activity
