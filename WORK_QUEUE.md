@@ -243,9 +243,10 @@ Still expose, where practical:
 ### Completion notes
 - Implementation branch: `work/mt-002-statistics-favorites`
 - PR: #138 (`MT-002: add statistics-backed Favorites`)
-- Current implementation: separate `favorites_statistics` portfolio with independent paper cash/P&L; reads settled collector evidence without modifying the collector; hierarchical fallback across series/market-type/side/price/time segments; configurable sample/confidence/ROI thresholds; per-decision trade/skip diagnostics; 30-second cached evidence aggregates to avoid full-history work on tight quote cycles; separate workspace statistics payload and segment leaderboard.
+- Current implementation: separate `favorites_statistics` portfolio with independent paper cash/P&L; reads pooled settled collector evidence without modifying the collector; hierarchical fallback across series/market-type/side/price/time segments; configurable sample/confidence/ROI thresholds; per-decision trade/skip diagnostics; shared 30-second evidence cache across statistics bots; separate workspace statistics payload and segment leaderboard.
+- New MT-002 additions: complete 70–95¢ range displayed in 5-cent buckets (95¢ terminal cell), market-type-specific price × entry-time matrix, exact event count/win rate/ROI/confidence, evidence eligibility, clearly labeled sparse cells and broader fallback samples, responsive scrollable UI, and separate folder pause/resume/reset support. Existing Favorites category research also uses 5-cent buckets.
 - Tests added: sparse fallback, tiny-sample rejection, new settled evidence changing a future decision, and read-only consumption of collector evidence.
-- Verification: PR is mergeable; GitHub full API/PostgreSQL validation is currently running against head `88554c4043a6b4e32858bf0a9e1c7d839d9aa3df`.
+- Verification: initial PR #138 CI passed before new matrix requirements; updated browser matrix tests pass; full API/PostgreSQL CI for updated head `2115afaebe338adb07b3449f29559aead2f3a83d` is running. Do not merge or deploy until it passes.
 - Status remains IN PROGRESS until CI completes and any failures are resolved.
 
 ---
