@@ -1101,9 +1101,9 @@ The system is using all maker capacity without producing enough fills/trades.
 ---
 
 ## MT-016 — Reduce redundant fee-verification REST traffic
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-016 implementation  
+**Claimed:** 2026-11-09 14:50 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
