@@ -100,6 +100,13 @@ class HostedRun(ForwardRun):
         return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
             or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
 
+    def legacy_ticker_needed(self,ticker):
+        if ticker not in self.engine.markets or self.engine.markets[ticker].get('paid'):return False
+        if any(l.ticker==ticker for l in self.engine.wallet.lots):return True
+        if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.engine.orders.values()):return True
+        owner=self.strategy.owner(ticker)
+        return bool(owner and owner.enabled)
+
     def legacy_input_needed(self,source,payload):
         if getattr(self,'suspend_idle_feeds',False) is not True:return True
         needed=self.spot_required()
@@ -112,10 +119,25 @@ class HostedRun(ForwardRun):
             self.legacy_feed_suspended=True
             self.legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0)+1
             return False
+        if source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade'):
+            ticker=payload.get('msg',{}).get('market_ticker')
+            if ticker in self.engine.markets and not self.legacy_ticker_needed(ticker):
+                sid,seq=payload.get('sid'),payload.get('seq')
+                if sid is None or seq is None:return True
+                previous=self.engine.sequences.get(sid)
+                if payload.get('type')!='orderbook_snapshot' and previous is not None:
+                    if seq<=previous:return False
+                    if seq!=previous+1:return True
+                self.engine.sequences[sid]=seq
+                self.engine.books[ticker].valid=False
+                if payload.get('type') in ('orderbook_snapshot','orderbook_delta'):self.engine.book_feed_at[sid]=time.time()
+                self.legacy_paused_inputs_skipped=getattr(self,'legacy_paused_inputs_skipped',0)+1
+                return False
         return True
 
     def subscription_books(self):
-        books=dict(self.engine.books) if getattr(self,'suspend_idle_feeds',False) is not True or self.spot_required() else {}
+        books=(dict(self.engine.books) if getattr(self,'suspend_idle_feeds',False) is not True else
+            {t:b for t,b in self.engine.books.items() if self.legacy_ticker_needed(t)})
         if hasattr(self,'experiments'):
             for e,f,_ in self.experiments.portfolios.values():
                 if getattr(self,'suspend_idle_feeds',False) is True and self.experiments.idle_feed(e,f):continue
