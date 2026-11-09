@@ -34,13 +34,16 @@ class NoCapture:
     def close(self):pass
 
 def processing_batch_budget(backlog):
-    """Bound synchronous simulation while amortizing durable checkpoints under backlog."""
-    # Keep socket/control fairness even under a saturated feed. Larger atomic
-    # batches improved checkpoint amortization but starved the event loop; the
-    # pause-aware subscription budget removes that waste at the source instead.
+    """Bound one synchronous simulation slice; sockets get a yield after each slice."""
     if backlog>2000:return 1024,.160
     if backlog>128:return 512,.080
     return 128,.020
+
+def checkpoint_group_budget(backlog):
+    """Bound state-lock time while amortizing the full durable checkpoint."""
+    # The simulation still yields at processing_batch_budget boundaries. This
+    # only lets several short slices share one atomic audit/checkpoint write.
+    return (1024,.450) if backlog>128 else (256,.080)
 
 class HostedRun(ForwardRun):
     def __init__(self,store,guard,stop,signer):
@@ -322,63 +325,68 @@ class HostedRun(ForwardRun):
         while not self.done.is_set():
             item=await self.queue.get()
             async with self.state_mutex():
-                self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
-                backlog=self.queue.qsize()
-                # Amortize full-state checkpoint/database cost during bursts.
-                # Every input remains ordered. Only a large existing backlog may
-                # widen the synchronous simulation slice; sockets still receive
-                # during the durable commit and the maximum slice stays <300 ms.
-                max_inputs,max_simulation=processing_batch_budget(backlog)
+                self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.;simulation_seconds=0.
+                initial_backlog=self.queue.qsize()
+                commit_inputs,commit_seconds=checkpoint_group_budget(initial_backlog)
                 try:
                     while True:
-                        source,payload,received=item
-                        max_lag=max(max_lag,max(0,time.time()-received))
-                        now=max(received,last)
-                        if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
-                        last=now
-                        try:
-                            legacy_input=self.legacy_input_needed(source,payload)
-                            if legacy_input:payload=self.prepare_fees(source,payload,now)
-                            if source=='rest_settlement_confirmed':
-                                if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
-                                ticker=payload['ticker']
-                                if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
-                                    raise ValueError('REST settlement confirmation invalid')
-                                self.engine.advance(now)
-                                if ticker not in self.engine.settled:
-                                    self.engine.markets[ticker]['settlement_confirmation']='production_rest'
-                                    self.engine.markets[ticker]['yes_payout_confirmed']='1' if payload['result']=='yes' else '0'
-                                    self.engine.settled.add(ticker)
-                                    self.engine.cancel_buys(ticker)
-                                    self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
-                                    recovered.append(ticker)
-                            elif legacy_input and source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
-                                try:self.engine.handle(source,payload,now)
-                                except ValueError as exc:self.reject_input(source,payload,exc)
-                            if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
-                        except ValueError as exc:
-                            self.reject_input(source,payload,exc)
-                        completed+=1
-                        # Preserve every event and its cash value, but avoid a DB
-                        # round trip/checkpoint for each partial fill in a burst.
-                        if self.done.is_set() or self.queue.empty() or completed>=max_inputs or time.monotonic()-started>=max_simulation:
+                        slice_started=time.monotonic();slice_completed=0
+                        max_inputs,max_simulation=processing_batch_budget(self.queue.qsize())
+                        while True:
+                            source,payload,received=item
+                            max_lag=max(max_lag,max(0,time.time()-received))
+                            now=max(received,last)
+                            if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
+                            last=now
+                            try:
+                                legacy_input=self.legacy_input_needed(source,payload)
+                                if legacy_input:payload=self.prepare_fees(source,payload,now)
+                                if source=='rest_settlement_confirmed':
+                                    if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
+                                    ticker=payload['ticker']
+                                    if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
+                                        raise ValueError('REST settlement confirmation invalid')
+                                    self.engine.advance(now)
+                                    if ticker not in self.engine.settled:
+                                        self.engine.markets[ticker]['settlement_confirmation']='production_rest'
+                                        self.engine.markets[ticker]['yes_payout_confirmed']='1' if payload['result']=='yes' else '0'
+                                        self.engine.settled.add(ticker)
+                                        self.engine.cancel_buys(ticker)
+                                        self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
+                                        recovered.append(ticker)
+                                elif legacy_input and source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
+                                    try:self.engine.handle(source,payload,now)
+                                    except ValueError as exc:self.reject_input(source,payload,exc)
+                                if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
+                            except ValueError as exc:
+                                self.reject_input(source,payload,exc)
+                            completed+=1;slice_completed+=1
+                            if (self.done.is_set() or self.queue.empty() or slice_completed>=max_inputs
+                                    or time.monotonic()-slice_started>=max_simulation):
+                                break
+                            item=self.queue.get_nowait()
+                        simulation_seconds+=time.monotonic()-slice_started
+                        # Keep the execution order and one atomic checkpoint, but
+                        # yield between short simulation slices so websocket reads,
+                        # pongs and queue producers never wait for the full group.
+                        if (self.done.is_set() or self.queue.empty() or completed>=commit_inputs
+                                or time.monotonic()-started>=commit_seconds):
                             break
+                        await asyncio.sleep(0)
                         item=self.queue.get_nowait()
                     simulated=time.monotonic()
                     await self.flush_audit()
                     committed=time.monotonic()
-                    self.pipeline_sample(completed,(simulated-started)*1000,(committed-simulated)*1000,max_lag)
+                    self.pipeline_sample(completed,simulation_seconds*1000,(committed-simulated)*1000,max_lag)
                     if hasattr(self,'experiments'):
                         self.experiments.monitoring.observe(time.time(),self.queue.qsize(),max_lag,
-                            (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining(),input_count=completed)
+                            (committed-started)*1000/max(1,completed),PRODUCTION_READS.remaining(),input_count=completed)
                 except BaseException:
                     self.audit.abort();raise
                 for ticker in recovered:
                     print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
                                           confirmation='production_rest',real_orders_enabled=False)),flush=True)
                 for _ in range(completed):self.queue.task_done()
-            # queue.get() doesn't yield while a burst is buffered. Socket
-            # readers, pongs and controls still run between committed batches.
             await asyncio.sleep(0)
 
     def pending_commands(self):
