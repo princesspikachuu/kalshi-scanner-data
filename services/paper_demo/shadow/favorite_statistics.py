@@ -170,6 +170,7 @@ class StatisticsFavoritesMixin:
     def set_statistics_source(self,source):self.statistics_source=source
     def _source_cells(self):return self.statistics_source() if getattr(self,'statistics_source',None) else {}
     def statistics_groups(self):
+        if getattr(self,'_shared_statistics_groups',None):return self._shared_statistics_groups(self.e.now)
         now=self.e.now
         refresh=float(self.profile.get('statistics_refresh_seconds',30))
         if getattr(self,'_statistics_groups',None) is None or now-getattr(self,'_statistics_groups_at',-1e9)>=refresh:
