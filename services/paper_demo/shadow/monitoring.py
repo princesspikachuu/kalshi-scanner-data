@@ -41,7 +41,12 @@ class MonitoringBudget:
             self.queue_cost_basis='committed burst throughput; slower of 5s and 60s'
         self.queue_seconds=backlog*self.service_ms/1000
         overloaded=backlog>2000 or self.queue_seconds>.5 or self.lag_p95>2 or self.processing_p95>100 or cooldown>0
-        healthy=backlog<=50 and self.lag_p95<.5 and self.processing_p95<20 and not cooldown
+        # Promotion should follow measured drain time, not raw queue length. A
+        # few hundred conflated frames are harmless when fresh committed-burst
+        # evidence says they drain in <=250ms. Without enough service evidence,
+        # retain the original <=50-input requirement.
+        healthy_queue=backlog<=50 or self.service_inputs>=128 and self.queue_seconds<=.25
+        healthy=healthy_queue and self.lag_p95<.5 and self.processing_p95<20 and not cooldown
         if overloaded:self.level=0;self.healthy_since=None
         elif healthy:
             if self.healthy_since is None:self.healthy_since=now
