@@ -35,7 +35,8 @@ class BookConflationTests(unittest.TestCase):
         return experiments
 
     def test_slow_active_mix_uses_coarser_server_side_book_conflation(self):
-        self.assertEqual(book_conflation_interval(self.suite(False)),250)
+        self.assertEqual(book_conflation_interval(self.suite(False)),1000)
+        self.assertIn(book_conflation_interval(self.suite(False)),(0,100,1000))
 
     def test_active_latency_sensitive_scalper_restores_fast_book_feed(self):
         self.assertEqual(book_conflation_interval(self.suite(True)),100)

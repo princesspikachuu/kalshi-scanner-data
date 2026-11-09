@@ -36,10 +36,12 @@ def book_conflation_interval(experiments):
         row=getattr(experiments,'portfolios',{}).get(folder)
         if row is not None and any(getattr(bot,'enabled',False) for bot in row[1].bots.values()):
             return 100
-    # Favorites and slow-market maker strategies do not need 10 depth batches/sec.
-    # Kalshi performs this conflation server-side while preserving sequence and
-    # the net L2 book changes, preventing redundant churn from entering our queue.
-    return 250
+    # Kalshi accepts only 0, 100, or 1000 milliseconds. An unsupported
+    # 250ms interval caused code=29 rejections of the initial book subscription,
+    # reconnect loops, and missing feed coverage. Preserve the faster 100ms
+    # path whenever a scalper is enabled; Favorites/Maker tolerate 1000ms.
+    # Public trade prints remain on a separate real-time subscription.
+    return 1000
 
 class NoCapture:
     def write(self,data):pass
