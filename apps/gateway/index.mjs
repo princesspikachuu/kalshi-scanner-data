@@ -31,7 +31,6 @@ function boundedResponse(stream,max,complete){
     if(done){complete();reader.releaseLock();controller.close();return}
     length+=value.byteLength;
     if(length>max)throw new RangeError('body limit');
-    // Own the bytes before enqueue: upstream can reuse/mutate its chunk.
     controller.enqueue(value.slice());
    }catch(error){complete();controller.error(error);try{await reader.cancel(error)}finally{reader.releaseLock()}}
   },
