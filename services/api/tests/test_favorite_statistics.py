@@ -2,7 +2,7 @@ import unittest
 from decimal import Decimal as D
 from services.paper_demo.shadow.favorite_entries import entry_key,observe
 from services.paper_demo.shadow.favorite_timing import cell
-from services.paper_demo.shadow.favorite_statistics import select,statistics_quote,aggregate,statistics_matrix,price_bucket,PRICE_BUCKETS
+from services.paper_demo.shadow.favorite_statistics import select,statistics_quote,aggregate,statistics_matrix,price_bucket,PRICE_BUCKETS,select_groups
 from services.paper_demo.shadow.statistics_favorites import StatisticsFavoritesStrategy
 from services.api.tests.test_strategy_folders import QuietAudit,market,profile
 from services.paper_demo.shadow.core import Engine
@@ -14,6 +14,78 @@ def add_events(cells,series,count,wins,price='.80',h='10–15m',market_type='15m
     return key
 
 class StatisticsEvidence(unittest.TestCase):
+    def test_sparse_cell_probes_even_with_no_settled_history(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-test',yes='.79',no='.19',close=1000)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True,statistics_exploration_contracts=2)
+        q,decision=statistics_quote(e,p,D(10),'KXBTCD-test','yes',{})
+        self.assertIsNotNone(q)
+        self.assertEqual(q['mode'],'statistics_exploration')
+        self.assertEqual(q['quantity'],D(2))
+        self.assertEqual(decision['reason'],'exploration_missing_cell')
+        self.assertEqual(decision['exact_samples'],0)
+        self.assertNotIn('trade',decision['decision_type'])
+        self.assertTrue(decision['provisional_not_validated'])
+
+    def test_full_strategy_submits_exploration_maker_order_without_history(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-test',yes='.79',no='.19',close=1000)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True,statistics_exploration_contracts=2)
+        b=StatisticsFavoritesStrategy(e,p)
+        b.set_statistics_source(lambda:{})
+        e.strategy=b;e.fill_callback=b.on_fill
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        order=next(iter(e.orders.values()))
+        self.assertTrue(order.maker)
+        self.assertEqual(order.quantity,D(2))
+        self.assertEqual(b.attempts['KXBTCD-test']['entry_mode'],'statistics_exploration')
+        self.assertEqual(b.attempts['KXBTCD-test']['entry_policy'],'favorites-statistics-learn-v2')
+
+    def test_exploration_caps_total_open_risk_and_does_not_claim_edge(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-a',yes='.79',no='.19',close=1000)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True,statistics_exploration_contracts=2,
+               statistics_exploration_portfolio_fraction='.0005')
+        q,decision=statistics_quote(e,p,D(10),'KXBTCD-a','yes',{})
+        self.assertIsNone(q)
+        self.assertEqual(decision['reason'],'exploration_budget_exhausted')
+        self.assertEqual(decision['decision_type'],'exploration')
+
+    def test_mature_unprofitable_cell_does_not_explore(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-test',yes='.79',no='.19',close=1000)
+        cells={};add_events(cells,'KXBTCD',30,10)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True,statistics_min_samples=20)
+        q,decision=statistics_quote(e,p,D(10),'KXBTCD-test','yes',cells)
+        self.assertIsNone(q)
+        self.assertEqual(decision['exact_samples'],30)
+        self.assertIn(decision['reason'],('confidence_lower_bound_below_threshold','evidence_below_threshold'))
+
+    def test_statistical_bot_uses_scarce_side_instead_of_highest_bid(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-test',yes='.79',no='.19',close=1000)
+        cells={};add_events(cells,'KXBTCD',30,26,price='.80',side='yes')
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True)
+        b=StatisticsFavoritesStrategy(e,p)
+        b.set_statistics_source(lambda:cells)
+        self.assertEqual(b.choose_entry_side('KXBTCD-test',[(D('.79'),'yes'),(D('.19'),'no')]),'yes')
+        # Both sides are considered, but only a maker price in range can win.
+
+    def test_own_and_collector_results_count_one_event_once(self):
+        a={};b={}
+        add_events(a,'KXBTCD',3,3)
+        add_events(b,'KXBTCD',3,3)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True)
+        result=select_groups(aggregate([a,b]),p,dict(close=1000),'yes',D('.80'),600,1)
+        self.assertEqual(result['samples'],3)
+
     def test_price_buckets_cover_range_without_crossing_five_cent_boundaries(self):
         self.assertEqual(price_bucket(D('.70')),'70-74')
         self.assertEqual(price_bucket(D('.74')),'70-74')
