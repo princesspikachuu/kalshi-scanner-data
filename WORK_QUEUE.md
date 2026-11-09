@@ -42,8 +42,8 @@ When the user says **"continue"** and the current chat has finished its assigned
 # PRIORITY 1 — Increase Favorites data collection volume
 
 ## MT-001 — Allow repeated Favorites data-collection bids on the same market
-**Status:** IN PROGRESS  
-**Worker:** ChatGPT / MT-001 implementation  
+**Status:** BLOCKED  
+**Worker:** ChatGPT / MT-001 implementation merged; deployment pending  
 **Claimed:** 2026-11-09 04:32 UTC  
 **Priority:** Highest
 
@@ -108,15 +108,23 @@ This is important because **we are currently dissatisfied with the amount of dat
 - Automated tests cover repeated-entry allowed + duplicate-cycle suppressed behavior.
 - Verification includes a paper-trading run or deterministic simulation showing repeated observations from the same market.
 
-### Implementation progress
-- Branch: `feature/mt001-repeat-favorites-observations` (based on live app source branch `build/google-auth-foundation`, not repository `main`).
-- PR: https://github.com/princesspikachuu/kalshi-scanner-data/pull/137
-- Added bounded same-market Favorites paper re-entry keyed by entry price/time bucket, with duplicate and risk suppressions, existing fill-cohort accounting, and targeted tests.
-- **Pending:** full CI results, independent review of re-entry accounting, and paper-run verification before merge/deployment. Do not mark DONE or assume deployed.
-- The default `main` branch contains the research scanner and this queue; the paper engine source is on `build/google-auth-foundation`.
+### Implementation and verification
+- **Code merged** to `build/google-auth-foundation` in PR https://github.com/princesspikachuu/kalshi-scanner-data/pull/137
+- Merge commit: `75b304c09db0d46c4904233d7e3ba62e9c3b1b49`.
+- GitHub Actions validation: **SUCCESS** at https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/42563609262 (full API/owner policy/PostgreSQL suite and staging checks).
+- Adds opportunity-level repeat paper-data entries on the same market; price/time signal suppresses unchanged repeated entries; permits fresh qualifying events. Existing timing fill-cohort history remains append-only.
+- Enforces per-market paper repeat inventory cap (default 5x configured contract quantity, profile override), cash limits, existing exit protections, and verified freshness/deadlines.
+- Tests cover distinct entry orders and prices within one market, duplicate suppression, capped inventory, two distinct fill cohorts through confirmed settlement, and calibrated Favorites retaining its original single-entry behavior.
+- Records repeated opportunities, attempts, risk skips, duplicate suppressions and audit events.
+
+### Deployment blocker
+- **NOT YET DEPLOYED** to Render. `infra/render.processor.yaml` has `autoDeployTrigger: 'off'`; merging the source branch does not redeploy the paper worker.
+- Render connector returned one available workspace (named `My Workspace`), but workspace selection must be explicitly confirmed by the user before any service action. After confirmation: inspect the correct active paper worker, deploy merge commit, verify service healthy, then observe repeated paper entries, duplicate suppression and position/P&L reconciliation in a controlled run.
+- Do not mark `DONE` or start throughput comparison MT-003 until deployment and production paper smoke check are verified.
+- If MT-002 is being implemented in parallel, rebase its branch on the merged `build/google-auth-foundation` source before merging overlapping Favorites code.
 
 ### Completion notes
-_Fill in once verified._
+_Code complete and 1,356-test suite passing; blocked solely on live paper-worker deployment and smoke verification._
 
 ---
 
