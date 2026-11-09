@@ -265,6 +265,22 @@ def install_shadow(app,auth,mutate,pool):
             pending_refills=sum(r['parameters'].get('amount_cents',0) for r in commands if not r['progress'].get('done'))),
             compressed=request.headers.get('x-pocket-workspace-encoding')=='gzip-base64-v1',request_started=request_started)
 
+    @app.get('/demo/shadow/research-folder/{identifier}')
+    def research_folder_details(identifier:str,request:Request):
+        auth(request);query(request)
+        if identifier not in ('favorites','favorites_statistics'):raise HTTPException(422,'Invalid research folder')
+        row=store.get('shadow/status');status=row['progress'] if row else {}
+        folder=status.get('experiments',{}).get(identifier,{})
+        out={}
+        for bot_id,metric in folder.get('bots',{}).items():
+            if not re.fullmatch('[a-z0-9_]{1,40}',str(bot_id)):continue
+            research={}
+            for key in ('entry_timing','calibration'):
+                rows=metric.get(key)
+                if isinstance(rows,list):research[key]=rows
+            if research:out[bot_id]=research
+        return dict(contract='demo-v1',folder_id=identifier,at=status.get('at'),bots=out,real_orders_enabled=False)
+
     @app.get('/demo/shadow/research/{identifier}')
     def research_details(identifier:str,request:Request):
         auth(request);query(request)
