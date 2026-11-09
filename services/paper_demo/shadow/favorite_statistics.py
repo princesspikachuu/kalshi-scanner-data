@@ -1,5 +1,5 @@
 """Transparent, hierarchical statistics for the Statistics-Backed Favorites paper strategy."""
-import json,math
+import math
 from decimal import Decimal as D, ROUND_FLOOR
 from .favorite_entries import entry_key
 from .favorite_timing import METRICS,clock,horizon,market_type
@@ -9,14 +9,16 @@ TICK=D('.01')
 def price_bucket(price):
     cents=int(D(price)*100)
     lo=70 if cents<75 else 75 if cents<80 else 80 if cents<85 else 85 if cents<90 else 90
-    hi=74 if lo<90 else 95
-    if lo in (75,80,85):hi=lo+4
+    hi=95 if lo==90 else lo+4
     return f'{lo}-{hi}'
 
 def _wilson(wins,n,z=1.96):
     if not n:return None
     p=wins/n;den=1+z*z/n
     return (p+z*z/(2*n)-z*math.sqrt(p*(1-p)/n+z*z/(4*n*n)))/den
+
+PRICE_BUCKETS=tuple(f'{lo}-{min(lo+4,95)}' for lo in (70,75,80,85,90))
+TIME_BUCKETS=('<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h')
 
 def _merge_event(target,event,value):
     target[event]=min(target.get(event,1),int(value))
@@ -115,6 +117,46 @@ def leaderboard_groups(groups,min_samples=1,limit=10):
 def leaderboard(cells,min_samples=1,limit=10):
     return leaderboard_groups(aggregate(cells),min_samples,limit)
 
+def statistics_matrix(groups,profile):
+    """Per-market-type 5-cent price x unchanged time grid.
+
+    Exact cells never inherit samples from broad parent groups. A separate
+    fallback field exposes when a live decision would use pooled evidence.
+    Eligibility here is evidence-only; live fees, depth, cash, and risk can
+    still reject an order.
+    """
+    minimum=int(profile.get('statistics_min_samples',20))
+    edge=D(str(profile.get('statistics_min_probability_edge','.01')))
+    slippage=D(str(profile.get('statistics_slippage_buffer','.005')))
+    min_roi=D(str(profile.get('statistics_min_expected_roi','.01')))
+    market_types=sorted({key[1][0] for key in groups if key[0]=='market_type_price_time' and key[1][0]})
+    result=[]
+    for kind in market_types:
+        cells=[]
+        for bucket in PRICE_BUCKETS:
+            price_hi=D(bucket.split('-')[1])/100
+            for time in TIME_BUCKETS:
+                key=('market_type_price_time',(kind,bucket,time))
+                row=summarize(groups.get(key,dict(level='market_type_price_time',key=key[1],events={},contracts=D(0),cost=D(0),net=D(0))))
+                # Look up the model's fallback level for the same group.
+                def lookup():
+                    for level,parent in (('market_type_price',(kind,bucket)),('price',(bucket,)),('global',())):
+                        g=groups.get((level,parent))
+                        if g is not None and len(g['events'])>=minimum:return level,len(g['events'])
+                    return 'insufficient_samples',0
+                fallback,pooled_n=lookup() if row['samples']<minimum else ('market_type_price_time',row['samples'])
+                lower=D(str(row['lower'])) if row['lower'] is not None else None
+                # No fee schedule is assumed in the matrix. This upper-bound
+                # test is necessary, not sufficient, for live order eligibility.
+                capable=row['samples']>=minimum and lower is not None and lower>price_hi+slippage+edge
+                capable=capable and row['win_rate'] is not None and (
+                    D(str(row['win_rate']))-price_hi-slippage)/(price_hi+slippage)>=min_roi
+                cells.append(dict(price_bucket=bucket,horizon=time,**row,
+                    eligibility='evidence_candidate' if capable else 'insufficient_samples' if row['samples']<minimum else 'evidence_rejected',
+                    fallback_level=fallback,fallback_samples=pooled_n))
+        result.append(dict(market_type=kind,price_buckets=list(PRICE_BUCKETS),time_buckets=list(TIME_BUCKETS),cells=cells))
+    return result
+
 class StatisticsFavoritesMixin:
     def set_statistics_source(self,source):self.statistics_source=source
     def _source_cells(self):return self.statistics_source() if getattr(self,'statistics_source',None) else {}
@@ -129,4 +171,5 @@ class StatisticsFavoritesMixin:
                     refresh_seconds=float(self.profile.get('statistics_refresh_seconds',30)),
                     evidence_refreshed_at=getattr(self,'_statistics_groups_at',None),
                     best_segments=leaderboard_groups(self.statistics_groups(),1,10),
+                    matrix=statistics_matrix(self.statistics_groups(),self.profile),
                     latest_decisions=list(self.decisions.values())[-20:])
