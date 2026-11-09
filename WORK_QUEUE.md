@@ -1033,9 +1033,9 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 ---
 
 ## MT-014 — Audit and remove redundant Render worker/service overlap
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** DONE  
+**Worker:** ChatGPT / architecture audit  
+**Claimed:** 2026-11-09 14:45 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
@@ -1053,6 +1053,18 @@ Both `pocket-processing-staging` and `pocket-research-staging` invoke `services.
 - No unexplained duplicate runtime responsibility remains.
 - Any retired service is proven unnecessary before shutdown.
 - Resource savings are measured.
+
+
+### Audit result
+- `pocket-research-staging` logs explicitly identify it as `collector worker ready`; it owns collection/provider reads and also hosts the provider-free saved-data analysis lane.
+- `pocket-processing-staging` is the active demo/paper trading executor; its live logs are paper-market scans, Favorites entries, monitoring capacity and shadow-feed telemetry.
+- Both services invoke `services.research.runtime`, but runtime dispatch is controlled by `WORKER_ROLE`; `role=='demo'` immediately routes to the trading runtime instead of constructing the research collector.
+- Therefore the shared start command is not duplicate execution. The services have distinct responsibilities and neither should be retired on this evidence.
+- Resource plans are also intentionally different: research/collector is 0.5c/512MB; paper processing is 1c/2GB.
+- The real waste discovered inside the research service is the persistent optional compaction retry loop, tracked separately as MT-013.
+
+### Completion notes
+_DONE. Suspected service duplication disproved; no service shutdown warranted. Keep both workers and address their internal inefficiencies separately._
 
 ---
 
