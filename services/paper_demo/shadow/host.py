@@ -365,10 +365,14 @@ class HostedRun(ForwardRun):
                         completed+=1
                         # Preserve every event and its cash value, but avoid a DB
                         # round trip/checkpoint for each partial fill in a burst.
-                        if self.done.is_set() or self.queue.empty() or completed>=max_inputs or time.monotonic()-started>=max_simulation:
-                            break
-                        if completed%PROCESSING_YIELD_INPUTS==0 or time.monotonic()-slice_started>=PROCESSING_YIELD_SECONDS:
+                        now_mono=time.monotonic()
+                        # If a simulation slice has occupied the loop long enough,
+                        # let socket readers/pongs run before a potentially slow
+                        # durable commit as well as between slices.
+                        if completed%PROCESSING_YIELD_INPUTS==0 or now_mono-slice_started>=PROCESSING_YIELD_SECONDS:
                             await asyncio.sleep(0);slice_started=time.monotonic()
+                        if self.done.is_set() or self.queue.empty() or completed>=max_inputs or now_mono-started>=max_simulation:
+                            break
                         item=self.queue.get_nowait()
                     simulated=time.monotonic()
                     await self.flush_audit()
