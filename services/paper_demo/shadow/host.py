@@ -33,6 +33,13 @@ class NoCapture:
     def flush(self):pass
     def close(self):pass
 
+def processing_batch_budget(backlog):
+    """Bound synchronous simulation while amortizing durable checkpoints under backlog."""
+    if backlog>10000:return 2048,.260
+    if backlog>2000:return 1536,.200
+    if backlog>128:return 768,.100
+    return 128,.020
+
 class HostedRun(ForwardRun):
     def __init__(self,store,guard,stop,signer):
         self.store,self.guard,self.outer_stop=store,guard,stop
@@ -289,12 +296,12 @@ class HostedRun(ForwardRun):
             item=await self.queue.get()
             async with self.state_mutex():
                 self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
-                burst=self.queue.qsize()>128
+                backlog=self.queue.qsize()
                 # Amortize full-state checkpoint/database cost during bursts.
-                # Every input remains ordered; sockets and controls regain the
-                # event loop at a bounded simulation/time boundary. Large
-                # backlogs amortize the measured full-checkpoint cost further.
-                max_inputs,max_simulation=(1024,.160) if self.queue.qsize()>2000 else (512,.080) if burst else (128,.020)
+                # Every input remains ordered. Only a large existing backlog may
+                # widen the synchronous simulation slice; sockets still receive
+                # during the durable commit and the maximum slice stays <300 ms.
+                max_inputs,max_simulation=processing_batch_budget(backlog)
                 try:
                     while True:
                         source,payload,received=item

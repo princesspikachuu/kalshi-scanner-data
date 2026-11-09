@@ -4,8 +4,17 @@ from decimal import Decimal as D
 from unittest.mock import Mock,patch
 from services.demo.exchange import ExchangeFailure
 from services.paper_demo.shadow.core import Engine,FeePolicy,StrategyFleet
-from services.paper_demo.shadow.host import HostedRun
+from services.paper_demo.shadow.host import HostedRun,processing_batch_budget
 from services.paper_demo.read_budget import ReadBudget
+
+class BurstBatchBudgetTests(unittest.TestCase):
+    def test_batch_budget_expands_only_under_backlog(self):
+        self.assertEqual(processing_batch_budget(0),(128,.020))
+        self.assertEqual(processing_batch_budget(128),(128,.020))
+        self.assertEqual(processing_batch_budget(129),(768,.100))
+        self.assertEqual(processing_batch_budget(2001),(1536,.200))
+        self.assertEqual(processing_batch_budget(10001),(2048,.260))
+        self.assertLess(processing_batch_budget(20000)[1],.300)
 
 class ProcessingBudgetTests(unittest.TestCase):
     def fixture(self):
