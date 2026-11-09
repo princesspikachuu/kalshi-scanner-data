@@ -136,6 +136,9 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    def test_hosted_worker_uses_exchange_supported_100ms_book_conflation(self):
+        self.assertEqual(HostedRun.book_update_interval_ms,100)
+
     async def test_subscriptions_updates_and_resnapshots_use_current_single_sid(self):
         run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock()
         run.engine=Engine(Mock());run.selected={'a':'BTC'}
@@ -172,6 +175,33 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({u['sid'] for u in updates if u['action']=='add_markets'},{11,12})
         self.assertTrue(any(u['action']=='get_snapshot' for u in updates))
         self.assertTrue(all(u['sid'] in (11,12) and 'sids' not in u for u in updates))
+
+    async def test_book_conflation_interval_is_only_sent_on_orderbook_subscription(self):
+        run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock();run.book_update_interval_ms=100
+        run.engine=Engine(Mock());run.selected={'a':'BTC'}
+        run.engine.add_market(dict(ticker='BTC',close=time.time()+900),FeePolicy())
+        run.engine.books['BTC'].valid=True
+        commands=[];step=0
+        class Socket:
+            async def send(self,raw):commands.append(json.loads(raw))
+            async def recv(self):
+                nonlocal step
+                step+=1
+                if step==1:return json.dumps(dict(type='subscribed',msg=dict(channel='orderbook_delta',sid=11)))
+                if step==2:
+                    run.done.set()
+                    return json.dumps(dict(type='subscribed',msg=dict(channel='trade',sid=12)))
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+        async def put(*args):pass
+        run.put=put
+        with patch('services.paper_demo.shadow.runner.connect',return_value=Socket()):
+            await run.kalshi()
+        subs=[c['params'] for c in commands if c['cmd']=='subscribe']
+        book=next(p for p in subs if p['channels']==['orderbook_delta'])
+        trade=next(p for p in subs if p['channels']==['trade'])
+        self.assertEqual(book['update_interval_ms'],100)
+        self.assertNotIn('update_interval_ms',trade)
 
     async def test_server_rejections_back_off_even_when_handshake_succeeds(self):
         run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock()
