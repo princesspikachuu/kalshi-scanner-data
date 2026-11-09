@@ -7,6 +7,7 @@ from services.paper_demo.shadow.core import Engine,FeePolicy,Wallet,Lot
 from services.paper_demo.shadow.sequential import SequentialStrategy,PairModel
 from services.paper_demo.shadow.complete_set import CompleteSetStrategy
 from services.paper_demo.shadow.experiments import ExperimentSuite
+from services.paper_demo.shadow.scalper import SCALPER_FOLDERS
 from services.paper_demo.shadow.folders import initialize_folders,FOLDERS
 from services.api.tests import test_demo_postgres as fixture
 
