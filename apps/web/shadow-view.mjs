@@ -43,7 +43,7 @@ export function favoriteStatisticsMatrixMarkup(statistics){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
- const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
+ const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
  return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table uses settled Data-Collection Favorites outcomes for one market category. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
@@ -53,12 +53,13 @@ export function favoriteStatisticsMatrixMarkup(statistics){
     (grid.time_buckets||[]).map(time=>{
       const cell=byCell.get(price+'|'+time);
       if(!cell||!cell.samples)return '<td class="stat-empty"><span class="small">No settled events</span></td>';
-      const enough=cell.samples>=min,capable=cell.eligibility==='evidence_candidate';
+      const enough=cell.samples>=min,capable=['evidence_candidate','fallback_candidate'].includes(cell.eligibility);
       const label=status(cell);
       const fallback=cell.fallback_level!==cell.level&&cell.fallback_level!=='insufficient_samples'?
         'Fallback available: '+cell.fallback_level.replaceAll('_',' ')+' · n='+cell.fallback_samples:
         cell.fallback_level==='insufficient_samples'?'No reliable fallback':'Exact category/time evidence';
-      const detail=['Confidence lower bound: '+num(cell.lower===null?null:cell.lower*100),
+      const detail=['Exact-cell confidence lower bound: '+num(cell.lower===null?null:cell.lower*100),
+        cell.fallback_lower===null||cell.fallback_lower===undefined?'':'Fallback confidence lower bound: '+num(cell.fallback_lower*100),
         'Net P/L: '+dollars(cell.realized_net),'Level: '+cell.level.replaceAll('_',' '),fallback,
         'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
       return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
