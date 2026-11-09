@@ -48,8 +48,8 @@ def summarize(group):
                 lower=_wilson(wins,n),realized_net=str(group['net']),
                 realized_roi=float(group['net']/group['cost']) if group['cost'] else None)
 
-def select(cells,profile,m,side,price,remaining,min_samples=20):
-    groups=aggregate(cells);mt=market_type(profile,m);pb=price_bucket(price);hz=horizon(remaining)
+def select_groups(groups,profile,m,side,price,remaining,min_samples=20):
+    mt=market_type(profile,m);pb=price_bucket(price);hz=horizon(remaining)
     candidates=[
         ('exact',(profile['series'],mt,side,pb,hz)),
         ('market_type_price_time_side',(mt,side,pb,hz)),
@@ -66,7 +66,10 @@ def select(cells,profile,m,side,price,remaining,min_samples=20):
     return dict(best or {},level=(best or {}).get('level','global'),samples=(best or {}).get('samples',0),
                 reason='insufficient_samples')
 
-def statistics_quote(engine,profile,contracts,ticker,side,cells,max_price=None):
+def select(cells,profile,m,side,price,remaining,min_samples=20):
+    return select_groups(aggregate(cells),profile,m,side,price,remaining,min_samples)
+
+def statistics_quote(engine,profile,contracts,ticker,side,cells,max_price=None,groups=None):
     book=engine.books[ticker];bid,ask=book.bid(side),book.ask(side)
     if bid is None or ask is None or bid>=ask:return None,dict(reason='no_valid_maker_spread',samples=0,level=None)
     ceiling=min(D('.95'),D(max_price) if max_price is not None else D('.95'))
@@ -81,7 +84,7 @@ def statistics_quote(engine,profile,contracts,ticker,side,cells,max_price=None):
         quantity-=1;fee=engine.fees[ticker].charge(quantity,price,True) if quantity else D(0)
     if quantity<1:return None,dict(reason='risk_or_capital_limit',samples=0,level=None)
     remaining,basis=clock(engine.markets[ticker],engine.now)
-    evidence=select(cells,profile,engine.markets[ticker],side,price,remaining,profile.get('statistics_min_samples',20))
+    evidence=select_groups(groups if groups is not None else aggregate(cells),profile,engine.markets[ticker],side,price,remaining,profile.get('statistics_min_samples',20))
     all_in=price+fee/quantity+D(str(profile.get('statistics_slippage_buffer','.005')))
     min_edge=D(str(profile.get('statistics_min_probability_edge','.01')))
     min_roi=D(str(profile.get('statistics_min_expected_roi','.01')))
@@ -103,16 +106,27 @@ def statistics_quote(engine,profile,contracts,ticker,side,cells,max_price=None):
     return dict(price=price,quantity=quantity,fee=fee,mode='statistics_backed',estimate=decision,key=key,
                 ceiling=str(ceiling),policy='favorites-statistics-v1'),dict(decision,reason='trade')
 
-def leaderboard(cells,min_samples=1,limit=10):
-    result=[summarize(g) for g in aggregate(cells).values() if g['level'] in ('exact','market_type_price_time_side')]
+def leaderboard_groups(groups,min_samples=1,limit=10):
+    result=[summarize(g) for g in groups.values() if g['level'] in ('exact','market_type_price_time_side')]
     result=[r for r in result if r['samples']>=min_samples]
     result.sort(key=lambda r:((r['realized_roi'] if r['realized_roi'] is not None else -999),r['samples']),reverse=True)
     return result[:limit]
 
+def leaderboard(cells,min_samples=1,limit=10):
+    return leaderboard_groups(aggregate(cells),min_samples,limit)
+
 class StatisticsFavoritesMixin:
     def set_statistics_source(self,source):self.statistics_source=source
     def _source_cells(self):return self.statistics_source() if getattr(self,'statistics_source',None) else {}
+    def statistics_groups(self):
+        now=self.e.now
+        refresh=float(self.profile.get('statistics_refresh_seconds',30))
+        if getattr(self,'_statistics_groups',None) is None or now-getattr(self,'_statistics_groups_at',-1e9)>=refresh:
+            self._statistics_groups=aggregate(self._source_cells());self._statistics_groups_at=now
+        return self._statistics_groups
     def statistics_snapshot(self):
         return dict(min_samples=int(self.profile.get('statistics_min_samples',20)),
-                    best_segments=leaderboard(self._source_cells(),1,10),
+                    refresh_seconds=float(self.profile.get('statistics_refresh_seconds',30)),
+                    evidence_refreshed_at=getattr(self,'_statistics_groups_at',None),
+                    best_segments=leaderboard_groups(self.statistics_groups(),1,10),
                     latest_decisions=list(self.decisions.values())[-20:])
