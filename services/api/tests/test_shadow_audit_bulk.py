@@ -61,6 +61,18 @@ class AuditBulkTests(unittest.TestCase):
         self.assertEqual([len(chunk) for _,_,chunk in cursor.calls],[64,64,64])
         self.assertEqual([row for _,_,chunk in cursor.calls for row in chunk],records)
 
+    def test_repeated_key_falls_back_to_original_sequential_upsert(self):
+        records=[self.row(i) for i in range(10)]
+        # Preserve the historical last-row-wins behavior for an unexpected
+        # duplicate idempotency key within one SQL chunk.
+        repeated=list(records[4]);repeated[3]=records[2][3]
+        records[4]=tuple(repeated)
+        cursor=CaptureCursor()
+        report=persist_audit_rows(cursor,records,'ORIGINAL UPSERT')
+        self.assertEqual(report['bulk_event_rows'],0)
+        self.assertEqual(report['ordinary_upsert_rows'],10)
+        self.assertEqual(cursor.calls,[('original','ORIGINAL UPSERT',records)])
+
     def test_sql_failure_propagates_before_transaction_reports_success(self):
         class FailingCursor(CaptureCursor):
             def execute(self,sql,params):
