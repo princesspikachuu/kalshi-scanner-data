@@ -46,6 +46,59 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(audit.durability_profile),before)
         self.assertEqual(audit.commits,2)
 
+    async def test_identical_compressed_checkpoint_skips_only_redundant_upsert(self):
+        from unittest.mock import MagicMock, patch
+        from services.paper_demo.shadow.checkpoint_codec import pack_checkpoint
+        from services.paper_demo.shadow.storage import KEY, entry
+        audit=self.audit();audit.store.pool.connection.return_value=MagicMock()
+        audit.durability_log_at=float('inf')
+        payload=pack_checkpoint(dict(wallet=dict(cash='1000', padding='x'*100000)),
+                                threshold=0,binary=True)
+        events=lambda:([entry(KEY,{},payload),
+                         entry('demo/shadow/event/'+str(id(object())),{},dict(event='TEST'))],
+                        [],[dict(event='TEST')])
+        cursor=audit.store.pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        with patch('builtins.print'):
+            audit.write(events())
+            audit.write(events())
+        # First commit contains checkpoint and event; second contains only its
+        # fresh audit event. Nothing in the evidence stream is discarded.
+        self.assertEqual(cursor.executemany.call_count,2)
+        self.assertEqual([len(c.args[1]) for c in cursor.executemany.call_args_list],[2,1])
+        self.assertEqual(audit.durability_profile['checkpoint_upserts'],1)
+        self.assertEqual(audit.durability_profile['checkpoint_unchanged_skips'],1)
+        self.assertGreater(audit.durability_profile['checkpoint_bytes_avoided'],0)
+        self.assertEqual(audit.rows_written,3)
+        # Force periodic durability rewrite without sleeping 30 seconds.
+        audit.committed_checkpoint_at=-1e9
+        with patch('builtins.print'):audit.write(events())
+        self.assertEqual(len(cursor.executemany.call_args.args[1]),2)
+        self.assertEqual(audit.durability_profile['checkpoint_upserts'],2)
+
+    async def test_changed_checkpoint_and_failed_commit_never_skip_persistence(self):
+        from unittest.mock import MagicMock,patch
+        from services.paper_demo.shadow.checkpoint_codec import pack_checkpoint
+        from services.paper_demo.shadow.storage import KEY,entry
+        audit=self.audit();audit.store.pool.connection.return_value=MagicMock()
+        audit.durability_log_at=float('inf')
+        def prepared(cash):
+            payload=pack_checkpoint(dict(wallet=dict(cash=cash,padding='x'*100000)),
+                                    threshold=0,binary=True)
+            return ([entry(KEY,{},payload)],[],[])
+        with patch('builtins.print'):
+            audit.write(prepared('1000'))
+        original_signature=audit.committed_checkpoint_signature
+        audit.store.pool.connection.side_effect=RuntimeError('database unavailable')
+        with self.assertRaisesRegex(RuntimeError,'database unavailable'):
+            audit.write(prepared('1001'))
+        self.assertEqual(audit.committed_checkpoint_signature,original_signature)
+        audit.store.pool.connection.side_effect=None
+        with patch('builtins.print'):
+            audit.write(prepared('1001'))
+        self.assertNotEqual(audit.committed_checkpoint_signature,original_signature)
+        self.assertEqual(audit.durability_profile['checkpoint_upserts'],2)
+        self.assertEqual(audit.durability_profile['checkpoint_unchanged_skips'],0)
+
     async def test_event_kind_attribution_is_bounded_without_losing_audit_rows(self):
         import json
         from unittest.mock import MagicMock,patch
