@@ -142,9 +142,18 @@ class HostedAudit:
             self.durability_profile=Counter()
             self.durability_kind_counts=Counter()
         if any(k in counts for k in ('ORDER_SUBMITTED','MAKER_RESTING','FILL','CANCELLED','SPOT_SAFETY_CANCEL','SAFETY_REENTRY_READY','IOC_COMPLETE','DATA_GAP')):
+            # These are operator log previews, not the durable audit. Every
+            # original fill/gap was already committed above. Thousands of
+            # DATA_GAP events on disconnect can otherwise generate megabytes of
+            # duplicate log JSON, blocking socket reads during heavy traffic.
+            fill_preview=[];gap_preview=[]
+            for event in written_events:
+                if event['event']=='FILL' and len(fill_preview)<8:fill_preview.append(event)
+                elif event['event']=='DATA_GAP' and len(gap_preview)<8:gap_preview.append(event)
             print(json.dumps(dict(event='shadow_audit_committed',counts=dict(counts),
-                fills=[e for e in written_events if e['event']=='FILL'],
-                gaps=[e for e in written_events if e['event']=='DATA_GAP'],real_orders_enabled=False)),flush=True)
+                fills=fill_preview,fills_omitted=max(0,counts['FILL']-len(fill_preview)),
+                gaps=gap_preview,gaps_omitted=max(0,counts['DATA_GAP']-len(gap_preview)),
+                real_orders_enabled=False)),flush=True)
         self.last_snapshot=time.monotonic()
     def commit(self,records):self.write(self.prepare(records))
     async def durable_io(self,action,*args):
