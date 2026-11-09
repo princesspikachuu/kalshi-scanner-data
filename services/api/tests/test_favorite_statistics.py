@@ -2,7 +2,7 @@ import unittest
 from decimal import Decimal as D
 from services.paper_demo.shadow.favorite_entries import entry_key,observe
 from services.paper_demo.shadow.favorite_timing import cell
-from services.paper_demo.shadow.favorite_statistics import select,statistics_quote
+from services.paper_demo.shadow.favorite_statistics import select,statistics_quote,aggregate,statistics_matrix,price_bucket,PRICE_BUCKETS
 from services.paper_demo.shadow.statistics_favorites import StatisticsFavoritesStrategy
 from services.api.tests.test_strategy_folders import QuietAudit,market,profile
 from services.paper_demo.shadow.core import Engine
@@ -14,6 +14,34 @@ def add_events(cells,series,count,wins,price='.80',h='10–15m',market_type='15m
     return key
 
 class StatisticsEvidence(unittest.TestCase):
+    def test_price_buckets_cover_range_without_crossing_five_cent_boundaries(self):
+        self.assertEqual(price_bucket(D('.70')),'70-74')
+        self.assertEqual(price_bucket(D('.74')),'70-74')
+        self.assertEqual(price_bucket(D('.75')),'75-79')
+        self.assertEqual(price_bucket(D('.90')),'90-94')
+        self.assertEqual(price_bucket(D('.95')),'95-95')
+        self.assertEqual(PRICE_BUCKETS,('70-74','75-79','80-84','85-89','90-94','95-95'))
+
+    def test_matrix_preserves_exact_category_and_time_samples_and_shows_fallback(self):
+        cells={}
+        add_events(cells,'KXBTCD',3,3)
+        add_events(cells,'KXETHD',30,29,price='.82')
+        add_events(cells,'KXWEATHER',30,30,market_type='weather_daily')
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),statistics_min_samples=20)
+        matrices=statistics_matrix(aggregate(cells),p)
+        kinds={m['market_type'] for m in matrices}
+        self.assertEqual(kinds,{'15m_price','weather_daily'})
+        crypto=next(m for m in matrices if m['market_type']=='15m_price')
+        sparse=next(x for x in crypto['cells'] if x['price_bucket']=='80-84' and x['horizon']=='10–15m')
+        self.assertEqual(sparse['samples'],30)
+        self.assertEqual(sparse['fallback_level'],'market_type_price_time')
+        thin=next(x for x in crypto['cells'] if x['price_bucket']=='80-84' and x['horizon']=='5–10m')
+        self.assertEqual(thin['samples'],0)
+        self.assertEqual(thin['eligibility'],'insufficient_samples')
+        weather=next(m for m in matrices if m['market_type']=='weather_daily')
+        populated=next(x for x in weather['cells'] if x['price_bucket']=='80-84' and x['horizon']=='10–15m')
+        self.assertEqual(populated['samples'],0)
+
     def test_sparse_exact_group_falls_back_to_pooled_market_type_segment(self):
         cells={}
         add_events(cells,'KXBTCD',6,6);add_events(cells,'KXETHD',8,8)
