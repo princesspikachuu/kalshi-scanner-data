@@ -96,11 +96,19 @@ class ExperimentSuite:
                 row=next((r for r in rows if r['parameters']['id']==p['id']),None)
                 if not row:continue
                 b=f.bots[p['series']];enabled=row['progress'].get('desired')=='running' and mode=='demo' and not row['parameters'].get('retired')
+                old_paused=set(p.get('paused_markets',[]))
                 if not enabled and b.enabled:
                     for t in e.markets:
-                        if f.owner(t) is b:e.cancel_buys(t)
+                        if f.owner(t) is b:
+                            e.cancel_buys(t)
+                            if not self.ticker_exposed(e,t):e.books[t].valid=False
                 b.enabled=enabled;b.contracts=D(row['parameters']['contracts'])
-                if isinstance(b,VolatilityScalper):p.update(row['parameters']);b.refresh_config()
+                if isinstance(b,VolatilityScalper):
+                    p.update(row['parameters']);b.refresh_config()
+                    for t in set(p.get('paused_markets',[]))-old_paused:
+                        if t in e.markets and f.owner(t) is b:
+                            e.cancel_buys(t)
+                            if not self.ticker_exposed(e,t):e.books[t].valid=False
     def add_set(self,payload,now):
         if not self.extra_capacity([p['market']['ticker'] for p in payload['markets']],now):return
         e,f,ps=self.portfolios['complete_set'];profile=ps[0]
@@ -309,6 +317,7 @@ class ExperimentSuite:
         """Paused entries release hot book/trade work unless this ticker still has risk to manage."""
         if ticker not in e.markets or e.markets[ticker].get('paid'):return False
         if self.ticker_exposed(e,ticker):return True
+        if e.markets[ticker].get('entry_parked'):return False
         owner=f.owner(ticker)
         if owner is None:
             # Group strategies such as complete-set do not have a ticker-prefix
