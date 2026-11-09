@@ -42,9 +42,9 @@ When the user says **"continue"** and the current chat has finished its assigned
 # PRIORITY 1 — Increase Favorites data collection volume
 
 ## MT-001 — Allow repeated Favorites data-collection bids on the same market
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-001 implementation  
+**Claimed:** 2026-11-09 04:32 UTC  
 **Priority:** Highest
 
 ### Goal
