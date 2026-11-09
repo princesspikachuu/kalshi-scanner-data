@@ -48,6 +48,17 @@ class ExperimentFleet(StrategyFleet):
             # cannot place or manage an order and need no duplicate book scans.
             owners={id(b):b for t in self.e.markets if (b:=self.owner(t)) is not None}
             for b in owners.values():b.step()
+        elif changed_ticker is None:
+            # Regular experiment fleets previously called every bot with no
+            # ticker, making each bot rescan every market on every clock. Group
+            # tickers by owner once, then preserve the existing bot/profile
+            # evaluation order so shared-capital decisions remain deterministic.
+            owned={}
+            for ticker in tuple(self.e.markets):
+                b=self.owner(ticker)
+                if b:owned.setdefault(id(b),[]).append(ticker)
+            for b in self.bots.values():
+                for ticker in owned.get(id(b),()):b.step(ticker)
         else:super().step(changed_ticker)
 
 class ExperimentSuite:
@@ -65,10 +76,8 @@ class ExperimentSuite:
             engine_class=ScalperEngine if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) else Engine
             e=engine_class(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
             if folder in ('favorites','favorites_statistics'):
-                # Preserve every sequenced book delta and trade print, but do not
-                # re-run 75 Favorites strategies for tiny top-of-book quantity
-                # churn. The 100ms clock still reevaluates every enabled bot,
-                # including held inventory and changing time buckets.
+                # Preserve every sequenced book delta and trade print, while
+                # filtering immaterial top-of-book quantity churn.
                 e.filter_unchanged_quotes=True
             if isinstance(e,ScalperEngine):e.tape=self.tape
             if getattr(host,'model_worker_latency',False) is True:e.wall_clock=time.time
