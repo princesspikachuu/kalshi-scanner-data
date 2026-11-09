@@ -53,6 +53,21 @@ def workspace_response(payload,*,compressed=False,request_started=None):
             # counters/decision summaries to render cards and folder totals.
             compact_experiment={k:v for k,v in experiment.items()
                 if k not in ('entry_timing','calibration')}
+            # Keep tiny research summaries actually visible on normal bot cards.
+            # Bulk series belong in the per-bot research view; never let them
+            # multiply initial workspace size across dozens of bots.
+            if experiment.get('scalper') is None:
+                for key in ('entry_timing','calibration'):
+                    rows=experiment.get(key)
+                    if isinstance(rows,list) and len(rows)<=8:
+                        try:
+                            encoded=json.dumps(rows,default=str,separators=(',',':'),
+                                ensure_ascii=False,allow_nan=False).encode('utf-8')
+                            if len(encoded)<=2048:compact_experiment[key]=rows
+                        except (TypeError,ValueError):
+                            # The normal JSON response still validates retained
+                            # fields. Never leak a non-serializable research blob.
+                            pass
             if experiment.get('scalper') is not None:
                 research=experiment['scalper']
                 compact_experiment['scalper']={k:v for k,v in research.items()

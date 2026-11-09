@@ -21,6 +21,17 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertEqual(response.headers['x-pocket-workspace-sha256'],hashlib.sha256(response.body).hexdigest())
         self.assertEqual(response.headers['x-pocket-workspace-bytes'],str(len(response.body)))
 
+    def test_small_evidence_tables_survive_workspace_compaction(self):
+        observations=[dict(price='0.94',net='1',label='Fresh · ✅')]
+        calibration=[dict(band='90–95',trials=4)]
+        payload=dict(status={},folders=[],bots=[dict(id='fav',experiment=dict(
+            attempts=5,entry_timing=observations,calibration=calibration))])
+        original=deepcopy(payload)
+        result=json.loads(workspace_response(payload).body)
+        self.assertEqual(result['bots'][0]['experiment']['entry_timing'],observations)
+        self.assertEqual(result['bots'][0]['experiment']['calibration'],calibration)
+        self.assertEqual(payload,original)
+
     def test_unused_latest_reports_do_not_inflate_initial_dashboard_snapshot(self):
         import base64,gzip
         huge='x'*1200000
