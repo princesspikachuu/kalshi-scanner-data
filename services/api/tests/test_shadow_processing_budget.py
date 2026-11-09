@@ -4,7 +4,7 @@ from decimal import Decimal as D
 from unittest.mock import Mock,patch
 from services.demo.exchange import ExchangeFailure
 from services.paper_demo.shadow.core import Engine,FeePolicy,StrategyFleet
-from services.paper_demo.shadow.host import HostedRun,processing_batch_budget,PROCESSING_YIELD_SECONDS,PROCESSING_YIELD_INPUTS
+from services.paper_demo.shadow.host import HostedRun,processing_batch_budget,book_conflation_interval,PROCESSING_YIELD_SECONDS,PROCESSING_YIELD_INPUTS
 from services.paper_demo.read_budget import ReadBudget
 
 class BurstBatchBudgetTests(unittest.TestCase):
@@ -24,6 +24,21 @@ class BurstBatchBudgetTests(unittest.TestCase):
         # amount of processing before cooperative socket yields.
         self.assertLessEqual(processing_batch_budget(20000)[0],4096)
         self.assertLessEqual(processing_batch_budget(20000)[1],1.0)
+
+
+class BookConflationTests(unittest.TestCase):
+    def suite(self,enabled):
+        bot=Mock();bot.enabled=enabled
+        fleet=Mock();fleet.bots={'b':bot}
+        experiments=Mock()
+        experiments.portfolios={folder:(Mock(),fleet if folder=='volatility_scalper' else Mock(bots={}),[]) for folder in ('volatility_scalper','scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation')}
+        return experiments
+
+    def test_slow_active_mix_uses_coarser_server_side_book_conflation(self):
+        self.assertEqual(book_conflation_interval(self.suite(False)),250)
+
+    def test_active_latency_sensitive_scalper_restores_fast_book_feed(self):
+        self.assertEqual(book_conflation_interval(self.suite(True)),100)
 
 class ProcessingBudgetTests(unittest.TestCase):
     def fixture(self):
