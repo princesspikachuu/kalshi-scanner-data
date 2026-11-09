@@ -1005,8 +1005,13 @@ Create a concise audit report in the repo containing:
 - Direct PostgreSQL queries blocked by existing empty external IP allowlist; no security settings altered.
 - Next: implement or audit checkpoint dirty-section write suppression and sampled write-latency histograms without overlapping MT-004/MT-015. Keep this task IN PROGRESS.
 
+### Engineering change awaiting CI
+- PR [#171](https://github.com/princesspikachuu/kalshi-scanner-data/pull/171), branch `fix/mt-011-checkpoint-noop-upserts`, head `28abd5e5dcad7df0b455cb8501f1c2e924455810`: skip only a SHA-verified byte-identical compressed checkpoint after a previously successful write, retaining every audit/report/command row in its original transaction; refresh full checkpoint every 30 seconds or on any state change, with failure-safe recovery.
+- Bounded durability counters: `checkpoint_upserts`, `checkpoint_unchanged_skips`, and `checkpoint_bytes_avoided`. Focused tests added for repeated snapshots, changed state, failed commits, periodic refresh and event preservation.
+- PR opened; CI/workflow result was **not yet available** when checked. **Do not claim deployment or throughput improvement** until checks pass, merge/deploy is confirmed, and live before/after samples are measured.
+
 ### Completion notes
-_In progress; baseline recorded, no code remediation deployed yet._
+_In progress; implementation PR opened but not merged or deployed._
 
 
 ---
