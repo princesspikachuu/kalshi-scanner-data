@@ -72,6 +72,41 @@ class FavoritesCollectionQualityTests(unittest.TestCase):
         self.assertEqual(sum(v['unique_verified_outcomes'] for v in report['by_market_type'].values()),2)
         self.assertFalse(report['rolling_counts_are_lower_bounds'])
 
+    def test_distinct_categories_contribute_to_global_unique_outcome_totals(self):
+        a,b={},{}
+        evidence(a,'crypto','AAA','15m_price','.72','5–10m')
+        evidence(b,'weather','BBB','weather_daily','.92','>=2h')
+        observe(a,'crypto','CRYPTO-A',1,observed_at=9700)
+        observe(a,'crypto','CRYPTO-B',0,observed_at=9600)
+        observe(b,'weather','WEATHER-C',1,observed_at=9900)
+        report=collection_quality([bot(a),bot(b)],now=10000)
+        self.assertEqual(report['unique_verified_outcomes'],3)
+        self.assertEqual(report['unique_verified_1h'],3)
+        self.assertEqual(report['unique_verified_24h'],3)
+        self.assertFalse(report['rolling_counts_are_lower_bounds'])
+        by_cell={(c['market_type'],c['price_bucket'],c['horizon']):c for c in report['price_time_cells']}
+        crypto=by_cell['15m_price','70-74','5–10m']
+        weather=by_cell['weather_daily','90-94','>=2h']
+        self.assertEqual(crypto['unique_verified_outcomes'],2)
+        self.assertEqual(crypto['unique_verified_1h'],2)
+        self.assertEqual(weather['unique_verified_24h'],1)
+        self.assertTrue(all(c['rolling_window_complete'] for c in by_cell.values()))
+
+    def test_untimed_outcomes_do_not_gain_fabricated_window_membership(self):
+        a={}
+        evidence(a,'old','OLD','15m_price','.84','10–15m')
+        observe(a,'old','OLD-1',1)
+        observe(a,'old','NEW-2',1,observed_at=9999)
+        report=collection_quality([bot(a)],now=10000)
+        self.assertEqual(report['unknown_time_outcomes'],1)
+        self.assertTrue(report['rolling_counts_are_lower_bounds'])
+        self.assertEqual(report['unique_verified_1h'],1)
+        row=report['price_time_cells'][0]
+        self.assertEqual(row['unique_verified_outcomes'],2)
+        self.assertEqual(row['unknown_time_outcomes'],1)
+        self.assertEqual(row['unique_verified_1h'],1)
+        self.assertFalse(row['rolling_window_complete'])
+
     def test_timestamp_metadata_is_bounded_with_evidence(self):
         cells={}
         for i in range(505):
