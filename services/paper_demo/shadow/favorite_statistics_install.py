@@ -30,34 +30,29 @@ def _initialize_base(store,guard):
     print(json.dumps(dict(event='statistics_favorites_initialized',profiles=len(rows),real_orders_enabled=False)),flush=True)
 
 def initialize_statistics_favorites(store,guard):
-    """Enable the learning policy for existing profiles without resetting history.
-
-    This is a one-time configuration rollout. Later user edits persist: the
-    marker prevents startup from overwriting custom exploration settings.
-    """
+    """Enable learning and widen default exploration without resetting history."""
     _initialize_base(store,guard)
-    if store.get('shadow/favorite-statistics-learning-v2'):return
-    guard();now=time.time()
-    config=dict(statistics_active_learning=True,statistics_exploration_contracts=2,
-        statistics_exploration_target_samples=20,
-        statistics_exploration_order_fraction='.01',
-        statistics_exploration_portfolio_fraction='.10',
-        statistics_exploration_max_open_markets=6)
-    with store.pool.connection() as c:
-        c.execute('SELECT pg_advisory_xact_lock(%s)',(73820194,))
-        if c.execute("SELECT 1 FROM research_job WHERE idempotency_key='demo/shadow/favorite-statistics-learning-v2'").fetchone():return
-        updated=c.execute("""UPDATE research_job SET parameters=parameters || %s
-            WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'
-              AND parameters->>'folder_id'='favorites_statistics'
-              AND parameters->>'statistics_active_learning' IS DISTINCT FROM 'true'
-            RETURNING id""",(Jsonb(config),)).fetchall()
-        put(c,'demo/shadow/favorite-statistics-learning-v2',
-            dict(mode='active_learning',policy='favorites-statistics-learn-v2'),
-            dict(at=now,profiles_enabled=len(updated),real_orders_enabled=False))
-    print(json.dumps(dict(event='statistics_favorites_learning_enabled',
-        profiles_enabled=len(updated),preserved_history=True,real_orders_enabled=False)),flush=True)
+    if not store.get('shadow/favorite-statistics-learning-v2'):
+        guard();now=time.time()
+        config=dict(statistics_active_learning=True,statistics_exploration_contracts=2,
+            statistics_exploration_target_samples=20,
+            statistics_exploration_order_fraction='.01',
+            statistics_exploration_portfolio_fraction='.10',
+            statistics_exploration_max_open_markets=6)
+        with store.pool.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(%s)',(73820194,))
+            if not c.execute("SELECT 1 FROM research_job WHERE idempotency_key='demo/shadow/favorite-statistics-learning-v2'").fetchone():
+                updated=c.execute("""UPDATE research_job SET parameters=parameters || %s
+                    WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'
+                      AND parameters->>'folder_id'='favorites_statistics'
+                      AND parameters->>'statistics_active_learning' IS DISTINCT FROM 'true'
+                    RETURNING id""",(Jsonb(config),)).fetchall()
+                put(c,'demo/shadow/favorite-statistics-learning-v2',
+                    dict(mode='active_learning',policy='favorites-statistics-learn-v2'),
+                    dict(at=now,profiles_enabled=len(updated),real_orders_enabled=False))
+                print(json.dumps(dict(event='statistics_favorites_learning_enabled',
+                    profiles_enabled=len(updated),preserved_history=True,real_orders_enabled=False)),flush=True)
     widen_statistics_exploration(store,guard)
-
 
 def widen_statistics_exploration(store,guard):
     """Double the default active-learning breadth without overriding custom profiles."""
