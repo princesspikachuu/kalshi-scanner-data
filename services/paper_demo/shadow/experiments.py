@@ -102,6 +102,7 @@ class ExperimentSuite:
             for bot in self.portfolios['favorites_statistics'][1].bots.values():
                 bot.set_statistics_source(collector_evidence)
                 bot._shared_statistics_groups=shared_groups
+                bot._shared_statistics_last_refresh=lambda: shared['at']
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
         self.maker_allocation=deepcopy((previous or {}).get('_maker_allocation') or dict(pending={},credits={},next_at=0))
         self.control(rows)
