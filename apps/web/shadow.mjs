@@ -10,17 +10,19 @@ if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
 let folderViews={open:[],periods:{}};try{folderViews=JSON.parse(localStorage.getItem('moneytree-folder-views')||'{}')}catch{}
 let researchViews=[];try{researchViews=JSON.parse(localStorage.getItem('moneytree-research-views')||'[]')}catch{}
 const openResearch=new Set(Array.isArray(researchViews)?researchViews.filter(k=>typeof k==='string'):[]);
-const folderResearch=new Map(),loadingFolderResearch=new Set();
+const folderResearch=new Map(),folderResearchLoadedAt=new Map(),loadingFolderResearch=new Set();
 function researchBot(bot){
  const folder=bot.folder_id||'convexity',extra=folderResearch.get(folder)?.[bot.id];
  return extra?{...bot,experiment:{...(bot.experiment||{}),...extra}}:bot;
 }
 async function loadFolderResearch(folder){
- if(!['favorites','favorites_statistics'].includes(folder)||folderResearch.has(folder)||loadingFolderResearch.has(folder))return;
+ if(!['favorites','favorites_statistics'].includes(folder)||loadingFolderResearch.has(folder))return;
+ const loaded=folderResearchLoadedAt.get(folder)||0;if(Date.now()-loaded<30000)return;
  loadingFolderResearch.add(folder);
  try{
   const result=await demoCall('shadow/research-folder/'+folder);
   folderResearch.set(folder,result?.bots&&typeof result.bots==='object'?result.bots:{});
+  folderResearchLoadedAt.set(folder,Date.now());
   if(data)draw();
  }catch(error){note('Research detail unavailable: '+error.message)}
  finally{loadingFolderResearch.delete(folder)}
