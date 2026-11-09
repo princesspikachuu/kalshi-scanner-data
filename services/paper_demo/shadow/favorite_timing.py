@@ -88,7 +88,7 @@ def settle(strategy,ticker,observe):
         row=cell(strategy.exit_evidence.cells,chunk['key']);q=D(chunk['quantity'])
         add(row,'resolved',q);add(row,'winners',q*payout)
         if not strategy.trial_valid(ticker,a):add(row,'execution_unverified_contracts',q)
-        if chunk['verified']:observe(strategy.exit_evidence.cells,chunk['key'],m.get('event_ticker',ticker),payout)
+        if chunk['verified']:observe(strategy.exit_evidence.cells,chunk['key'],m.get('event_ticker',ticker),payout,observed_at=strategy.e.now)
     a['timing_finalized']=True
 
 def rows(cells):
