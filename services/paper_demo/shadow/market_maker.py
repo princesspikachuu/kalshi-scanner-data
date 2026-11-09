@@ -87,11 +87,20 @@ def initialize_market_maker(store,guard):
         add('demo/'+marker,{},dict(at=now,real_orders_enabled=False))
 
 class MarketMaker(VolatilityScalper):
+    def effective_config(self):
+        c=dict(EXECUTION_DEFAULTS,**MM_CONFIG)
+        c['competitive_inside']=self.profile.get('folder_id')=='maker_competitive'
+        c.update(self.profile.get('config',{}))
+        return c
     def __init__(self,engine,profile):
-        super().__init__(engine,dict(profile,config=dict(MM_CONFIG,**profile.get('config',{}))))
-        self.profile=profile;self.config=dict(EXECUTION_DEFAULTS,**MM_CONFIG);self.config.update(profile.get('config',{}))
+        self.profile=profile
+        super().__init__(engine,dict(profile,config=self.effective_config()))
+        # Keep the shared mutable profile object: dashboard controls update it
+        # in place before refresh_config().
+        self.profile=profile
+        self.config=self.effective_config()
     def refresh_config(self):
-        self.config=dict(EXECUTION_DEFAULTS,**MM_CONFIG);self.config.update(self.profile.get('config',{}))
+        self.config=self.effective_config()
     def phase(self,ticker):
         c=dict(self.config);c['restrict_entries']=max(c['liquidate']+60,c['min_remaining'])
         c['order_ttl']=min(c['order_ttl'],max(900,min(1800,self.e.markets[ticker].get('maker_idle_seconds',1800)/2)))
