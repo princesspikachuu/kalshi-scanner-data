@@ -536,6 +536,12 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 - Added per-reason decision counters and explicit `favorite_statistics_entry` logs so post-deploy throughput can be verified directly.
 - Regression coverage proves the 6-market cap blocks a seventh exploration market while 12 allows it.
 
+
+### Rebase / validation update
+- Original CI-green PR #164 was closed after newer parallel merges made it non-mergeable.
+- The same MT-010 patch was rebuilt on current base `7482f452591e4e5ba29b15994d62d7a9f769ebec` as PR #167: https://github.com/princesspikachuu/kalshi-scanner-data/pull/167
+- PR #167 is mergeable; focused checks are green and the full PostgreSQL/API suite is running.
+
 ---
 
 # PRIORITY 5 — Expand monitoring capacity for active strategies
@@ -1173,6 +1179,11 @@ The system is using all maker capacity without producing enough fills/trades.
 - Market Maker trading activity materially improves.
 
 
+
+
+### Implementation progress
+- Implemented together with MT-004 in PR #166 to avoid conflicting Maker allocation changes.
+- Reallocation now optimizes for executable flow rather than raw tape activity; see MT-004 progress for validation state.
 
 ---
 
