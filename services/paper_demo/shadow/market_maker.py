@@ -20,11 +20,16 @@ def quote_diagnostics(engine,now):
         matching=[t for t in sample if ('no' if t[3]>0 else 'yes')==resting and
             (t[1] if resting=='yes' else 1-t[1])<=limit+1e-9]
         book=engine.books[order.ticker]
+        strategy=getattr(engine,'strategy',None)
+        owner=strategy.owner(order.ticker) if hasattr(strategy,'owner') else strategy if hasattr(strategy,'config') else None
+        policy=getattr(owner,'config',{})
         result.append(dict(ticker=order.ticker,order_id=order.id,side=order.side,action=order.action,
             status=order.status,price=str(order.price),remaining=str(order.remaining),queue_ahead=str(order.ahead),
             age_seconds=max(0,now-order.created),seconds_to_expiry=max(0,order.expiry-now),
             public_bid=str(book.bid(order.side)) if book.bid(order.side) is not None else None,
             public_ask=str(book.ask(order.side)) if book.ask(order.side) is not None else None,
+            competitive_inside=bool(policy.get('competitive_inside',False)),
+            reprice_ticks=policy.get('reprice_ticks'),reprice_seconds=policy.get('reprice_seconds'),
             recent_trade_count=len(sample),recent_executable_trade_count=len(matching),
             recent_executable_volume=sum(t[2] for t in matching),sample_first_at=sample[0][0] if sample else None,
             sample_basis='bounded live tape since arrival; diagnostic only'))
@@ -89,8 +94,10 @@ def initialize_market_maker(store,guard):
 class MarketMaker(VolatilityScalper):
     def effective_config(self):
         c=dict(EXECUTION_DEFAULTS,**MM_CONFIG)
-        c['competitive_inside']=self.profile.get('folder_id')=='maker_competitive'
         c.update(self.profile.get('config',{}))
+        # Variant identity is internal, not a persisted/user-overridable knob.
+        # This also repairs stale rows that may carry an old value.
+        c['competitive_inside']=self.profile.get('folder_id')=='maker_competitive'
         return c
     def __init__(self,engine,profile):
         self.profile=profile

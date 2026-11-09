@@ -41,10 +41,12 @@ class MakerTests(unittest.TestCase):
         self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{'trade_count':1},bc.config),D('.28'))
         self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{'trade_count':1},bs.config),D('.27'))
         self.assertLess(D('.28'),D('.29'))
-        competitive['config']=dict(competitive['config'],min_spread=.025)
-        bc.refresh_config()
+        competitive['config']=dict(competitive['config'],min_spread=.025,competitive_inside=False)
+        standard['config']=dict(standard['config'],competitive_inside=True)
+        bc.refresh_config();bs.refresh_config()
         self.assertEqual(bc.config['min_spread'],.025)
         self.assertTrue(bc.config['competitive_inside'])
+        self.assertFalse(bs.config['competitive_inside'])
 
     def test_market_maker_warms_after_three_fresh_samples(self):
         e=ScalperEngine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0,seed=1);e.advance(200)
