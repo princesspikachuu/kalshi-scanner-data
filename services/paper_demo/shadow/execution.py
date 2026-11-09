@@ -41,7 +41,12 @@ def size(engine,ticker,contracts,price,features,config):
 def passive_entry_price(market,bid,ask,features,config):
     tick=tick_size(market,bid)
     improve=(config.get('adaptive',True) and ask-bid>=2*tick and (features.get('trade_count',0)>0 or features.get('last_change',0)>0))
-    if config.get('approach')=='market_maker' and config.get('adaptive',True) and ask-bid>=2*tick:improve=True
+    if config.get('approach')=='market_maker' and config.get('adaptive',True) and ask-bid>=2*tick:
+        if config.get('competitive_inside',False):
+            # Experimental competitive variant: take the best post-only price.
+            # Standard Maker remains one tick better than the public bid.
+            return ask-tick
+        improve=True
     return min(ask-tick,bid+(tick if improve else ZERO))
 
 def choose(engine,ticker,side,features,quantity,target,config):
