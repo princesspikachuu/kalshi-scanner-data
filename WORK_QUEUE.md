@@ -317,7 +317,7 @@ _Fill in when done._
 # PRIORITY 8 — Restore Favorites research visibility and controls
 
 ## MT-009 — Fix Data-Collection Favorites research tables: empty data + collapse state
-**Status:** IN PROGRESS  
+**Status:** MERGED / DEPLOYING  
 **Worker:** ChatGPT / MT-009 implementation  
 **Claimed:** 2026-11-09 19:45 UTC  
 **Urgency:** U1 — URGENT  
@@ -373,14 +373,21 @@ _Fill in when done._
 - Initial CI failure was only a syntax typo in the new test fixture; corrected.
 - Latest run `42687341474`: gateway/browser checks and focused Statistics-Favorites regressions are passing; full PostgreSQL/API suite is still running.
 
+
+### Deployment progress
+- PR #159 passed full CI and was squash-merged as `f99325ecd3de93c059ff2090674d2eca06348cfc`.
+- Staging Cloudflare asset deployment succeeded and uploaded the changed `shadow.mjs` and `shadow-view.mjs`; the workflow failed only in its final unauthenticated public sign-in check with HTTP 403 after deployment.
+- API deployment is building a newer branch head `722732707cb36fa43eff1b1216bc4b817ac3f888` that is confirmed to descend from the MT-009 merge.
+- Keep MT-009 open until the API deploy is live and the user-visible tables can be rechecked.
+
 ---
 
 # PRIORITY 9 — Increase Statistics-Backed Favorites trading activity
 
 ## MT-010 — Make Statistics-Backed Favorites trade materially more while still learning safely
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-010 implementation  
+**Claimed:** 2026-11-09 22:22 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
