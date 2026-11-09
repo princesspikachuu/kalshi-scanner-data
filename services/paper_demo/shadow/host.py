@@ -1,5 +1,5 @@
 """One fenced, durable 28-market paper executor hosted by the existing worker."""
-import asyncio,json,time,logging
+import asyncio,json,time,logging,math
 from types import SimpleNamespace
 from decimal import Decimal as D
 from services.paper_demo.exchange import credentials,ProductionData,Fees
@@ -26,6 +26,7 @@ from .market_maker import MM_FOLDERS,quote_diagnostics
 from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 from .favorite_statistics_install import initialize_statistics_favorites
+from .favorite_collection_quality import collection_quality
 
 LOG=logging.getLogger('shadow-host')
 
@@ -46,6 +47,20 @@ def processing_batch_budget(backlog):
     if backlog>2000:return 4096,.640
     if backlog>128:return 512,.240
     return 256,.040
+
+def book_ingest_age_bucket(sending_ts_ms,received_at):
+    """Classify sampled exchange-to-WebSocket receipt age, before queue wait."""
+    if sending_ts_ms is None:return 'missing_timestamp'
+    try:
+        age=float(received_at)-float(sending_ts_ms)/1000
+    except (TypeError,ValueError,OverflowError):
+        return 'invalid_timestamp'
+    if not math.isfinite(age) or age<-.5:return 'invalid_or_future_timestamp'
+    if age<1:return 'under_1s'
+    if age<3:return '1_to_3s'
+    if age<10:return '3_to_10s'
+    return 'over_10s'
+
 
 class HostedRun(ForwardRun):
     # Kalshi's 100 ms server-side conflation preserves exact net L2 changes and
@@ -229,6 +244,14 @@ class HostedRun(ForwardRun):
         if not hasattr(self,'input_counts'):self.input_counts={}
         kind=source+':'+str(payload.get('type','')) if source=='kalshi' else source
         self.input_counts[kind]=self.input_counts.get(kind,0)+1
+        if (source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta')
+                and self.input_counts[kind]%32==0):
+            # This is the WS-reader age, distinct from time spent in our
+            # bounded queue. Sampling avoids per-delta wall-clock overhead.
+            bucket=book_ingest_age_bucket(payload.get('sending_ts_ms'),time.time())
+            samples=getattr(self,'book_ingest_age_samples',None)
+            if samples is None:samples=self.book_ingest_age_samples={}
+            samples[bucket]=samples.get(bucket,0)+1
         if (source=='kalshi' and payload.get('type')=='market_lifecycle_v2'
                 and payload.get('seq') is None):
             # Lifecycle is an exchange-wide stream. Ignore unsequenced notices
@@ -460,6 +483,11 @@ class HostedRun(ForwardRun):
                     self.health_log_at=time.monotonic()+30
                     print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                    collector=self.experiments.portfolios.get('favorites')
+                    if collector:
+                        quality=collection_quality(collector[1].bots.values(),now)
+                        print(json.dumps(dict(event='favorites_collection_quality',
+                            **quality,real_orders_enabled=False)),flush=True)
                     for folder,(se,sf,_) in self.experiments.portfolios.items():
                         if folder not in (*SCALPER_FOLDERS,*MM_FOLDERS):continue
                         totals=[b.research['totals'] for b in sf.bots.values()]
@@ -487,12 +515,15 @@ class HostedRun(ForwardRun):
                             self.engine.markets[t]['close']<=now and t not in self.engine.settled),
                         spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
                         input_rejections=getattr(self,'input_rejections',0),
+                        input_rejection_reasons=dict(getattr(self,'input_rejection_reasons',{})),
+                        sampled_book_ingest_age=dict(getattr(self,'book_ingest_age_samples',{})),
                         unrelated_lifecycle_dropped=getattr(self,'lifecycle_dropped',0),
                         valid_cycles=sum(self.engine.wallet.stat(t).valid for t in active),
                         resting_orders=sum(o.status=='resting' for o in self.engine.orders.values()),
                         pending_orders=sum(o.status=='pending' for o in self.engine.orders.values()),
                         open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
                         real_orders_enabled=False)),flush=True)
+                    self.book_ingest_age_samples={}
                 if time.monotonic()>=self.publish_at:
                     self.publish_at=time.monotonic()+5
                     money=money_snapshot(self.engine,self.profiles,time.time())

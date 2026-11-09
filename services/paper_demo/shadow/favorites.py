@@ -169,7 +169,7 @@ class FavoritesStrategy(ConvexityStrategy):
                 if trial_valid and a['first'] and m.get('yes_payout_confirmed') in ('0','1'):
                     payout=int(m['yes_payout_confirmed']==('1' if a['side']=='yes' else '0'))
                     for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
-                    if a.get('entry_key') and not a.get('entry_fills'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout)
+                    if a.get('entry_key') and not a.get('entry_fills'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout,observed_at=self.e.now)
                 self.e.log('FAVORITE_TRIAL_QUALITY',ticker=ticker,details=json.dumps(dict(
                     cycle_valid=s.valid,execution_window_valid=trial_valid,window=a.get('data_window'),
                     verified_entry_chunks=sum(bool(c.get('verified')) for c in a.get('entry_fills',[])))))

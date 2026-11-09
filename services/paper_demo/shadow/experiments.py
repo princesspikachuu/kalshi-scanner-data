@@ -64,6 +64,12 @@ class ExperimentSuite:
             model=(AdaptivePairModel if folder=='sequential_adaptive' else PairModel)(model_data)
             engine_class=ScalperEngine if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) else Engine
             e=engine_class(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
+            if folder in ('favorites','favorites_statistics'):
+                # Preserve every sequenced book delta and trade print, but do not
+                # re-run 75 Favorites strategies for tiny top-of-book quantity
+                # churn. The 100ms clock still reevaluates every enabled bot,
+                # including held inventory and changing time buckets.
+                e.filter_unchanged_quotes=True
             if isinstance(e,ScalperEngine):e.tape=self.tape
             if getattr(host,'model_worker_latency',False) is True:e.wall_clock=time.time
             f=ExperimentFleet(e,ps,model,folder=='complete_set')

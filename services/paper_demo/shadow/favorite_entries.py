@@ -15,7 +15,7 @@ def entry_key(series, side, bid, remaining, basis='market_close'):
     return f'entry-v2|{series}|{side}|{int(bid*100)}|{horizon(remaining)}|{basis}'
 
 
-def observe(cells, key, event, payout):
+def observe(cells, key, event, payout, observed_at=None):
     cell = cells.setdefault(key, {})
     outcomes = cell.setdefault('events', {})
     if event in outcomes:
@@ -24,9 +24,15 @@ def observe(cells, key, event, payout):
         outcomes[event] = min(outcomes[event], int(payout))
         return
     outcomes[event] = int(payout)
-    # Bounded recent sample rather than unbounded event identities/checkpoints.
+    # Old outcomes keep their original count, but cannot be assigned a made-up
+    # timestamp. Only newly confirmed, timestamped outcomes enter rolling rates.
+    if observed_at is not None:
+        cell.setdefault('event_times', {})[event] = float(observed_at)
+    # Keep event identities and timestamp metadata bounded together.
     while len(outcomes) > 500:
-        outcomes.pop(next(iter(outcomes)))
+        oldest = next(iter(outcomes))
+        outcomes.pop(oldest)
+        cell.get('event_times', {}).pop(oldest, None)
 
 
 def estimate(cells, key):
