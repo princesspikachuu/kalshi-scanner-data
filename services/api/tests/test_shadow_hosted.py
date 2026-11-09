@@ -142,8 +142,8 @@ class HostedPostgres(unittest.TestCase):
                 "WHERE starts_with(idempotency_key,'demo/shadow/event/')").fetchall()
         self.assertEqual(len(rows),145)
         self.assertEqual(sorted(D(row['progress']['cash']) for row in rows),
-                         list(map(D,range(101,246))))
-        self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),245)
+                         list(map(D,range(51,196))))
+        self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),195)
         self.assertEqual(audit.durability_profile['bulk_event_rows'],145)
         self.assertEqual(audit.durability_profile['bulk_event_groups'],3)
         self.assertEqual(audit.durability_profile['commits'],1)
