@@ -149,6 +149,8 @@ At minimum evaluate historical Favorites results by combinations of:
 - side if materially relevant,
 - other already-collected Favorites features that show sufficient sample size.
 
+**Price/value buckets must use 5-cent increments, not 10-cent increments.** Preserve the full applicable Favorites price range and split it into contiguous 5-cent buckets (for example, 70–74¢, 75–79¢, 80–84¢, etc.; use the actual strategy range rather than hard-coding this example).
+
 For each candidate group calculate useful empirical measures such as:
 - sample size,
 - win rate,
@@ -196,7 +198,26 @@ Add a clearly separate Statistics-Backed Favorites card/folder/strategy identity
 - sample/data basis,
 can be distinguished from the Data-Collection Favorites strategy.
 
-Where practical, expose:
+#### Required statistics matrix
+Display the Favorites statistical evidence as a **two-dimensional table/matrix** rather than a flat list of segments.
+
+- Use **entry value/price as one axis** and **time-to-expiration at entry as the other axis**.
+- Use **5-cent value buckets** on the value axis, replacing any existing 10-cent buckets.
+- Recommended orientation for readability: **value/price buckets as rows** and **time buckets as columns**. The implementation may transpose this only if the UI is materially clearer.
+- Keep different market types/categories separated (for example, separate matrix/table per market type or a market-type selector). Do not pool unlike market types into one table merely to simplify the display.
+- Preserve the currently useful time-bucket resolution unless evidence supports changing it; this request changes the **value resolution to 5 cents**, not the time resolution.
+- Every cell represents the historical observations for that exact **value bucket × time bucket** combination within the selected market type/category.
+- Each populated cell should expose, at minimum:
+  - sample size,
+  - win rate,
+  - ROI or expected value,
+  - and whether the Statistics-Backed Favorites strategy currently considers that cell/group eligible to trade.
+- Where useful, allow the user to inspect additional cell details such as realized P/L, confidence/uncertainty, fill rate, and fallback level.
+- Empty or under-sampled cells must be visibly distinguishable from cells with sufficient evidence. Do not present sparse cells as authoritative.
+- When a decision uses a broader fallback because the exact matrix cell lacks enough data, make that fallback apparent rather than making the exact cell look statistically proven.
+- The table must update as newly settled Favorites observations are incorporated.
+
+Still expose, where practical:
 - current best-performing market/time/price segments,
 - sample sizes,
 - observed win rate/ROI,
