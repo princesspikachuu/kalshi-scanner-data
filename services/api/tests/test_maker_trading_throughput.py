@@ -3,7 +3,7 @@ import time,unittest
 from unittest.mock import Mock,AsyncMock,patch
 from services.api.tests import test_market_maker as fixture
 from services.paper_demo.shadow.maker_opportunities import retry_verified,turnover_score,ranked_rows
-from services.paper_demo.shadow.market_maker import profiles
+from services.paper_demo.shadow.market_maker import profiles,trade_frequency_eligible
 from services.paper_demo.shadow.core import FeePolicy
 from decimal import Decimal as D
 T=fixture.T
@@ -58,6 +58,19 @@ class CachedAdmissionTests(unittest.IsolatedAsyncioTestCase):
         await retry_verified(h,s,1005)
         self.assertEqual(h.put.call_args.args[1]['market']['ticker'],'BETTER')
         self.assertFalse(await retry_verified(h,s,1006));self.assertEqual(h.put.await_count,1)
+
+class RecentFlowEligibilityTests(unittest.TestCase):
+    def test_six_recent_verified_prints_can_replace_thirty_trade_daily_floor(self):
+        now=100000
+        recent=[dict(created_time=fixture.iso(now-60*i)) for i in range(1,7)]
+        eligible,hour=trade_frequency_eligible(recent,now,30)
+        self.assertTrue(eligible);self.assertEqual(hour,6)
+        sparse=[dict(created_time=fixture.iso(now-60*i)) for i in range(1,6)]
+        eligible,hour=trade_frequency_eligible(sparse,now,30)
+        self.assertFalse(eligible);self.assertEqual(hour,5)
+        old=[dict(created_time=fixture.iso(now-7200-i)) for i in range(30)]
+        eligible,hour=trade_frequency_eligible(old,now,30)
+        self.assertTrue(eligible);self.assertEqual(hour,0)
 
 class TurnoverRankingTests(unittest.TestCase):
     def prints(self,now,recent):
