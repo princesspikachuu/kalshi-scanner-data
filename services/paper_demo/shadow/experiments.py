@@ -337,6 +337,10 @@ class ExperimentSuite:
         """Consume lifecycle sequence without strategy fanout for an unrelated market."""
         if source!='kalshi' or payload.get('type')!='market_lifecycle_v2':return False
         ticker=payload.get('msg',{}).get('market_ticker')
+        # Generic lifecycle/control frames without an explicit market remain on
+        # the normal strategy path. Only ticker-scoped unrelated events are safe
+        # to suppress.
+        if not isinstance(ticker,str) or not ticker:return False
         if ticker in e.markets:return False
         sid,seq=payload.get('sid'),payload.get('seq')
         if sid is not None and seq is not None:
