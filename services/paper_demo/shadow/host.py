@@ -26,6 +26,7 @@ from .market_maker import MM_FOLDERS,quote_diagnostics
 from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 from .favorite_statistics_install import initialize_statistics_favorites
+from .favorite_collection_quality import collection_quality
 
 LOG=logging.getLogger('shadow-host')
 
@@ -460,6 +461,11 @@ class HostedRun(ForwardRun):
                     self.health_log_at=time.monotonic()+30
                     print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                    collector=self.experiments.portfolios.get('favorites')
+                    if collector:
+                        quality=collection_quality(collector[1].bots.values(),now)
+                        print(json.dumps(dict(event='favorites_collection_quality',
+                            **quality,real_orders_enabled=False)),flush=True)
                     for folder,(se,sf,_) in self.experiments.portfolios.items():
                         if folder not in (*SCALPER_FOLDERS,*MM_FOLDERS):continue
                         totals=[b.research['totals'] for b in sf.bots.values()]
