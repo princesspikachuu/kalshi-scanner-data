@@ -550,14 +550,25 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 - Current PR: #170 https://github.com/princesspikachuu/kalshi-scanner-data/pull/170
 - PR #170 is mergeable; CI is pending/starting.
 
+
+### Live deployment verification
+- PR #170 passed full CI and merged as `aa056ef9a90b76d58bd4b488650ec75fdd235227`.
+- Processing worker deploy `dep-dbp5nqp42hec73bll880` is live; new worker instance `srv-dbhcqr0473hc739kj4pg-jbksc` acquired the demo lock.
+- Pre-fix baseline in this workstream: 0 shared active Maker markets in repeated samples.
+- Post-deploy new-worker scan: 8 candidates admitted to shared Maker monitoring and monitoring capacity shows `market_maker: 8` with `maker_slots_free: 0`.
+- Post-deploy health reached 8 monitored / 8 fresh books for both baseline and competitive Maker folders.
+- Repeated `MAKER_RESTING` events are being generated on the new worker, confirming decision→order activity.
+- Remaining live limiter is now downstream worker processing backlog; health snapshots report `worker processing backlog` and can temporarily show 0 resting orders even while MAKER_RESTING events are being emitted.
+- Keep MT-004 IN PROGRESS until backlog is reduced enough to verify sustained resting orders and new Maker fills/round trips.
+
 ---
 
 # PRIORITY 5 — Expand monitoring capacity for active strategies
 
 ## MT-005 — Remove artificial monitoring bottlenecks and allocate capacity dynamically
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-005 capacity implementation  
+**Claimed:** 2026-11-09 23:55 UTC  
 **Urgency:** U2 — HIGH  
 **Priority:** Medium-High; especially relevant if MT-003 or MT-004 shows monitoring starvation
 
@@ -596,6 +607,11 @@ The app has previously had surprisingly few effective monitoring slots. Active s
 
 ### Completion notes
 _Fill in when done._
+
+
+### Trigger from MT-004/015
+- Claimed because live Maker admission is now healthy (8/8 slots, 8/8 fresh books) but quote persistence is suppressed by `worker processing backlog`.
+- Goal: remove artificial monitoring/processing bottlenecks without reducing useful active trading or dropping protected exit/position markets.
 
 ---
 
@@ -1204,6 +1220,13 @@ The system is using all maker capacity without producing enough fills/trades.
 ### Implementation progress
 - Implemented together with MT-004 in PR #166 to avoid conflicting Maker allocation changes.
 - Reallocation now optimizes for executable flow rather than raw tape activity; see MT-004 progress for validation state.
+
+
+### Live deployment verification
+- Slot-efficiency portion is live in merge `aa056ef9a90b76d58bd4b488650ec75fdd235227`.
+- New worker filled all 8 Maker monitoring slots; repeated reallocation/monitoring telemetry confirms active slot use.
+- Executable-flow-aware replacement is deployed; current bottleneck is no longer empty/stranded Maker slots but worker processing backlog.
+- Keep MT-015 IN PROGRESS only until MT-005/backlog work proves sustained quote processing; the slot-allocation code itself is deployed and behaving as intended.
 
 ---
 
