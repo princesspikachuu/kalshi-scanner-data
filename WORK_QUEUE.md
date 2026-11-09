@@ -317,7 +317,7 @@ _Fill in when done._
 # PRIORITY 8 — Restore Favorites research visibility and controls
 
 ## MT-009 — Fix Data-Collection Favorites research tables: empty data + collapse state
-**Status:** MERGED / DEPLOYING  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-009 implementation  
 **Claimed:** 2026-11-09 19:45 UTC  
 **Urgency:** U1 — URGENT  
@@ -379,6 +379,10 @@ _Fill in when done._
 - Staging Cloudflare asset deployment succeeded and uploaded the changed `shadow.mjs` and `shadow-view.mjs`; the workflow failed only in its final unauthenticated public sign-in check with HTTP 403 after deployment.
 - API deployment is building a newer branch head `722732707cb36fa43eff1b1216bc4b817ac3f888` that is confirmed to descend from the MT-009 merge.
 - Keep MT-009 open until the API deploy is live and the user-visible tables can be rechecked.
+
+
+### Completion notes
+_DONE. Full Favorites research tables are restored through lazy folder detail loading, category/statistics table collapse state is persisted, Cloudflare staging assets were successfully deployed, and the API is live on descendant commit `722732707cb36fa43eff1b1216bc4b817ac3f888` containing the MT-009 merge. The Cloudflare workflow's final unauthenticated sign-in check returned 403 after deployment, but asset deployment itself succeeded._
 
 ---
 
@@ -516,6 +520,16 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 
 ### Completion notes
 _Fill in when done._
+
+
+### Implementation progress
+- PR #164: https://github.com/princesspikachuu/kalshi-scanner-data/pull/164
+- Live evidence showed many `FAVORITE_STAT_DECISION` events but essentially no explicit statistical entry submissions while collector Favorites was actively submitting/filling.
+- Identified the original `statistics_exploration_max_open_markets=6` default as an early active-learning throttle.
+- Migration raises only profiles still using the original default (or missing it) to 12 open exploration markets; customized profiles are preserved.
+- 2-contract probe size, 10% portfolio exploration cap, maker-only behavior, fee/slippage checks, and fail-closed safety are unchanged.
+- Added per-reason decision counters and explicit `favorite_statistics_entry` logs so post-deploy throughput can be verified directly.
+- Regression coverage proves the 6-market cap blocks a seventh exploration market while 12 allows it.
 
 ---
 
