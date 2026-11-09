@@ -1176,9 +1176,9 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-017 Cloudflare CPU audit  
+**Claimed:** 2026-11-09 19:20 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
