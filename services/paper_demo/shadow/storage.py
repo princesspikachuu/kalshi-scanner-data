@@ -111,7 +111,10 @@ class HostedAudit:
         profile=getattr(self,'durability_profile',None)
         if profile is None:profile=self.durability_profile=Counter()
         profile['commits']+=1
-        profile['checkpoint_bytes']+=len(getattr(batch[0][2],'obj',{}).get('data','')) if batch else 0
+        checkpoint=getattr(batch[0][2],'obj',{}) if batch else {}
+        compressed=checkpoint.get('data') if isinstance(checkpoint,dict) else None
+        if isinstance(compressed,str):profile['checkpoint_bytes']+=len(compressed)
+        else:profile['inline_checkpoint_commits']+=1
         profile['audit_and_extra_rows']+=max(0,len(batch)-1)
         profile['command_rows']+=len(commands)
         profile['prepare_ms']+=getattr(self,'snapshot_ms',0)
