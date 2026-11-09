@@ -28,6 +28,22 @@ class StatisticsEvidence(unittest.TestCase):
         self.assertNotIn('trade',decision['decision_type'])
         self.assertTrue(decision['provisional_not_validated'])
 
+    def test_full_strategy_submits_exploration_maker_order_without_history(self):
+        e=Engine(QuietAudit(),cash='1000');e.advance(200)
+        market(e,'KXBTCD-test',yes='.79',no='.19',close=1000)
+        p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
+               statistics_active_learning=True,statistics_exploration_contracts=2)
+        b=StatisticsFavoritesStrategy(e,p)
+        b.set_statistics_source(lambda:{})
+        e.strategy=b;e.fill_callback=b.on_fill
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        order=next(iter(e.orders.values()))
+        self.assertTrue(order.maker)
+        self.assertEqual(order.quantity,D(2))
+        self.assertEqual(b.attempts['KXBTCD-test']['entry_mode'],'statistics_exploration')
+        self.assertEqual(b.attempts['KXBTCD-test']['entry_policy'],'favorites-statistics-learn-v2')
+
     def test_exploration_caps_total_open_risk_and_does_not_claim_edge(self):
         e=Engine(QuietAudit(),cash='1000');e.advance(200)
         market(e,'KXBTCD-a',yes='.79',no='.19',close=1000)
