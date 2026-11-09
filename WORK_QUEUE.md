@@ -1009,9 +1009,9 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 ---
 
 ## MT-013 — Fix persistent storage compaction retry loop
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-013 implementation  
+**Claimed:** 2026-11-09 14:15 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
