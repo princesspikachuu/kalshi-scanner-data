@@ -312,17 +312,137 @@ _Fill in when done._
 
 ---
 
+---
+
+# PRIORITY 8 — Restore Favorites research visibility and controls
+
+## MT-009 — Fix Data-Collection Favorites research tables: empty data + collapse state
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** Highest UI/data visibility issue after MT-008
+
+### Current user-visible failures
+1. Data-Collection Favorites research/statistics tables are showing **no data**.
+2. The research/details tables **will not stay closed** after the user collapses them.
+
+### Likely interaction with MT-008
+MT-008 intentionally removed heavy per-bot research arrays such as `entry_timing` and `calibration` from the initial workspace response. The Favorites UI previously rendered these tables directly from `bot.experiment.entry_timing` / `calibration`.
+
+Do not undo MT-008 by stuffing all research history back into the initial dashboard snapshot. Restore these tables using lazy/detail loading from dedicated research endpoints or a compact folder/category aggregate endpoint.
+
+### Required fix — data
+- Identify exactly which Favorites table components now receive empty arrays after MT-008.
+- Restore Data-Collection Favorites research data via a bounded, lazy request when the relevant folder/category/research panel is opened.
+- Reuse canonical stored Favorites evidence; do not duplicate or reset history.
+- Prefer category/folder aggregate responses where the UI only needs aggregated price × time results.
+- Keep payload bounded with aggregation/pagination rather than raw unlimited observations.
+- Verify 5-cent value buckets and the existing time buckets remain intact.
+- Ensure Data-Collection Favorites and Statistics-Backed Favorites both render their correct evidence sources without accidentally mixing portfolio accounting.
+
+### Required fix — collapse persistence
+- Diagnose why collapsing a research/details table does not persist.
+- Preserve closed/open state across ordinary dashboard refreshes/polls.
+- Use the existing localStorage/open-state mechanism if appropriate, but ensure rerendering does not force panels open again.
+- Respect explicit user action: once a table is closed, background refreshes must not reopen it.
+- Verify this separately for:
+  - folder-level research,
+  - category-level research,
+  - per-bot research,
+  - Statistics-Backed Favorites matrices if they use the same details pattern.
+
+### Acceptance criteria
+- Data-Collection Favorites tables show real collected data again.
+- No large research history is reintroduced into the initial workspace snapshot.
+- Closing a table keeps it closed across dashboard refreshes.
+- Opening it keeps it open unless the user closes it.
+- Mobile and desktop verified.
+- Tests cover lazy data load and persisted collapse state.
+
+### Completion notes
+_Fill in when done._
+
+---
+
+# PRIORITY 9 — Increase Statistics-Backed Favorites trading activity
+
+## MT-010 — Make Statistics-Backed Favorites trade materially more while still learning safely
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Current problem
+The Statistics-Backed Favorites strategy is running concurrently but is trading too little. The dataset is still sparse, so a strategy that waits only for high-confidence exact cells will not collect enough of its own experience or provide useful parallel performance.
+
+### Goal
+Increase the rate of **intentional statistical/exploration trades** without turning the strategy into a duplicate of the broad Data-Collection Favorites collector.
+
+### Required work
+Measure the full decision funnel:
+- qualifying Favorites opportunities seen,
+- exact-cell evidence candidates,
+- broader-fallback evidence candidates,
+- exploration candidates,
+- trades submitted,
+- maker fills,
+- skips by sample threshold,
+- skips by confidence threshold,
+- skips by ROI/EV threshold,
+- skips by risk/capital,
+- skips by duplicate/open exposure,
+- skips by fill economics.
+
+Then increase participation using evidence-based changes such as:
+1. **Explicit exploration budget**
+   - When data is sparse, allow controlled exploration trades in under-sampled cells that are strategically useful to learn.
+   - Prioritize cells with little/no data rather than repeatedly sampling already-rich cells.
+   - Keep a clear cap on exploration exposure.
+2. **Hierarchical fallback trading**
+   - Permit trades based on broader market-type/price or category/price evidence when exact price × time cells are sparse, provided broader evidence is positive enough.
+3. **Graduated confidence requirements**
+   - Do not require the same confidence/sample threshold for a small paper-learning probe as for a full evidence-backed trade.
+   - Smaller exploratory size is preferred over no trade when uncertainty is the only blocker and economics are otherwise acceptable.
+4. **Market coverage**
+   - Verify the strategy is seeing the same eligible Favorites opportunity stream as the collector and is not accidentally monitoring a tiny subset.
+5. **Maker fill realism**
+   - Audit whether overly passive maker prices are causing nearly all statistical opportunities to go unfilled.
+   - Improve/reprice maker bids when expected value remains positive, using the existing execution rules.
+6. **Capital utilization**
+   - Verify idle paper capital can support multiple simultaneous low-risk positions rather than one-at-a-time gating.
+
+### Guardrails
+- Preserve separate P/L/accounting from Data-Collection Favorites.
+- Keep every decision auditable as evidence-backed vs exploration.
+- Do not fabricate confidence from sparse cells.
+- Do not use exploration as a reason to cross uneconomic spreads.
+- Keep paper exposure caps.
+- Continue incorporating newly settled collector + statistical observations.
+
+### Acceptance criteria
+- Measured increase in submitted trades and fills over a comparable active window.
+- Sparse-data exploration produces useful new observations in under-sampled cells.
+- Evidence-backed trades remain distinguishable from learning probes.
+- No silent regression in risk controls or accounting.
+- Dashboard shows why the strategy is or is not trading.
+
+### Completion notes
+_Fill in when done._
+
+
 # PRIORITY 4 — Make Market Maker actually trade
 
 ## MT-004 — Diagnose and increase Market Maker opportunity-to-fill throughput
 **Status:** READY  
 **Worker:** —  
 **Claimed:** —  
-**Urgency:** U2 — HIGH  
+**Urgency:** U1 — URGENT  
 **Priority:** High
 
 ### Current problem
-The Market Maker is active but has been producing almost no trading activity. The goal is not merely to make it scan more markets; it must generate materially more valid paper quotes, fills, inventory turns, and completed trades while keeping the strategy economically rational.
+The Market Maker is active but has been producing almost no trading activity. **User reconfirmed on 2026-11-09 that it still barely does anything after prior changes. Treat this as an unresolved strategy-throughput defect, not a cosmetic concern.** The goal is not merely to make it scan more markets; it must generate materially more valid paper quotes, fills, inventory turns, and completed trades while keeping the strategy economically rational.
 
 ### First: instrument the full funnel
 Before loosening behavior, measure where candidates disappear. Add or verify counters/reason codes for:
