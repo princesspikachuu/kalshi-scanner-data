@@ -184,6 +184,6 @@ class StatisticsFavoritesMixin:
         return dict(min_samples=int(self.profile.get('statistics_min_samples',20)),
                     refresh_seconds=float(self.profile.get('statistics_refresh_seconds',30)),
                     evidence_refreshed_at=getattr(self,'_statistics_groups_at',None),
-                    best_segments=leaderboard_groups(self.statistics_groups(),1,10),
-                    matrix=statistics_matrix(self.statistics_groups(),self.profile),
+                    best_segments=leaderboard_groups(groups,1,10),
+                    matrix=statistics_matrix(groups,self.profile),
                     latest_decisions=list(self.decisions.values())[-20:])
