@@ -460,10 +460,10 @@ test('high-probability Favorites collector table is visible directly within its 
  ];
  const html=setup(d).nodes.get('groups').innerHTML;
  const root=html.indexOf('id="folder-favorites"');
- const table=html.indexOf('High-Probability Favorites · entry statistics',root);
+ const table=html.indexOf('High-Probability Favorites · price × time matrix',root);
  const category=html.indexOf('data-market-type="favorites::crypto-15m"',root);
  assert.ok(root>=0&&table>root&&category>table,'the collected table precedes nested market cards');
- for(const phrase of ['80–84¢','85–89¢','10–15m','Win rate','Still open','Realized P/L'])
+ for(const phrase of ['80–84¢','85–89¢','10–15m','75.0%','80.0%','n=4 settled','n=5 settled','P/L'])
   assert.ok(html.includes(phrase),phrase);
 });
 test('large collector folder restores its statistics when opened, including paused history',()=>{
@@ -473,10 +473,25 @@ test('large collector folder restores its statistics when opened, including paus
  d.bots.find(b=>b.id==='fav-extra-3').desired='paused';
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true};
  const {nodes}=setup(d,{queries:{'details[data-folder]':[detail]}});
- assert.ok(!nodes.get('groups').innerHTML.includes('High-Probability Favorites · entry statistics'));
+ assert.ok(!nodes.get('groups').innerHTML.includes('High-Probability Favorites · price × time matrix'));
  detail.open=true;detail.ontoggle();
  const html=nodes.get('groups').innerHTML;
- assert.ok(html.includes('High-Probability Favorites · entry statistics'));
+ assert.ok(html.includes('High-Probability Favorites · price × time matrix'));
  assert.ok(html.includes('75–79¢'));
- assert.ok(html.includes('7</td>'), 'stored collector outcomes remain visible');
+ assert.ok(html.includes('n=5 settled'), 'stored collector outcomes remain visible');
+});
+
+test('collector matrix does not replace existing category research and excludes unsettled outcomes',()=>{
+ const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');
+ bot.experiment.entry_timing=[
+ {series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'5–10m',price:'.70',contracts:'10',closed:'5',resolved:'5',winners:'4',cost:'7',net:'.2'},
+ {series:bot.series,market_type:'15m_price',side:'no',clock:'market_close',horizon:'5–10m',price:'.72',contracts:'3',closed:'0',resolved:'0',winners:'0',cost:'2.16',net:'0'}
+ ];
+ const html=setup(d).nodes.get('groups').innerHTML;
+ assert.ok(html.includes('High-Probability Favorites · price × time matrix'));
+ assert.ok(html.includes('Combined data · time × percentage tier'),'old research remains');
+ assert.ok(html.includes('70–74¢'));assert.ok(html.includes('80.0%'));
+ assert.ok(html.includes('n=5 settled'));assert.ok(html.includes('Purchased 13'));
+ assert.ok(html.includes('still open/unsettled 8'));
+ assert.ok(!html.includes('n=13 settled'));
 });
