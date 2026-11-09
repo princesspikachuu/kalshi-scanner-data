@@ -68,6 +68,65 @@ class DataMode(unittest.TestCase):
         self.assertEqual(o.status,'filled');self.assertEqual(e.wallet.inventory(o.ticker,'yes'),D(10))
         self.assertEqual(e.wallet.cash,D(992));self.assertEqual(len(e.orders),1)
 
+    def test_distinct_market_price_can_create_second_paper_entry(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.fill(first,D(10),first.price,'TEST')
+        book.at=212;e.advance(212)
+        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        b.step()
+        orders=list(e.orders.values())
+        self.assertEqual(len(orders),2)
+        self.assertEqual(orders[-1].price,D('.83'))
+        self.assertEqual(b.attempts[first.ticker]['repeat_entries'],1)
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(10))
+        # Once filled, an unchanged qualifying state must not create a third entry.
+        e.advance(213);e.fill(orders[-1],D(10),orders[-1].price,'TEST')
+        e.advance(224);book.at=224;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertGreater(b.attempts[first.ticker]['repeat_duplicate_suppressed'],0)
+
+    def test_repeated_fills_remain_distinct_cohorts_at_settlement(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.fill(first,D(10),first.price,'TEST')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        b.step();second=list(e.orders.values())[-1]
+        e.advance(213);e.fill(second,D(10),second.price,'TEST')
+        chunks=b.attempts[first.ticker]['entry_fills']
+        self.assertEqual(len(chunks),2)
+        self.assertEqual({c['order_id'] for c in chunks},{first.id,second.id})
+        self.assertEqual({D(c['price']) for c in chunks},{D('.80'),D('.83')})
+        e.markets[first.ticker].update(paid=True,yes_payout_confirmed='1')
+        b.step()
+        self.assertEqual(b.attempts[first.ticker]['timing_finalized'],True)
+        self.assertTrue(all(D(c['remaining'])==0 for c in chunks))
+
+    def test_calibrated_favorites_stays_single_entry_per_market(self):
+        maker=fixture.MakerEntries()
+        e,b,book=maker.setup_bot(paper_exploration=False)
+        maker.seed(b);b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.fill(first,D(10),first.price,'TEST')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+
+    def test_repeat_entry_stops_at_bounded_market_inventory(self):
+        e,b,book=fixture.MakerEntries().setup_bot(paper_repeat_inventory_multiplier=1)
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.fill(first,D(10),first.price,'TEST')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertGreater(b.attempts[first.ticker]['repeat_risk_suppressed'],0)
+
     def test_partial_order_is_cancelled_when_data_or_entry_conditions_fail(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
         o=next(iter(e.orders.values()));e.fill(o,D(1),o.price,'TEST')

@@ -43,7 +43,7 @@ class FavoritesStrategy(ConvexityStrategy):
         if not active:return
         q=self.entry_quote(ticker,a['side']) if (self.enabled and self.entry_allowed(m,self.e.now)
             and self.entry_ready(ticker) and m['close']-self.e.now>60 and not a.get('exit_reason')) else None
-        desired=max(ZERO,self.contracts-sum((l.quantity for l in lots),ZERO))
+        desired=max(ZERO,D(a.get('target_inventory',str(self.contracts)))-sum((l.quantity for l in lots),ZERO))
         if not q or any(o.price>q['price'] or o.remaining>min(desired,q['quantity']) for o in active):
             self.e.cancel_buys(ticker);return
         canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
@@ -64,6 +64,10 @@ class FavoritesStrategy(ConvexityStrategy):
         if expiry<=self.e.now+self.e.latency:return
         if not a.get('first'):
             a['data_window']=dict(started_at=self.e.now,valid=self.entry_ready(ticker),scope='entry-through-exit-or-close-v1')
+        elif a.get('data_window',{}).get('ended_at') is not None:
+            # A second opportunity may follow an earlier fully closed position.
+            a['data_window'].pop('ended_at',None)
+            a['data_window']['valid']=a['data_window'].get('valid',True) and self.entry_ready(ticker)
         a.update(price=str(q['price']),quantity=str(q['quantity']),entry_key=q['key'],
             entry_mode=q['mode'],entry_estimate=q['estimate'],entry_policy=q['policy'],last_submit=self.e.now,
             price_band='70–79¢' if q['price']<D('.80') else '80–89¢' if q['price']<D('.90') else '90–95¢',
@@ -79,6 +83,59 @@ class FavoritesStrategy(ConvexityStrategy):
             print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
                 price=str(q['price']),policy=q['policy'],maker=True,execution_model=request.execution_model,
                 worker_delay_ms=request.worker_delay_seconds*1000,arrival_at=request.arrives,real_orders_enabled=False)),flush=True)
+    def repeat_data_entry(self,ticker,m,a,lots):
+        """Collect distinct later signals in one market, without loop duplicates.
+
+        Re-entry is paper-exploration only. Keep one market-level attempt record
+        and its individual fill cohorts for settlement while limiting inventory
+        to five configured entries per market.
+        """
+        if self.profile.get('paper_exploration',True) is False or a.get('entry_policy')!='favorites-paper-data-v3':
+            return
+        if a.get('exit_reason') or not self.enabled or m.get('entry_parked'):
+            a['repeat_qualified']=False
+            return
+        if not self.entry_allowed(m,self.e.now) or not self.entry_ready(ticker) or m['close']-self.e.now<=60:
+            a['repeat_qualified']=False
+            return
+        if self.entry_deadline(m,self.e.now)<=self.e.now+self.e.latency:
+            a['repeat_qualified']=False
+            return
+        if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):
+            return
+        q=self.entry_quote(ticker,a['side'])
+        if not q:
+            a['repeat_qualified']=False
+            return
+        remaining,basis=favorite_timing.clock(m,self.e.now)
+        signal=entry_key(self.series,a['side'],q['price'],remaining,basis)
+        if a.get('repeat_qualified') and signal==a.get('last_repeat_signal'):
+            a['repeat_duplicate_suppressed']=a.get('repeat_duplicate_suppressed',0)+1
+            return
+        a['repeat_opportunities_detected']=a.get('repeat_opportunities_detected',0)+1
+        inventory=sum((l.quantity for l in lots if l.side==a['side']),ZERO)
+        max_inventory=self.contracts*D(str(self.profile.get('paper_repeat_inventory_multiplier',5)))
+        if inventory+q['quantity']>max_inventory:
+            a['repeat_risk_suppressed']=a.get('repeat_risk_suppressed',0)+1
+            a['last_repeat_suppression']=dict(reason='inventory_cap',signal=signal,at=self.e.now)
+            return
+        if self.e.now-a.get('last_submit',0)<10:
+            return
+        # Refresh the deadline from the currently verified market state.
+        # Sports verification may expire earlier than the original attempt.
+        a['entry_deadline']=self.entry_deadline(m,self.e.now)
+        a['target_inventory']=str(inventory+q['quantity'])
+        self.submit_entry(ticker,a,q)
+        a['last_repeat_signal']=signal
+        a['repeat_qualified']=True
+        a['repeat_entries']=a.get('repeat_entries',0)+1
+        self.e.log('FAVORITE_REPEAT_OPPORTUNITY',ticker=ticker,details=json.dumps(dict(
+            opportunity_key=signal,repeat_entries=a['repeat_entries'],
+            inventory_before=str(inventory),max_inventory=str(max_inventory),
+            price=str(q['price']),quantity=str(q['quantity']),
+            entries_attempted=a['repeat_entries'],
+            opportunities_detected=a['repeat_opportunities_detected'])))
+
     def entry_allowed(self,m,now):
         if self.profile.get('retired'):return False
         return not m.get('sports') or (m.get('sports_live') is True and
@@ -130,6 +187,7 @@ class FavoritesStrategy(ConvexityStrategy):
                         self.exit_at[ticker]=now
                         self.e.log('FAVORITE_RISK_EXIT',ticker=ticker,reason=a['exit_reason'])
                         self.e.place(ticker,a['side'],'sell',sum((l.quantity for l in lots),ZERO),D('.01'),maker=False,targets=[l.id for l in lots])
+                self.repeat_data_entry(ticker,m,a,lots)
                 continue
             if m.get('entry_parked') or not self.enabled or not self.entry_allowed(m,now) or not self.entry_ready(ticker) or m['close']-now<=60:
                 if a:self.cancel_entry(ticker,'Waiting: entry conditions or fresh verified book unavailable')
@@ -172,4 +230,10 @@ class FavoritesStrategy(ConvexityStrategy):
                 canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
                 for order in active:
                     if order.id not in canceling:order.expiry=min(now+30,deadline)
-            else:self.submit_entry(ticker,a,q)
+            else:
+                self.submit_entry(ticker,a,q)
+                if q['mode']=='paper_exploration':
+                    remaining,basis=favorite_timing.clock(m,now)
+                    a['last_repeat_signal']=entry_key(self.series,side,q['price'],remaining,basis)
+                    a['repeat_qualified']=True
+                    a['target_inventory']=str(q['quantity'])
