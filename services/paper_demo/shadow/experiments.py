@@ -172,7 +172,7 @@ class ExperimentSuite:
         care={t for t in active if protected(self,t,now)}
         probes=active-care
         markets={t:m for e,_,_ in self.portfolios.values() for t,m in e.markets.items()}
-        legacy={t for t,m in self.host.engine.markets.items() if m['close']>now}
+        legacy={t for t,m in self.host.engine.markets.items() if m['close']>now and (getattr(self.host,'suspend_idle_feeds',False) is not True or self.host.legacy_ticker_needed(t))}
         stats=dict(limits,position_and_exit_markets=len(care),entry_markets=len(probes),
             subscribed_markets=len(active|legacy),legacy_markets=len(legacy),coalesced_inputs=sum(getattr(e,'coalesced_inputs',0) for e,_,_ in self.portfolios.values()),filtered_quote_updates=sum(getattr(e,'filtered_quote_updates',0) for e,_,_ in self.portfolios.values()),
             categories={c:sum(market_category(markets.get(t,{}))==c for t in probes) for c in ('weather','weather_daily','hourly','sports','complete_set','market_maker')},

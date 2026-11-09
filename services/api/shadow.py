@@ -291,7 +291,7 @@ def install_shadow(app,auth,mutate,pool):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
         category:str|None=Field(default=None,pattern='^(politics|economics|sports_futures|entertainment)$')
-        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive)$')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive|volatility_all)$')
     @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
@@ -301,7 +301,9 @@ def install_shadow(app,auth,mutate,pool):
                 except ModeConflict as exc:raise HTTPException(409,str(exc)) from None
             if body.category and body.folder_id not in MM_FOLDERS:raise HTTPException(422,'Choose a Market Maker strategy for category controls')
             desired='paused' if body.action=='pause' else 'running'
-            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true') AND (%s::text IS NULL OR parameters->>'market_category'=%s)",(desired,body.folder_id,body.folder_id,desired,body.category,body.category))
+            family=body.folder_id=='volatility_all'
+            folder=None if family else body.folder_id
+            c.execute("UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb(%s::text)) WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz' AND starts_with(idempotency_key,'demo/shadow/bot/') AND (%s::text IS NULL OR coalesce(parameters->>'folder_id','convexity')=%s) AND (%s IS NOT TRUE OR parameters->>'folder_id' IN ('volatility_scalper','scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation')) AND (%s='paused' OR parameters->>'retired' IS DISTINCT FROM 'true') AND (%s::text IS NULL OR parameters->>'market_category'=%s)",(desired,folder,folder,family,desired,body.category,body.category))
         return dict(contract='demo-v1',saved=True,real_orders_enabled=False)
 
     class Reset(BaseModel):

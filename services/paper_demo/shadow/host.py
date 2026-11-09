@@ -20,7 +20,7 @@ from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope,initialize_restored_favorites
 from .sequential_comparison import initialize_comparison,BOT_LIMIT
 from .hourly import discover_hourly
-from .scalper_install import initialize_scalper,initialize_scalper_upgrade
+from .scalper_install import initialize_scalper,initialize_scalper_upgrade,apply_requested_volatility_pause
 from .scalper import SCALPER_FOLDERS
 from .market_maker import MM_FOLDERS,quote_diagnostics
 from .market_maker import initialize_market_maker,discover_maker
@@ -54,6 +54,7 @@ class HostedRun(ForwardRun):
         initialize_comparison(store,guard)
         initialize_scalper(store,guard)
         initialize_scalper_upgrade(store,guard)
+        apply_requested_volatility_pause(store,guard)
         initialize_market_maker(store,guard)
         initialize_quote_policy(store,guard)
         all_rows=store.rows('shadow/bot/',BOT_LIMIT)
