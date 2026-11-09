@@ -13,6 +13,39 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         audit.engine=Engine(audit,cash='1000');audit.fleet=StrategyFleet(audit.engine,[])
         return audit
 
+    async def test_durability_breakdown_reports_only_successfully_committed_writes(self):
+        from unittest.mock import MagicMock
+        store=Mock();store.pool.connection.return_value=MagicMock()
+        audit=HostedAudit(store,lambda:None)
+        self.addCleanup(shutil.rmtree,audit.path)
+        audit.engine=Engine(audit,cash='1000')
+        audit.fleet=StrategyFleet(audit.engine,[])
+        audit.durability_log_at=float('inf')
+        audit.begin();audit.engine.refill(D(1));audit.flush()
+        profile=audit.durability_profile
+        self.assertEqual(profile['commits'],1)
+        self.assertEqual(profile['audit_and_extra_rows'],1)
+        self.assertEqual(profile['command_rows'],0)
+        # Tiny test checkpoints are intentionally inlined; production-sized
+        # checkpoints instead contribute their compressed transport byte size.
+        self.assertEqual(profile['checkpoint_bytes'],0)
+        self.assertEqual(profile['inline_checkpoint_commits'],1)
+        self.assertGreater(profile['prepare_ms'],0)
+        self.assertGreaterEqual(profile['total_write_ms'],0)
+        self.assertGreaterEqual(profile['upsert_ms'],0)
+        self.assertGreaterEqual(profile['transaction_finalize_ms'],0)
+        audit.begin();audit.engine.refill(D(1));audit.flush()
+        self.assertEqual(audit.durability_profile['commits'],2)
+        self.assertEqual(audit.rows_written,4)
+
+        before=dict(audit.durability_profile)
+        store.pool.connection.side_effect=RuntimeError('database unavailable')
+        audit.begin();audit.engine.refill(D(1))
+        with self.assertRaisesRegex(RuntimeError,'database unavailable'):
+            audit.flush()
+        self.assertEqual(dict(audit.durability_profile),before)
+        self.assertEqual(audit.commits,2)
+
     async def test_checkpoint_preparation_leaves_socket_loop_responsive(self):
         audit=self.audit();started=threading.Event();release=threading.Event()
         original=audit.prepare
