@@ -45,11 +45,21 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         self.assertEqual(e.wallet.inventory('POL-X','yes'),1);self.assertIn('POL-X',s.feed_markets())
         self.assertFalse(s.maker_allocation['pending']);self.assertFalse(s.maker_allocation['credits'])
         self.assertNotIn('maker_replacement_pending',e.markets['POL-X'])
-    def test_recent_flow_inventory_shared_ownership_and_stale_candidates_are_not_replaced(self):
+    def test_only_executable_recent_flow_protects_a_resting_slot_from_replacement(self):
         s,p=self.setup();e=s.portfolios[MM_FOLDERS[0]][0]
-        e.tape.trade('POL-X',dict(trade_id='recent',taker_side='yes',yes_price_dollars='.45',count_fp='1',ts_ms=990000),990)
+        # A recent print above our resting YES bid demonstrates activity but
+        # could not fill the quote, so it should not strand this slot.
+        e.tape.trade('POL-X',dict(trade_id='nonexec',taker_side='no',yes_price_dollars='.50',count_fp='1',ts_ms=990000),990)
+        self.assertTrue(s.can_replace_maker_market(p,1000))
+        e.tape.clear('POL-X')
+        # A taker sell through the resting maker bid is executable flow and
+        # should preserve the incumbent opportunity.
+        e.tape.trade('POL-X',dict(trade_id='exec',taker_side='no',yes_price_dollars='.40',count_fp='1',ts_ms=991000),991)
         self.assertFalse(s.can_replace_maker_market(p,1000))
-        e.tape.clear('POL-X');e.wallet.fill('POL-X','yes','buy',D(1),D('.41'),D(0),1,'held')
+
+    def test_inventory_shared_ownership_and_stale_candidates_are_not_replaced(self):
+        s,p=self.setup();e=s.portfolios[MM_FOLDERS[0]][0]
+        e.wallet.fill('POL-X','yes','buy',D(1),D('.41'),D(0),1,'held')
         self.assertFalse(s.can_replace_maker_market(p,1000))
         s,p=self.setup();p['market']['maker_last_trade_at']=600
         self.assertFalse(s.can_replace_maker_market(p,1000))
