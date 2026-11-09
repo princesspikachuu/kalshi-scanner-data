@@ -8,14 +8,25 @@ KEY='demo/compaction-health'
 class ScopeCompaction:
     def __init__(self,pool,*,clock=time.monotonic):
         self.pool,self.clock=pool,clock;self.ready_at=clock()+180;self.next_at=self.ready_at;self.last_log=0
+        self.failures=0
     def tick(self):
         now=self.clock()
         if now<self.next_at:return
         enable_compact_writes();self.next_at=now+5
-        try:self.step(now)
-        except Exception:
-            self.next_at=now+300
-            print(json.dumps(dict(event='storage_compaction_deferred',original_records_retained=True)),flush=True)
+        try:
+            self.step(now);self.failures=0
+        except Exception as exc:
+            self.failures+=1
+            # Optional maintenance must never become a tight retry loop against
+            # the live trading database. Back off exponentially, capped at 6h.
+            delay=min(21600,300*(2**min(self.failures-1,6)))
+            self.next_at=now+delay
+            print(json.dumps(dict(event='storage_compaction_deferred',
+                error_type=type(exc).__name__,
+                sqlstate=getattr(exc,'sqlstate',None),
+                retry_seconds=delay,
+                consecutive_failures=self.failures,
+                original_records_retained=True)),flush=True)
     def step(self,now):
         with self.pool.connection() as c:
             c.execute('SET LOCAL statement_timeout=5000')
@@ -24,7 +35,7 @@ class ScopeCompaction:
             state=dict(prior['progress']) if prior else dict(cursor='00000000-0000-0000-0000-000000000000',rows=0,logical_bytes_saved=0)
             rows=c.execute("""SELECT id::text,parameters,pg_column_size(parameters) AS bytes FROM research_job
                 WHERE id>%s::uuid AND status='succeeded' AND parameters->>'collector'='evidence-v1'
-                AND parameters->'scope' ? 'manifest_key' ORDER BY id LIMIT 1000""",(state['cursor'],)).fetchall()
+                AND parameters->'scope' ? 'manifest_key' ORDER BY id LIMIT 100""",(state['cursor'],)).fetchall()
             changes=[]
             for row in rows:
                 compact=dict(row['parameters'],scope=encode_scope(row['parameters']['scope']))
