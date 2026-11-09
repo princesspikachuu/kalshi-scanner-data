@@ -545,10 +545,10 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 
 
 ### Latest validation update
-- Current rebased PR is #169, head `41ee6c6a3c522d5375a7473d286b21a45397742e`, and remains mergeable against the current app branch after MT-010 merged.
-- First run failed one legacy discovery test because that test used 29 *recent* trades and still expected rejection at the old 30/day floor. Under the intentional new rule, 29 recent trades are clearly eligible.
-- Corrected the regression fixture to use 29 stale trades (>1h old), preserving the historical daily-floor assertion without contradicting the new 6-recent-trades rule.
-- Corrected run has passed all fast/focused checks and is currently in the full PostgreSQL/API suite.
+- PR #169 passed the corrected full suite but became non-mergeable after additional parallel app merges advanced the base.
+- Rebased the same CI-green behavior onto current app head `e1359f567bade146a6da62f467efed04d94ca801`.
+- Current PR: #170 https://github.com/princesspikachuu/kalshi-scanner-data/pull/170
+- PR #170 is mergeable; CI is pending/starting.
 
 ---
 
