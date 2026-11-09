@@ -35,9 +35,11 @@ class NoCapture:
 
 def processing_batch_budget(backlog):
     """Bound synchronous simulation while amortizing durable checkpoints under backlog."""
-    if backlog>10000:return 2048,.260
-    if backlog>2000:return 1536,.200
-    if backlog>128:return 768,.100
+    # Keep socket/control fairness even under a saturated feed. Larger atomic
+    # batches improved checkpoint amortization but starved the event loop; the
+    # pause-aware subscription budget removes that waste at the source instead.
+    if backlog>2000:return 1024,.160
+    if backlog>128:return 512,.080
     return 128,.020
 
 class HostedRun(ForwardRun):
