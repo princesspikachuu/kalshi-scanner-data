@@ -30,6 +30,17 @@ from .favorite_collection_quality import collection_quality
 
 LOG=logging.getLogger('shadow-host')
 
+def book_conflation_interval(experiments):
+    """Use the fastest book feed only while a latency-sensitive scalper is enabled."""
+    for folder in SCALPER_FOLDERS:
+        row=getattr(experiments,'portfolios',{}).get(folder)
+        if row is not None and any(getattr(bot,'enabled',False) for bot in row[1].bots.values()):
+            return 100
+    # Favorites and slow-market maker strategies do not need 10 depth batches/sec.
+    # Kalshi performs this conflation server-side while preserving sequence and
+    # the net L2 book changes, preventing redundant churn from entering our queue.
+    return 250
+
 class NoCapture:
     def write(self,data):pass
     def flush(self):pass
@@ -113,6 +124,7 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.suspend_idle_feeds=True
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        self.book_update_interval_ms=book_conflation_interval(self.experiments)
         self.experiments.share_external_markets()
         self.experiments.share_legacy_markets()
         self.audit.experiments=self.experiments
