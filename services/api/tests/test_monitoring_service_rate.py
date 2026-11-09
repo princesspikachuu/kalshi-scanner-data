@@ -35,6 +35,24 @@ class CommittedServiceRate(unittest.TestCase):
         b=self.mixed();b.observe(107,600,.01,.1,input_count=1)
         self.assertEqual(b.limits(107)['queue_cost_basis'],'p95 per-input fallback')
         self.assertFalse(b.limits(107)['admitting']);self.assertFalse(b.limits(118)['admitting'])
+    def test_sustained_fast_measured_backlog_can_earn_capacity_growth(self):
+        b=MonitoringBudget()
+        for now in range(0,121,5):
+            b.observe(now,300,.02,.5,input_count=512)
+        s=b.limits(120)
+        self.assertEqual(s['level'],1)
+        self.assertEqual(s['total'],40)
+        self.assertLessEqual(s['estimated_queue_seconds'],.25)
+
+    def test_small_queue_growth_without_service_evidence_stays_at_base_capacity(self):
+        b=MonitoringBudget()
+        for now in range(0,181,5):
+            b.observe(now,300,.02,.5)
+        s=b.limits(180)
+        self.assertTrue(s['admitting'])
+        self.assertEqual(s['level'],0)
+        self.assertEqual(s['total'],32)
+
     def test_hard_backlog_lag_processing_and_provider_guards_still_apply(self):
         for backlog,lag,cost,cooldown in ((2001,.01,.01,0),(0,3,.01,0),(0,.01,101,0),(0,.01,.01,1)):
             b=MonitoringBudget();b.observe(100,backlog,lag,cost,cooldown,input_count=512)
