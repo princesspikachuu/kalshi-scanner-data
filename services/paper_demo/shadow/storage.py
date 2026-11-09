@@ -11,6 +11,14 @@ from .checkpoint_segments import CheckpointSegments
 from .audit_bulk import persist_audit_rows
 
 KEY='demo/shadow/checkpoint'
+# An unchanged checkpoint is already durable. Keep a periodic full UPSERT as a
+# recovery boundary even when audit-only batches don't change paper state.
+CHECKPOINT_REWRITE_SECONDS=30
+
+def checkpoint_signature(payload):
+    if not isinstance(payload,dict) or not isinstance(payload.get('data'),str):return None
+    if not isinstance(payload.get('sha256'),str) or not isinstance(payload.get('bytes'),int):return None
+    return (payload.get('checkpoint_encoding'),payload['bytes'],payload['sha256'])
 
 UPSERT="""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
       VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())
@@ -94,6 +102,16 @@ class HostedAudit:
     def write(self,prepared):
         batch,commands,written_events=prepared
         started=time.monotonic();self.guard()
+        # A SHA-256 digest of the *decoded* lossless state is computed by the
+        # checkpoint codec. Skip only when it matches the LAST SUCCESSFULLY
+        # COMMITTED checkpoint, and still persist every event/report/command in
+        # the same transaction. A changed financial state always writes first.
+        checkpoint=getattr(batch[0][2],'obj',{}) if batch else {}
+        signature=checkpoint_signature(checkpoint)
+        unchanged=(signature is not None and
+            signature==getattr(self,'committed_checkpoint_signature',None) and
+            started-getattr(self,'committed_checkpoint_at',0)<CHECKPOINT_REWRITE_SECONDS)
+        rows=batch[1:] if unchanged else batch
         with self.store.pool.connection() as c:
             acquired=time.monotonic()
             # Pipeline the event burst; wallet/checkpoint, all audit rows, reports
@@ -102,7 +120,7 @@ class HostedAudit:
                 # Keep the same transaction, idempotency keys, and row order;
                 # group only consecutive append-only audit rows into bounded
                 # multi-row UPSERT statements to reduce per-row SQL overhead.
-                sql_batch=persist_audit_rows(cur,batch,UPSERT)
+                sql_batch=persist_audit_rows(cur,rows,UPSERT)
                 upserted=time.monotonic()
                 if commands:cur.executemany('UPDATE research_job SET progress=%s WHERE idempotency_key=%s',commands)
                 commands_written=time.monotonic()
@@ -110,14 +128,21 @@ class HostedAudit:
         # completed. No instrumentation can report a failed commit as successful.
         finished=time.monotonic()
         self.write_ms=(finished-started)*1000
+        # On an exception above, this identity is NEVER advanced. Retrying
+        # after a failed transaction must rewrite the checkpoint as needed.
+        if not unchanged:
+            self.committed_checkpoint_signature=signature
+            self.committed_checkpoint_at=finished
         self.commits=getattr(self,'commits',0)+1
-        self.rows_written=getattr(self,'rows_written',0)+len(batch)+len(commands)
+        self.rows_written=getattr(self,'rows_written',0)+len(rows)+len(commands)
         profile=getattr(self,'durability_profile',None)
         if profile is None:profile=self.durability_profile=Counter()
         profile['commits']+=1
-        checkpoint=getattr(batch[0][2],'obj',{}) if batch else {}
+        profile['checkpoint_unchanged_skips']+=int(unchanged)
+        profile['checkpoint_upserts']+=int(not unchanged)
         compressed=checkpoint.get('data') if isinstance(checkpoint,dict) else None
-        if isinstance(compressed,str):profile['checkpoint_bytes']+=len(compressed)
+        if unchanged:profile['checkpoint_bytes_avoided']+=len(compressed)
+        elif isinstance(compressed,str):profile['checkpoint_bytes']+=len(compressed)
         else:profile['inline_checkpoint_commits']+=1
         profile['audit_and_extra_rows']+=max(0,len(batch)-1)
         for field,value in sql_batch.items():profile[field]+=value
@@ -184,6 +209,10 @@ class HostedAudit:
     def write_checkpoint(self,data):
         self.guard()
         with self.store.pool.connection() as c:put(c,KEY,{},data)
+        # Standalone/shutdown checkpoints also become the last durable state.
+        # A failure above must leave the old signature unchanged.
+        self.committed_checkpoint_signature=checkpoint_signature(data)
+        self.committed_checkpoint_at=time.monotonic()
         self.last_snapshot=time.monotonic()
     async def checkpoint_async(self):
         self.freeze_discovery()
