@@ -11,7 +11,7 @@ class BurstBatchBudgetTests(unittest.TestCase):
     def test_batch_budget_expands_only_under_backlog(self):
         self.assertEqual(processing_batch_budget(0),(256,.040))
         self.assertEqual(processing_batch_budget(128),(256,.040))
-        self.assertEqual(processing_batch_budget(129),(1536,.240))
+        self.assertEqual(processing_batch_budget(129),(512,.240))
         self.assertEqual(processing_batch_budget(2001),(4096,.640))
         self.assertEqual(processing_batch_budget(10001),(4096,.640))
         self.assertLessEqual(PROCESSING_YIELD_SECONDS,.080)
