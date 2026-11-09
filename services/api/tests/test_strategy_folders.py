@@ -37,10 +37,11 @@ class FleetClockDispatchTests(unittest.TestCase):
         f=ExperimentFleet(e,ps,PairModel())
         for ticker in ('KXAAA-one','KXAAA-two','KXBBB-one'):
             e.add_market(dict(ticker=ticker,close=1000,open=100,event_ticker='TEST',bot_id='x'),FeePolicy())
-        for bot in f.bots.values():bot.step=Mock()
+        seen=[]
+        f.bots['KXAAA'].step=Mock(side_effect=lambda ticker:seen.append(('KXAAA',ticker)))
+        f.bots['KXBBB'].step=Mock(side_effect=lambda ticker:seen.append(('KXBBB',ticker)))
         f.step()
-        self.assertEqual([call.args[0] for call in f.bots['KXAAA'].step.call_args_list],['KXAAA-one','KXAAA-two'])
-        self.assertEqual([call.args[0] for call in f.bots['KXBBB'].step.call_args_list],['KXBBB-one'])
+        self.assertEqual(seen,[('KXAAA','KXAAA-one'),('KXAAA','KXAAA-two'),('KXBBB','KXBBB-one')])
 
 class StrategyTests(unittest.TestCase):
     def engine(self):return Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
