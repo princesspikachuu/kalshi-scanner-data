@@ -21,6 +21,6 @@ def initialize_statistics_favorites(store,guard):
                 name=p.get('name',p['series'])+' · Statistics',folder_id=FOLDER,strategy='favorites_statistics',
                 paper_exploration=False,statistics_min_samples=20,statistics_min_probability_edge='.01',
                 statistics_min_expected_roi='.01',statistics_slippage_buffer='.005',
-                statistics_max_capital_fraction='.05',version='favorites-statistics-1'),dict(desired=r['progress'].get('desired','running')))
+                statistics_max_capital_fraction='.05',statistics_refresh_seconds=30,version='favorites-statistics-1'),dict(desired=r['progress'].get('desired','running')))
         put(c,'demo/shadow/favorite-statistics-v1',{},dict(at=now,profiles=len(rows),real_orders_enabled=False))
     print(json.dumps(dict(event='statistics_favorites_initialized',profiles=len(rows),real_orders_enabled=False)),flush=True)
