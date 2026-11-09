@@ -291,7 +291,8 @@ def install_shadow(app,auth,mutate,pool):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
         category:str|None=Field(default=None,pattern='^(politics|economics|sports_futures|entertainment)$')
-        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive|volatility_all)    @app.post('/demo/shadow/bulk')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive|volatility_all)$')
+    @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
         with pool.connection() as c:
