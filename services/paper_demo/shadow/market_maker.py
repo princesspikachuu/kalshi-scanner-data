@@ -47,7 +47,7 @@ def quotable(bids,config):
         any(config.get('min_price',.20)<=p<=config.get('max_price',.80) for p in bids.values()))
 MM_CONFIG=dict(approach='market_maker',adaptive=True,mixed=False,maker_profit_exits=True,take_profit=.01,
     stop_loss=.08,min_hold=0,max_hold=14400,liquidate=3600,reduce_hold=21600,restrict_entries=86400,
-    order_ttl=1800,exit_ttl=900,reprice_seconds=30,reprice_ticks=2,eval_seconds=5,
+    order_ttl=1800,exit_ttl=900,reprice_seconds=30,reprice_ticks=2,eval_seconds=5,min_observations=3,
     min_remaining=86400,min_price=.20,max_price=.80,min_spread=.03,min_trades_24h=30,
     max_sigma=.025,depth_fraction=.20,market_exposure=.04,event_exposure=.08,category_exposure=.15,
     portfolio_exposure=.40,pre_event=900,post_event=300,category_phases={})
