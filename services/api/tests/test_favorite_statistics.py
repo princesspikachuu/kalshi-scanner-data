@@ -33,7 +33,7 @@ class StatisticsEvidence(unittest.TestCase):
         market(e,'KXBTCD-a',yes='.79',no='.19',close=1000)
         p=dict(profile(series='KXBTCD',strategy='favorites_statistics'),
                statistics_active_learning=True,statistics_exploration_contracts=2,
-               statistics_exploration_portfolio_fraction='.001')
+               statistics_exploration_portfolio_fraction='.0005')
         q,decision=statistics_quote(e,p,D(10),'KXBTCD-a','yes',{})
         self.assertIsNone(q)
         self.assertEqual(decision['reason'],'exploration_budget_exhausted')
