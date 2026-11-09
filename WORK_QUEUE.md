@@ -456,9 +456,9 @@ _Fill in when done._
 # PRIORITY 4 — Make Market Maker actually trade
 
 ## MT-004 — Diagnose and increase Market Maker opportunity-to-fill throughput
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-004 Maker throughput  
+**Claimed:** 2026-11-09 22:22 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
