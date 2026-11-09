@@ -1002,7 +1002,9 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
   - safe reconnect/resnapshot when the desired interval changes.
 - Implemented idle clock suppression so fully paused/empty portfolios do not process 10 Hz clock ticks while still retaining lifecycle, settlement, control and resume safety.
 - Added tests for adaptive feed interval and idle-clock suppression.
-- Latest CI run is still in progress; do not merge until validation completes.
+- First full CI run failed only because a stale MT-008 workspace test still expected `entry_timing` to be embedded in the initial dashboard response. MT-012-specific tests passed.
+- Updated that regression test to assert the intended lazy-research architecture: visible account/card data remains in the workspace while heavy `entry_timing` stays out and the canonical source remains unchanged.
+- Fresh full CI run 42636698160 is in progress; gateway/auth and focused Statistics-Favorites checks are passing; PostgreSQL/API suite is currently running. Do not merge until this run completes successfully.
 
 ---
 
