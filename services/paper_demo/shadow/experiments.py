@@ -333,6 +333,19 @@ class ExperimentSuite:
         e.book_feed_at=dict(primary.book_feed_at)
 
     @staticmethod
+    def skip_unrelated_lifecycle(e,source,payload):
+        """Consume lifecycle sequence without strategy fanout for an unrelated market."""
+        if source!='kalshi' or payload.get('type')!='market_lifecycle_v2':return False
+        ticker=payload.get('msg',{}).get('market_ticker')
+        if ticker in e.markets:return False
+        sid,seq=payload.get('sid'),payload.get('seq')
+        if sid is not None and seq is not None:
+            previous=e.sequences.get(sid)
+            if previous is None or seq>previous:e.sequences[sid]=seq
+        e.unrelated_lifecycle_skipped=getattr(e,'unrelated_lifecycle_skipped',0)+1
+        return True
+
+    @staticmethod
     def idle_feed(e,f):
         return (not any(b.enabled for b in f.bots.values()) and not e.wallet.lots
             and not any(o.status in ('pending','resting') for o in e.orders.values()))
@@ -454,6 +467,7 @@ class ExperimentSuite:
                     if source=='clock':
                         self.idle_clock_skipped=getattr(self,'idle_clock_skipped',0)+1
                     e.idle_feed_suspended=True;continue
+            if self.skip_unrelated_lifecycle(e,source,payload):continue
             if getattr(self.host,'suspend_idle_feeds',False) is True and self.skip_paused_ticker_input(e,f,source,payload,now):continue
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
                 # The budget is identical across portfolios on this input.
