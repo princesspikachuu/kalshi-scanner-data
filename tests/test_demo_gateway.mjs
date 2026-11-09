@@ -45,6 +45,18 @@ test('full shadow research is available through an owner-authenticated GET route
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research/test_bot',{method:'POST',headers:{origin:env.APP_ORIGIN}}),env,{fetcher})).status,405);
 });
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
+test('validated Demo JSON is forwarded byte-for-byte without redundant stringification',async()=>{
+ const body=' { "contract":"demo-v1", "environment":"demo", "bots":[] } ';
+ const response=await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{
+  fetcher:async()=>new Response(body,{headers:{'content-type':'application/json'}})
+ });
+ assert.equal(response.status,200);
+ assert.equal(await response.text(),body);
+ const invalid=await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{
+  fetcher:async()=>new Response('{"contract":"wrong"}',{headers:{'content-type':'application/json'}})
+ });
+ assert.equal(invalid.status,502);
+});
 test('expanded shadow workspace passes the gateway with active and retired bots',async()=>{
  const bots=Array.from({length:154},(_,i)=>({id:'bot-'+i,retired:i<28}));
  const fetcher=async()=>new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots,folders:[{id:'favorites'},{id:'sequential'},{id:'complete_set'},{id:'convexity'}]}),{headers:{'content-type':'application/json'}});
