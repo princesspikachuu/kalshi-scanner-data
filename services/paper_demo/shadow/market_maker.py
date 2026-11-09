@@ -36,6 +36,10 @@ def quote_diagnostics(engine,now):
         if len(result)>=8:break
     return result
 
+def trade_frequency_eligible(prints,now,required):
+    recent_hour=sum(ts(t['created_time'])>=now-3600 for t in prints)
+    return len(prints)>=required or recent_hour>=6,recent_hour
+
 def activity_deadline(engine,ticker,market):
     # Slow makers need an observation window matched to actual trade cadence.
     # Discovery prints are activity metadata only; never replay them as fills.
@@ -260,13 +264,13 @@ async def maker_once(host):
         trades=await asyncio.to_thread(host.verified_data.call,'GET','/markets/trades',dict(ticker=ticker,min_ts=int(now-86400),limit=100));s['reads']+=1
         prints=[t for t in trades.get('trades',[]) if not t.get('is_block_trade') and now-86400<=ts(t['created_time'])<=now]
         prices=[float(t['yes_price_dollars']) for t in prints]
-        count=len(prints);recent_hour=sum(ts(t['created_time'])>=now-3600 for t in prints)
+        count=len(prints);required=min(p.get('config',{}).get('min_trades_24h',30) for p in ps)
+        eligible,recent_hour=trade_frequency_eligible(prints,now,required)
         row['trades_24h']=count;row['trades_last_hour']=recent_hour
-        required=min(p.get('config',{}).get('min_trades_24h',30) for p in ps)
         # Daily volume is a smoothing prior, not a reason to discard a market
         # that is demonstrably active right now. Require either the historical
         # floor or six verified prints in the last hour.
-        if count<required and recent_hour<6:
+        if not eligible:
             row['reason']='insufficient_executed_trade_frequency';continue
         if len(prices)>1 and max(prices)-min(prices)>.20:row['reason']='recent_trade_prices_unstable';continue
         book=await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker+'/orderbook',dict(depth=3));s['reads']+=1
