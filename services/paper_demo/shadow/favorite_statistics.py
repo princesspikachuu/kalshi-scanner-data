@@ -206,6 +206,7 @@ def statistics_matrix(groups,profile):
                 capable=capable and mean is not None and (
                     D(str(mean))-price_hi-slippage)/(price_hi+slippage)>=min_roi
                 status=('evidence_candidate' if row['samples']>=minimum else 'fallback_candidate') if capable else (
+                    'exploration_candidate' if row['samples']<minimum and profile.get('statistics_active_learning') is True else
                     'insufficient_samples' if row['samples']<minimum else 'evidence_rejected')
                 cells.append(dict(price_bucket=bucket,horizon=time,**row,
                     eligibility=status,fallback_level=fallback,fallback_samples=pooled_n,
