@@ -233,7 +233,12 @@ Still expose, where practical:
 - P/L and open-position accounting for the two Favorites strategies remain separate.
 
 ### Completion notes
-_Fill in when done._
+- Implementation branch: `work/mt-002-statistics-favorites`
+- PR: #138 (`MT-002: add statistics-backed Favorites`)
+- Current implementation: separate `favorites_statistics` portfolio with independent paper cash/P&L; reads settled collector evidence without modifying the collector; hierarchical fallback across series/market-type/side/price/time segments; configurable sample/confidence/ROI thresholds; per-decision trade/skip diagnostics; 30-second cached evidence aggregates to avoid full-history work on tight quote cycles; separate workspace statistics payload and segment leaderboard.
+- Tests added: sparse fallback, tiny-sample rejection, new settled evidence changing a future decision, and read-only consumption of collector evidence.
+- Verification: PR is mergeable; GitHub full API/PostgreSQL validation is currently running against head `88554c4043a6b4e32858bf0a9e1c7d839d9aa3df`.
+- Status remains IN PROGRESS until CI completes and any failures are resolved.
 
 ---
 
