@@ -202,6 +202,8 @@ class FavoritesStrategy(ConvexityStrategy):
                 quotes=[(book.bid(side),side) for side in ('yes','no') if book.bid(side) is not None]
                 if not quotes:continue
                 _,side=max(quotes)
+                chooser=getattr(self,'choose_entry_side',None)
+                if chooser:side=chooser(ticker,quotes) or side
             else:side=a['side']
             q=self.entry_quote(ticker,side,a.get('initial_ceiling',a['price']) if a else None)
             active=[o for o in self.e.orders.values() if o.ticker==ticker and o.status in ('pending','resting')]
