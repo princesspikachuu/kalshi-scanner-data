@@ -389,7 +389,7 @@ _DONE. Full Favorites research tables are restored through lazy folder detail lo
 # PRIORITY 9 — Increase Statistics-Backed Favorites trading activity
 
 ## MT-010 — Make Statistics-Backed Favorites trade materially more while still learning safely
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-010 implementation  
 **Claimed:** 2026-11-09 22:22 UTC  
 **Urgency:** U1 — URGENT  
