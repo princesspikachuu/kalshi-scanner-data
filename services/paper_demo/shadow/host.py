@@ -33,14 +33,17 @@ class NoCapture:
     def flush(self):pass
     def close(self):pass
 
+PROCESSING_YIELD_SECONDS=.080
+
 def processing_batch_budget(backlog):
-    """Bound synchronous simulation while amortizing durable checkpoints under backlog."""
-    # Keep socket/control fairness even under a saturated feed. Larger atomic
-    # batches improved checkpoint amortization but starved the event loop; the
-    # pause-aware subscription budget removes that waste at the source instead.
-    if backlog>2000:return 1024,.160
-    if backlog>128:return 512,.080
-    return 128,.020
+    """Amortize durable checkpoints without monopolizing the event loop."""
+    # The database checkpoint is much more expensive than one simulation input.
+    # Under sustained flow, keep one atomic audit/checkpoint batch open longer,
+    # but yield between short simulation slices so socket readers and pongs keep
+    # receiving data. The state mutex remains held until the durable commit.
+    if backlog>2000:return 4096,.640
+    if backlog>128:return 1536,.240
+    return 256,.040
 
 class HostedRun(ForwardRun):
     def __init__(self,store,guard,stop,signer):
@@ -322,12 +325,12 @@ class HostedRun(ForwardRun):
         while not self.done.is_set():
             item=await self.queue.get()
             async with self.state_mutex():
-                self.audit.begin();completed=0;recovered=[];started=time.monotonic();max_lag=0.
+                self.audit.begin();completed=0;recovered=[];started=time.monotonic();slice_started=started;max_lag=0.
                 backlog=self.queue.qsize()
                 # Amortize full-state checkpoint/database cost during bursts.
-                # Every input remains ordered. Only a large existing backlog may
-                # widen the synchronous simulation slice; sockets still receive
-                # during the durable commit and the maximum slice stays <300 ms.
+                # Every input remains ordered and inside one durable transaction.
+                # Short cooperative yields keep socket ingestion responsive while
+                # the state mutex prevents a second wallet mutation from racing it.
                 max_inputs,max_simulation=processing_batch_budget(backlog)
                 try:
                     while True:
@@ -363,6 +366,8 @@ class HostedRun(ForwardRun):
                         # round trip/checkpoint for each partial fill in a burst.
                         if self.done.is_set() or self.queue.empty() or completed>=max_inputs or time.monotonic()-started>=max_simulation:
                             break
+                        if time.monotonic()-slice_started>=PROCESSING_YIELD_SECONDS:
+                            await asyncio.sleep(0);slice_started=time.monotonic()
                         item=self.queue.get_nowait()
                     simulated=time.monotonic()
                     await self.flush_audit()
@@ -377,8 +382,7 @@ class HostedRun(ForwardRun):
                     print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
                                           confirmation='production_rest',real_orders_enabled=False)),flush=True)
                 for _ in range(completed):self.queue.task_done()
-            # queue.get() doesn't yield while a burst is buffered. Socket
-            # readers, pongs and controls still run between committed batches.
+            # Give controls a turn after the state fence is released too.
             await asyncio.sleep(0)
 
     def pending_commands(self):
