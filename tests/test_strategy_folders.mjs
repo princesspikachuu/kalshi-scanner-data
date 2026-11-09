@@ -429,7 +429,7 @@ test('opening Favorites lazily restores full research without bloating initial w
   if(path==='shadow/research-folder/favorites'){
    calls++;
    return {contract:'demo-v1',folder_id:'favorites',at:123,bots:{favorites:{entry_timing:[
-    {series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',cost:'4',net:'.2}
+    {series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',cost:'4',net:'.2'}
    ]}}};
   }
   return {};
