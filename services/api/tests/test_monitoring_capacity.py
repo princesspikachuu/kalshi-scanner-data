@@ -46,6 +46,18 @@ class AllocationTests(unittest.TestCase):
         stats=s.monitoring_snapshot(100)
         self.assertEqual(stats['position_and_exit_markets'],4);self.assertEqual(stats['entry_markets'],0)
         self.assertTrue(s.search_capacity('weather_daily',100))
+    def test_idle_legacy_markets_do_not_consume_subscription_capacity(self):
+        s=self.suite();s.host.suspend_idle_feeds=True
+        s.host.engine.markets={'OLD':dict(close=10000)}
+        s.host.legacy_ticker_needed=Mock(return_value=False)
+        stats=s.monitoring_snapshot(100)
+        self.assertEqual(stats['legacy_markets'],0)
+        self.assertEqual(stats['subscribed_markets'],0)
+        s.host.legacy_ticker_needed=Mock(return_value=True)
+        stats=s.monitoring_snapshot(100)
+        self.assertEqual(stats['legacy_markets'],1)
+        self.assertEqual(stats['subscribed_markets'],1)
+
     def test_total_limit_still_blocks_admission_and_never_evicts_positions(self):
         s=self.suite();s.host.engine.markets={str(i):dict(close=10000) for i in range(48)}
         self.assertFalse(s.extra_capacity(['new'],100));self.assertEqual(len(s.host.engine.markets),48)
