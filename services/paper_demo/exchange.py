@@ -48,7 +48,9 @@ class ProductionData:
         except (httpx.HTTPError,ValueError):raise ExchangeFailure('paper_data_unavailable') from None
 
 class Fees:
-    def __init__(self,data):self.data=data;self.cache={};self.series={};self.series_locks={}
+    def __init__(self,data):
+        self.data=data;self.cache={};self.series={};self.series_locks={}
+        self.events={};self.event_locks={}
     def load(self,ticker,market,now):
         series=market.get('series_ticker') or ticker.split('-')[0];event=market['event_ticker']
         # Several admitted markets can share a cold series. Recheck inside a
@@ -61,16 +63,25 @@ class Fees:
                 change=self.data.call('GET','/series/fee_changes',dict(series_ticker=series)).get('series_fee_change_arr')
                 if not isinstance(change,list) or len(change)>1000:raise ExchangeFailure('paper_fee_schedule_unknown')
                 cached=dict(at=now,base=(raw.get('fee_type'),raw.get('fee_multiplier')),changes=change);self.series[series]=cached
-        events=[];cursor=None
-        for _ in range(5):
-            page=self.data.call('GET','/events/fee_changes',dict(event_ticker=event,limit=200,**({'cursor':cursor} if cursor else {})))
-            changes=page.get('event_fee_changes')
-            if not isinstance(changes,list) or len(changes)>200:raise ExchangeFailure('paper_fee_schedule_unknown')
-            events.extend(changes);nxt=page.get('cursor')
-            if not nxt:break
-            if nxt==cursor:raise ExchangeFailure('paper_fee_schedule_unknown')
-            cursor=nxt
-        else:raise ExchangeFailure('paper_fee_schedule_unknown')
+        # Event fee-change history is identical for every market in the same
+        # event. Reuse that verified response for the same 30-second freshness
+        # window instead of issuing one identical paginated request per market.
+        with self.event_locks.setdefault(event,threading.Lock()):
+            event_cached=self.events.get(event)
+            if not event_cached or now-event_cached['at']>30:
+                events=[];cursor=None
+                for _ in range(5):
+                    page=self.data.call('GET','/events/fee_changes',dict(event_ticker=event,limit=200,**({'cursor':cursor} if cursor else {})))
+                    changes=page.get('event_fee_changes')
+                    if not isinstance(changes,list) or len(changes)>200:raise ExchangeFailure('paper_fee_schedule_unknown')
+                    events.extend(changes);nxt=page.get('cursor')
+                    if not nxt:break
+                    if nxt==cursor:raise ExchangeFailure('paper_fee_schedule_unknown')
+                    cursor=nxt
+                else:raise ExchangeFailure('paper_fee_schedule_unknown')
+                event_cached=dict(at=now,changes=events)
+                self.events[event]=event_cached
+            events=event_cached['changes']
         try:
             for change in cached['changes']+events:
                 if not isinstance(change.get('scheduled_ts'),str):raise ValueError()
