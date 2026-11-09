@@ -6,7 +6,7 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal as D
-from unittest.mock import Mock
+from unittest.mock import Mock,AsyncMock,patch
 from services.demo.exchange import ExchangeFailure
 from services.paper_demo.exchange import ProductionData
 from services.paper_demo.shadow.core import Engine,FeePolicy
@@ -75,6 +75,22 @@ class FeeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         run.discover=run.kalshi=run.spot=run.clock=run.consume=run.control=run.fee_maintenance=feed
         await run.run()
         self.assertTrue(launched)
+
+    async def test_background_refresh_uses_existing_sixty_second_validity_window(self):
+        async def run_once(age):
+            run=object.__new__(HostedRun);run.done=asyncio.Event();run.engine=Engine(Mock())
+            run.selected={'M':'M'};run.engine.add_market(dict(ticker='M',close=10000,event_ticker='E'),FeePolicy())
+            run.verified_fees=Mock();run.verified_fees.cache={'M':dict(at=100)}
+            run.subscription_books=lambda:{'M':run.engine.books['M']}
+            run.refresh_fee=AsyncMock(return_value=True)
+            async def sleep(_):run.done.set()
+            with patch('services.paper_demo.shadow.host.PRODUCTION_READS.remaining',return_value=0),\
+                 patch('services.paper_demo.shadow.host.time.time',return_value=100+age),\
+                 patch('services.paper_demo.shadow.host.asyncio.sleep',new=sleep):
+                await run.fee_maintenance()
+            return run.refresh_fee
+        fresh=await run_once(40);fresh.assert_not_awaited()
+        due=await run_once(51);due.assert_awaited_once_with('M')
 
     async def test_28_market_refresh_is_bounded_and_not_tied_to_control_passes(self):
         run=object.__new__(HostedRun);run.done=asyncio.Event();run.engine=Engine(Mock())
