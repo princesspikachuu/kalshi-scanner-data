@@ -344,6 +344,13 @@ class ForwardRun:
         reason=str(exc) if str(exc) in known else 'malformed '+source+' event'
         ticker=payload.get('msg',{}).get('market_ticker') if source=='kalshi' else payload.get('ticker')
         self.input_rejections=getattr(self,'input_rejections',0)+1
+        # Separate validation failures from queue capacity. Counters are
+        # cumulative and bounded by the small set of known input/error kinds.
+        reasons=getattr(self,'input_rejection_reasons',None)
+        if reasons is None:
+            reasons=self.input_rejection_reasons={}
+        key=source+':'+reason
+        reasons[key]=reasons.get(key,0)+1
         if not hasattr(self,'rejection_logs'):self.rejection_logs={}
         key=(source,ticker,reason);at=time.monotonic()
         if at-self.rejection_logs.get(key,-1e9)>=5:
