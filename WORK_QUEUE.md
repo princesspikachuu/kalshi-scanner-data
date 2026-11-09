@@ -633,8 +633,18 @@ If detailed data is still loading separately:
 - Tests cover an oversized synthetic dataset and verify the dashboard initial response stays below the supported limit.
 - Verify on mobile and desktop.
 
+### Implementation progress
+- Branch: `fix/mt008-dashboard-snapshot-size`
+- PR: https://github.com/princesspikachuu/kalshi-scanner-data/pull/145
+- Root cause confirmed: `/demo/shadow/workspace` rejects decoded JSON above 8 MiB.
+- First payload reduction committed: remove per-bot `latest_report` from the initial workspace transport because the dashboard frontend never reads it; durable reports remain stored and backend-derived visible fields are preserved.
+- Added oversize diagnostics logging decoded bytes plus approximate top-level section weights.
+- Added regression test with an >8 MiB synthetic workspace proving unused full reports no longer make the initial response exceed the supported size.
+- PR currently mergeable; CI/deployment verification still pending.
+- If the live dataset remains above 8 MiB after this reduction, use the new section-size diagnostics to move the next largest non-initial detail to a lazy/paginated endpoint rather than increasing the limit or deleting history.
+
 ### Completion notes
-_Fill in when done._
+_In progress — do not mark DONE until CI passes and the deployed dashboard loads against the dataset that triggered the failure._
 
 ---
 
