@@ -42,10 +42,10 @@ def passive_entry_price(market,bid,ask,features,config):
     tick=tick_size(market,bid)
     improve=(config.get('adaptive',True) and ask-bid>=2*tick and (features.get('trade_count',0)>0 or features.get('last_change',0)>0))
     if config.get('approach')=='market_maker' and config.get('adaptive',True) and ask-bid>=2*tick:
-        if config.get('competitive_inside',False) and features.get('trade_count',0)>0:
-            # Experimental competitive variant: take the best post-only price
-            # only while the causal tape has observed trade flow in the last
-            # minute. Quiet books fall back to Standard's one-tick improvement.
+        if config.get('competitive_inside',False):
+            # Competitive is the aggressive A/B variant: use the best post-only
+            # tick whenever the verified book leaves room. Standard remains the
+            # conservative one-tick-improvement control on quiet books.
             return ask-tick
         improve=True
     return min(ask-tick,bid+(tick if improve else ZERO))
