@@ -68,6 +68,17 @@ class TurnoverRankingTests(unittest.TestCase):
         slow=turnover_score(self.prints(now,False),now,dict(yes=.40,no=.54),[p],fee,{})
         self.assertGreater(active['execution_score'],slow['execution_score'])
         self.assertLess(active['expected_hold_seconds'],slow['expected_hold_seconds'])
+    def test_recent_slowdown_is_not_hidden_by_old_daily_volume(self):
+        now=100000;p=list(profiles())[4];fee=FeePolicy(D(1),D(0))
+        stale=[dict(created_time=fixture.iso(now-10),count_fp='5')]
+        stale.extend(dict(created_time=fixture.iso(now-36000-i),count_fp='5') for i in range(99))
+        steady=[dict(created_time=fixture.iso(now-300-i*120),count_fp='5') for i in range(20)]
+        wide=turnover_score(stale,now,dict(yes=.40,no=.54),[p],fee,{})
+        active=turnover_score(steady,now,dict(yes=.40,no=.58),[p],fee,{})
+        self.assertLess(wide['recent_flow_per_hour'],active['recent_flow_per_hour'])
+        self.assertGreater(active['execution_score'],wide['execution_score'])
+        self.assertLess(active['expected_hold_seconds'],wide['expected_hold_seconds'])
+
     def test_fees_affect_ranking_and_economically_negative_candidates_are_rejected(self):
         now=100000;p=dict(list(profiles())[4],contracts=1)
         free=turnover_score(self.prints(now,True),now,dict(yes=.40,no=.58),[p],FeePolicy(D(1),D(0)),{})
