@@ -118,6 +118,9 @@ class FavoritesStrategy(ConvexityStrategy):
             return
         if self.e.now-a.get('last_submit',0)<10:
             return
+        # Refresh the deadline from the currently verified market state.
+        # Sports verification may expire earlier than the original attempt.
+        a['entry_deadline']=self.entry_deadline(m,self.e.now)
         a['target_inventory']=str(inventory+q['quantity'])
         self.submit_entry(ticker,a,q)
         a['last_repeat_signal']=signal
