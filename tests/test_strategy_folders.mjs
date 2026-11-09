@@ -20,7 +20,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
@@ -41,11 +41,12 @@ test('frontend upgrade hides unsupported folder controls until the worker migrat
  assert.ok(!html.includes('data-folder-reset='));assert.ok(!html.includes('data-folder-pause='));
 });
 
-test('top overview lists every folder with one shared set of period buttons',()=>{
+test('top overview lists only running folders with one shared set of period buttons',()=>{
  const data=fixture();for(const f of data.folders){f.accounting.portfolio.equity='1000';f.accounting.portfolio.total_pnl='0'}
  const {nodes}=setup(data),html=nodes.get('accountSummary').innerHTML;
  assert.equal((html.match(/data-folder-period=/g)||[]).length,6);
- for(const f of data.folders)assert.ok(html.includes(f.name));
+ for(const f of data.folders.filter(f=>f.id!=='convexity'))assert.ok(html.includes(f.name));
+ assert.ok(!html.includes('Convexity · Paused'));
  assert.ok(html.includes('Open bids'));assert.ok(html.includes('Open/pending positions'));assert.ok(html.includes('P/L · All'));
 });
 test('period overview uses deposit-adjusted history and labels incomplete coverage',()=>{
@@ -414,4 +415,39 @@ test('statistics-backed Favorites renders a category-separated 5-cent by time ma
  const html=favoriteStatisticsMatrixMarkup(stats);
  for(const phrase of ['weather_daily','70–74¢','75–79¢','95–95¢','5–10m','10–15m','n=32','n=3','Evidence candidate','Under-sampled','Fallback available','44'])assert.ok(html.includes(phrase),phrase);
  assert.ok(!html.includes('n=0'));assert.ok(html.includes('No settled events'));
+});
+
+test('statistical Favorites decision cannot erase all detailed bot panels',()=>{
+ const d=fixture();
+ d.folders.push({id:'favorites_statistics',name:'Favorites · Statistics-Backed',description:'Independent statistical paper strategy',accounting:{at:Date.now()/1000,portfolio:{cash:'1000'}}});
+ d.bots.push({...d.bots.find(b=>b.id==='favorites'),id:'stats-bot',name:'Statistical BTC',folder_id:'favorites_statistics',strategy:'favorites_statistics',
+  experiment:{attempts:2,completed:1,unmatched:0,message:'Collecting',calibration:[],entry_timing:[],
+   decision:{reason:'insufficient_samples',samples:5,level:'global',expected_roi:null}}});
+ const {nodes}=setup(d),html=nodes.get('groups').innerHTML;
+ assert.ok(html.includes('Statistical BTC'));
+ assert.ok(html.includes('Last statistical decision'));
+ assert.ok(html.includes('insufficient_samples'));
+ assert.ok(html.includes('Money currently committed'));
+ assert.ok(html.includes('data-market="favorites"'), 'other bot details remain accessible');
+});
+test('paused-only portfolios are excluded from overview, not erased from strategy history',()=>{
+ const d=fixture();
+ d.folders.push({id:'favorites_statistics',name:'Paused statistics history',description:'Historical data',accounting:{at:Date.now()/1000,portfolio:{cash:'1000'}}});
+ d.bots.push({...d.bots[0],id:'stat-paused',folder_id:'favorites_statistics',desired:'paused',name:'Stat history',strategy:'favorites_statistics',experiment:{message:'Paused'}});
+ const {nodes}=setup(d);
+ assert.ok(!nodes.get('accountSummary').innerHTML.includes('Paused statistics history'));
+ assert.ok(!nodes.get('accountSummary').innerHTML.includes('Convexity · Paused'));
+ assert.ok(nodes.get('groups').innerHTML.includes('Paused statistics history'));
+ assert.ok(nodes.get('groups').innerHTML.includes('Stat history'));
+});
+test('large collapsed folders defer detailed cards and render them when expanded',()=>{
+ const d=fixture(),base=d.bots.find(b=>b.id==='favorites');
+ for(let i=0;i<40;i++)d.bots.push({...base,id:'favorite-extra-'+i,name:'Extra '+i});
+ const storage=new Map(),detail={dataset:{folder:'favorites'},open:false,isConnected:true};
+ const {nodes}=setup(d,{storage,queries:{'details[data-folder]':[detail]}});
+ assert.ok(nodes.get('groups').innerHTML.includes('Expand this folder to load its bot details'));
+ assert.ok(!nodes.get('groups').innerHTML.includes('data-market="favorite-extra-25"'));
+ detail.open=true;detail.ontoggle();
+ assert.ok(nodes.get('groups').innerHTML.includes('data-market="favorite-extra-25"'));
+ assert.equal(JSON.parse(storage.get('moneytree-folder-views')).open.includes('favorites'),true);
 });
