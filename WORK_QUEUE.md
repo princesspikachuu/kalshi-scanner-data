@@ -1186,7 +1186,7 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** IN PROGRESS  
+**Status:** BLOCKED  
 **Worker:** ChatGPT / MT-017 Cloudflare CPU audit  
 **Claimed:** 2026-11-09 19:20 UTC  
 **Urgency:** U1 — URGENT  
@@ -1214,6 +1214,14 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 - PR #155 removed Worker invocation from static asset requests and redundant JSON stringification for pass-through API responses; automated tests passed and staging deployment step succeeded.
 - PR #155 is a mitigation, **not** proof that all CPU-limit errors stopped. Inspect Cloudflare CPU analytics to verify.
 - Coordinate with MT-008 (dashboard payload/performance) and other infrastructure tasks; avoid duplicate edits.
+
+### Implementation progress / blocked dependency (2026-11-09)
+- Audit and tests merged in [PR #160](https://github.com/princesspikachuu/kalshi-scanner-data/pull/160), merge commit `41e1d138ccea83f145ca8db9c1a8f46e2ca137a1`, based on successful full PR CI [42687617581](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/42687617581).
+- Added `docs/audits/cloudflare-cpu-2026-11-09.md`, `tools/benchmark_gateway_cpu.mjs`, and CI benchmarking. Scoped both Cloudflare Workers and existing safe mitigations from PR #155.
+- Local synthetic benchmark on Node 24: **76.36 ms CPU** for 100 copies of a 2-MiB buffer; **54.213 ms CPU** for ten 2-MiB streams through the authenticated gateway. This is **not Cloudflare CPU**, and does not prove incident mitigation.
+- A proposed zero-copy stream change **failed an existing mutable-upstream-buffer integrity test** and was reverted; original safe gateway runtime unchanged. No bot strategy or history modifications.
+- **BLOCKER:** No connected Cloudflare observability/CPU metrics or authorized Cloudflare Analytics API read access. Need to determine whether `pocket-analytics-staging`, `kalshi-pocket-analytics` or both generated `exceededCpu` errors and obtain pre/post 2026-11-09 15:00 UTC CPU p50/p95/p99, invocation counts and affected routes.
+- After metrics are available: quantify error trend, identify specific high-CPU route, implement validated optimization and re-test authenticated dashboard. Leave task BLOCKED rather than claiming the alert is resolved.
 
 
 # Coordination notes
