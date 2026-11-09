@@ -35,7 +35,12 @@ def persist_audit_rows(cursor, rows, upsert_sql, *, min_bulk=8, max_bulk=64):
             # block uses the original statement rather than a padded VALUES.
             for offset in range(0,len(pending),max_bulk):
                 group=pending[offset:offset+max_bulk]
-                if len(group)>=min_bulk:
+                # A repeated idempotency key is unexpected for UUID audit
+                # events, but sequential UPSERTs historically let the later
+                # row win. Preserve that behavior rather than letting one
+                # multi-row ON CONFLICT attempt fail on duplicate targets.
+                keys=[record[3] for record in group]
+                if len(group)>=min_bulk and len(set(keys))==len(keys):
                     placeholders=','.join([ROW_SQL]*len(group))
                     params=tuple(value for record in group for value in record)
                     cursor.execute(INSERT_SQL+placeholders+CONFLICT_SQL,params)
