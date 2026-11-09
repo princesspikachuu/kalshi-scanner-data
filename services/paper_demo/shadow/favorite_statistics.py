@@ -24,24 +24,31 @@ def _merge_event(target,event,value):
     target[event]=min(target.get(event,1),int(value))
 
 def aggregate(cells):
+    """Pool collector and statistical portfolios without duplicating event outcomes.
+
+    Each source retains its own cost/P&L. Independent paper fills from the same
+    event do not count as independent evidence for the outcome probability.
+    """
     groups={}
-    for k,row in cells.items():
-        if not k.startswith(METRICS) or not row.get('key'):continue
-        events=cells.get(row['key'],{}).get('events',{})
-        dims=dict(series=row.get('series'),market_type=row.get('market_type'),side=row.get('side'),
-                  price_bucket=price_bucket(row.get('price','0')),horizon=row.get('horizon'))
-        levels=[
-            ('exact',(dims['series'],dims['market_type'],dims['side'],dims['price_bucket'],dims['horizon'])),
-            ('market_type_price_time_side',(dims['market_type'],dims['side'],dims['price_bucket'],dims['horizon'])),
-            ('market_type_price_time',(dims['market_type'],dims['price_bucket'],dims['horizon'])),
-            ('market_type_price',(dims['market_type'],dims['price_bucket'])),
-            ('price',(dims['price_bucket'],)),
-            ('global',()),
-        ]
-        for level,key in levels:
-            g=groups.setdefault((level,key),dict(level=level,key=key,events={},contracts=D(0),cost=D(0),net=D(0)))
-            for event,value in events.items():_merge_event(g['events'],event,value)
-            g['contracts']+=D(row.get('closed','0'));g['cost']+=D(row.get('closed_cost','0'));g['net']+=D(row.get('net','0'))
+    sources=cells if isinstance(cells,(tuple,list)) else (cells,)
+    for source in sources:
+        for k,row in source.items():
+            if not k.startswith(METRICS) or not row.get('key'):continue
+            events=source.get(row['key'],{}).get('events',{})
+            dims=dict(series=row.get('series'),market_type=row.get('market_type'),side=row.get('side'),
+                      price_bucket=price_bucket(row.get('price','0')),horizon=row.get('horizon'))
+            levels=[
+                ('exact',(dims['series'],dims['market_type'],dims['side'],dims['price_bucket'],dims['horizon'])),
+                ('market_type_price_time_side',(dims['market_type'],dims['side'],dims['price_bucket'],dims['horizon'])),
+                ('market_type_price_time',(dims['market_type'],dims['price_bucket'],dims['horizon'])),
+                ('market_type_price',(dims['market_type'],dims['price_bucket'])),
+                ('price',(dims['price_bucket'],)),
+                ('global',()),
+            ]
+            for level,key in levels:
+                g=groups.setdefault((level,key),dict(level=level,key=key,events={},contracts=D(0),cost=D(0),net=D(0)))
+                for event,value in events.items():_merge_event(g['events'],event,value)
+                g['contracts']+=D(row.get('closed','0'));g['cost']+=D(row.get('closed_cost','0'));g['net']+=D(row.get('net','0'))
     return groups
 
 def summarize(group):
@@ -98,15 +105,56 @@ def statistics_quote(engine,profile,contracts,ticker,side,cells,max_price=None,g
                   required_probability=str(all_in+min_edge),expected_value=str(expected_ev) if expected_ev is not None else None,
                   expected_roi=str(expected_roi) if expected_roi is not None else None,
                   min_expected_roi=str(min_roi),basis=basis,horizon=horizon(remaining))
+    # A scarce exact market/price/time/side cell is worth a small controlled
+    # paper probe even when the pooled confidence interval is too wide.
+    exact_key=('market_type_price_time_side',(market_type(profile,engine.markets[ticker]),side,
+        price_bucket(price),horizon(remaining)))
+    exact=groups.get(exact_key) if groups is not None else aggregate(cells).get(exact_key)
+    exact_n=len(exact['events']) if exact else 0
+    target=int(profile.get('statistics_exploration_target_samples',20))
+    decision.update(exact_samples=exact_n,exploration_target=target,
+        provisional_win_rate=(sum(exact['events'].values())+1)/(exact_n+2) if exact else .5,
+        # The smoothed rate is only a ranking aid, never a proven profitable edge.
+        provisional_not_validated=True)
+    qualified=(evidence.get('reason')=='sample_threshold_met' and lower is not None
+        and lower>all_in+min_edge and expected_roi is not None and expected_roi>=min_roi)
+    if qualified:
+        key=entry_key(profile['series'],side,price,remaining,basis)
+        return dict(price=price,quantity=quantity,fee=fee,mode='statistics_backed',estimate=decision,key=key,
+            ceiling=str(ceiling),policy='favorites-statistics-v1'),dict(decision,reason='trade',decision_type='evidence')
+    if profile.get('statistics_active_learning') is True and exact_n<target:
+        max_orders=int(profile.get('statistics_exploration_max_open_markets',6))
+        existing={l.ticker for l in engine.wallet.lots}
+        existing.update(o.ticker for o in engine.orders.values() if o.action=='buy' and o.status in ('pending','resting'))
+        cap=engine.wallet.deposits*D(str(profile.get('statistics_exploration_portfolio_fraction','.10')))
+        open_value=sum((l.price*l.quantity+l.entry_fee for l in engine.wallet.lots),D(0))
+        open_value+=sum((o.reserved for o in engine.orders.values() if o.action=='buy' and o.status in ('pending','resting')),D(0))
+        remaining_cap=cap-open_value
+        if ticker not in existing and len(existing)>=max_orders:
+            return None,dict(decision,reason='exploration_open_market_limit',decision_type='exploration')
+        max_order=engine.wallet.deposits*D(str(profile.get('statistics_exploration_order_fraction','.01')))
+        budget=min(remaining_cap,max_order,available)
+        quantity=min(quantity,D(str(profile.get('statistics_exploration_contracts',2))),
+            (budget/price).to_integral_value(rounding=ROUND_FLOOR))
+        while quantity>0:
+            fee=engine.fees[ticker].charge(quantity,price,True)
+            if quantity*price+fee<=budget:break
+            quantity-=1
+        if quantity<=0:
+            return None,dict(decision,reason='exploration_budget_exhausted',decision_type='exploration')
+        key=entry_key(profile['series'],side,price,remaining,basis)
+        reason='exploration_missing_cell' if exact_n==0 else 'exploration_under_sampled_cell'
+        return dict(price=price,quantity=quantity,fee=fee,mode='statistics_exploration',
+            estimate=dict(decision,quantity=str(quantity),fee=str(fee),decision_type='exploration'),
+            key=key,ceiling=str(ceiling),policy='favorites-statistics-learn-v2'),dict(
+            decision,quantity=str(quantity),fee=str(fee),reason=reason,decision_type='exploration')
     if evidence.get('reason')!='sample_threshold_met':
-        return None,decision
+        return None,dict(decision,reason='insufficient_samples',decision_type='skipped')
     if lower is None or lower<=all_in+min_edge:
         return None,dict(decision,reason='confidence_lower_bound_below_threshold')
     if expected_roi is None or expected_roi<min_roi:
         return None,dict(decision,reason='expected_roi_below_threshold')
-    key=entry_key(profile['series'],side,price,remaining,basis)
-    return dict(price=price,quantity=quantity,fee=fee,mode='statistics_backed',estimate=decision,key=key,
-                ceiling=str(ceiling),policy='favorites-statistics-v1'),dict(decision,reason='trade')
+    return None,dict(decision,reason='evidence_below_threshold',decision_type='skipped')
 
 def leaderboard_groups(groups,min_samples=1,limit=10):
     result=[summarize(g) for g in groups.values() if g['level'] in ('exact','market_type_price_time_side')]
