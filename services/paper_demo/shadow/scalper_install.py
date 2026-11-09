@@ -42,6 +42,22 @@ def initialize_scalper(store,guard):
                     folder_id=folder,strategy='volatility_scalper',version='scalper-1',live_enabled=False,config=CONFIGS[folder]),dict(desired='running'))
         add('demo/'+marker,{},dict(at=now,real_orders_enabled=False))
 
+
+def apply_requested_volatility_pause(store,guard):
+    """One-time staging state correction: the user requested every volatility variant paused."""
+    marker='shadow/volatility-family-pause-20261109'
+    if store.get(marker):return
+    guard();now=time.time()
+    with store.pool.connection() as c:
+        c.execute('SELECT pg_advisory_xact_lock(%s)',(73820193,))
+        if c.execute('SELECT 1 FROM research_job WHERE idempotency_key=%s',('demo/'+marker,)).fetchone():return
+        c.execute("""UPDATE research_job SET progress=jsonb_set(progress,'{desired}',to_jsonb('paused'::text))
+            WHERE idempotency_key>='demo/shadow/bot/' AND idempotency_key<'demo/shadow/bot/zzzz'
+            AND parameters->>'folder_id' IN ('volatility_scalper','scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation')""")
+        c.execute("""INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
+            VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp()) ON CONFLICT(idempotency_key) DO NOTHING""",
+            entry('demo/'+marker,{},dict(at=now,real_orders_enabled=False)))
+
 def initialize_scalper_upgrade(store,guard):
     marker='shadow/scalper-execution-v2'
     if store.get(marker):return
