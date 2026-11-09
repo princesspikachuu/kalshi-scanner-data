@@ -336,7 +336,7 @@ class HostedRun(ForwardRun):
                     self.pipeline_sample(completed,(simulated-started)*1000,(committed-simulated)*1000,max_lag)
                     if hasattr(self,'experiments'):
                         self.experiments.monitoring.observe(time.time(),self.queue.qsize(),max_lag,
-                            (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining())
+                            (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining(),input_count=completed)
                 except BaseException:
                     self.audit.abort();raise
                 for ticker in recovered:
