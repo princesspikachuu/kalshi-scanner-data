@@ -4,7 +4,7 @@ from decimal import Decimal as D
 from unittest.mock import Mock,patch
 from services.demo.exchange import ExchangeFailure
 from services.paper_demo.shadow.core import Engine,FeePolicy,StrategyFleet
-from services.paper_demo.shadow.host import HostedRun,processing_batch_budget,PROCESSING_YIELD_SECONDS
+from services.paper_demo.shadow.host import HostedRun,processing_batch_budget,PROCESSING_YIELD_SECONDS,PROCESSING_YIELD_INPUTS
 from services.paper_demo.read_budget import ReadBudget
 
 class BurstBatchBudgetTests(unittest.TestCase):
@@ -15,6 +15,7 @@ class BurstBatchBudgetTests(unittest.TestCase):
         self.assertEqual(processing_batch_budget(2001),(4096,.640))
         self.assertEqual(processing_batch_budget(10001),(4096,.640))
         self.assertLessEqual(PROCESSING_YIELD_SECONDS,.080)
+        self.assertLessEqual(PROCESSING_YIELD_INPUTS,256)
         self.assertLess(PROCESSING_YIELD_SECONDS,processing_batch_budget(20000)[1])
 
 class ProcessingBudgetTests(unittest.TestCase):
