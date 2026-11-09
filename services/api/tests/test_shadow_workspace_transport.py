@@ -36,6 +36,19 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertEqual([bot['experiment'] for bot in result['bots']],
             [bot['experiment'] for bot in bots])
 
+    def test_oversized_bot_card_falls_back_to_bounded_experiment_summary(self):
+        huge='x'*20000
+        payload=dict(status={},folders=[],bots=[dict(id='fav',name='Favorite',experiment=dict(
+            attempts=12,completed=7,decision=dict(reason='evidence'),message='running',
+            new_future_research_blob=huge))])
+        result=json.loads(workspace_response(payload).body)
+        bot=result['bots'][0]
+        self.assertEqual(bot['experiment']['attempts'],12)
+        self.assertEqual(bot['experiment']['completed'],7)
+        self.assertEqual(bot['experiment']['decision'],dict(reason='evidence'))
+        self.assertNotIn('new_future_research_blob',bot['experiment'])
+        self.assertLess(len(json.dumps(bot)),12000)
+
     def test_nonfinite_values_fail_before_response_is_sent(self):
         with self.assertRaises(ValueError):workspace_response(dict(status={},folders=[],bots=[],invalid=float('nan')))
     def test_repeated_research_above_transport_limit_is_sent_once(self):
@@ -53,24 +66,30 @@ class WorkspaceTransport(unittest.TestCase):
         result=json.loads(gzip.decompress(base64.b64decode(envelope['data'])))
         self.assertLess(envelope['bytes'],1500000)
         bot=result['bots'][0]
-        self.assertEqual(bot['experiment'],metric)
+        self.assertNotIn('entry_timing',bot['experiment'])
+        self.assertNotIn('cells',bot['experiment']['scalper'])
+        self.assertEqual(bot['experiment']['scalper']['config'],research['config'])
         for field in ('metrics','financial_metrics'):
             for summary in bot[field].values():
                 self.assertEqual(summary,dict(gross_profit='12',fees='2',net_realized_pnl='10',win_rate='50',cycles=20,excluded_cycles=1))
         self.assertEqual(payload,original)
 
-    def test_research_cells_keep_all_rendered_summary_fields_without_mutating_full_evidence(self):
-        from services.paper_demo.shadow.scalper import bucket
-        cell=dict(bucket(),dimensions=dict(underlying='BTC',horizon='3–5m',price_tier='30–39¢'),
-            completed=5,win_rate=60,net=.12,average_net=.024,entry_quantity=10,closed_quantity=8,
-            winning_quantity=5,entry_cost=3.1,holding_seconds=35)
-        payload=dict(status={},folders=[],bots=[dict(id='scalper',experiment=dict(scalper=dict(cells=[cell],totals=cell)))])
-        original=deepcopy(payload);body=workspace_response(payload).body;result=json.loads(body)
-        sent=result['bots'][0]['experiment']['scalper']
-        self.assertEqual(sent['totals'],cell)
-        self.assertEqual(sent['cells'],[{k:cell[k] for k in ('dimensions','completed','win_rate','net','average_net',
-            'entry_quantity','closed_quantity','winning_quantity','entry_cost','holding_seconds')}])
+    def test_heavy_research_arrays_are_not_in_initial_workspace(self):
+        research=dict(cells=[dict(net='1',dimensions=dict(underlying='BTC')) for _ in range(1000)],
+            totals=dict(net=10,completed=2),config=dict(min_price=.2))
+        payload=dict(status={},folders=[],bots=[dict(id='scalper',experiment=dict(
+            scalper=research,entry_timing=[dict(price=.9)]*1000,calibration=[dict(band='90-95')]*1000))])
+        original=deepcopy(payload)
+        body=workspace_response(payload).body
+        result=json.loads(body)
+        sent=result['bots'][0]['experiment']
+        self.assertNotIn('entry_timing',sent)
+        self.assertNotIn('calibration',sent)
+        self.assertNotIn('cells',sent['scalper'])
+        self.assertEqual(sent['scalper']['totals'],research['totals'])
+        self.assertEqual(sent['scalper']['config'],research['config'])
         self.assertEqual(payload,original)
+
     def test_negotiated_compression_preserves_large_unicode_payload_and_embedded_checksum(self):
         import base64,gzip
         payload=dict(status={},folders=[],bots=[dict(id=i,label='Quoted "price" · 🌱',pnl='-0.123') for i in range(30000)])

@@ -48,14 +48,33 @@ def workspace_response(payload,*,compressed=False,request_started=None):
         bot.pop('latest_report',None)
         if bot.get('experiment') is not None:
             experiment=bot['experiment']
+            # Large research histories belong behind the existing per-bot
+            # research endpoint. The initial workspace only needs compact
+            # counters/decision summaries to render cards and folder totals.
+            compact_experiment={k:v for k,v in experiment.items()
+                if k not in ('entry_timing','calibration')}
             if experiment.get('scalper') is not None:
                 research=experiment['scalper']
-                bot['experiment']=dict(experiment,scalper=dict(research,
-                    cells=[{k:v for k,v in cell.items() if k in cell_fields} for cell in research.get('cells',[])]))
+                compact_experiment['scalper']={k:v for k,v in research.items()
+                    if k not in ('cells',)}
+            bot['experiment']=compact_experiment
             for field in ('metrics','financial_metrics'):
                 if field in bot:
                     bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
                         for period,metric in bot[field].items()}
+        # Keep the initial card payload bounded even if a strategy later adds
+        # another large research field we did not know about yet. The full
+        # experiment remains durable and is available through detail endpoints.
+        try:bot_bytes=len(json.dumps(bot,default=str,separators=(',',':')).encode('utf-8'))
+        except Exception:bot_bytes=0
+        if bot_bytes>12000 and bot.get('experiment') is not None:
+            experiment=bot['experiment']
+            keep=('message','attempts','completed','unmatched','decision','scanner','state','mode')
+            slim={k:experiment[k] for k in keep if k in experiment}
+            if isinstance(experiment.get('scalper'),dict):
+                research=experiment['scalper']
+                slim['scalper']={k:research[k] for k in ('totals','config','periods') if k in research}
+            bot['experiment']=slim
         bots.append(bot)
     response_payload=dict(payload,status=status,folders=folders,bots=bots)
     result=JSONResponse(response_payload)
