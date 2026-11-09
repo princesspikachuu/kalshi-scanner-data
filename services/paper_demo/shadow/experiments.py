@@ -482,13 +482,17 @@ class ExperimentSuite:
                     e.idle_feed_suspended=True;continue
             if self.skip_unrelated_lifecycle(e,source,payload):continue
             if getattr(self.host,'suspend_idle_feeds',False) is True and self.skip_paused_ticker_input(e,f,source,payload,now):continue
-            if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
-                # The budget is identical across portfolios on this input.
-                # Propagate only transitions instead of rewriting hundreds of
-                # inactive profiles for every raw book delta.
+            if folder in SCALPER_FOLDERS:
+                # Admission overload may pause high-frequency scalper entries,
+                # but must not disable already-admitted slow Maker markets.
+                # Maker keeps independent fresh-book, staleness, spread/depth,
+                # momentum and exposure checks while discovery remains closed.
                 if getattr(f,'_resource_paused',None) is not resource_paused:
                     for bot in f.bots.values():bot.resource_paused=resource_paused
                     f._resource_paused=resource_paused
+            elif folder in MM_FOLDERS and getattr(f,'_resource_paused',None) is not False:
+                for bot in f.bots.values():bot.resource_paused=False
+                f._resource_paused=False
             if folder in MM_FOLDERS and self.skip_unrelated_flat_maker(e,source,payload):continue
             if folder in ('scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation'):
                 if source=='clock':
