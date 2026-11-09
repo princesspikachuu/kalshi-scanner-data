@@ -40,7 +40,7 @@ class StatisticsEvidence(unittest.TestCase):
         self.assertEqual(thin['eligibility'],'insufficient_samples')
         weather=next(m for m in matrices if m['market_type']=='weather_daily')
         populated=next(x for x in weather['cells'] if x['price_bucket']=='80-84' and x['horizon']=='10–15m')
-        self.assertEqual(populated['samples'],0)
+        self.assertEqual(populated['samples'],30)
 
     def test_sparse_exact_group_falls_back_to_pooled_market_type_segment(self):
         cells={}
