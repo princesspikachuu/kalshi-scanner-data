@@ -637,15 +637,18 @@ If detailed data is still loading separately:
 - Branch: `fix/mt008-dashboard-snapshot-size`
 - PR: https://github.com/princesspikachuu/kalshi-scanner-data/pull/145
 - Root cause confirmed: `/demo/shadow/workspace` rejects decoded JSON above 8 MiB.
-- First payload reduction committed: remove per-bot `latest_report` from the initial workspace transport because the dashboard frontend never reads it; durable reports remain stored and backend-derived visible fields are preserved.
+- Pre-fix live Render logs showed workspace payloads growing from ~7.5 MiB to ~8.22 MiB, leaving very little headroom beneath the 8 MiB guard.
+- Removed per-bot `latest_report` from the initial workspace transport because the dashboard frontend never reads it. Durable reports remain stored; derived visible stats/accounting/experiment data are preserved.
 - Added oversize diagnostics logging decoded bytes plus approximate top-level section weights.
 - Added regression test with an >8 MiB synthetic workspace proving unused full reports no longer make the initial response exceed the supported size.
-- PR currently mergeable; CI/deployment verification still pending.
-- If the live dataset remains above 8 MiB after this reduction, use the new section-size diagnostics to move the next largest non-initial detail to a lazy/paginated endpoint rather than increasing the limit or deleting history.
+- GitHub Actions run 42620625608 passed, including gateway/auth checks, focused Statistics-Favorites regressions, full API/PostgreSQL validation, and Blueprint validation.
+- PR #145 squash-merged to `build/google-auth-foundation` as commit `62d869e57b6ae1d2b291869bb4c258a79f59655b`.
+- Render API deploy `dep-dbos6b6417fc7398dm90` is LIVE on the merge commit.
+- Live authenticated workspace verification is still required: no post-deploy dashboard request has hit the endpoint yet, so there is not yet a measured post-fix decoded byte count.
+- If the first live request remains too large, use the new section-size diagnostics to move the next largest non-initial detail to a lazy/paginated endpoint rather than increasing the limit or deleting history.
 
 ### Completion notes
-_In progress — do not mark DONE until CI passes and the deployed dashboard loads against the dataset that triggered the failure._
-
+_In progress — merged, CI-passed, and deployed; keep U0 until a real dashboard request confirms the current dataset loads below the supported size._
 ---
 
 # Coordination notes
