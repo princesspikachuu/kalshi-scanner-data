@@ -102,9 +102,8 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
         await run.consume();await reader
         self.assertEqual(seen,list(range(768)))
         self.assertLess(socket_observed[0],768)
-        self.assertGreaterEqual(run.audit.flush.call_count,2)
+        self.assertEqual(run.audit.flush.call_count,1)
         self.assertLessEqual(socket_observed[0],512)
-        self.assertLess(run.audit.flush.call_count,768)
 
     async def test_failed_batch_does_not_acknowledge_uncertain_inputs(self):
         run=object.__new__(HostedRun)
