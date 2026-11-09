@@ -295,6 +295,45 @@ class ExperimentSuite:
         return (not any(b.enabled for b in f.bots.values()) and not e.wallet.lots
             and not any(o.status in ('pending','resting') for o in e.orders.values()))
 
+    @staticmethod
+    def ticker_exposed(e,ticker):
+        return (any(l.ticker==ticker for l in e.wallet.lots) or
+            any(o.ticker==ticker and o.status in ('pending','resting') for o in e.orders.values()))
+
+    @staticmethod
+    def owner_market_paused(owner,ticker):
+        return ticker in getattr(owner,'profile',{}).get('paused_markets',[])
+
+    def ticker_feed_needed(self,e,f,ticker):
+        """Paused entries release hot book/trade work unless this ticker still has risk to manage."""
+        if ticker not in e.markets or e.markets[ticker].get('paid'):return False
+        if self.ticker_exposed(e,ticker):return True
+        owner=f.owner(ticker)
+        if owner is None:
+            # Group strategies such as complete-set do not have a ticker-prefix
+            # owner. A running group still needs its admitted markets.
+            return any(b.enabled for b in f.bots.values())
+        return bool(owner.enabled and not self.owner_market_paused(owner,ticker))
+
+    def skip_paused_ticker_input(self,e,f,source,payload,now):
+        if source!='kalshi' or payload.get('type') not in ('orderbook_snapshot','orderbook_delta','trade'):return False
+        ticker=payload.get('msg',{}).get('market_ticker')
+        if ticker not in e.markets or self.ticker_feed_needed(e,f,ticker):return False
+        sid,seq=payload.get('sid'),payload.get('seq')
+        if sid is None or seq is None:return False
+        previous=e.sequences.get(sid)
+        if payload.get('type')!='orderbook_snapshot' and previous is not None:
+            if seq<=previous:return True
+            if seq!=previous+1:return False
+        e.sequences[sid]=seq
+        # This portfolio deliberately stopped observing this ticker. Never let
+        # its old book become tradable again until a replacement full snapshot.
+        e.books[ticker].valid=False
+        if payload.get('type') in ('orderbook_snapshot','orderbook_delta'):e.book_feed_at[sid]=now
+        e.paused_feed_tickers=getattr(e,'paused_feed_tickers',set());e.paused_feed_tickers.add(ticker)
+        e.paused_inputs_skipped=getattr(e,'paused_inputs_skipped',0)+1
+        return True
+
     def handle(self,source,payload,now):
         # These portfolios use Kalshi books, not the legacy BTC spot valve.
         if source=='gap' and payload.get('reason')=='spot stream disconnected':return
@@ -361,6 +400,7 @@ class ExperimentSuite:
                     # No trading intent, outstanding orders or exposure needs
                     # this duplicate book. Keep lifecycle/settlement processing.
                     e.idle_feed_suspended=True;continue
+            if getattr(self.host,'suspend_idle_feeds',False) is True and self.skip_paused_ticker_input(e,f,source,payload,now):continue
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
                 # The budget is identical across portfolios on this input.
                 # Propagate only transitions instead of rewriting hundreds of
