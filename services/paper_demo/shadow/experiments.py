@@ -76,12 +76,9 @@ class ExperimentSuite:
             engine_class=ScalperEngine if folder in (*SCALPER_FOLDERS,*MM_FOLDERS) else Engine
             e=engine_class(ExperimentAudit(host.audit,folder),cash='1000',latency_ms=150,seed=17,toxic_fill_probability=0)
             if folder in ('favorites','favorites_statistics'):
-                # Preserve every sequenced book delta and trade print, including
-                # immediate queue/fill effects, but make strategy decisions on the
-                # existing 100ms clock instead of re-running dozens of Favorites
-                # bots on every market-data frame.
+                # Preserve every sequenced book delta and trade print, while
+                # filtering immaterial top-of-book quantity churn.
                 e.filter_unchanged_quotes=True
-                e.clock_only_strategy_steps=True
             if isinstance(e,ScalperEngine):e.tape=self.tape
             if getattr(host,'model_worker_latency',False) is True:e.wall_clock=time.time
             f=ExperimentFleet(e,ps,model,folder=='complete_set')
