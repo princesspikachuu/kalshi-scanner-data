@@ -451,6 +451,8 @@ class ExperimentSuite:
                     # hot book traffic or 10 Hz strategy clocks. Keep lifecycle,
                     # settlement and control processing so the portfolio can
                     # resume safely when enabled again.
+                    if source=='clock':
+                        self.idle_clock_skipped=getattr(self,'idle_clock_skipped',0)+1
                     e.idle_feed_suspended=True;continue
             if getattr(self.host,'suspend_idle_feeds',False) is True and self.skip_paused_ticker_input(e,f,source,payload,now):continue
             if folder in (*SCALPER_FOLDERS,*MM_FOLDERS):
