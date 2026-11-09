@@ -30,6 +30,33 @@ class ScopeStorage(unittest.TestCase):
         for field in ('resource','source','series','ticker','start_ts','end_ts'):self.assertEqual(stored[field],getattr(scope,field))
         with self.assertRaises(ValueError):decode_scope(dict(stored,manifest_bytes=1))
         with self.assertRaises(ValueError):decode_scope(dict(stored,manifest_v1=['bad',1]))
+    def test_persistent_failure_uses_exponential_bounded_backoff(self):
+        pool=__import__('unittest.mock',fromlist=['MagicMock']).MagicMock()
+        clock=[200.]
+        job=ScopeCompaction(pool,clock=lambda:clock[0]);job.ready_at=job.next_at=200.
+        with patch.object(job,'step',side_effect=RuntimeError('safe')):
+            with patch('builtins.print') as logged:
+                job.tick()
+                self.assertEqual(job.failures,1);self.assertEqual(job.next_at,500.)
+                first=json.loads(logged.call_args.args[0])
+                self.assertEqual(first['retry_seconds'],300)
+                self.assertEqual(first['error_type'],'RuntimeError')
+                clock[0]=500.;job.tick()
+                self.assertEqual(job.failures,2);self.assertEqual(job.next_at,1100.)
+                second=json.loads(logged.call_args.args[0])
+                self.assertEqual(second['retry_seconds'],600)
+                clock[0]=1100.;job.tick()
+                self.assertEqual(job.failures,3);self.assertEqual(job.next_at,2300.)
+
+    def test_success_resets_failure_backoff(self):
+        pool=__import__('unittest.mock',fromlist=['MagicMock']).MagicMock()
+        clock=[200.]
+        job=ScopeCompaction(pool,clock=lambda:clock[0]);job.ready_at=job.next_at=200.;job.failures=4
+        with patch.object(job,'step') as step:
+            job.tick()
+        step.assert_called_once_with(200.)
+        self.assertEqual(job.failures,0)
+
     def test_rollout_grace_period_does_not_change_metadata_or_writes(self):
         pool=__import__('unittest.mock',fromlist=['MagicMock']).MagicMock()
         with patch('services.research.scope_storage._WRITE_COMPACT',False):
