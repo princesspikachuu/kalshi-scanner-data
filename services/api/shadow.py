@@ -62,6 +62,19 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                 if field in bot:
                     bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
                         for period,metric in bot[field].items()}
+        # Keep the initial card payload bounded even if a strategy later adds
+        # another large research field we did not know about yet. The full
+        # experiment remains durable and is available through detail endpoints.
+        try:bot_bytes=len(json.dumps(bot,default=str,separators=(',',':')).encode('utf-8'))
+        except Exception:bot_bytes=0
+        if bot_bytes>12000 and bot.get('experiment') is not None:
+            experiment=bot['experiment']
+            keep=('message','attempts','completed','unmatched','decision','scanner','state','mode')
+            slim={k:experiment[k] for k in keep if k in experiment}
+            if isinstance(experiment.get('scalper'),dict):
+                research=experiment['scalper']
+                slim['scalper']={k:research[k] for k in ('totals','config','periods') if k in research}
+            bot['experiment']=slim
         bots.append(bot)
     response_payload=dict(payload,status=status,folders=folders,bots=bots)
     result=JSONResponse(response_payload)
