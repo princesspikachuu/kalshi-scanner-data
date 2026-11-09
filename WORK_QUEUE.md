@@ -543,6 +543,13 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 - PR #167 is mergeable; focused checks are green and the full PostgreSQL/API suite is running.
 - Concurrent PR #135 changed Competitive Maker's post-only inside-quote behavior and merged immediately before MT-004. This is a separate execution improvement and should be included in the before/after quote/fill comparison; do not attribute its outcome to the MT-004 telemetry addition.
 
+
+### Latest validation update
+- Current rebased PR is #169, head `41ee6c6a3c522d5375a7473d286b21a45397742e`, and remains mergeable against the current app branch after MT-010 merged.
+- First run failed one legacy discovery test because that test used 29 *recent* trades and still expected rejection at the old 30/day floor. Under the intentional new rule, 29 recent trades are clearly eligible.
+- Corrected the regression fixture to use 29 stale trades (>1h old), preserving the historical daily-floor assertion without contradicting the new 6-recent-trades rule.
+- Corrected run has passed all fast/focused checks and is currently in the full PostgreSQL/API suite.
+
 ---
 
 # PRIORITY 5 — Expand monitoring capacity for active strategies
