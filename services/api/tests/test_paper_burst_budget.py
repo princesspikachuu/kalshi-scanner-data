@@ -13,32 +13,35 @@ class BurstTimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         seen=[];commits=[];clock=[0.0]
         def handle(source,payload,now):
             seen.append(payload['n']);clock[0]+=.03
-            if len(seen)==12:run.done.set()
+            if len(seen)==44:run.done.set()
         run.engine.handle=handle;run.audit.flush.side_effect=lambda:commits.append(len(seen))
         for n in range(2500):await run.queue.put(('clock',dict(n=n),1000+n*.01))
         with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:clock[0],time=time.time)):await run.consume()
-        self.assertEqual(seen,list(range(12)));self.assertEqual(commits,[6,12]);self.assertEqual(run.queue._unfinished_tasks,2488)
-    async def test_large_backlog_never_exceeds_1024_inputs_in_one_atomic_batch(self):
+        self.assertEqual(seen,list(range(44)));self.assertEqual(commits,[22,44]);self.assertEqual(run.queue._unfinished_tasks,2456)
+    async def test_large_backlog_never_exceeds_4096_inputs_in_one_atomic_batch(self):
         run=object.__new__(HostedRun);run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
         run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload;seen=[]
         run.engine.handle.side_effect=lambda source,payload,now:seen.append(payload['n'])
         run.audit.flush.side_effect=run.done.set
-        for n in range(2500):await run.queue.put(('clock',dict(n=n),1000+n*.01))
+        for n in range(5000):await run.queue.put(('clock',dict(n=n),1000+n*.01))
         with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:0,time=time.time)):await run.consume()
-        self.assertEqual(seen,list(range(1024)));self.assertEqual(run.queue._unfinished_tasks,1476)
+        self.assertEqual(seen,list(range(4096)));self.assertEqual(run.queue._unfinished_tasks,904)
     async def test_time_budget_yields_before_input_cap_and_preserves_every_input(self):
         run=object.__new__(HostedRun);run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
         run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload
-        seen=[];commits=[];clock=[0.0]
+        seen=[];commits=[];clock=[0.0];yielded=asyncio.Event();loop=asyncio.get_running_loop()
         def handle(source,payload,now):
-            seen.append(payload['n']);clock[0]+=.03
-            if len(seen)==12:run.done.set()
-        run.engine.handle=handle;run.audit.flush.side_effect=lambda:commits.append(len(seen))
+            seen.append(payload['n']);clock[0]+=.05
+            if len(seen)==1:loop.call_soon(yielded.set)
+            if len(seen)==10:run.done.set()
+        run.engine.handle=handle
+        run.audit.flush.side_effect=lambda:commits.append((len(seen),yielded.is_set()))
         for n in range(768):await run.queue.put(('clock',dict(n=n),1000+n*.01))
         with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:clock[0],time=time.time)):await run.consume()
-        self.assertEqual(seen,list(range(12)))
-        self.assertEqual(commits,[3,6,9,12])
-        self.assertEqual(run.queue._unfinished_tasks,756)
+        self.assertEqual(seen,list(range(10)))
+        self.assertEqual([n for n,_ in commits],[5,10])
+        self.assertTrue(all(flag for _,flag in commits))
+        self.assertEqual(run.queue._unfinished_tasks,758)
 
 class SharedRiskBudgetTests(unittest.TestCase):
     def suite(self):
