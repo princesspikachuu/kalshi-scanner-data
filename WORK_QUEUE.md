@@ -985,6 +985,25 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 - Lower queue delay/backlog.
 - More monitoring/discovery headroom without reducing useful data quality.
 
+### Implementation progress
+- Claimed by ChatGPT on 2026-11-09.
+- PR #149: https://github.com/princesspikachuu/kalshi-scanner-data/pull/149
+- Live baseline before remediation:
+  - order-book update interval 100 ms,
+  - examples of 544 to 7,372 orderbook deltas per ~30-second telemetry window,
+  - >1,000,000 cumulative unrelated maker inputs skipped,
+  - paused scalper/sequential portfolios still receiving hundreds to >1,000 handler calls per window because 10 Hz clock ticks were not excluded,
+  - worker CPU around ~0.5–0.6 core in sampled windows,
+  - RSS around ~0.94–0.96 GB,
+  - backlog spikes have previously paused discovery/admission.
+- Implemented adaptive Kalshi server-side order-book conflation:
+  - 250 ms when no latency-sensitive scalper is enabled,
+  - 100 ms automatically when any scalper/volatility strategy is enabled,
+  - safe reconnect/resnapshot when the desired interval changes.
+- Implemented idle clock suppression so fully paused/empty portfolios do not process 10 Hz clock ticks while still retaining lifecycle, settlement, control and resume safety.
+- Added tests for adaptive feed interval and idle-clock suppression.
+- Latest CI run is still in progress; do not merge until validation completes.
+
 ---
 
 ## MT-013 — Fix persistent storage compaction retry loop
