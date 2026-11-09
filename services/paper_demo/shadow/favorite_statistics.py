@@ -138,22 +138,31 @@ def statistics_matrix(groups,profile):
             for time in TIME_BUCKETS:
                 key=('market_type_price_time',(kind,bucket,time))
                 row=summarize(groups.get(key,dict(level='market_type_price_time',key=key[1],events={},contracts=D(0),cost=D(0),net=D(0))))
-                # Look up the model's fallback level for the same group.
-                def lookup():
+                # A sparse matrix cell remains sparse even when a broader
+                # pool can justify a decision. Show the fallback separately.
+                fallback='insufficient_samples';pooled_n=0;pooled=None
+                if row['samples']>=minimum:
+                    fallback='market_type_price_time';pooled_n=row['samples'];pooled=row
+                else:
                     for level,parent in (('market_type_price',(kind,bucket)),('price',(bucket,)),('global',())):
-                        g=groups.get((level,parent))
-                        if g is not None and len(g['events'])>=minimum:return level,len(g['events'])
-                    return 'insufficient_samples',0
-                fallback,pooled_n=lookup() if row['samples']<minimum else ('market_type_price_time',row['samples'])
-                lower=D(str(row['lower'])) if row['lower'] is not None else None
-                # No fee schedule is assumed in the matrix. This upper-bound
-                # test is necessary, not sufficient, for live order eligibility.
-                capable=row['samples']>=minimum and lower is not None and lower>price_hi+slippage+edge
-                capable=capable and row['win_rate'] is not None and (
-                    D(str(row['win_rate']))-price_hi-slippage)/(price_hi+slippage)>=min_roi
+                        group=groups.get((level,parent))
+                        if group is None:continue
+                        sample=summarize(group)
+                        if sample['samples']>=minimum:
+                            fallback=level;pooled_n=sample['samples'];pooled=sample;break
+                confidence=pooled['lower'] if pooled else None
+                mean=pooled['win_rate'] if pooled else None
+                lower=D(str(confidence)) if confidence is not None else None
+                # Evidence-only screen, before actual series fees and liquidity.
+                capable=pooled is not None and lower is not None and lower>price_hi+slippage+edge
+                capable=capable and mean is not None and (
+                    D(str(mean))-price_hi-slippage)/(price_hi+slippage)>=min_roi
+                status=('evidence_candidate' if row['samples']>=minimum else 'fallback_candidate') if capable else (
+                    'insufficient_samples' if row['samples']<minimum else 'evidence_rejected')
                 cells.append(dict(price_bucket=bucket,horizon=time,**row,
-                    eligibility='evidence_candidate' if capable else 'insufficient_samples' if row['samples']<minimum else 'evidence_rejected',
-                    fallback_level=fallback,fallback_samples=pooled_n))
+                    eligibility=status,fallback_level=fallback,fallback_samples=pooled_n,
+                    fallback_win_rate=pooled['win_rate'] if pooled and row['samples']<minimum else None,
+                    fallback_lower=pooled['lower'] if pooled and row['samples']<minimum else None))
         result.append(dict(market_type=kind,price_buckets=list(PRICE_BUCKETS),time_buckets=list(TIME_BUCKETS),cells=cells))
     return result
 
