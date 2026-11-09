@@ -518,8 +518,13 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 - P/L, inventory, open orders, and completed-trade accounting remain correct.
 - Any remaining bottleneck becomes a new task in this queue rather than being hidden.
 
-### Completion notes
-_Fill in when done._
+### Implementation progress
+- Claimed 2026-11-09 22:22 UTC. Initial live Render monitoring (22:19–22:23 UTC) found two physical Maker subscriptions, intermittent admission due to processing lag/backlog, 9–12 retained discovery candidates, and repeated low-volume/unstable-price/current-quote-ineligible rejection reasons. Both Maker portfolios were running (four profiles each), but neither had open inventory in the sampled health reports.
+- Open PR [#165](https://github.com/princesspikachuu/kalshi-scanner-data/pull/165): adds bounded in-process candidate rejection/verification/category histogram to existing `market_maker_scan` records, with unit tests; no new API traffic or strategy/risk changes.
+- Live diagnosis and remaining acceptance work documented at `docs/audits/mt-004-maker-funnel-2026-11-09.md`. Full CI on PR head underway. Keep task IN PROGRESS until comparable opportunity-to-quote-to-fill measurements and actual improvement are verified.
+- Coordinate slot allocation changes with MT-015; do not independently raise monitoring limits or change shared scheduler while the bottleneck remains partially processing-bound.
+
+
 
 
 ### Implementation progress
