@@ -29,9 +29,10 @@ class MakerTests(unittest.TestCase):
         taker=o.side if o.action=='sell' else ('no' if o.side=='yes' else 'yes')
         e.trade(T,dict(trade_id=ident,taker_side=taker,yes_price_dollars=str(yes_price),count_fp=str(o.ahead+(quantity or o.remaining)),ts_ms=e.now*1000))
     def test_competitive_variant_quotes_best_non_crossing_tick_while_standard_stays_control(self):
-        standard=next(p for p in profiles() if p['folder_id']=='market_maker' and p['market_category']=='politics')
-        competitive=next(p for p in profiles() if p['folder_id']=='maker_competitive' and p['market_category']=='politics')
-        es,bs,_=self.bot(config=standard['config']);ec,bc,_=self.bot(config=competitive['config'])
+        standard=dict(next(p for p in profiles() if p['folder_id']=='market_maker' and p['market_category']=='politics'),revision=1)
+        competitive=dict(next(p for p in profiles() if p['folder_id']=='maker_competitive' and p['market_category']=='politics'),revision=1)
+        e=ScalperEngine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0,seed=1)
+        bs=MarketMaker(e,standard);bc=MarketMaker(e,competitive)
         # Full runtime defaults, including the variant flag, are applied by MarketMaker.
         self.assertFalse(bs.config['competitive_inside']);self.assertTrue(bc.config['competitive_inside'])
         market_meta={}
