@@ -209,6 +209,7 @@ class ForwardRun:
                 async with connect(WS, additional_headers=self.signer.headers('GET','/trade-api/ws/v2'),
                                    ping_interval=10, ping_timeout=5, max_queue=2048,
                                    open_timeout=5, max_size=2**22) as ws:
+                    subscribed_book_interval=getattr(self,'book_update_interval_ms',0)
                     await ws.send(json.dumps(dict(id=1, cmd='subscribe',
                         params=dict(channels=['market_lifecycle_v2']))))
                     subscribed, ident = set(), 2
@@ -217,6 +218,8 @@ class ForwardRun:
                     last_heartbeat=time.monotonic();ping_sent=0.
                     connected_at = time.monotonic()
                     while not self.done.is_set():
+                        if getattr(self,'book_update_interval_ms',0)!=subscribed_book_interval:
+                            raise RuntimeError('book subscription interval changed')
                         if pong is not None:
                             if pong.done():
                                 pong.result()
