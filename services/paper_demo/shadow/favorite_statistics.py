@@ -8,8 +8,8 @@ TICK=D('.01')
 
 def price_bucket(price):
     cents=int(D(price)*100)
-    lo=70 if cents<75 else 75 if cents<80 else 80 if cents<85 else 85 if cents<90 else 90
-    hi=95 if lo==90 else lo+4
+    lo=70 if cents<75 else 75 if cents<80 else 80 if cents<85 else 85 if cents<90 else 90 if cents<95 else 95
+    hi=min(lo+4,95)
     return f'{lo}-{hi}'
 
 def _wilson(wins,n,z=1.96):
@@ -17,7 +17,7 @@ def _wilson(wins,n,z=1.96):
     p=wins/n;den=1+z*z/n
     return (p+z*z/(2*n)-z*math.sqrt(p*(1-p)/n+z*z/(4*n*n)))/den
 
-PRICE_BUCKETS=tuple(f'{lo}-{min(lo+4,95)}' for lo in (70,75,80,85,90))
+PRICE_BUCKETS=tuple(f'{lo}-{min(lo+4,95)}' for lo in (70,75,80,85,90,95))
 TIME_BUCKETS=('<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h')
 
 def _merge_event(target,event,value):
