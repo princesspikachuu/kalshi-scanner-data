@@ -61,18 +61,24 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         with patch('builtins.print'):
             audit.write(events())
             audit.write(events())
-        # First commit contains checkpoint and event; second contains only its
-        # fresh audit event. Nothing in the evidence stream is discarded.
-        self.assertEqual(cursor.executemany.call_count,2)
-        self.assertEqual([len(c.args[1]) for c in cursor.executemany.call_args_list],[2,1])
+        # The writer keeps checkpoint and audit events in their original
+        # order, so the first commit uses two SQL groups and the second only
+        # one audit-event group. Both transactions keep all event rows.
+        self.assertEqual(cursor.executemany.call_count,3)
+        persisted=[record[3] for call in cursor.executemany.call_args_list
+                   for record in call.args[1]]
+        self.assertEqual(sum(k==KEY for k in persisted),1)
+        self.assertEqual(sum(k.startswith('demo/shadow/event/') for k in persisted),2)
         self.assertEqual(audit.durability_profile['checkpoint_upserts'],1)
         self.assertEqual(audit.durability_profile['checkpoint_unchanged_skips'],1)
         self.assertGreater(audit.durability_profile['checkpoint_bytes_avoided'],0)
         self.assertEqual(audit.rows_written,3)
         # Force periodic durability rewrite without sleeping 30 seconds.
         audit.committed_checkpoint_at=-1e9
+        before=cursor.executemany.call_count
         with patch('builtins.print'):audit.write(events())
-        self.assertEqual(len(cursor.executemany.call_args.args[1]),2)
+        self.assertEqual(cursor.executemany.call_count-before,2)
+        self.assertEqual([call.args[1][0][3] for call in cursor.executemany.call_args_list[before:]][0],KEY)
         self.assertEqual(audit.durability_profile['checkpoint_upserts'],2)
 
     async def test_changed_checkpoint_and_failed_commit_never_skip_persistence(self):
