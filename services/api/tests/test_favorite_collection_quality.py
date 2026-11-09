@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 from decimal import Decimal as D
 from services.paper_demo.shadow.core import Engine,FeePolicy
+from services.paper_demo.shadow.host import book_ingest_age_bucket
+from services.paper_demo.shadow.runner import ForwardRun
 from services.paper_demo.shadow.favorite_entries import observe
 from services.paper_demo.shadow.favorite_timing import cell
 from services.paper_demo.shadow.favorite_collection_quality import collection_quality
@@ -111,6 +113,28 @@ class FavoritesBookFilterTests(unittest.TestCase):
         engine.handle('clock',{},1000.8)
         self.assertEqual(calls,['TEST','TEST',None])
         self.assertEqual(engine.sequences[3],4)
+
+
+class FeedFreshnessMetricsTests(unittest.TestCase):
+    def test_book_transport_age_is_separate_from_queue_processing_lag(self):
+        now=1000
+        self.assertEqual(book_ingest_age_bucket(999800,now),'under_1s')
+        self.assertEqual(book_ingest_age_bucket(998000,now),'1_to_3s')
+        self.assertEqual(book_ingest_age_bucket(995000,now),'3_to_10s')
+        self.assertEqual(book_ingest_age_bucket(980000,now),'over_10s')
+        self.assertEqual(book_ingest_age_bucket(None,now),'missing_timestamp')
+        self.assertEqual(book_ingest_age_bucket('NaN',now),'invalid_or_future_timestamp')
+        self.assertEqual(book_ingest_age_bucket(1002000,now),'invalid_or_future_timestamp')
+
+    def test_simulation_rejection_reasons_are_counted_separately(self):
+        fake=SimpleNamespace(engine=SimpleNamespace(books={'TEST':object()},data_gap=Mock()))
+        payload=dict(msg=dict(market_ticker='TEST'))
+        ForwardRun.reject_input(fake,'kalshi',payload,ValueError('stale book event'))
+        ForwardRun.reject_input(fake,'kalshi',payload,ValueError('book sequence gap'))
+        self.assertEqual(fake.input_rejections,2)
+        self.assertEqual(fake.input_rejection_reasons,
+            {'kalshi:stale book event':1,'kalshi:book sequence gap':1})
+        self.assertEqual(fake.engine.data_gap.call_count,2)
 
 
 if __name__=='__main__':unittest.main()
