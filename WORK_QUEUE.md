@@ -1134,9 +1134,9 @@ _DONE. Suspected service duplication disproved; no service shutdown warranted. K
 ---
 
 ## MT-015 — Rework Market Maker slot efficiency / monitoring yield
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / Market Maker throughput implementation  
+**Claimed:** 2026-11-09 22:30 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
