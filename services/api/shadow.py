@@ -41,6 +41,11 @@ def workspace_response(payload,*,compressed=False,request_started=None):
     bots=[]
     for source in payload.get('bots',[]):
         bot=dict(source)
+        # latest_report is a durable worker/report artifact used to derive the
+        # compact fields above, but the dashboard never reads it. Shipping one
+        # full report per bot made the initial workspace payload grow with
+        # report detail and could trip the 8 MiB transport guard.
+        bot.pop('latest_report',None)
         if bot.get('experiment') is not None:
             experiment=bot['experiment']
             if experiment.get('scalper') is not None:
@@ -52,11 +57,23 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                     bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
                         for period,metric in bot[field].items()}
         bots.append(bot)
-    result=JSONResponse(dict(payload,status=status,folders=folders,bots=bots))
+    response_payload=dict(payload,status=status,folders=folders,bots=bots)
+    result=JSONResponse(response_payload)
     raw=result.body
     digest=hashlib.sha256(raw).hexdigest()
     if compressed:
-        if len(raw)>8388608:raise HTTPException(503,'Dashboard snapshot exceeds its supported size')
+        if len(raw)>8388608:
+            # Log approximate section weights before rejecting the transport so
+            # future growth has an actionable source instead of a generic size
+            # failure. Durable records remain untouched.
+            section_bytes={}
+            for key,value in response_payload.items():
+                try:section_bytes[key]=len(json.dumps(value,default=str,separators=(',',':')).encode('utf-8'))
+                except Exception:section_bytes[key]=-1
+            print(json.dumps(dict(event='dashboard_snapshot_oversize',decoded_bytes=len(raw),
+                limit_bytes=8388608,section_bytes=section_bytes,
+                bots=len(bots),folders=len(folders))),flush=True)
+            raise HTTPException(503,'Dashboard snapshot exceeds its supported size')
         # Self-contained ASCII envelope: compressed data is far smaller and its
         # checksum describes the decoded JSON, independent of HTTP transforms.
         result=JSONResponse(dict(transport='workspace-gzip-v1',sha256=digest,bytes=len(raw),
