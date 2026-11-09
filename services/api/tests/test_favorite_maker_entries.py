@@ -114,6 +114,14 @@ class MakerEntries(unittest.TestCase):
         e.handle('clock',{},201.2)
         self.assertGreater(b.step.call_count,0)
 
+    def test_clock_only_mode_does_not_defer_non_kalshi_state_changes(self):
+        e,b,_=self.setup_bot();e.clock_only_strategy_steps=True
+        b.step=Mock()
+        ticker='KXBTCD-next'
+        e.handle('market',dict(market=dict(ticker=ticker,open=100,close=1000,event_ticker='NEXT',bot_id='next'),
+            taker_multiplier='1',maker_multiplier='0'),200.1)
+        b.step.assert_called_once_with(ticker)
+
     def test_only_confirmed_settlement_teaches_entry_model_and_survives_json(self):
         e,b,_=self.setup_bot();b.step();e.advance(201)
         o=next(iter(e.orders.values()));e.fill(o,D(1),o.price,'TEST')
