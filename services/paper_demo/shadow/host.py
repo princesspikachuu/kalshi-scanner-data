@@ -44,6 +44,11 @@ def processing_batch_budget(backlog):
     # Under sustained flow, keep one atomic audit/checkpoint batch open longer,
     # but yield between short simulation slices so socket readers and pongs keep
     # receiving data. The state mutex remains held until the durable commit.
+    # At the queue ceiling, database checkpoint overhead consumes much of
+    # the processing window. Amortize one extra bounded simulation slice while
+    # keeping every 256-input / 80ms cooperative socket yield unchanged.
+    # Never hold this longer budget for healthy or moderately busy queues.
+    if backlog>8000:return 4096,.900
     if backlog>2000:return 4096,.640
     if backlog>128:return 512,.240
     return 256,.040
