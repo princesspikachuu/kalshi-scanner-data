@@ -30,6 +30,17 @@ from .favorite_collection_quality import collection_quality
 
 LOG=logging.getLogger('shadow-host')
 
+def book_conflation_interval(experiments):
+    """Use the fastest book feed only while a latency-sensitive scalper is enabled."""
+    for folder in SCALPER_FOLDERS:
+        row=getattr(experiments,'portfolios',{}).get(folder)
+        if row is not None and any(getattr(bot,'enabled',False) for bot in row[1].bots.values()):
+            return 100
+    # Favorites and slow-market maker strategies do not need 10 depth batches/sec.
+    # Kalshi performs this conflation server-side while preserving sequence and
+    # the net L2 book changes, preventing redundant churn from entering our queue.
+    return 250
+
 class NoCapture:
     def write(self,data):pass
     def flush(self):pass
@@ -115,6 +126,7 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.suspend_idle_feeds=True
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        self.book_update_interval_ms=book_conflation_interval(self.experiments)
         self.experiments.share_external_markets()
         self.experiments.share_legacy_markets()
         self.audit.experiments=self.experiments
@@ -333,6 +345,7 @@ class HostedRun(ForwardRun):
                     position_lots=len(engine.wallet.lots),orders_generated_total=engine.serial,
                     coalesced_inputs_total=getattr(engine,'coalesced_inputs',0),
                     unrelated_inputs_skipped_total=getattr(engine,'unrelated_inputs_skipped',0),
+                    unrelated_lifecycle_skipped_total=getattr(engine,'unrelated_lifecycle_skipped',0),
                     observations_total=sum(getattr(b,'research',{}).get('totals',{}).get('opportunities',0) for b in fleet.bots.values()),
                     round_trips_total=sum(getattr(b,'research',{}).get('totals',{}).get('completed',0) for b in fleet.bots.values()))
         print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
@@ -344,11 +357,14 @@ class HostedRun(ForwardRun):
             last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_control_ms=getattr(self,'last_control_ms',None),legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0),
+            idle_strategy_clocks_skipped=getattr(experiments,'idle_clock_skipped',0) if isinstance(experiments,ExperimentSuite) else 0,
             input_types=getattr(self,'input_counts',{}),book_update_interval_ms=getattr(self,'book_update_interval_ms',0),
             real_orders_enabled=False)),flush=True)
         self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
         self.input_counts={};self.loop_lag_max=0
-        if isinstance(experiments,ExperimentSuite):experiments.processing_costs={}
+        if isinstance(experiments,ExperimentSuite):
+            experiments.processing_costs={}
+            experiments.idle_clock_skipped=0
 
     def state_mutex(self):
         if not hasattr(self,'_state_mutex'):self._state_mutex=asyncio.Lock()
@@ -455,6 +471,7 @@ class HostedRun(ForwardRun):
                 await self.audit.durable_io(self.guard)
                 self.experiments.control(all_rows,mode)
                 self.experiments.maintain()
+                self.book_update_interval_ms=book_conflation_interval(self.experiments)
                 rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
                 for row in rows:
                     p=row['parameters'];bot=self.strategy.bots[p['series']]

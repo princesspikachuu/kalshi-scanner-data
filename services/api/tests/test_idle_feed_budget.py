@@ -20,6 +20,26 @@ class IdleFeedBudget(unittest.TestCase):
         for e,f,ps in suite.portfolios.values():e.handle.assert_not_called()
         suite.handle('kalshi',dict(type='market_lifecycle_v2',msg={}),1001)
         for e,f,ps in suite.portfolios.values():e.handle.assert_called_once()
+    def test_paused_empty_portfolios_skip_high_frequency_clock_ticks(self):
+        suite=self.fixture()
+        for e,f,ps in suite.portfolios.values():e.handle=Mock()
+        for n in range(100):suite.handle('clock',{},1000+n/10)
+        for e,f,ps in suite.portfolios.values():e.handle.assert_not_called()
+        # Lifecycle/settlement classes remain eligible even while entry work is idle.
+        suite.handle('kalshi',dict(type='market_lifecycle_v2',msg={}),1011)
+        for e,f,ps in suite.portfolios.values():e.handle.assert_called_once()
+
+    def test_unrelated_lifecycle_skips_strategy_fanout_but_advances_sequence(self):
+        suite=self.fixture()
+        for e,f,ps in suite.portfolios.values():e.handle=Mock()
+        payload=dict(type='market_lifecycle_v2',sid=77,seq=12,
+            msg=dict(market_ticker='UNRELATED',event_type='created'))
+        suite.handle('kalshi',payload,1000)
+        for e,f,ps in suite.portfolios.values():
+            e.handle.assert_not_called()
+            self.assertEqual(e.sequences.get(77),12)
+            self.assertEqual(getattr(e,'unrelated_lifecycle_skipped',0),1)
+
     def test_ticker_pause_contract_applies_to_every_strategy_owner(self):
         suite=self.fixture();ticker='KXBTC15M-test'
         for folder,(e,f,ps) in suite.portfolios.items():
