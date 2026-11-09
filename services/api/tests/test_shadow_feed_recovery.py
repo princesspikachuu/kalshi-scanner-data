@@ -7,7 +7,7 @@ from decimal import Decimal as D
 from unittest.mock import Mock, patch, AsyncMock
 from services.paper_demo.shadow.core import Engine, FeePolicy
 from services.paper_demo.shadow.runner import ForwardRun
-from services.paper_demo.shadow.host import HostedRun
+from services.paper_demo.shadow.host import HostedRun,PROCESSING_COALESCE_SECONDS
 
 
 class InputRecoveryTests(unittest.TestCase):
@@ -105,6 +105,25 @@ class HostedConsumerTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(run.audit.flush.call_count,2)
         self.assertLessEqual(socket_observed[0],512)
         self.assertLess(run.audit.flush.call_count,768)
+
+    async def test_sparse_arrivals_share_one_checkpoint_with_bounded_coalescing(self):
+        run=object.__new__(HostedRun)
+        run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
+        run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload
+        seen=[]
+        def handle(source,payload,now):
+            seen.append(payload['n'])
+            if len(seen)==2:run.done.set()
+        run.engine.handle=handle
+        await run.queue.put(('clock',{'n':0},1000))
+        async def producer():
+            await asyncio.sleep(0)
+            await run.queue.put(('clock',{'n':1},1000.01))
+        await asyncio.gather(run.consume(),producer())
+        self.assertEqual(seen,[0,1])
+        self.assertEqual(run.audit.flush.call_count,1)
+        self.assertEqual(run.queue._unfinished_tasks,0)
+        self.assertLessEqual(PROCESSING_COALESCE_SECONDS,.005)
 
     async def test_failed_batch_does_not_acknowledge_uncertain_inputs(self):
         run=object.__new__(HostedRun)
