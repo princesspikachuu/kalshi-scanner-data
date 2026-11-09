@@ -124,6 +124,30 @@ class HostedPostgres(unittest.TestCase):
         self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),104)
         shutil.rmtree(audit.path)
 
+    def test_multirow_audit_commit_preserves_all_events_and_checkpoint_atomically(self):
+        self.seed()
+        audit=HostedAudit(self.demo,lambda:None)
+        self.addCleanup(shutil.rmtree,audit.path)
+        engine=Engine(audit)
+        fleet=StrategyFleet(engine,profiles())
+        audit.engine,audit.fleet=engine,fleet
+        audit.durability_log_at=float('inf')
+        engine.advance(1000)
+        audit.begin()
+        for i in range(145):
+            engine.refill(D(1))
+        audit.flush()
+        with self.demo.pool.connection() as c:
+            rows=c.execute("SELECT progress FROM research_job "
+                "WHERE starts_with(idempotency_key,'demo/shadow/event/')").fetchall()
+        self.assertEqual(len(rows),145)
+        self.assertEqual(sorted(D(row['progress']['cash']) for row in rows),
+                         list(map(D,range(101,246))))
+        self.assertEqual(D(self.demo.get('shadow/checkpoint')['progress']['wallet']['cash']),245)
+        self.assertEqual(audit.durability_profile['bulk_event_rows'],145)
+        self.assertEqual(audit.durability_profile['bulk_event_groups'],3)
+        self.assertEqual(audit.durability_profile['commits'],1)
+
     def test_async_commit_keeps_refill_marker_events_and_wallet_atomic(self):
         import asyncio
         self.seed();request=dict(amount_cents=5000,request_id='async-refill-request-123')
