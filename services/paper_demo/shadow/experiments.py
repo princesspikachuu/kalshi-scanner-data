@@ -48,6 +48,13 @@ class ExperimentFleet(StrategyFleet):
             # cannot place or manage an order and need no duplicate book scans.
             owners={id(b):b for t in self.e.markets if (b:=self.owner(t)) is not None}
             for b in owners.values():b.step()
+        elif changed_ticker is None:
+            # Regular experiment fleets previously called every bot with no
+            # ticker, making each bot rescan every market on every clock. Each
+            # market has one owner, so dispatch each ticker once instead.
+            for ticker in tuple(self.e.markets):
+                b=self.owner(ticker)
+                if b:b.step(ticker)
         else:super().step(changed_ticker)
 
 class ExperimentSuite:
