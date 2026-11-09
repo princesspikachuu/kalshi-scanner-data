@@ -57,6 +57,7 @@ jobs:
         run: |
           node --test tests/test_login_bridge.mjs tests/test_research_dashboard.mjs tests/test_demo_gateway.mjs tests/test_bot_table.mjs tests/test_strategy_folders.mjs
           node scripts/check_staging_gateway.mjs
+          node tools/benchmark_gateway_cpu.mjs
       - name: Install pinned development dependencies
         run: pip install -r services/api/requirements-dev.txt
       - name: Focused statistics-backed Favorites regression tests
