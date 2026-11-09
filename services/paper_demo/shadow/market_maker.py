@@ -199,6 +199,11 @@ async def maker_once(host):
     if not choices:return
     limits=suite.monitoring_snapshot(now)
     screening_only=not limits['admitting']
+    # Verification is a read-only precursor to serialized admission. Use only
+    # measured free Maker slots to spend more REST reads, and cap each pass so
+    # a newly healthy worker cannot create a metadata burst.
+    verify_budget=1 if screening_only else max(1,min(3,int(limits.get('maker_slots_free',1))))
+    s['verification_budget']=verify_budget
     bounded_screen=(limits.get('telemetry_fresh',False) and limits.get('backlog',10001)<=10000 and
         limits.get('lag_p95_seconds',6)<5 and limits.get('processing_p95_ms',21)<20 and not limits.get('read_cooldown_seconds',1))
     if screening_only and not (bounded_screen and s['candidates']):
@@ -234,7 +239,8 @@ async def maker_once(host):
                 s['candidates'][raw['ticker']]=dict(s['candidates'].get(raw['ticker'],{}),raw={k:raw[k] for k in ('ticker','event_ticker','open_time','close_time','status','yes_bid_dollars','no_bid_dollars','yes_bid','no_bid','volume_24h_fp','volume_24h','title','price_ranges') if k in raw},event={k:event[k] for k in ('series_ticker','title','category') if k in event},category=group,score=score,at=now,scheduled_events=schedule_times(result.get('milestones',[]),raw['event_ticker']))
             except (KeyError,TypeError,ValueError):continue
             if len(s['candidates'])>120:s['candidates']=dict(sorted(s['candidates'].items(),key=lambda x:-x[1]['score'])[:100])
-    # Keep a broad, bounded near-miss pool; inspect only one ranked candidate per pass.
+    # Keep a broad, bounded near-miss pool; inspection count is tied to measured
+    # free Maker slots below, never to raw catalogue size.
     s['candidates']={t:r for t,r in sorted(s['candidates'].items(),key=lambda x:-x[1]['score']) if now-r['at']<3600 and ts(r['raw']['close_time'])>now}
     s['candidates']=dict(list(s['candidates'].items())[:100])
     active=set(suite.feed_markets());maker_active={t for t,m in suite.feed_markets().items() if m.get('market_maker')}
@@ -248,7 +254,7 @@ async def maker_once(host):
         if ticker in active or row.get('ready') or now<row.get('retry_at',0):continue
         ps=[p for p in choices if p['market_category']==row['category']]
         if not ps:continue
-        if checked>=1:break
+        if checked>=verify_budget:break
         checked+=1
         row['retry_at']=now+300;row['inspected_at']=now;raw=row['raw']
         trades=await asyncio.to_thread(host.verified_data.call,'GET','/markets/trades',dict(ticker=ticker,min_ts=int(now-86400),limit=100));s['reads']+=1
@@ -281,8 +287,11 @@ async def maker_once(host):
         for old in cached[:-8]:old.pop('ready');old['reason']='verified_cache_capacity'
         if screening_only:
             row['reason']='verified_waiting_for_capacity';s['state']='Read-only verification complete; admission remains paused'
-        else:await host.put('maker_market',payload)
-        break
+        else:
+            # Admission is still serialized and rechecks current capacity. The
+            # initial free-slot snapshot only bounds how many candidates we can
+            # pre-verify/enqueue during this pass.
+            await host.put('maker_market',payload)
     s['ranked']=[dict(ticker=t,category=r['category'],score=r['score'],trades_24h=r.get('trades_24h'),reason=r.get('reason','awaiting trade-frequency verification')) for t,r in list(s['candidates'].items())[:20]]
     if s.get('state')=='Inspecting candidates':s['state']='Candidate inspection complete' if s['candidates'] else 'No eligible candidates in the current event page'
     scan_report(s,now,len(result.get('events',[])),len(maker_active))
