@@ -1006,6 +1006,13 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 - Updated that regression test to assert the intended lazy-research architecture: visible account/card data remains in the workspace while heavy `entry_timing` stays out and the canonical source remains unchanged.
 - Fresh full CI run 42636698160 is in progress; gateway/auth and focused Statistics-Favorites checks are passing; PostgreSQL/API suite is currently running. Do not merge until this run completes successfully.
 
+
+### Additional implementation progress
+- Live logs showed lifecycle traffic exceeding 1,000 frames in a 30-second window during queue saturation.
+- Added per-portfolio suppression of ticker-scoped lifecycle events for markets that portfolio does not own, while still advancing sequence state.
+- Generic lifecycle frames without an explicit market ticker remain on the normal path for safety.
+- Latest validation run `42640070818` has passed gateway/auth and focused Favorites checks and is currently in the full PostgreSQL/API suite.
+
 ---
 
 ## MT-013 — Fix persistent storage compaction retry loop
@@ -1029,6 +1036,14 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 - Compaction either succeeds or backs off sanely.
 - Repeated useless DB work stops.
 - No evidence/history is deleted.
+
+
+### Implementation progress
+- PR #153 passed full CI and was squash-merged as `702230abd3587d2e36daef4c65eaae3be9a2a294`.
+- Collector deployment `dep-dbotva3ncjis73a0da50` is LIVE on branch head `77abff0c8af00d826fe976dfefece802292a363d`, which is confirmed to descend from the MT-013 merge commit.
+- Compaction batch size reduced from 1000 rows to 100 rows under the existing 5-second statement timeout.
+- Repeated failures now use exponential backoff from 5 minutes up to 6 hours and log safe `error_type`, `sqlstate`, retry interval, and consecutive failure count.
+- Keep IN PROGRESS until post-deploy logs confirm either successful compaction or the new sane backoff behavior.
 
 ---
 
@@ -1150,3 +1165,10 @@ MT-012 baseline telemetry exposed another significant resource consumer:
 - MT-007 can be implemented incrementally by strategy, but its shared UI/data-contract work must not conflict with active MT-001/MT-002 schema changes.
 - MT-008 is an urgent user-visible dashboard blocker and should be claimed before lower-priority READY UI/diagnostic work. MT-007 should use the lazy/paginated detail architecture established by MT-008 rather than expanding the initial dashboard snapshot again.
 - If MT-002 needs data-schema fields that MT-001 is already changing, coordinate through this file rather than independently creating conflicting schemas.
+
+
+### Implementation progress
+- PR #154 passed full PR CI and was squash-merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`.
+- Same-event markets now share one verified `/events/fee_changes` response for the unchanged 30-second freshness window.
+- Distinct events remain independently verified; TTLs and fail-closed behavior are unchanged.
+- Branch validation for the merge commit is in progress; processing deployment will follow the service's checks-pass auto-deploy policy.
