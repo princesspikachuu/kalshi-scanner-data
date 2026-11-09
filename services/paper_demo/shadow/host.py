@@ -354,11 +354,14 @@ class HostedRun(ForwardRun):
             last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
             last_control_ms=getattr(self,'last_control_ms',None),legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0),
+            idle_strategy_clocks_skipped=getattr(experiments,'idle_clock_skipped',0) if isinstance(experiments,ExperimentSuite) else 0,
             input_types=getattr(self,'input_counts',{}),book_update_interval_ms=getattr(self,'book_update_interval_ms',0),
             real_orders_enabled=False)),flush=True)
         self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
         self.input_counts={};self.loop_lag_max=0
-        if isinstance(experiments,ExperimentSuite):experiments.processing_costs={}
+        if isinstance(experiments,ExperimentSuite):
+            experiments.processing_costs={}
+            experiments.idle_clock_skipped=0
 
     def state_mutex(self):
         if not hasattr(self,'_state_mutex'):self._state_mutex=asyncio.Lock()
