@@ -109,3 +109,22 @@
 .favorite-timing{margin:18px 0}.favorite-timing>summary{font-weight:700;cursor:pointer}.favorite-timing .comparison-grid{margin-top:12px}
 
 .favorite-research{margin:14px 0;padding:12px;border:1px solid var(--border,#d9e0df);border-radius:12px;min-width:0}.favorite-research>summary{font-weight:700;cursor:pointer;overflow-wrap:anywhere}.favorite-research .comparison-grid{margin-top:12px}.favorite-research .comparison-card h3{overflow-wrap:anywhere}
+
+/* Statistics-backed Favorites matrix, independent of the flat timing table. */
+.statistics-matrices{min-width:0;margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:12px}
+.statistics-matrices h3{margin:0 0 8px}
+.favorite-stat-market{margin:14px 0}
+.favorite-stat-market>summary{cursor:pointer;padding:10px 0;font-weight:700}
+.favorite-stat-matrix{border-collapse:separate;border-spacing:3px;min-width:770px;width:100%;font-size:12px}
+.favorite-stat-matrix th{white-space:nowrap;text-align:center;padding:9px 5px}
+.favorite-stat-matrix th:first-child{position:sticky;left:0;z-index:1;background:var(--panel,#151922)}
+.favorite-stat-matrix td{vertical-align:top;min-width:88px;padding:7px;border:1px solid var(--line);border-radius:7px}
+.favorite-stat-matrix td summary{list-style:none;cursor:pointer;display:grid;gap:4px}
+.favorite-stat-matrix td summary::-webkit-details-marker{display:none}
+.favorite-stat-matrix td summary span,.favorite-stat-matrix td summary small{display:block}
+.favorite-stat-matrix td details[open] p{max-width:200px;overflow-wrap:anywhere}
+.favorite-stat-matrix .stat-candidate{background:#19382b;border-color:#3f765c}
+.favorite-stat-matrix .stat-sparse{background:#292a2d}
+.favorite-stat-matrix .stat-rejected{background:#332629}
+.favorite-stat-matrix .stat-empty{background:#1b1e25;color:var(--muted,#aaa)}
+@media(max-width:650px){.statistics-matrices{padding:8px}.favorite-stat-matrix{font-size:11px}}
