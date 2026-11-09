@@ -953,7 +953,124 @@ Create a concise audit report in the repo containing:
 _Fill in when done._
 
 
+---
+
+# PRIORITY 11 — Urgent efficiency remediations from MT-011 audit
+
+## MT-012 — Reduce event-queue waste and early-coalesce quote updates
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Why this is urgent
+Live telemetry showed:
+- backlog up to ~13,770 inputs,
+- estimated queue delay ~245 seconds,
+- discovery/admission paused because of processing lag,
+- filtered quote updates above 600,000.
+
+This is directly suppressing useful Market Maker/Favorites monitoring and trading.
+
+### Required work
+- Profile queue volume by event type and market.
+- Identify quote/book updates that can be safely coalesced or dropped before entering expensive processing.
+- Move filtering as close to ingestion as possible.
+- Preserve all material state transitions, fills, settlement, lifecycle, and audit events.
+- Measure before/after queue depth, queue seconds, processing p95, and useful opportunity throughput.
+
+### Acceptance criteria
+- Material reduction in no-op/filtered event processing.
+- Lower queue delay/backlog.
+- More monitoring/discovery headroom without reducing useful data quality.
+
+---
+
+## MT-013 — Fix persistent storage compaction retry loop
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Why this is urgent
+`pocket-research-staging` has been logging `storage_compaction_deferred` every few minutes for hours.
+
+### Required work
+- Safely surface the failure category without leaking sensitive data.
+- Determine whether the failure is lock contention, timeout, permissions, malformed state, or another cause.
+- Fix the root cause where practical.
+- Add exponential/bounded backoff so an unchanged failure does not retry every few minutes forever.
+- Ensure optional maintenance cannot compete aggressively with latency-sensitive paper trading.
+
+### Acceptance criteria
+- Compaction either succeeds or backs off sanely.
+- Repeated useless DB work stops.
+- No evidence/history is deleted.
+
+---
+
+## MT-014 — Audit and remove redundant Render worker/service overlap
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Why this is urgent
+Both `pocket-processing-staging` and `pocket-research-staging` invoke `services.research.runtime`. This may be intentional role separation or legacy duplication, but it must be proven.
+
+### Required work
+- Document each service's `WORKER_ROLE`, enabled features, DB pool, provider/API use, and unique responsibilities.
+- Confirm whether both services are still needed.
+- Identify duplicated polling, scheduling, compaction, analysis, or queue consumption.
+- If one service is obsolete/redundant, retire it safely only after verifying no unique work depends on it.
+- If both are needed, make the separation explicit and remove accidental overlap.
+
+### Acceptance criteria
+- No unexplained duplicate runtime responsibility remains.
+- Any retired service is proven unnecessary before shutdown.
+- Resource savings are measured.
+
+---
+
+## MT-015 — Rework Market Maker slot efficiency / monitoring yield
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U1 — URGENT  
+**Priority:** High
+
+### Why this is urgent
+Live telemetry showed:
+- maker entry limit 8,
+- maker slots free 0,
+- only ~6 maker entry markets,
+- very low actual trading activity.
+
+The system is using all maker capacity without producing enough fills/trades.
+
+### Required work
+- Measure fills, quote attempts, opportunities, and completed turns per slot-hour.
+- Identify markets/subscriptions consuming slots with near-zero yield.
+- Release/reallocate stale or low-yield slots faster.
+- Prefer markets with better passive-fill opportunity and sustainable spread/depth.
+- Coordinate with MT-004; do not duplicate conflicting Market Maker changes.
+
+### Acceptance criteria
+- Higher useful opportunities/fills per maker slot.
+- Idle/low-yield subscriptions no longer monopolize capacity.
+- Market Maker trading activity materially improves.
+
+
+
 # Coordination notes
+
+- MT-012 through MT-015 are U1 remediation tasks discovered by MT-011 and may be worked in parallel where files/infrastructure do not overlap.
+- MT-015 must coordinate with MT-004 because both affect Market Maker throughput.
+- MT-012 should inform MT-005 because queue pressure may be the real monitoring-capacity limit rather than a simple slot-count issue.
+- MT-013/MT-014 should verify the legacy research service role before any service is disabled.
 
 - MT-001 and MT-002 may be worked on by different chats at the same time.
 - MT-003 depends on MT-001 being deployed/verified.
