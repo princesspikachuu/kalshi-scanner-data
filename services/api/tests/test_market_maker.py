@@ -9,7 +9,7 @@ def iso(at):return datetime.fromtimestamp(at,timezone.utc).isoformat()
 from services.paper_demo.shadow.core import Engine,FeePolicy
 from services.paper_demo.shadow.scalper import ScalperEngine,VolatilityScalper
 from services.paper_demo.shadow.market_maker import MarketMaker,MM_FOLDERS,profiles,category,schedule_times,maker_once,initialize_market_maker
-from services.paper_demo.shadow.execution import committed,size,depth_quote,choose
+from services.paper_demo.shadow.execution import committed,size,depth_quote,choose,passive_entry_price
 from services.paper_demo.shadow.microstructure import MarketTape
 from services.paper_demo.shadow.accounting import snapshot
 
@@ -28,6 +28,24 @@ class MakerTests(unittest.TestCase):
         yes_price=o.price if o.side=='yes' else 1-o.price
         taker=o.side if o.action=='sell' else ('no' if o.side=='yes' else 'yes')
         e.trade(T,dict(trade_id=ident,taker_side=taker,yes_price_dollars=str(yes_price),count_fp=str(o.ahead+(quantity or o.remaining)),ts_ms=e.now*1000))
+    def test_competitive_variant_quotes_best_non_crossing_tick_while_standard_stays_control(self):
+        standard=dict(next(p for p in profiles() if p['folder_id']=='market_maker' and p['market_category']=='politics'),revision=1)
+        competitive=dict(next(p for p in profiles() if p['folder_id']=='maker_competitive' and p['market_category']=='politics'),revision=1)
+        e=ScalperEngine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0,seed=1)
+        bs=MarketMaker(e,standard);bc=MarketMaker(e,competitive)
+        # Full runtime defaults, including the variant flag, are applied by MarketMaker.
+        self.assertFalse(bs.config['competitive_inside']);self.assertTrue(bc.config['competitive_inside'])
+        market_meta={}
+        self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{},bs.config),D('.27'))
+        self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{},bc.config),D('.27'))
+        self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{'trade_count':1},bc.config),D('.28'))
+        self.assertEqual(passive_entry_price(market_meta,D('.26'),D('.29'),{'trade_count':1},bs.config),D('.27'))
+        self.assertLess(D('.28'),D('.29'))
+        competitive['config']=dict(competitive['config'],min_spread=.025)
+        bc.refresh_config()
+        self.assertEqual(bc.config['min_spread'],.025)
+        self.assertTrue(bc.config['competitive_inside'])
+
     def test_market_maker_warms_after_three_fresh_samples(self):
         e=ScalperEngine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0,seed=1);e.advance(200)
         p=dict(next(profiles()),revision=1)
