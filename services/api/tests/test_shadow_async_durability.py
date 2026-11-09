@@ -26,7 +26,10 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(profile['commits'],1)
         self.assertEqual(profile['audit_and_extra_rows'],1)
         self.assertEqual(profile['command_rows'],0)
-        self.assertGreater(profile['checkpoint_bytes'],0)
+        # Tiny test checkpoints are intentionally inlined; production-sized
+        # checkpoints instead contribute their compressed transport byte size.
+        self.assertEqual(profile['checkpoint_bytes'],0)
+        self.assertEqual(profile['inline_checkpoint_commits'],1)
         self.assertGreater(profile['prepare_ms'],0)
         self.assertGreaterEqual(profile['total_write_ms'],0)
         self.assertGreaterEqual(profile['upsert_ms'],0)
