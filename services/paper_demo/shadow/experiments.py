@@ -564,11 +564,12 @@ class ExperimentSuite:
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
                     scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,
-                    statistics=b.statistics_snapshot() if isinstance(b,StatisticsFavoritesStrategy) else None,
+                    statistics=dict(b.statistics_snapshot(),matrix=[]) if isinstance(b,StatisticsFavoritesStrategy) else None,
                     entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder in ('favorites','favorites_statistics') else [])
                 if isinstance(b,VolatilityScalper):
                     retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
-            result[folder]=dict(accounting=money,bots=bots,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else {k:v for k,v in getattr(self,'maker_discovery',{}).items() if k in ('state','ranked','reads')} if folder in MM_FOLDERS else None,
+            stats_matrix=next((b.statistics_snapshot() for b in f.bots.values() if isinstance(b,StatisticsFavoritesStrategy)),None)
+            result[folder]=dict(accounting=money,bots=bots,statistics=stats_matrix,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else {k:v for k,v in getattr(self,'maker_discovery',{}).items() if k in ('state','ranked','reads')} if folder in MM_FOLDERS else None,
                 assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
                     execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
                     independent_paper_portfolio=True,real_orders_enabled=False))
