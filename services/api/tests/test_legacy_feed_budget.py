@@ -9,7 +9,7 @@ from services.paper_demo.shadow.host import HostedRun
 class LegacyFeedBudget(unittest.TestCase):
     def fixture(self):
         run=object.__new__(HostedRun);run.suspend_idle_feeds=True
-        run.engine=Engine(Mock());run.strategy=SimpleNamespace(bots={'bot':SimpleNamespace(enabled=False)})
+        run.engine=Engine(Mock());bot=SimpleNamespace(enabled=False);run.strategy=SimpleNamespace(bots={'bot':bot},owner=lambda ticker:bot)
         run.engine.add_market(dict(ticker='SHARED',close=2000),FeePolicy())
         return run
     def test_idle_book_bursts_skip_legacy_but_lifecycle_stays_enabled(self):
@@ -30,10 +30,20 @@ class LegacyFeedBudget(unittest.TestCase):
         self.assertTrue(run.legacy_input_needed('clock',{}))
         self.assertFalse(run.engine.books['SHARED'].valid);self.assertEqual(run.engine.sequences,{})
         self.assertFalse(run.legacy_feed_suspended)
+    def test_one_legacy_position_does_not_keep_other_paused_tickers_hot(self):
+        run=self.fixture();run.engine.add_market(dict(ticker='IDLE',close=2000),FeePolicy())
+        run.engine.wallet.lots=[Lot('l','SHARED','yes',D(1),D('.8'),D(0),1)]
+        self.assertTrue(run.legacy_ticker_needed('SHARED'))
+        self.assertFalse(run.legacy_ticker_needed('IDLE'))
+        payload=dict(type='orderbook_snapshot',sid=9,seq=1,msg=dict(market_ticker='IDLE'))
+        self.assertFalse(run.legacy_input_needed('kalshi',payload))
+        self.assertFalse(run.engine.books['IDLE'].valid)
+        self.assertIn('SHARED',run.subscription_books());self.assertNotIn('IDLE',run.subscription_books())
+
     def test_idle_legacy_copy_does_not_trigger_repeated_shared_snapshots(self):
         run=self.fixture();other=Engine(Mock());other.add_market(dict(ticker='SHARED',close=2000),FeePolicy())
         other.books['SHARED'].valid=True
-        run.experiments=SimpleNamespace(portfolios={'favorites':(other,Mock(),None)},idle_feed=lambda *args:False)
+        run.experiments=SimpleNamespace(portfolios={'favorites':(other,Mock(),None)},idle_feed=lambda *args:False,ticker_feed_needed=lambda *args:True)
         self.assertIs(run.subscription_books()['SHARED'],other.books['SHARED'])
 
 class LegacyDelivery(unittest.IsolatedAsyncioTestCase):
