@@ -163,11 +163,33 @@ async def maker_event_page(host,s,now,minimum):
     from .maker_discovery import event_page
     return await event_page(host,s,now,minimum,category,CATEGORIES)
 
+def maker_funnel_snapshot(s,now):
+    """Bounded, aggregate-only opportunity diagnostics; no extra exchange reads."""
+    reasons={}
+    by_category={}
+    verified=0
+    cached=0
+    for row in s.get('candidates',{}).values():
+        reason=str(row.get('reason') or 'unverified')
+        reasons[reason]=reasons.get(reason,0)+1
+        category=str(row.get('category') or 'unknown')
+        by_category[category]=by_category.get(category,0)+1
+        verified+=bool(row.get('inspected_at'))
+        cached+=bool(row.get('ready'))
+    # Stable ordering keeps machine-readable scan diffs easy to compare;
+    # cap cardinality even if future reason strings change.
+    return dict(total_candidates=sum(reasons.values()),verified_candidates=verified,
+        cached_admission_candidates=cached,
+        reason_counts=dict(sorted(reasons.items(),key=lambda item:(-item[1],item[0]))[:20]),
+        category_counts=dict(sorted(by_category.items(),key=lambda item:(-item[1],item[0]))[:8]),
+        shared_active_markets=s.get('shared_active_markets',0),
+        scan_at=now)
+
 def scan_report(s,now,listed=0,active=0):
     # Admission is acknowledged on the serialized engine path after enqueue.
     s['ranked']=ranked_rows(s)
     print(json.dumps(dict(event='market_maker_scan',at=now,listed_events=listed,
-        candidate_count=len(s.get('candidates',{})),state=s.get('state'),reads=s.get('reads',0),
+        candidate_count=len(s.get('candidates',{})),funnel=maker_funnel_snapshot(s,now),state=s.get('state'),reads=s.get('reads',0),
         discovery_source=s.get('discovery_source'),page_limit=s.get('event_page_limit',50),
         catalog_status=s.get('series_status'),catalog_series=len(s.get('series_pool',[])),
         split_event=bool(s.get('split_event')),ranked=s.get('ranked',[])[:8],shared_active=active,
