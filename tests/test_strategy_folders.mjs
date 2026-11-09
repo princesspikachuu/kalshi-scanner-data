@@ -335,7 +335,7 @@ test('category research pools series and both sides while keeping price and time
  const rows=favoriteCategoryRows(input,true);assert.equal(rows.length,3);
  const r=rows.find(r=>r.horizon==='5–10m'&&r.low===90);assert.equal(r.band,'90–94¢');assert.equal(r.contracts,10);assert.equal(r.winners,9);assert.equal(r.cost,9.1);assert.equal(r.net,-.1);assert.equal(rows.find(r=>r.low===95).band,'95–95¢');
  const html=favoriteCategoryResearchMarkup({id:'crypto-hourly',label:'Crypto · 1 hour',bots:input.map((r,i)=>({id:String(i),experiment:{entry_timing:[r]}}))});
- assert.ok(html.includes('91.7%'));assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
+ assert.ok(html.includes('90.0%'));assert.ok(html.includes('100.0%'));assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
  assert.equal(favoriteCategoryResearchMarkup({id:'sports',bots:[]}), '');
 });
 test('Favorites research sits within each non-sports category and keeps pending outcomes honest',()=>{
