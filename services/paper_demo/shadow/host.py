@@ -405,7 +405,11 @@ class HostedRun(ForwardRun):
                     enabled=row['progress'].get('desired')=='running' and mode=='demo'
                     if not enabled and bot.enabled:
                         for ticker in self.engine.markets:
-                            if ticker.startswith(p['series']+'-'):self.engine.cancel_buys(ticker)
+                            if not ticker.startswith(p['series']+'-'):continue
+                            self.engine.cancel_buys(ticker)
+                            exposed=(any(l.ticker==ticker for l in self.engine.wallet.lots) or
+                                any(o.ticker==ticker and o.status in ('pending','resting') for o in self.engine.orders.values()))
+                            if not exposed:self.engine.books[ticker].valid=False
                     bot.enabled=enabled
                     if self.revisions.get(p['id']) != p['revision']:
                         bot.contracts=D(p['contracts'])
