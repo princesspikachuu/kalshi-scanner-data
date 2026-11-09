@@ -95,6 +95,9 @@ class MarketMaker(VolatilityScalper):
     def __init__(self,engine,profile):
         self.profile=profile
         super().__init__(engine,dict(profile,config=self.effective_config()))
+        # Keep the shared mutable profile object: dashboard controls update it
+        # in place before refresh_config().
+        self.profile=profile
         self.config=self.effective_config()
     def refresh_config(self):
         self.config=self.effective_config()
