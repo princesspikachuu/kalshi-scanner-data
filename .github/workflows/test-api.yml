@@ -56,6 +56,8 @@ jobs:
           node scripts/check_staging_gateway.mjs
       - name: Install pinned development dependencies
         run: pip install -r services/api/requirements-dev.txt
+      - name: Focused statistics-backed Favorites regression tests
+        run: python -m unittest services.api.tests.test_favorite_statistics -v
       - name: Test owner policy, API and actual PostgreSQL
         run: |
           python -m unittest discover -s tests -p 'test_auth_policy.py' -v
