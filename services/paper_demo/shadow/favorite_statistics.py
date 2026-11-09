@@ -180,6 +180,7 @@ class StatisticsFavoritesMixin:
             self._statistics_groups=aggregate(self._source_cells());self._statistics_groups_at=now
         return self._statistics_groups
     def statistics_snapshot(self):
+        groups=self.statistics_groups()
         return dict(min_samples=int(self.profile.get('statistics_min_samples',20)),
                     refresh_seconds=float(self.profile.get('statistics_refresh_seconds',30)),
                     evidence_refreshed_at=getattr(self,'_statistics_groups_at',None),
