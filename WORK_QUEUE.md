@@ -18,6 +18,8 @@ When the user says **"continue"** and the current chat has finished its assigned
    - verification performed and result.
    - any follow-up task discovered.
 7. If the task is done and the user says "continue" again, return here and claim another `READY` task.
+8. Before claiming, re-read the latest `WORK_QUEUE.md` from `main` so a stale copy cannot overwrite another chat's claim.
+9. When a task changes application code, record the implementation branch/PR/commit in Completion notes so another chat can audit or continue it.
 
 ### Status values
 - `READY` — available for any chat to claim.
@@ -256,8 +258,158 @@ _Fill in when done._
 
 ---
 
+# PRIORITY 4 — Make Market Maker actually trade
+
+## MT-004 — Diagnose and increase Market Maker opportunity-to-fill throughput
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Priority:** High
+
+### Current problem
+The Market Maker is active but has been producing almost no trading activity. The goal is not merely to make it scan more markets; it must generate materially more valid paper quotes, fills, inventory turns, and completed trades while keeping the strategy economically rational.
+
+### First: instrument the full funnel
+Before loosening behavior, measure where candidates disappear. Add or verify counters/reason codes for:
+- markets discovered,
+- markets monitored,
+- markets rejected before quoting,
+- quote opportunities generated,
+- quote opportunities rejected and exact reason,
+- bid/ask quotes submitted,
+- quotes replaced/repriced,
+- quotes cancelled/expired,
+- maker fills,
+- partial fills if supported,
+- positions/inventory opened,
+- inventory exits/offsetting fills,
+- completed round trips,
+- realized P/L,
+- average quote lifetime,
+- average time-to-fill,
+- spread at quote,
+- executable depth at quote,
+- API/worker capacity suppressions.
+
+Expose enough of this in logs or dashboard diagnostics to identify the dominant bottleneck.
+
+### Increase participation intelligently
+After identifying the bottleneck, implement the highest-impact safe changes. Evaluate at least:
+1. **Market breadth** — monitor more than a tiny fixed set when capacity exists. Do not assume four markets is a useful ceiling.
+2. **Market selection** — prefer slower, liquid markets suitable for passive quoting rather than short 15-minute volatility markets.
+3. **Adaptive quoting** — quote based on actual spread/depth and move quotes when necessary instead of leaving stale fixed prices.
+4. **Quote refresh/repricing** — allow a maker quote to improve or re-anchor as the book moves, with anti-churn controls.
+5. **Two-sided participation** where strategy/risk rules permit, rather than waiting on only one narrow entry condition.
+6. **Inventory-aware sizing** — permit repeated small inventory turns without allowing unbounded directional exposure.
+7. **Quote lifetime** — avoid cancelling so quickly that fills are impossible, but also avoid leaving economically obsolete quotes.
+8. **Opportunity threshold audit** — find any filters that are so strict they eliminate nearly every candidate.
+9. **Capital allocation** — verify unused paper capital is not needlessly preventing additional independent quotes.
+
+Do not simply cross the spread to manufacture activity. Any taker behavior must remain explicitly justified by expected value after fees/slippage and should not replace the maker strategy's core purpose.
+
+### Guardrails
+- Paper trading only unless explicitly changed by the user.
+- Preserve all existing Market Maker history.
+- Do not unpause volatility strategies.
+- Do not steal so much worker/API capacity that Favorites data collection materially degrades.
+- Keep per-market/event exposure caps and total strategy risk caps.
+- Avoid duplicate identical orders every cycle.
+
+### Acceptance criteria
+- The dominant reason for low activity is identified with measured funnel counts.
+- The implementation produces a material increase in quote attempts and/or fills over a comparable active-market window.
+- At least one deterministic or paper-run verification demonstrates the bot can manage multiple simultaneous quote opportunities safely.
+- P/L, inventory, open orders, and completed-trade accounting remain correct.
+- Any remaining bottleneck becomes a new task in this queue rather than being hidden.
+
+### Completion notes
+_Fill in when done._
+
+---
+
+# PRIORITY 5 — Expand monitoring capacity for active strategies
+
+## MT-005 — Remove artificial monitoring bottlenecks and allocate capacity dynamically
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Priority:** Medium-High; especially relevant if MT-003 or MT-004 shows monitoring starvation
+
+### Goal
+The app has previously had surprisingly few effective monitoring slots. Active strategies should use available worker/API capacity efficiently rather than being constrained by arbitrary low fixed limits.
+
+### Required work
+1. Map the current monitoring-capacity controls:
+   - global slot limits,
+   - per-strategy limits,
+   - per-category limits,
+   - API concurrency/rate-limit controls,
+   - database/worker concurrency controls,
+   - any stale legacy caps.
+2. Distinguish a real external/resource limit from a conservative application default.
+3. Add diagnostics showing:
+   - eligible candidates waiting for a slot,
+   - slots currently used by strategy,
+   - slots unavailable because of API/CPU/DB pressure,
+   - cycles where candidates were skipped solely for lack of monitoring capacity.
+4. Allocate capacity dynamically among the **currently active** strategies:
+   - Favorites data collection,
+   - Statistics-Backed Favorites when enabled,
+   - Market Maker.
+5. Paused volatility strategies must not consume active monitoring capacity beyond minimal bookkeeping needed to display their existing state.
+6. Allow unused capacity from one active strategy to be borrowed by another rather than sitting idle.
+7. Preserve API-rate safety and database stability; increase useful concurrency only as far as measured headroom supports.
+
+### Acceptance criteria
+- We can state the actual effective monitoring capacity and its limiting resource.
+- A hardcoded low ceiling is removed or justified by measured constraints.
+- Active strategies can consume otherwise-idle capacity.
+- Paused strategies do not crowd out active strategies.
+- Dashboard/logging can show when a strategy is opportunity-limited versus capacity-limited.
+- Load tests or controlled paper runs show no material regression in worker stability.
+
+### Completion notes
+_Fill in when done._
+
+---
+
+# PRIORITY 6 — Keep paused items out of the way without losing them
+
+## MT-006 — Sort paused folders/strategies/markets to the bottom everywhere
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Priority:** Medium
+
+### Goal
+Paused items should remain visible and retain all history/state, but they should not clutter the top of active operating views.
+
+### Required behavior
+- Active folders/strategies appear before paused folders/strategies.
+- Within a folder/subfolder, active markets appear before paused markets.
+- Preserve the existing ordering logic inside the active group and inside the paused group unless there is a strong reason to change it.
+- Pausing/unpausing should immediately move the item to the appropriate group without a full data reset.
+- Collapsed/expanded UI state should not accidentally unpause anything.
+- Summary totals must continue to include/exclude paused state exactly as the existing product semantics intend; this task is primarily ordering/presentation, not accounting.
+- Existing open/settling positions from a paused strategy remain visible and continue normal settlement bookkeeping.
+
+### Acceptance criteria
+- A paused market moves below all active markets in its relevant list.
+- A paused folder/strategy moves below active folders/strategies.
+- Unpausing reverses the ordering.
+- No historical trades, P/L, positions, or pause state are lost.
+- Mobile and desktop views are verified.
+
+### Completion notes
+_Fill in when done._
+
+---
+
 # Coordination notes
 
 - MT-001 and MT-002 may be worked on by different chats at the same time.
 - MT-003 depends on MT-001 being deployed/verified.
+- MT-004 can run concurrently with Favorites work if it does not modify the same shared monitoring/risk infrastructure.
+- MT-005 should use evidence from MT-003/MT-004 when available. If another task is already changing shared scheduler/monitoring infrastructure, do not create a parallel conflicting implementation; coordinate through this file.
+- MT-006 is UI-focused and is a good independent task for a separate chat.
 - If MT-002 needs data-schema fields that MT-001 is already changing, coordinate through this file rather than independently creating conflicting schemas.
