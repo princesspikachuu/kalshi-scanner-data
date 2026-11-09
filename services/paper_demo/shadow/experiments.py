@@ -316,14 +316,21 @@ class ExperimentSuite:
     def ticker_feed_needed(self,e,f,ticker):
         """Paused entries release hot book/trade work unless this ticker still has risk to manage."""
         if ticker not in e.markets or e.markets[ticker].get('paid'):return False
-        if self.ticker_exposed(e,ticker):return True
-        if e.markets[ticker].get('entry_parked'):return False
+        parked=e.markets[ticker].get('entry_parked')
         owner=f.owner(ticker)
-        if owner is None:
-            # Group strategies such as complete-set do not have a ticker-prefix
-            # owner. A running group still needs its admitted markets.
-            return any(b.enabled for b in f.bots.values())
-        return bool(owner.enabled and not self.owner_market_paused(owner,ticker))
+        # Running owners are the overwhelmingly common hot-feed case. Avoid an
+        # O(open lots + open orders) exposure scan on every depth delta when the
+        # strategy already needs this ticker for new entries.
+        if not parked:
+            if owner is None:
+                # Group strategies such as complete-set do not have a ticker-prefix
+                # owner. A running group still needs its admitted markets.
+                if any(b.enabled for b in f.bots.values()):return True
+            elif owner.enabled and not self.owner_market_paused(owner,ticker):
+                return True
+        # Paused/parked strategies still retain exact feed coverage for inventory
+        # and outstanding orders until that risk is gone.
+        return self.ticker_exposed(e,ticker)
 
     def skip_paused_ticker_input(self,e,f,source,payload,now):
         if source!='kalshi' or payload.get('type') not in ('orderbook_snapshot','orderbook_delta','trade'):return False
