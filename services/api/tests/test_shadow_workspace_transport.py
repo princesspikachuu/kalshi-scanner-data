@@ -36,6 +36,19 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertEqual([bot['experiment'] for bot in result['bots']],
             [bot['experiment'] for bot in bots])
 
+    def test_oversized_bot_card_falls_back_to_bounded_experiment_summary(self):
+        huge='x'*20000
+        payload=dict(status={},folders=[],bots=[dict(id='fav',name='Favorite',experiment=dict(
+            attempts=12,completed=7,decision=dict(reason='evidence'),message='running',
+            new_future_research_blob=huge))])
+        result=json.loads(workspace_response(payload).body)
+        bot=result['bots'][0]
+        self.assertEqual(bot['experiment']['attempts'],12)
+        self.assertEqual(bot['experiment']['completed'],7)
+        self.assertEqual(bot['experiment']['decision'],dict(reason='evidence'))
+        self.assertNotIn('new_future_research_blob',bot['experiment'])
+        self.assertLess(len(json.dumps(bot)),12000)
+
     def test_nonfinite_values_fail_before_response_is_sent(self):
         with self.assertRaises(ValueError):workspace_response(dict(status={},folders=[],bots=[],invalid=float('nan')))
     def test_repeated_research_above_transport_limit_is_sent_once(self):
