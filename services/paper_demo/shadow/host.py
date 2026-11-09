@@ -25,6 +25,7 @@ from .scalper import SCALPER_FOLDERS
 from .market_maker import MM_FOLDERS,quote_diagnostics
 from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
+from .favorite_statistics_install import initialize_statistics_favorites
 
 LOG=logging.getLogger('shadow-host')
 
@@ -60,6 +61,7 @@ class HostedRun(ForwardRun):
         initialize_scope(store,guard)
         initialize_restored_favorites(store,guard)
         initialize_comparison(store,guard)
+        initialize_statistics_favorites(store,guard)
         initialize_scalper(store,guard)
         initialize_scalper_upgrade(store,guard)
         apply_requested_volatility_pause(store,guard)

@@ -291,7 +291,7 @@ def install_shadow(app,auth,mutate,pool):
         model_config=ConfigDict(extra='forbid',strict=True)
         action:str=Field(pattern='^(pause|resume)$')
         category:str|None=Field(default=None,pattern='^(politics|economics|sports_futures|entertainment)$')
-        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive|volatility_all)$')
+        folder_id:str|None=Field(default=None,pattern='^(convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|favorites_statistics|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive|volatility_all)$')
     @app.post('/demo/shadow/bulk')
     def bulk(body:Bulk,request:Request):
         mutate(request);query(request)
@@ -312,7 +312,7 @@ def install_shadow(app,auth,mutate,pool):
     @app.post('/demo/shadow/folders/{folder}/reset')
     def reset_folder(folder:str,body:Reset,request:Request):
         mutate(request);query(request)
-        if folder not in ('convexity','complete_set','favorites',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or not store.get('shadow/folder/'+folder):
+        if folder not in ('convexity','complete_set','favorites','favorites_statistics',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or not store.get('shadow/folder/'+folder):
             raise HTTPException(404,'Bot folder not found')
         with pool.connection() as c:
             key='demo/shadow/command/'+body.request_id

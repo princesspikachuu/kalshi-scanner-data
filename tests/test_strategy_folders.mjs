@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -161,7 +161,7 @@ test('each bot including experiments has six P/L windows visible while collapsed
 test('favorite timing research combines contract sides using percentage tiers',()=>{
  const row={series:'KXNBAGAME',market_type:'sports',side:'yes',price:'.90',horizon:'10–15m',clock:'estimated_game_end',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9',net:'1',holding_seconds:'6000'};
  const html=favoriteTimingMarkup([row,{...row,side:'no',contracts:'5',closed:'5',resolved:'5',winners:'3',cost:'4.5',net:'-.5',holding_seconds:'3000'}]);
- for(const text of ['90–99%','10–15m','estimated game end','80.0%','$0.50','15'])assert.ok(html.includes(text),text);
+ for(const text of ['90–94¢','10–15m','estimated game end','80.0%','$0.50','15'])assert.ok(html.includes(text),text);
  assert.equal((html.match(/<tbody><tr>/g)||[]).length,1);
  assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));assert.ok(!html.includes('NaN'));
 });
@@ -332,17 +332,17 @@ test('failed initial requests replace the checking status and remain retryable',
 test('category research pools series and both sides while keeping price and time tiers distinct',()=>{
  const base={series:'KXBTCD',market_type:'hourly_price',side:'yes',clock:'market_close',horizon:'5–10m',price:'.90',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9.1',net:'-.1'};
  const input=[base,{...base,series:'KXETHD',side:'no',price:'.95',contracts:'2',closed:'2',resolved:'2',winners:'2',cost:'1.9',net:'.1'},{...base,horizon:'1–2h'}];
- const rows=favoriteCategoryRows(input,true);assert.equal(rows.length,2);
- const r=rows.find(r=>r.horizon==='5–10m');assert.equal(r.band,'90–99%');assert.equal(r.contracts,12);assert.equal(r.winners,11);assert.equal(r.cost,11);assert.equal(r.net,0);
+ const rows=favoriteCategoryRows(input,true);assert.equal(rows.length,3);
+ const r=rows.find(r=>r.horizon==='5–10m'&&r.low===90);assert.equal(r.band,'90–94¢');assert.equal(r.contracts,10);assert.equal(r.winners,9);assert.equal(r.cost,9.1);assert.equal(r.net,-.1);assert.equal(rows.find(r=>r.low===95).band,'95–95¢');
  const html=favoriteCategoryResearchMarkup({id:'crypto-hourly',label:'Crypto · 1 hour',bots:input.map((r,i)=>({id:String(i),experiment:{entry_timing:[r]}}))});
- assert.ok(html.includes('91.7%'));assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
+ assert.ok(html.includes('90.0%'));assert.ok(html.includes('100.0%'));assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
  assert.equal(favoriteCategoryResearchMarkup({id:'sports',bots:[]}), '');
 });
 test('Favorites research sits within each non-sports category and keeps pending outcomes honest',()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.name='<img onerror=x>';
  bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'10–15m',price:'.90',contracts:'4',closed:'0',resolved:'0',winners:'0',cost:'3.6',net:'0'}];
  const {nodes}=setup(d),html=nodes.get('groups').innerHTML;
- for(const text of ['Combined data · time × percentage tier','90–99%','10–15m left','no closed contracts','Bids are still gathering data','independent of the P/L time selector'])assert.ok(html.includes(text),text);
+ for(const text of ['Combined data · time × percentage tier','90–94¢','10–15m left','no closed contracts','Bids are still gathering data','independent of the P/L time selector'])assert.ok(html.includes(text),text);
  assert.ok(!html.includes('<img onerror'));assert.ok(!html.includes('NaN'));
  const group=html.indexOf('data-market-type="favorites::crypto-15m"'),research=html.indexOf('Combined data',group),card=html.indexOf('data-market="favorites"',group);
  assert.ok(group<research&&research<card);
@@ -404,4 +404,14 @@ test('maker discovery displays ranked candidates and actual admission rejection 
  const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
  for(const value of ['Market Maker discovery','1 ranked candidates','5 shared-budget data reads','insufficient executed trade frequency','&lt;candidate','0.1235'])assert.ok(html.includes(value),value);
  assert.ok(!html.includes('<candidate>'));
+});
+
+test('statistics-backed Favorites renders a category-separated 5-cent by time matrix with sparse and fallback labels',()=>{
+ const stats={min_samples:20,matrix:[{market_type:'weather_daily',price_buckets:['70-74','75-79','95-95'],time_buckets:['5–10m','10–15m'],cells:[
+  {price_bucket:'70-74',horizon:'5–10m',samples:32,win_rate:.9,realized_roi:.08,realized_net:'4',lower:.79,level:'market_type_price_time',fallback_level:'market_type_price_time',fallback_samples:32,eligibility:'evidence_candidate'},
+  {price_bucket:'75-79',horizon:'10–15m',samples:3,win_rate:1,realized_roi:.3,realized_net:'1',lower:.4,level:'market_type_price_time',fallback_level:'market_type_price',fallback_samples:44,eligibility:'insufficient_samples'}
+ ]}]};
+ const html=favoriteStatisticsMatrixMarkup(stats);
+ for(const phrase of ['weather_daily','70–74¢','75–79¢','95–95¢','5–10m','10–15m','n=32','n=3','Evidence candidate','Under-sampled','Fallback available','44'])assert.ok(html.includes(phrase),phrase);
+ assert.ok(!html.includes('n=0'));assert.ok(html.includes('No settled events'));
 });
