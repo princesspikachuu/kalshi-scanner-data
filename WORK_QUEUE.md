@@ -21,6 +21,16 @@ When the user says **"continue"** and the current chat has finished its assigned
 8. Before claiming, re-read the latest `WORK_QUEUE.md` from `main` so a stale copy cannot overwrite another chat's claim.
 9. When a task changes application code, record the implementation branch/PR/commit in Completion notes so another chat can audit or continue it.
 
+## Urgency levels
+- `U0 — BLOCKER` — user-visible outage, broken core workflow, data integrity risk, or issue preventing normal use. Claim before any lower-urgency READY work unless already blocked by another active fix.
+- `U1 — URGENT` — severe degradation or time-sensitive work that should be next after blockers.
+- `U2 — HIGH` — important product/strategy work with meaningful impact, but not currently blocking use.
+- `U3 — NORMAL` — standard planned improvement.
+- `U4 — BACKLOG` — useful but deferrable work.
+
+### Queue ordering rule
+When choosing new work, sort first by urgency (U0 → U4), then by dependency/readiness, then by the existing Priority text. A lower-urgency task already `IN PROGRESS` may finish unless a U0 issue requires the same files/infrastructure or the user explicitly redirects it.
+
 ### Status values
 - `READY` — available for any chat to claim.
 - `IN PROGRESS` — actively owned; other chats must skip it.
@@ -258,6 +268,7 @@ Still expose, where practical:
 **Status:** READY  
 **Worker:** —  
 **Claimed:** —  
+**Urgency:** U2 — HIGH  
 **Priority:** High, but execute after MT-001 is deployed
 
 ### Goal
@@ -307,6 +318,7 @@ _Fill in when done._
 **Status:** READY  
 **Worker:** —  
 **Claimed:** —  
+**Urgency:** U2 — HIGH  
 **Priority:** High
 
 ### Current problem
@@ -376,6 +388,7 @@ _Fill in when done._
 **Status:** READY  
 **Worker:** —  
 **Claimed:** —  
+**Urgency:** U2 — HIGH  
 **Priority:** Medium-High; especially relevant if MT-003 or MT-004 shows monitoring starvation
 
 ### Goal
@@ -422,6 +435,7 @@ _Fill in when done._
 **Status:** READY  
 **Worker:** —  
 **Claimed:** —  
+**Urgency:** U3 — NORMAL  
 **Priority:** Medium
 
 ### Goal
@@ -454,6 +468,7 @@ _Fill in when done._
 **Status:** READY  
 **Worker:** —  
 **Claimed:** —  
+**Urgency:** U2 — HIGH  
 **Priority:** Medium-High
 
 ### Goal
@@ -536,9 +551,10 @@ _Fill in when done._
 # URGENT — Dashboard snapshot size failure
 
 ## MT-008 — Fix "Dashboard snapshot exceeds its supported size"
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-008 implementation  
+**Claimed:** 2026-11-09 12:49 UTC  
+**Urgency:** U0 — BLOCKER  
 **Priority:** Urgent / user-visible blocker
 
 ### Current failure
