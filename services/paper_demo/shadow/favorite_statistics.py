@@ -235,4 +235,5 @@ class StatisticsFavoritesMixin:
                     evidence_refreshed_at=getattr(self,'_statistics_groups_at',None),
                     best_segments=leaderboard_groups(groups,1,10),
                     matrix=statistics_matrix(groups,self.profile),
+                    decision_counts=dict(getattr(self,'decision_counts',{})),
                     latest_decisions=list(self.decisions.values())[-20:])
