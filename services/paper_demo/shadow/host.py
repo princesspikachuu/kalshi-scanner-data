@@ -43,7 +43,7 @@ def processing_batch_budget(backlog):
     # but yield between short simulation slices so socket readers and pongs keep
     # receiving data. The state mutex remains held until the durable commit.
     if backlog>2000:return 4096,.640
-    if backlog>128:return 1536,.240
+    if backlog>128:return 512,.240
     return 256,.040
 
 class HostedRun(ForwardRun):
