@@ -120,6 +120,8 @@ class HostedRun(ForwardRun):
             for e,f,_ in self.experiments.portfolios.values():
                 if getattr(self,'suspend_idle_feeds',False) is True and self.experiments.idle_feed(e,f):continue
                 for ticker,book in e.books.items():
+                    if (getattr(self,'suspend_idle_feeds',False) is True and
+                            not self.experiments.ticker_feed_needed(e,f,ticker)):continue
                     # A healthy copy must not hide another portfolio's need for
                     # a replacement snapshot on the shared subscription.
                     if ticker not in books or not book.valid:books[ticker]=book
