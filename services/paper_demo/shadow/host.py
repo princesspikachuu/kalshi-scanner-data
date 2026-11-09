@@ -35,9 +35,11 @@ class NoCapture:
 
 def processing_batch_budget(backlog):
     """Bound synchronous simulation while amortizing durable checkpoints under backlog."""
-    if backlog>10000:return 2048,.260
-    if backlog>2000:return 1536,.200
-    if backlog>128:return 768,.100
+    # Keep socket/control fairness even under a saturated feed. Larger atomic
+    # batches improved checkpoint amortization but starved the event loop; the
+    # pause-aware subscription budget removes that waste at the source instead.
+    if backlog>2000:return 1024,.160
+    if backlog>128:return 512,.080
     return 128,.020
 
 class HostedRun(ForwardRun):
@@ -100,6 +102,13 @@ class HostedRun(ForwardRun):
         return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
             or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
 
+    def legacy_ticker_needed(self,ticker):
+        if ticker not in self.engine.markets or self.engine.markets[ticker].get('paid'):return False
+        if any(l.ticker==ticker for l in self.engine.wallet.lots):return True
+        if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.engine.orders.values()):return True
+        owner=self.strategy.owner(ticker)
+        return bool(owner and owner.enabled)
+
     def legacy_input_needed(self,source,payload):
         if getattr(self,'suspend_idle_feeds',False) is not True:return True
         needed=self.spot_required()
@@ -112,14 +121,31 @@ class HostedRun(ForwardRun):
             self.legacy_feed_suspended=True
             self.legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0)+1
             return False
+        if source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade'):
+            ticker=payload.get('msg',{}).get('market_ticker')
+            if ticker in self.engine.markets and not self.legacy_ticker_needed(ticker):
+                sid,seq=payload.get('sid'),payload.get('seq')
+                if sid is None or seq is None:return True
+                previous=self.engine.sequences.get(sid)
+                if payload.get('type')!='orderbook_snapshot' and previous is not None:
+                    if seq<=previous:return False
+                    if seq!=previous+1:return True
+                self.engine.sequences[sid]=seq
+                self.engine.books[ticker].valid=False
+                if payload.get('type') in ('orderbook_snapshot','orderbook_delta'):self.engine.book_feed_at[sid]=time.time()
+                self.legacy_paused_inputs_skipped=getattr(self,'legacy_paused_inputs_skipped',0)+1
+                return False
         return True
 
     def subscription_books(self):
-        books=dict(self.engine.books) if getattr(self,'suspend_idle_feeds',False) is not True or self.spot_required() else {}
+        books=(dict(self.engine.books) if getattr(self,'suspend_idle_feeds',False) is not True else
+            {t:b for t,b in self.engine.books.items() if self.legacy_ticker_needed(t)})
         if hasattr(self,'experiments'):
             for e,f,_ in self.experiments.portfolios.values():
                 if getattr(self,'suspend_idle_feeds',False) is True and self.experiments.idle_feed(e,f):continue
                 for ticker,book in e.books.items():
+                    if (getattr(self,'suspend_idle_feeds',False) is True and
+                            not self.experiments.ticker_feed_needed(e,f,ticker)):continue
                     # A healthy copy must not hide another portfolio's need for
                     # a replacement snapshot on the shared subscription.
                     if ticker not in books or not book.valid:books[ticker]=book
@@ -381,7 +407,11 @@ class HostedRun(ForwardRun):
                     enabled=row['progress'].get('desired')=='running' and mode=='demo'
                     if not enabled and bot.enabled:
                         for ticker in self.engine.markets:
-                            if ticker.startswith(p['series']+'-'):self.engine.cancel_buys(ticker)
+                            if not ticker.startswith(p['series']+'-'):continue
+                            self.engine.cancel_buys(ticker)
+                            exposed=(any(l.ticker==ticker for l in self.engine.wallet.lots) or
+                                any(o.ticker==ticker and o.status in ('pending','resting') for o in self.engine.orders.values()))
+                            if not exposed:self.engine.books[ticker].valid=False
                     bot.enabled=enabled
                     if self.revisions.get(p['id']) != p['revision']:
                         bot.contracts=D(p['contracts'])

@@ -125,12 +125,13 @@ class MarketMaker(VolatilityScalper):
     def research_snapshot(self):
         result=super().research_snapshot()
         result['market_maker']=True;result['incentive_profit']='0';result['reward_estimates_enabled']=False
-        result['markets']=[dict(ticker=t,title=m.get('title',t),category=m['market_category'],close=m['close'],
+        markets=[dict(ticker=t,title=m.get('title',t),category=m['market_category'],close=m['close'],
             paused=t in self.profile.get('paused_markets',[]),schedule_source=m.get('schedule_source','unavailable'),
             incentives=m.get('incentives',[]),score=m.get('maker_score'),trades_24h=m.get('trades_24h'),
             entry_blocked=m.get('maker_entry_blocked',False),position=str(sum((l.quantity for l in self.e.wallet.lots if l.ticker==t),D(0))),
             orders=sum(o.ticker==t and o.status in ('pending','resting') for o in self.e.orders.values()))
-            for t,m in self.e.markets.items() if self.matches(t,m) and not m.get('paid')][:20]
+            for t,m in self.e.markets.items() if self.matches(t,m) and not m.get('paid')]
+        result['markets']=sorted(markets,key=lambda row:(row['paused'],str(row['title']),row['ticker']))[:20]
         return result
 
 def schedule_times(milestones,event):

@@ -140,6 +140,9 @@ export function marketTypeGroups(bots){
   if(!groups.has(id))groups.set(id,{id,label,rank,bots:[]});
   groups.get(id).bots.push(bot);
  }
+ for(const group of groups.values())group.bots.sort((a,b)=>
+  Number(a.desired==='paused')-Number(b.desired==='paused')||
+  String(a.name||a.series).localeCompare(String(b.name||b.series)));
  return [...groups.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label));
 }
 export function summaryExposure(a){

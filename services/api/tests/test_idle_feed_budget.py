@@ -2,6 +2,7 @@
 import unittest
 from decimal import Decimal as D
 from unittest.mock import Mock
+from types import SimpleNamespace
 from services.api.tests.test_strategy_scope import ScopeTests
 from services.api.tests.test_strategy_folders import market
 from services.paper_demo.shadow.core import Lot
@@ -19,6 +20,35 @@ class IdleFeedBudget(unittest.TestCase):
         for e,f,ps in suite.portfolios.values():e.handle.assert_not_called()
         suite.handle('kalshi',dict(type='market_lifecycle_v2',msg={}),1001)
         for e,f,ps in suite.portfolios.values():e.handle.assert_called_once()
+    def test_ticker_pause_contract_applies_to_every_strategy_owner(self):
+        suite=self.fixture();ticker='KXBTC15M-test'
+        for folder,(e,f,ps) in suite.portfolios.items():
+            e.now=200;market(e,ticker)
+            self.assertFalse(suite.ticker_feed_needed(e,f,ticker),folder)
+            payload=dict(type='orderbook_snapshot',sid=11,seq=1,msg=dict(market_ticker=ticker))
+            self.assertTrue(suite.skip_paused_ticker_input(e,f,'kalshi',payload,201),folder)
+            self.assertFalse(e.books[ticker].valid,folder)
+
+    def test_paused_unexposed_ticker_is_skipped_beside_exposed_ticker(self):
+        suite=self.fixture();e,f,ps=suite.portfolios['favorites'];e.now=200
+        held='KXBTC15M-held';idle='KXBTC15M-idle';market(e,held);market(e,idle)
+        e.wallet.lots=[Lot('lot',held,'yes',D(1),D('.8'),D(0),1)]
+        self.assertTrue(suite.ticker_feed_needed(e,f,held))
+        self.assertFalse(suite.ticker_feed_needed(e,f,idle))
+        self.assertFalse(suite.skip_paused_ticker_input(e,f,'kalshi',
+            dict(type='orderbook_snapshot',sid=12,seq=1,msg=dict(market_ticker=held)),201))
+        self.assertTrue(suite.skip_paused_ticker_input(e,f,'kalshi',
+            dict(type='orderbook_snapshot',sid=12,seq=2,msg=dict(market_ticker=idle)),202))
+
+    def test_per_market_pause_releases_feed_while_category_bot_remains_running(self):
+        suite=self.fixture();e,f,ps=suite.portfolios['favorites'];e.now=200
+        ticker='KXBTC15M-paused';market(e,ticker)
+        owner=SimpleNamespace(enabled=True,profile=dict(paused_markets=[ticker]))
+        fleet=SimpleNamespace(owner=lambda _:owner,bots={'owner':owner})
+        self.assertFalse(suite.ticker_feed_needed(e,fleet,ticker))
+        e.wallet.lots=[Lot('lot',ticker,'yes',D(1),D('.8'),D(0),1)]
+        self.assertTrue(suite.ticker_feed_needed(e,fleet,ticker))
+
     def test_paused_portfolio_with_exposure_keeps_feed_and_risk_processing(self):
         suite=self.fixture();e,f,ps=suite.portfolios['favorites']
         e.wallet.lots=[Lot('lot','KXBTC15M-test','yes',D(1),D('.8'),D(0),1)]

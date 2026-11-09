@@ -11,10 +11,11 @@ class BurstBatchBudgetTests(unittest.TestCase):
     def test_batch_budget_expands_only_under_backlog(self):
         self.assertEqual(processing_batch_budget(0),(128,.020))
         self.assertEqual(processing_batch_budget(128),(128,.020))
-        self.assertEqual(processing_batch_budget(129),(768,.100))
-        self.assertEqual(processing_batch_budget(2001),(1536,.200))
-        self.assertEqual(processing_batch_budget(10001),(2048,.260))
-        self.assertLess(processing_batch_budget(20000)[1],.300)
+        self.assertEqual(processing_batch_budget(129),(512,.080))
+        self.assertEqual(processing_batch_budget(2001),(1024,.160))
+        self.assertEqual(processing_batch_budget(10001),(1024,.160))
+        self.assertLessEqual(processing_batch_budget(20000)[0],1024)
+        self.assertLess(processing_batch_budget(20000)[1],.200)
 
 class ProcessingBudgetTests(unittest.TestCase):
     def fixture(self):
