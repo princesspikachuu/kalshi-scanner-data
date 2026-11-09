@@ -2,6 +2,24 @@ import {readFileSync} from 'node:fs';
 import test from 'node:test';import assert from 'node:assert/strict';import {proxyAuth} from '../apps/gateway/index.mjs';import {selectedSquares} from '../apps/web/bot-builder.mjs';
 import gateway from '../apps/gateway/index.mjs';
 import {readFile} from 'node:fs/promises';
+test('Cloudflare static assets bypass Worker CPU while API and redirect still route through it',()=>{
+ const config=JSON.parse(readFileSync(new URL('../infra/wrangler.staging.json',import.meta.url),'utf8'));
+ assert.deepEqual(config.assets.run_worker_first,['/api/*','/live-paper']);
+ const headers=readFileSync(new URL('../apps/web/_headers',import.meta.url),'utf8');
+ for(const [name,value] of Object.entries({
+  'Cache-Control':'no-store',
+  'X-Content-Type-Options':'nosniff',
+  'Referrer-Policy':'no-referrer',
+  'Cross-Origin-Opener-Policy':'same-origin-allow-popups',
+  'X-Frame-Options':'DENY',
+  'Permissions-Policy':'camera=(), microphone=(), geolocation=()'
+ })){
+  assert.ok(headers.includes('  '+name+': '+value),name);
+ }
+ assert.ok(headers.includes("frame-ancestors 'none'"));
+ assert.ok(headers.includes("script-src 'self' https://accounts.google.com/gsi/client"));
+ assert.equal(config.assets.directory,'../apps/web');
+});
 test('Every page entrypoint and imported module is served through the real gateway allowlist',async()=>{
  const base=new URL('../apps/web/',import.meta.url),queue=['index.html','shadow.html','bots.html','activity.html','collection.html','paper.html','live-bots.html'],seen=new Set();
  const environment={APP_ORIGIN:'https://app.test',ASSETS:{fetch:async request=>new Response(await readFile(new URL(new URL(request.url).pathname.slice(1),base),'utf8'),{headers:{'content-type':request.url.endsWith('.mjs')?'text/javascript':'text/html'}})}};
@@ -27,6 +45,18 @@ test('full shadow research is available through an owner-authenticated GET route
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research/test_bot',{method:'POST',headers:{origin:env.APP_ORIGIN}}),env,{fetcher})).status,405);
 });
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
+test('validated Demo JSON is forwarded byte-for-byte without redundant stringification',async()=>{
+ const body=' { "contract":"demo-v1", "environment":"demo", "bots":[] } ';
+ const response=await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{
+  fetcher:async()=>new Response(body,{headers:{'content-type':'application/json'}})
+ });
+ assert.equal(response.status,200);
+ assert.equal(await response.text(),body);
+ const invalid=await proxyAuth(new Request('https://app.test/api/demo/workspace'),env,{
+  fetcher:async()=>new Response('{"contract":"wrong"}',{headers:{'content-type':'application/json'}})
+ });
+ assert.equal(invalid.status,502);
+});
 test('expanded shadow workspace passes the gateway with active and retired bots',async()=>{
  const bots=Array.from({length:154},(_,i)=>({id:'bot-'+i,retired:i<28}));
  const fetcher=async()=>new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots,folders:[{id:'favorites'},{id:'sequential'},{id:'complete_set'},{id:'convexity'}]}),{headers:{'content-type':'application/json'}});
