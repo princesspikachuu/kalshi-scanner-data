@@ -634,21 +634,18 @@ If detailed data is still loading separately:
 - Verify on mobile and desktop.
 
 ### Implementation progress
-- Branch: `fix/mt008-dashboard-snapshot-size`
-- PR: https://github.com/princesspikachuu/kalshi-scanner-data/pull/145
 - Root cause confirmed: `/demo/shadow/workspace` rejects decoded JSON above 8 MiB.
-- Pre-fix live Render logs showed workspace payloads growing from ~7.5 MiB to ~8.22 MiB, leaving very little headroom beneath the 8 MiB guard.
-- Removed per-bot `latest_report` from the initial workspace transport because the dashboard frontend never reads it. Durable reports remain stored; derived visible stats/accounting/experiment data are preserved.
-- Added oversize diagnostics logging decoded bytes plus approximate top-level section weights.
-- Added regression test with an >8 MiB synthetic workspace proving unused full reports no longer make the initial response exceed the supported size.
-- GitHub Actions run 42620625608 passed, including gateway/auth checks, focused Statistics-Favorites regressions, full API/PostgreSQL validation, and Blueprint validation.
-- PR #145 squash-merged to `build/google-auth-foundation` as commit `62d869e57b6ae1d2b291869bb4c258a79f59655b`.
-- Render API deploy `dep-dbos6b6417fc7398dm90` is LIVE on the merge commit.
-- Live authenticated workspace verification is still required: no post-deploy dashboard request has hit the endpoint yet, so there is not yet a measured post-fix decoded byte count.
-- If the first live request remains too large, use the new section-size diagnostics to move the next largest non-initial detail to a lazy/paginated endpoint rather than increasing the limit or deleting history.
+- First fix removed unused per-bot `latest_report` from the initial workspace and added section-size diagnostics.
+- Live diagnostics after that deploy showed the remaining failure precisely: decoded workspace ~8.64–8.65 MiB, with `bots` alone ~8.45–8.46 MiB across 602 bots; folders were only ~225 KiB and all other sections were tiny.
+- Follow-up PR #148 moved heavy per-bot research arrays (`entry_timing`, `calibration`, scalper cell histories) out of the initial workspace response while preserving compact counters, decisions, totals, config, accounting, performance, and durable research.
+- Added a bounded fallback: if a bot card still serializes above 12 KiB because a future strategy adds another large research field, the initial dashboard sends only the compact experiment summary instead of allowing one bot to inflate the whole workspace.
+- PR #148 squash-merged as commit `0d807065af18c36bf54956e48807e1155ae2956b`.
+- Render API deploy `dep-dbostlbbc2fs73d4pvr0` is LIVE on the follow-up commit.
+- Full GitHub validation for the latest head was still running when the outage fix was merged because MT-008 is U0; continue monitoring that run and patch forward if it reports a regression.
+- The next authenticated dashboard request should be checked for `dashboard_transport` decoded bytes. If `dashboard_snapshot_oversize` still appears, use the new diagnostics to continue stripping non-initial detail rather than raising the 8 MiB ceiling or deleting history.
 
 ### Completion notes
-_In progress — merged, CI-passed, and deployed; keep U0 until a real dashboard request confirms the current dataset loads below the supported size._
+_In progress — second-stage compaction is deployed live. Keep U0 until a real post-deploy dashboard request succeeds below the supported size._
 ---
 
 # Coordination notes
