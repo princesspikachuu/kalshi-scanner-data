@@ -124,12 +124,23 @@ class HostedAudit:
         profile['transaction_finalize_ms']+=(finished-commands_written)*1000
         profile['total_write_ms']+=(finished-started)*1000
         profile['worst_write_ms']=max(profile['worst_write_ms'],(finished-started)*1000)
+        # Keep event-kind counts only, not any trade, account, or decision body.
+        # This allows actual write costs to be attributed to high-volume audit
+        # events without discarding or coalescing the underlying evidence.
+        counts=Counter(e['event'] for e in written_events)
+        kinds=getattr(self,'durability_kind_counts',None)
+        if kinds is None:kinds=self.durability_kind_counts=Counter()
+        kinds.update(counts)
         if finished>=getattr(self,'durability_log_at',0):
             self.durability_log_at=finished+30
+            # Bound telemetry cardinality independently of future event types.
+            top=kinds.most_common(16)
+            other=sum(kinds.values())-sum(v for _,v in top)
             print(json.dumps(dict(event='shadow_durability_cost',
-                **dict(profile),real_orders_enabled=False)),flush=True)
+                **dict(profile),event_kinds=dict(top),event_kinds_other=other,
+                real_orders_enabled=False)),flush=True)
             self.durability_profile=Counter()
-        counts=Counter(e['event'] for e in written_events)
+            self.durability_kind_counts=Counter()
         if any(k in counts for k in ('ORDER_SUBMITTED','MAKER_RESTING','FILL','CANCELLED','SPOT_SAFETY_CANCEL','SAFETY_REENTRY_READY','IOC_COMPLETE','DATA_GAP')):
             print(json.dumps(dict(event='shadow_audit_committed',counts=dict(counts),
                 fills=[e for e in written_events if e['event']=='FILL'],
