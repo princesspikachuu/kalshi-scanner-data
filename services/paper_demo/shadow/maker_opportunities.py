@@ -10,8 +10,11 @@ def turnover_score(prints,now,bids,profiles,fee,market):
     hour=sum(at>=now-3600 for at in times);six=sum(at>=now-21600 for at in times)
     sizes=[float(p.get('count_fp',1)) for p in prints]
     typical=max(1,statistics.median(q for q in sizes if math.isfinite(q) and q>0)) if any(math.isfinite(q) and q>0 for q in sizes) else 1
-    # A capped response supplies lower-bound observed activity, not invented trades.
-    flow=max(hour,six/6,len(times)/24)
+    # Recency dominates because fill opportunity is perishable. Six-hour and
+    # daily rates smooth a quiet minute/hour, but cannot make stale historical
+    # volume look like current turnover. A capped response remains a lower bound.
+    six_rate=six/6;day_rate=len(times)/24
+    flow=.60*hour+.30*six_rate+.10*day_rate
     best=None
     for p in profiles:
         c=p.get('config',{});q=D(p['contracts'])
@@ -29,8 +32,8 @@ def turnover_score(prints,now,bids,profiles,fee,market):
             score=float(net/capital)*trips_per_day
             row=dict(execution_score=score,expected_net_per_round=str(net),expected_capital=str(capital),
                 expected_hold_seconds=hold,trades_last_hour=hour,trades_last_six_hours=six,
-                observed_trades=len(times),sample_capped=len(times)>=100,
-                ranking_basis='observed trade flow and fee-adjusted spread; uncalibrated ranking only',
+                recent_flow_per_hour=flow,observed_trades=len(times),sample_capped=len(times)>=100,
+                ranking_basis='recency-weighted observed trade flow and fee-adjusted spread; uncalibrated ranking only',
                 ranking_side=side,ranking_profile=p['id'])
             if best is None or score>best['execution_score']:best=row
     return best
@@ -42,7 +45,8 @@ def ranked_rows(state):
     return [dict(ticker=t,category=r['category'],score=r.get('execution_score',r['score']),
         score_basis='verified turnover estimate' if 'execution_score' in r else 'discovery prior',
         trades_24h=r.get('trades_24h'),trades_last_hour=r.get('trades_last_hour'),
-        expected_net_per_round=r.get('expected_net_per_round'),expected_hold_seconds=r.get('expected_hold_seconds'),
+        recent_flow_per_hour=r.get('recent_flow_per_hour'),expected_net_per_round=r.get('expected_net_per_round'),
+        expected_hold_seconds=r.get('expected_hold_seconds'),
         reason=r.get('reason','awaiting trade-frequency verification'))
         for t,r in sorted(state.get('candidates',{}).items(),key=rank)[:20]]
 
