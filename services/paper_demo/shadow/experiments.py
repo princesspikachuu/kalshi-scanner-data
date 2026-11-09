@@ -50,11 +50,15 @@ class ExperimentFleet(StrategyFleet):
             for b in owners.values():b.step()
         elif changed_ticker is None:
             # Regular experiment fleets previously called every bot with no
-            # ticker, making each bot rescan every market on every clock. Each
-            # market has one owner, so dispatch each ticker once instead.
+            # ticker, making each bot rescan every market on every clock. Group
+            # tickers by owner once, then preserve the existing bot/profile
+            # evaluation order so shared-capital decisions remain deterministic.
+            owned={}
             for ticker in tuple(self.e.markets):
                 b=self.owner(ticker)
-                if b:b.step(ticker)
+                if b:owned.setdefault(id(b),[]).append(ticker)
+            for b in self.bots.values():
+                for ticker in owned.get(id(b),()):b.step(ticker)
         else:super().step(changed_ticker)
 
 class ExperimentSuite:
