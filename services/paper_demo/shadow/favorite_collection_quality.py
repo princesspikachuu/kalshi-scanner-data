@@ -17,6 +17,9 @@ def collection_quality(bots, now):
     rolling_1h=defaultdict(set)
     rolling_24h=defaultdict(set)
     timestamped=defaultdict(set)
+    all_events=set()
+    all_1h=set()
+    all_24h=set()
     cell_events=defaultdict(set)
     for bot in bots:
         cells=bot.exit_evidence.cells
@@ -33,8 +36,9 @@ def collection_quality(bots, now):
             if observed:totals['outcome_cells']+=1
             group=(mt,price_bucket(row.get('price','0')),row.get('horizon') or 'unknown')
             for event in observed:
-                identity=(mt,str(event))
+                identity=str(event)
                 events_by_type[mt].add(identity)
+                all_events.add(identity)
                 cell_events[group].add(identity)
                 at=timestamps.get(event)
                 if at is None:
@@ -44,8 +48,12 @@ def collection_quality(bots, now):
                 # No fabricated history, no future timestamps.
                 if not 0<=at<=now:continue
                 timestamped[mt].add(identity)
-                if now-at<=86400:rolling_24h[mt].add(identity)
-                if now-at<=3600:rolling_1h[mt].add(identity)
+                if now-at<=86400:
+                    rolling_24h[mt].add(identity)
+                    all_24h.add(identity)
+                if now-at<=3600:
+                    rolling_1h[mt].add(identity)
+                    all_1h.add(identity)
     categories={}
     for mt in sorted(events_by_type):
         all_events=events_by_type[mt]
@@ -59,12 +67,14 @@ def collection_quality(bots, now):
         unverified_entry_contracts=str(totals['unverified_entry_contracts']),
         settled_cohort_contracts=str(totals['settled_cohort_contracts']),
         outcome_cells=totals['outcome_cells'],
-        unique_verified_outcomes=sum(v['unique_verified_outcomes'] for v in categories.values()),
-        unique_verified_1h=sum(v['unique_verified_1h'] for v in categories.values()),
-        unique_verified_24h=sum(v['unique_verified_24h'] for v in categories.values()),
-        # Legacy outcomes were retained without timestamps; these windows are
-        # lower bounds until a full window of timestamped operation is observed.
-        rolling_counts_are_lower_bounds=True,
+        # An event appearing in different market-type or price-time cohorts
+        # remains one independent settlement in the global totals.
+        unique_verified_outcomes=len(all_events),
+        unique_verified_1h=len(all_1h),
+        unique_verified_24h=len(all_24h),
+        # Legacy outcomes were retained without timestamps; do not fabricate
+        # their confirmation times to make rolling windows appear complete.
+        rolling_counts_are_lower_bounds=bool(all_events-set().union(*timestamped.values())),
         by_market_type=categories,
         price_time_cells=[dict(market_type=mt,price_bucket=price,horizon=h,unique_verified_outcomes=len(events))
             for (mt,price,h),events in sorted(cell_events.items()) if events])
