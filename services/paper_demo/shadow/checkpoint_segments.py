@@ -4,8 +4,10 @@ from collections import OrderedDict
 import msgpack
 
 class CheckpointSegments:
-    def __init__(self,max_bytes=16*1024*1024,max_entries=512,min_bytes=4096):
+    def __init__(self,max_bytes=16*1024*1024,max_entries=512,min_bytes=4096,
+                 scalper_cold_level=6):
         self.max_bytes=max_bytes;self.max_entries=max_entries;self.min_bytes=min_bytes
+        self.scalper_cold_level=scalper_cold_level
         self.cache=OrderedDict();self.bytes=0;self.hits=0;self.misses=0;self.evictions=0
     @staticmethod
     def descend(path,key):
@@ -25,7 +27,16 @@ class CheckpointSegments:
         old=self.cache.get(path)
         if old is not None and old[0]==raw:
             self.cache.move_to_end(path);self.hits+=1;return old[1]
-        self.misses+=1;encoded=gzip.compress(raw,compresslevel=1,mtime=0)
+        self.misses+=1
+        # Most per-strategy scalper research stays byte-identical while paused.
+        # Compress its FIRST cached member more tightly; every later checkpoint
+        # reuses these bytes at zero recompression cost. If a running strategy
+        # mutates research, use the original fast level-1 path thereafter.
+        # Both levels produce the SAME gzip/member format and lossless hash.
+        level=(self.scalper_cold_level
+               if len(path)==6 and path[4:]==('scalper','research') and old is None
+               else 1)
+        encoded=gzip.compress(raw,compresslevel=level,mtime=0)
         if old is not None:self.bytes-=len(old[0])+len(old[1]);del self.cache[path]
         size=len(raw)+len(encoded)
         if size<=self.max_bytes and self.max_entries>0:
