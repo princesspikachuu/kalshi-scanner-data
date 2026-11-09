@@ -138,6 +138,25 @@ class FolderPostgres(unittest.TestCase):
         old=[r for r in rows if r['parameters']['folder_id']=='convexity']
         self.assertEqual(len(old),28);self.assertTrue(all(r['progress']['desired']=='paused' for r in old))
         self.assertEqual(len(self.demo.rows('shadow/folder/',10)),4)
+    def test_volatility_family_control_updates_every_scalper_folder_only(self):
+        from services.paper_demo.shadow.scalper_install import initialize_scalper,initialize_scalper_upgrade
+        self.seed();initialize_scalper(self.demo,lambda:None);initialize_scalper_upgrade(self.demo,lambda:None)
+        self.assertEqual(self.client.post('/demo/shadow/bulk',json=dict(action='pause',folder_id='volatility_all')).status_code,200)
+        rows=self.demo.rows('shadow/bot/',500)
+        self.assertTrue(all(r['progress']['desired']=='paused' for r in rows if r['parameters'].get('folder_id') in SCALPER_FOLDERS))
+        self.assertEqual(self.demo.get('shadow/bot/fav_btc')['progress']['desired'],'running')
+        self.assertEqual(self.client.post('/demo/shadow/bulk',json=dict(action='resume',folder_id='volatility_all')).status_code,200)
+        rows=self.demo.rows('shadow/bot/',500)
+        self.assertTrue(all(r['progress']['desired']=='running' for r in rows if r['parameters'].get('folder_id') in SCALPER_FOLDERS))
+
+    def test_requested_volatility_pause_migration_is_idempotent(self):
+        from services.paper_demo.shadow.scalper_install import initialize_scalper,initialize_scalper_upgrade,apply_requested_volatility_pause
+        self.seed();initialize_scalper(self.demo,lambda:None);initialize_scalper_upgrade(self.demo,lambda:None)
+        apply_requested_volatility_pause(self.demo,lambda:None);apply_requested_volatility_pause(self.demo,lambda:None)
+        rows=self.demo.rows('shadow/bot/',500)
+        self.assertTrue(all(r['progress']['desired']=='paused' for r in rows if r['parameters'].get('folder_id') in SCALPER_FOLDERS))
+        self.assertIsNotNone(self.demo.get('shadow/volatility-family-pause-20261109'))
+
     def test_folder_control_does_not_resume_other_strategies(self):
         self.seed();r=self.client.post('/demo/shadow/bulk',json=dict(action='pause',folder_id='sequential'))
         self.assertEqual(r.status_code,200)
