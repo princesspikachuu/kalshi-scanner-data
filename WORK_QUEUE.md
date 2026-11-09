@@ -317,9 +317,9 @@ _Fill in when done._
 # PRIORITY 8 — Restore Favorites research visibility and controls
 
 ## MT-009 — Fix Data-Collection Favorites research tables: empty data + collapse state
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-009 implementation  
+**Claimed:** 2026-11-09 19:45 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** Highest UI/data visibility issue after MT-008
 
@@ -958,7 +958,7 @@ _Fill in when done._
 # PRIORITY 11 — Urgent efficiency remediations from MT-011 audit
 
 ## MT-012 — Reduce event-queue waste and early-coalesce quote updates
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-012 implementation  
 **Claimed:** 2026-11-09 13:53 UTC  
 **Urgency:** U1 — URGENT  
@@ -1012,6 +1012,21 @@ This is directly suppressing useful Market Maker/Favorites monitoring and tradin
 - Added per-portfolio suppression of ticker-scoped lifecycle events for markets that portfolio does not own, while still advancing sequence state.
 - Generic lifecycle frames without an explicit market ticker remain on the normal path for safety.
 - Latest validation run `42640070818` has passed gateway/auth and focused Favorites checks and is currently in the full PostgreSQL/API suite.
+
+
+### Completion notes
+_DONE and live-verified._
+- Before MT-012, the worker repeatedly hit backlog saturation (including 20,000 queued inputs), discovery/admission paused, and execution delays stretched into many seconds.
+- Post-deploy live telemetry showed:
+  - backlog fell to 0,
+  - estimated queue seconds fell to 0,
+  - discovery/admission returned to `true` with reason `Measured capacity available`,
+  - event-loop lag dropped below 1 second in sampled steady-state telemetry,
+  - idle strategy clocks skipped in the thousands per window,
+  - ticker-scoped unrelated lifecycle fanout skipped across inactive portfolios,
+  - book update interval increased while latency-sensitive scalpers remained paused,
+  - processing worker RSS fell from roughly ~0.94–0.96 GB baseline samples to roughly ~0.51 GB in a representative post-fix sample.
+- A transient backlog spike occurred immediately after restart/warmup, but later steady-state telemetry cleared to zero and restored market admission.
 
 ---
 
