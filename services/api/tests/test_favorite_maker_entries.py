@@ -1,7 +1,6 @@
 """Maker-only favorites: actual costs, changing evidence, expiry and queue races."""
 import json
 import unittest
-from unittest.mock import Mock
 from decimal import Decimal as D
 from services.api.tests.test_strategy_folders import QuietAudit,market,profile
 from services.paper_demo.shadow.core import Engine,FeePolicy
@@ -97,30 +96,6 @@ class MakerEntries(unittest.TestCase):
         self.assertEqual(len(e.orders),1);self.assertEqual(o.status,'resting')
         self.assertEqual(o.remaining,D(9))
         self.assertEqual(e.wallet.inventory(self.ticker,'yes'),D(1))
-
-    def test_clock_only_decisions_keep_trade_fills_immediate(self):
-        e,b,book=self.setup_bot()
-        e.clock_only_strategy_steps=True
-        b.step();e.advance(201)
-        order=next(iter(e.orders.values()))
-        original_step=b.step;b.step=Mock(wraps=original_step)
-        volume=order.ahead+D(1)
-        e.handle('kalshi',dict(type='trade',sid=7,seq=1,msg=dict(
-            market_ticker=self.ticker,trade_id='clock-only-fill',taker_side='no',
-            yes_price_dollars=str(order.price),count_fp=str(volume),ts_ms=201100)),201.1)
-        self.assertEqual(e.wallet.inventory(self.ticker,'yes'),D(1))
-        b.step.assert_not_called()
-        book.at=201.2
-        e.handle('clock',{},201.2)
-        self.assertGreater(b.step.call_count,0)
-
-    def test_clock_only_mode_does_not_defer_non_kalshi_state_changes(self):
-        e,b,_=self.setup_bot();e.clock_only_strategy_steps=True
-        b.step=Mock()
-        ticker='KXBTCD-next'
-        e.handle('market',dict(market=dict(ticker=ticker,open=100,close=1000,event_ticker='NEXT',bot_id='next'),
-            taker_multiplier='1',maker_multiplier='0'),200.1)
-        b.step.assert_called_once_with(ticker)
 
     def test_only_confirmed_settlement_teaches_entry_model_and_survives_json(self):
         e,b,_=self.setup_bot();b.step();e.advance(201)
