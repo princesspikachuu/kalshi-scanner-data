@@ -438,6 +438,91 @@ _Fill in when done._
 
 ---
 
+# PRIORITY 7 — Make strategy-learning data visible across strategies
+
+## MT-007 — Add per-strategy data collection and learning diagnostics
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Priority:** Medium-High
+
+### Goal
+For every strategy that is collecting observations in order to improve future behavior, expose clear details about **what data it is collecting, how much data it has, how the data is segmented, and how that evidence is intended to improve the strategy**.
+
+This is broader than Favorites. The user should be able to inspect a strategy and understand whether it is actually building a useful evidence base.
+
+### Scope
+Audit all current strategies and classify each as one of:
+- **Data-learning strategy** — actively collects observations intended to change future entry/exit/quoting decisions.
+- **Operational-only strategy** — records trades/P&L for accounting but does not currently use historical evidence to adapt.
+- **Future-learning candidate** — has useful historical data but no adaptive logic yet.
+
+Do not pretend an operational-only strategy is “learning” if it is not.
+
+### Required data-details panel
+For each data-learning strategy, add an expandable **Data / Learning** section in the strategy/folder UI showing, where applicable:
+
+- total observations collected,
+- settled observations usable for learning,
+- open/pending observations not yet usable,
+- unique markets/events represented,
+- date/time range of the dataset,
+- market types/categories represented,
+- key features being recorded,
+- current bucket/segment definitions,
+- sample size per important segment,
+- outcome metrics being learned from,
+- fill-rate / fill-delay data where execution quality matters,
+- entry timing / time-to-expiration data where timing matters,
+- price/value/probability data where entry value matters,
+- spread/depth/volatility/order-book features where relevant,
+- reasons observations were skipped or excluded,
+- missing-data counts where material,
+- last time aggregates/models/statistics were refreshed.
+
+### Explain how the data improves the strategy
+The panel must also state in plain language:
+- **what decisions the collected data is meant to improve**, such as entry threshold, quote placement, sizing, time window, market selection, exit timing, maker/taker choice, or risk limits;
+- whether the strategy is currently **collecting only**, **using statistics now**, or **waiting for a minimum sample size**;
+- the minimum evidence/sample threshold required before data can affect decisions;
+- which parameters are currently data-driven versus still fixed/manual;
+- what fallback behavior is used when a narrow segment lacks enough data.
+
+### Strategy-appropriate views
+Do not force every strategy into the same table. Use the visualization that matches the strategy's decision variables.
+
+Examples:
+- Favorites: price/value × time matrix, separated by market type.
+- Market Maker: spread/depth/liquidity/fill-rate/quote-lifetime diagnostics and performance by market type.
+- Sequential Spread: relevant leg spacing/order, time-to-close, entry spread, completion rate, and P/L by setup.
+- High Probability: probability/price × time-to-expiration performance, separated by market type.
+- Convexity/partial-profit strategies: entry conditions, excursion, partial-exit timing, realized return, and adverse-move data.
+- Volatility strategies, when paused: preserve and display collected evidence, but do not resume trading merely to gather more data.
+
+If a strategy has better natural axes/segments, use those instead.
+
+### Data integrity
+- Preserve all existing history.
+- Reuse the canonical observation/trade dataset where possible rather than creating duplicate incompatible stores.
+- Add missing fields backward-compatibly.
+- Historical records lacking a newly added field should remain usable for the dimensions they do contain.
+- Clearly distinguish raw observations from derived aggregates/statistics.
+
+### Acceptance criteria
+- Every strategy is labeled as data-learning, operational-only, or future-learning candidate.
+- Every data-learning strategy has an inspectable data/learning section.
+- The user can see what features are being collected and how many useful observations exist.
+- The UI explains exactly which future decisions the data is intended to improve.
+- Sample sizes and sparse-data limitations are visible.
+- No strategy is described as adaptive unless its code actually uses historical evidence.
+- Paused strategies retain visible historical learning data without being reactivated.
+- Tests verify the diagnostics remain correct as new observations settle.
+
+### Completion notes
+_Fill in when done._
+
+---
+
 # Coordination notes
 
 - MT-001 and MT-002 may be worked on by different chats at the same time.
@@ -445,4 +530,5 @@ _Fill in when done._
 - MT-004 can run concurrently with Favorites work if it does not modify the same shared monitoring/risk infrastructure.
 - MT-005 should use evidence from MT-003/MT-004 when available. If another task is already changing shared scheduler/monitoring infrastructure, do not create a parallel conflicting implementation; coordinate through this file.
 - MT-006 is UI-focused and is a good independent task for a separate chat.
+- MT-007 can be implemented incrementally by strategy, but its shared UI/data-contract work must not conflict with active MT-001/MT-002 schema changes.
 - If MT-002 needs data-schema fields that MT-001 is already changing, coordinate through this file rather than independently creating conflicting schemas.
