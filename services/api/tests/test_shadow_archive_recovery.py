@@ -4,8 +4,9 @@ from datetime import datetime,timezone
 from unittest.mock import MagicMock,patch
 
 from services.demo.shadow_archive_recovery import (
-    PREFIX,MANIFEST_PREFIX,CANDIDATES,MANIFEST_SQL,DELETE_SQL,
-    validate_window,archive_payload,plan_only,archive_and_reclaim_one,main
+    PREFIX,MANIFEST_PREFIX,CANDIDATES,LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL,
+    SAFE_EVENT_KINDS,validate_window,archive_payload,plan_only,
+    archive_and_reclaim_one,verify_archived_manifest,main
 )
 
 class ShadowArchiveRecoveryTests(unittest.TestCase):
@@ -21,7 +22,7 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         deleted=([dict(id=r['id']) for r in rows] if deleted is None else deleted)
         def sql(statement,params=None):
             cur=MagicMock()
-            if statement==CANDIDATES:cur.fetchall.return_value=rows
+            if statement in (CANDIDATES,LOCKED_CANDIDATES):cur.fetchall.return_value=rows
             if statement==DELETE_SQL:cur.fetchall.return_value=deleted
             return cur
         c.execute.side_effect=sql
@@ -35,6 +36,13 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(validate_window(10000,6,1),10000-6*3600)
         self.assertIn("idempotency_key>=%s",CANDIDATES)
         self.assertIn("created_at<to_timestamp(%s)",DELETE_SQL)
+        self.assertIn("ORDER BY idempotency_key LIMIT %s",CANDIDATES)
+        self.assertNotIn("FOR UPDATE",CANDIDATES)
+        self.assertIn("FOR UPDATE SKIP LOCKED",LOCKED_CANDIDATES)
+        self.assertIn("progress->>'event'=ANY",DELETE_SQL)
+        self.assertNotIn('FILL',SAFE_EVENT_KINDS)
+        self.assertNotIn('SETTLED',SAFE_EVENT_KINDS)
+        self.assertNotIn('CYCLE_REPORT',SAFE_EVENT_KINDS)
         self.assertTrue(MANIFEST_PREFIX.startswith('demo/shadow/'))
         self.assertNotEqual(PREFIX,'demo/event/')
 
@@ -61,7 +69,7 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual([r['id'] for r in put.call_args.args[2]],[a['id'],b['id']])
         self.assertEqual(put.call_args.args[2][0]['progress'],a['progress'])
         statements=[call.args[0] for call in c.execute.call_args_list]
-        self.assertEqual(statements,['SET LOCAL statement_timeout=10000',CANDIDATES,MANIFEST_SQL,DELETE_SQL])
+        self.assertEqual(statements,['SET LOCAL statement_timeout=10000',LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL])
         manifest_args=c.execute.call_args_list[2].args[1]
         self.assertEqual(manifest_args[2].obj['count'],2)
         self.assertEqual(manifest_args[2].obj['reference'],receipt)
@@ -74,7 +82,7 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 archive_and_reclaim_one(pool,MagicMock(),now=1794500000)
         statements=[call.args[0] for call in c.execute.call_args_list]
-        self.assertEqual(statements,['SET LOCAL statement_timeout=10000',CANDIDATES])
+        self.assertEqual(statements,['SET LOCAL statement_timeout=10000',LOCKED_CANDIDATES])
 
     def test_delete_mismatch_aborts_instead_of_reporting_success(self):
         pool,c=self.db([self.row()],deleted=[])
@@ -83,6 +91,37 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'identity mismatch'):
                 archive_and_reclaim_one(pool,MagicMock(),now=1794500000)
         self.assertEqual(c.execute.call_args_list[-1].args[0],DELETE_SQL)
+
+
+    def test_never_delete_settlements_or_financial_records(self):
+        financial=self.row()
+        financial['progress']=dict(event='SETTLED',cash='1200',details=dict(payout=1))
+        pool,c=self.db([financial])
+        with self.assertRaisesRegex(RuntimeError,'Non-diagnostic'):
+            archive_and_reclaim_one(pool,MagicMock(),now=1794500000)
+        self.assertNotIn(DELETE_SQL,[call.args[0] for call in c.execute.call_args_list])
+        self.assertNotIn(MANIFEST_SQL,[call.args[0] for call in c.execute.call_args_list])
+
+    def test_verify_manifest_roundtrip_and_reject_tampered_or_unrelated_entries(self):
+        from services.demo.shadow_archive_recovery import archive_payload
+        original=archive_payload([self.row()])
+        manifest=dict(format='shadow-r2-event-batch-v1',source_prefix=PREFIX,
+                      count=1,reference=dict(key='demo/events/abc.json.gz'))
+        with patch('services.demo.shadow_archive_recovery.read_verified',return_value=original) as reader:
+            self.assertEqual(verify_archived_manifest(MagicMock(),manifest),original)
+            reader.assert_called_once()
+        with patch('services.demo.shadow_archive_recovery.read_verified',return_value=original*2):
+            with self.assertRaisesRegex(ValueError,'count mismatch'):
+                verify_archived_manifest(MagicMock(),manifest)
+        invalid=[dict(original[0],progress=dict(event='FILL'))]
+        with patch('services.demo.shadow_archive_recovery.read_verified',return_value=invalid):
+            with self.assertRaisesRegex(ValueError,'financial'):
+                verify_archived_manifest(MagicMock(),manifest)
+        invalid=[dict(original[0],idempotency_key='demo/order/unrelated')]
+        with patch('services.demo.shadow_archive_recovery.read_verified',return_value=invalid):
+            with self.assertRaisesRegex(ValueError,'unrelated'):
+                verify_archived_manifest(MagicMock(),manifest)
+
 
     def test_command_line_requires_explicit_operator_confirmation(self):
         with self.assertRaises(SystemExit) as caught:
