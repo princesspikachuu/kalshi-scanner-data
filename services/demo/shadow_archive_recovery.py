@@ -32,6 +32,7 @@ MIN_AGE_HOURS = 6
 CANDIDATES = """SELECT id::text,idempotency_key,parameters,progress,created_at
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
+    AND NOT (progress ? 'archive')
     AND idempotency_key>=%s AND idempotency_key<%s
     ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED"""
 
@@ -42,7 +43,8 @@ MANIFEST_SQL = """INSERT INTO research_job
 DELETE_SQL = """DELETE FROM research_job WHERE id=ANY(%s::uuid[])
     AND status='succeeded'
     AND idempotency_key>=%s AND idempotency_key<%s
-    AND created_at<to_timestamp(%s) RETURNING id::text"""
+    AND created_at<to_timestamp(%s)
+    AND NOT (progress ? 'archive') RETURNING id::text"""
 
 
 def validate_window(now, age_hours, batch_size):
