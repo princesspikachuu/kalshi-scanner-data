@@ -10,6 +10,7 @@ recovery connection that can DELETE research_job rows. The default is preview.
 import argparse
 import json
 import os
+import sys
 import time
 from collections import Counter
 from datetime import timezone
@@ -137,6 +138,13 @@ def main(argv=None):
                         if args.execute else plan_only(pool,now=now,age_hours=args.age_hours,batch_size=args.batch_size))
                 print(json.dumps(result,sort_keys=True),flush=True)
                 if not args.execute or not result.get('archived'):break
+    except Exception as error:
+        # Database/SDK error strings can include credentials; report only the
+        # failure class and never claim a partially failed batch succeeded.
+        print(json.dumps(dict(event='shadow_archive_recovery_failed',
+            error_type=type(error).__name__,recovery_incomplete=True)),
+            file=sys.stderr,flush=True)
+        return 1
     finally:
         if objects is not None:objects.client.close()
     return 0
