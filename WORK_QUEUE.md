@@ -265,7 +265,7 @@ Still expose, where practical:
 # PRIORITY 3 — Validate Favorites data throughput after MT-001
 
 ## MT-003 — Measure whether Favorites data collection is now fast enough
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-003 throughput measurement  
 **Claimed:** 2026-11-10 00:10 UTC  
 **Urgency:** U2 — HIGH  
@@ -308,7 +308,14 @@ Do not simply loosen all safeguards. Identify the dominant bottleneck and create
 - Any remaining dominant bottleneck is documented as a new READY task.
 
 ### Completion notes
-_Fill in when done._
+_DONE. Favorites collection volume materially increased after MT-001._
+- Historical sampled minute before/early MT-001: 1 entry submission, 0 fill-cohort events, 1 repeat-opportunity event.
+- Early post-MT-001 sampled minute: 30 submissions, 22 fill-cohort events, 27 repeat-opportunity events. These are point samples rather than sustained hourly averages, but they confirm the repeated-opportunity path materially changed throughput.
+- Current live collection-quality telemetry: 2,361 retained verified outcomes, 57 verified outcomes in the last hour (lower bound), 841 timestamped verified outcomes in the last 24h, 2,018 populated outcome cells, 31,937.31 cohort contracts, and 29,980.41 settled cohort contracts (~93.9% of cohort contracts).
+- Same-day retained evidence grew from 2,297 to 2,361 verified outcomes (+64), 777 to 841 timestamped 24h outcomes (+64), and 1,970 to 2,018 populated cells (+48).
+- Current 24h evidence is highly imbalanced by market type: 15m price 809/841 (~96.2%), hourly price 13 (~1.5%), weather 12 (~1.4%), weather daily 7 (~0.8%), sports 0.
+- Current 15m collection is healthy enough that it should not be reduced merely to rebalance the dataset. The dominant remaining collection issue is insufficient evidence from non-15m market types, not overall Favorites observation volume.
+- Resource/backlog work is tracked separately under MT-011; do not duplicate it here.
 
 ---
 
@@ -1348,3 +1355,43 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 - Same-event markets now share one verified `/events/fee_changes` response for the unchanged 30-second freshness window.
 - Distinct events remain independently verified; TTLs and fail-closed behavior are unchanged.
 - Branch validation for the merge commit is in progress; processing deployment will follow the service's checks-pass auto-deploy policy.
+
+
+---
+
+## MT-018 — Balance Favorites evidence collection across under-sampled market types
+**Status:** READY  
+**Worker:** —  
+**Claimed:** —  
+**Urgency:** U2 — HIGH  
+**Priority:** High, after MT-003
+
+### Goal
+Increase verified Favorites evidence for hourly, weather, weather-daily, and sports markets while preserving the now-healthy 15-minute collection rate.
+
+### Evidence
+Current timestamped verified outcomes in the last 24h are 841 total:
+- 15m price: 809 (~96.2%)
+- hourly price: 13 (~1.5%)
+- weather: 12 (~1.4%)
+- weather daily: 7 (~0.8%)
+- sports: 0
+
+This is now the dominant Favorites learning-data imbalance.
+
+### Requirements
+- Do not throttle or discard healthy 15m collection merely to make percentages look balanced.
+- Increase discovery/monitoring and controlled paper exploration for under-sampled market types when valid opportunities exist.
+- Preserve fresh-book, fee, risk/capital, exposure, duplicate-suppression, and settlement-integrity safeguards.
+- Prefer filling missing price/time cells and genuinely under-sampled market-type buckets.
+- Record attempted, submitted, filled, settled, duplicate-skipped, risk-skipped, and unavailable-opportunity counts per market type so lack of market availability can be distinguished from strategy gating.
+- Keep collector Favorites and Statistics-Backed Favorites evidence compatible; do not overwrite existing history.
+
+### Acceptance criteria
+- Hourly/weather/weather-daily/sports evidence rates are measured before and after.
+- At least one under-sampled type materially increases when qualifying markets are available.
+- 15m evidence throughput is not intentionally reduced.
+- Any market type that remains sparse has an explicit measured reason (availability, fills, discovery, risk, or another gate).
+
+### Completion notes
+_Fill in when done._
