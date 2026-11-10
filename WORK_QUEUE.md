@@ -456,7 +456,7 @@ _Fill in when done._
 # PRIORITY 4 — Make Market Maker actually trade
 
 ## MT-004 — Diagnose and increase Market Maker opportunity-to-fill throughput
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-004 Maker throughput  
 **Claimed:** 2026-11-09 22:22 UTC  
 **Urgency:** U1 — URGENT  
@@ -561,12 +561,21 @@ Do not simply cross the spread to manufacture activity. Any taker behavior must 
 - Remaining live limiter is now downstream worker processing backlog; health snapshots report `worker processing backlog` and can temporarily show 0 resting orders even while MAKER_RESTING events are being emitted.
 - Keep MT-004 IN PROGRESS until backlog is reduced enough to verify sustained resting orders and new Maker fills/round trips.
 
+
+### Completion notes
+_DONE and live-verified._
+- PR #170 passed full CI, merged as `aa056ef9a90b76d58bd4b488650ec75fdd235227`, and deployed on worker deploy `dep-dbp5nqp42hec73bll880`.
+- New-worker scans filled all 8 Maker monitoring slots and reached 8/8 fresh books.
+- Repeated `MAKER_RESTING` events confirm decision→order activity.
+- Cumulative Maker results increased during this workstream: baseline Maker round trips moved from 9 to 10; competitive Maker completed rounds moved from 30 to 36, with entry fills reaching 42.
+- Remaining processing-resource work is tracked separately under MT-011; discovery/quote throughput changes for this task are complete.
+
 ---
 
 # PRIORITY 5 — Expand monitoring capacity for active strategies
 
 ## MT-005 — Remove artificial monitoring bottlenecks and allocate capacity dynamically
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-005 capacity implementation  
 **Claimed:** 2026-11-09 23:55 UTC  
 **Urgency:** U2 — HIGH  
@@ -1187,7 +1196,7 @@ _DONE. Suspected service duplication disproved; no service shutdown warranted. K
 ---
 
 ## MT-015 — Rework Market Maker slot efficiency / monitoring yield
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / Market Maker throughput implementation  
 **Claimed:** 2026-11-09 22:30 UTC  
 **Urgency:** U1 — URGENT  
@@ -1227,6 +1236,13 @@ The system is using all maker capacity without producing enough fills/trades.
 - New worker filled all 8 Maker monitoring slots; repeated reallocation/monitoring telemetry confirms active slot use.
 - Executable-flow-aware replacement is deployed; current bottleneck is no longer empty/stranded Maker slots but worker processing backlog.
 - Keep MT-015 IN PROGRESS only until MT-005/backlog work proves sustained quote processing; the slot-allocation code itself is deployed and behaving as intended.
+
+
+### Completion notes
+_DONE and live-verified._
+- Executable-flow-aware slot replacement is live in `aa056ef9a90b76d58bd4b488650ec75fdd235227`.
+- Live monitoring reached the full 8-slot Maker allocation with no empty-slot bottleneck.
+- Slot allocation is no longer the limiting factor; remaining system backlog is tracked separately.
 
 ---
 
