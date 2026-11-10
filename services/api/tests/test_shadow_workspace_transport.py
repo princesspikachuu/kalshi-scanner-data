@@ -1,7 +1,35 @@
 """Large dashboard views remain strict JSON with verifiable transport bytes."""
 import hashlib,json,unittest
 from copy import deepcopy
-from services.api.shadow import workspace_response
+from services.api.shadow import workspace_response,learning_diagnostics
+
+class LearningDiagnostics(unittest.TestCase):
+    def test_classification_is_truthful_and_counts_are_compact(self):
+        sequential=learning_diagnostics('sequential',dict(bots={
+            'a':dict(attempts=12,completed=8),'b':dict(attempts=10,completed=7)}))
+        self.assertEqual(sequential['classification'],'data_learning')
+        self.assertEqual(sequential['state'],'using_statistics_now')
+        self.assertEqual(sequential['observations'],22)
+        self.assertEqual(sequential['settled_observations'],15)
+        self.assertEqual(sequential['open_observations'],7)
+        self.assertIn('20 matching settled attempts',sequential['minimum'])
+        maker=learning_diagnostics('market_maker',dict(bots={'m':dict(scalper=dict(
+            totals=dict(observations=40,submitted=7,completed=3),cells={'x':{},'y':{}}))}))
+        self.assertEqual(maker['classification'],'future_learning_candidate')
+        self.assertEqual(maker['state'],'collecting_only')
+        self.assertEqual(maker['observations'],40)
+        self.assertEqual(maker['settled_observations'],3)
+        self.assertEqual(maker['research_cells'],2)
+        complete=learning_diagnostics('complete_set',dict(bots={}))
+        self.assertEqual(complete['classification'],'operational_only')
+        self.assertEqual(complete['state'],'not_learning')
+
+    def test_statistics_favorites_exposes_threshold_refresh_and_reason_counts(self):
+        x=learning_diagnostics('favorites_statistics',dict(bots={'s':dict(attempts=9,completed=4)},
+            statistics=dict(min_samples=20,evidence_refreshed_at=123,decision_counts={'insufficient_samples':7})))
+        self.assertEqual(x['sample_threshold'],20)
+        self.assertEqual(x['last_refreshed_at'],123)
+        self.assertEqual(x['decision_counts']['insufficient_samples'],7)
 
 class WorkspaceTransport(unittest.TestCase):
     def test_compaction_preserves_visible_accounts_and_small_research_without_mutating_snapshot(self):

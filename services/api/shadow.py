@@ -18,6 +18,114 @@ from services.paper_demo.shadow.market_maker import MM_FOLDERS,CATEGORIES
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
 
+LEARNING_PROFILES={
+    'sequential':dict(classification='data_learning',state='using_statistics_now',
+        decisions='Entry pair selection, completion likelihood and expected net return',
+        features=['entry leg prices','time to close','price movement','first-fill outcome','pair completion','net P/L'],
+        segments='series × 3-minute time bucket × moving/quiet × YES/NO entry prices',
+        minimum='20 matching settled attempts before the 95% lower expected-net estimate can authorize empirical sizing',
+        fallback='1-contract least-sampled paper exploration when no supported empirical setup exists'),
+    'sequential_flexible':dict(classification='data_learning',state='using_statistics_now',
+        decisions='Entry pair selection, completion likelihood and expected net return',
+        features=['entry leg prices','time to close','price movement','first-fill outcome','pair completion','net P/L'],
+        segments='series × time/movement × entry-price setup',
+        minimum='20 matching settled attempts for a confidence-bounded empirical setup',
+        fallback='small paper exploration of the least-sampled matching setup'),
+    'sequential_adaptive':dict(classification='data_learning',state='using_statistics_now',
+        decisions='Adaptive pair selection and expected completion/net-return thresholds',
+        features=['entry leg prices','time to close','market movement','first-fill outcome','completion','net P/L'],
+        segments='adaptive sequential setup cells',
+        minimum='Uses only supported empirical cells; sparse cells remain exploratory',
+        fallback='bounded paper exploration rather than inventing a probability'),
+    'favorites':dict(classification='data_learning',state='using_statistics_now',
+        decisions='Entry value ceiling and evidence-based risk/exit behavior',
+        features=['market type','side','entry price','time remaining','maker fill','settled outcome','fees','realized P/L'],
+        segments='market series/type × purchased side × 5¢ price tier × time-to-expiration bucket',
+        minimum='Sparse cells collect paper data; calibrated/value-qualified entries require settled evidence',
+        fallback='paper-data collection with duplicate/risk/capital caps; no missing outcome is treated as a win or loss'),
+    'favorites_statistics':dict(classification='data_learning',state='using_statistics_now',
+        decisions='Whether to trade a price/time cell, fallback evidence level and targeted exploration',
+        features=['market type','price tier','time remaining','distinct resolved events','win rate','ROI','confidence lower bound'],
+        segments='market type × 5¢ price tier × time-to-expiration bucket with pooled fallbacks',
+        minimum='20 distinct resolved events per preferred evidence cell by default',
+        fallback='broader evidence fallback or separately capped 2-contract exploration of sparse cells'),
+    'volatility_scalper':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Current entries remain rule/live-feature driven; research can later tune thresholds and execution',
+        features=['spread','depth','volatility','momentum','range','execution type','fill result','holding time','P/L'],
+        segments='strategy approach × live microstructure feature cells',
+        minimum='No historical sample threshold currently changes live rules',
+        fallback='Fixed configured rules with fresh-book and execution checks'),
+    'scalper_fixed':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Future threshold and execution tuning; current rules are fixed/configured',
+        features=['spread','depth','volatility','price movement','fill quality','P/L'],
+        segments='fixed-scalper research cells',
+        minimum='No historical sample threshold currently changes live rules',
+        fallback='Fixed configured rules'),
+    'scalper_grid':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Future grid/range and execution tuning; current rules are fixed/configured',
+        features=['range','spread','depth','volatility','fill quality','P/L'],
+        segments='grid-scalper research cells',
+        minimum='No historical sample threshold currently changes live rules',
+        fallback='Fixed configured rules'),
+    'scalper_momentum':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Future momentum and execution tuning; current rules are fixed/configured',
+        features=['momentum','spread','depth','volatility','fill quality','P/L'],
+        segments='momentum-scalper research cells',
+        minimum='No historical sample threshold currently changes live rules',
+        fallback='Fixed configured rules'),
+    'scalper_dislocation':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Future liquidity-dislocation and execution tuning; current rules are fixed/configured',
+        features=['liquidity dislocation','spread','depth','volatility','fill quality','P/L'],
+        segments='dislocation-scalper research cells',
+        minimum='No historical sample threshold currently changes live rules',
+        fallback='Fixed configured rules'),
+    'market_maker':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Future quote placement/market selection tuning; current quoting uses live spread, depth, flow and configured limits',
+        features=['spread','depth','recent executable flow','quote lifetime','queue position','maker fill rate','holding time','P/L'],
+        segments='market category × microstructure/execution research cells',
+        minimum='No retained historical-cell threshold currently changes quoting rules',
+        fallback='Live microstructure rules and risk/exposure checks'),
+    'maker_competitive':dict(classification='future_learning_candidate',state='collecting_only',
+        decisions='Future inside-quote and market-selection tuning; current rules use live microstructure',
+        features=['inside quote','spread','depth','recent executable flow','quote lifetime','maker fill rate','P/L'],
+        segments='market category × competitive-quote research cells',
+        minimum='No retained historical-cell threshold currently changes quoting rules',
+        fallback='Live competitive maker configuration'),
+    'complete_set':dict(classification='operational_only',state='not_learning',
+        decisions='No historical model currently changes set execution',
+        features=['executable set cost','fees','coverage','fill/completion','P/L'],
+        segments='event/set execution records',
+        minimum='Not applicable',
+        fallback='Current executable-cost and coverage rules'),
+    'convexity':dict(classification='future_learning_candidate',state='paused_history',
+        decisions='Historical results are preserved for future analysis; paused bots do not adapt or resume automatically',
+        features=['historical entries','exits','P/L','execution results'],
+        segments='legacy bot/cycle history',
+        minimum='No active learning threshold',
+        fallback='Paused; history only')
+}
+
+def learning_diagnostics(folder_id,experiment):
+    profile=dict(LEARNING_PROFILES.get(folder_id,dict(classification='operational_only',state='not_learning',
+        decisions='No historical learning logic is currently registered',features=[],segments='—',minimum='Not applicable',fallback='Current configured rules')))
+    bots=(experiment or {}).get('bots',{}) if isinstance(experiment,dict) else {}
+    attempts=sum(int((b or {}).get('attempts') or 0) for b in bots.values())
+    settled=sum(int((b or {}).get('completed') or 0) for b in bots.values())
+    profile.update(observations=attempts,settled_observations=settled,
+        open_observations=max(0,attempts-settled),bot_count=len(bots))
+    if folder_id in SCALPER_FOLDERS or folder_id in MM_FOLDERS:
+        totals=[(b or {}).get('scalper',{}).get('totals',{}) for b in bots.values()]
+        profile.update(observations=sum(int(t.get('observations') or 0) for t in totals),
+            settled_observations=sum(int(t.get('completed') or 0) for t in totals),
+            open_observations=sum(max(0,int(t.get('submitted') or 0)-int(t.get('completed') or 0)) for t in totals),
+            research_cells=sum(len((b or {}).get('scalper',{}).get('cells',{})) for b in bots.values()))
+    if folder_id=='favorites_statistics':
+        stats=(experiment or {}).get('statistics') or {}
+        profile['last_refreshed_at']=stats.get('evidence_refreshed_at')
+        profile['sample_threshold']=stats.get('min_samples',20)
+        profile['decision_counts']=stats.get('decision_counts',{})
+    return profile
+
 
 def workspace_response(payload,*,compressed=False,request_started=None):
     started=time.monotonic()
@@ -251,8 +359,10 @@ def install_shadow(app,auth,mutate,pool):
         folders=[]
         for row in sorted(folder_rows,key=lambda r:r['parameters']['order']):
             f=dict(row['parameters'],**row['progress'])
-            if f['id'] in experiments:f.update(experiments[f['id']])
+            exp=experiments.get(f['id'],{})
+            if f['id'] in experiments:f.update(exp)
             elif f['id']=='convexity':f['accounting']=money
+            f['learning']=learning_diagnostics(f['id'],exp)
             folders.append(f)
         folder_performance(pool,folders,snapshot_at)
         bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
