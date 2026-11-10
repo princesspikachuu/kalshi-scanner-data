@@ -667,7 +667,7 @@ _Fill in when done._
 # PRIORITY 7 — Make strategy-learning data visible across strategies
 
 ## MT-007 — Add per-strategy data collection and learning diagnostics
-**Status:** IN PROGRESS  
+**Status:** DONE  
 **Worker:** ChatGPT / MT-007 learning diagnostics  
 **Claimed:** 2026-11-10 00:12 UTC  
 **Urgency:** U2 — HIGH  
@@ -1370,9 +1370,9 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 ---
 
 ## MT-018 — Balance Favorites evidence collection across under-sampled market types
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-018 evidence balance  
+**Claimed:** 2026-11-10 00:20 UTC  
 **Urgency:** U2 — HIGH  
 **Priority:** High, after MT-003
 
