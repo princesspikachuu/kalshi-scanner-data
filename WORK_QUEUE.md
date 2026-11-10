@@ -115,6 +115,14 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Before merging either, review R2 retrieval of compressed-batch histories, PostgreSQL physical disk free space/WAL headroom, and the suspended database's recovery route. No storage purchase authorized.
 
 
+### Combined raw + compressed recovery support (2026-11-10)
+- Latest PR #174 head `9ccf61fa48ef316417b757b41b908ff11c7ff8bb` passed GitHub CI; still draft and not deployed. Operator-only, previews before any R2-backed deletion.
+- PR #175 now includes `services/demo/shadow_batch_archive_recovery.py` for old `demo/shadow/event-batch/` records in addition to the lossless new-event packer. Uses bounded indexed candidate queries, a separate recovery DB connection, explicit --writers-stopped --execute, verified R2 readback, manifest IDs for both original batch rows and embedded event UUIDs, and a single transaction for manifest + exact deletion. Added `test_shadow_batch_archive_recovery.py`. New CI run is in progress; retain draft.
+- Legacy Favorites statistics are sourced from persistent in-engine research cells, not raw `demo/shadow/event/` SQL scans (verified code paths). However, historical dashboard/replay browsing after archival still needs a dedicated R2 cold-history read path.
+- Both operator archivers require actual database access, verified R2 bucket, and safe WAL headroom. No storage purchase, resume, archive execution, row deletion, or live strategy modifications authorized.
+- Standard Render guidance says a full suspended DB can temporarily resume before being suspended again, but zero-upgrade recovery is not guaranteed. Do not start bulk cleanup without a controlled recovery and no concurrent writers.
+
+
 ---
 
 
