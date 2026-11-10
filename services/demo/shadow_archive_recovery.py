@@ -42,7 +42,9 @@ SAFE_EVENT_KINDS = (
 # The unique research_job idempotency-key index supports prefix ordering.
 # Created-at ordering can require a large sort over millions of rows.
 # Preview is strictly read-only; only the executing operator takes row locks.
-CANDIDATES = """SELECT id::text,idempotency_key,parameters,progress,created_at
+CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
+    parameters,progress,created_at,started_at,finished_at,lease_expires_at,
+    attempts,error_code
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
     AND NOT (progress ? 'archive')
@@ -72,10 +74,13 @@ def validate_window(now, age_hours, batch_size):
 
 
 def archive_payload(rows):
-    """Every original field is retained in the checksum-verified R2 object."""
-    return [dict(id=r['id'], idempotency_key=r['idempotency_key'],
-                 parameters=r['parameters'], progress=r['progress'],
-                 created_at=r['created_at'].isoformat()) for r in rows]
+    """Retain every research_job column for verifiable R2 round-trip recovery."""
+    timestamps=('created_at','started_at','finished_at','lease_expires_at')
+    return [dict(id=r['id'],idempotency_key=r['idempotency_key'],
+        asset=r['asset'],status=r['status'],parameters=r['parameters'],
+        progress=r['progress'],attempts=r['attempts'],error_code=r['error_code'],
+        **{key:r[key].isoformat() if r[key] is not None else None for key in timestamps})
+        for r in rows]
 
 
 def verify_archived_manifest(objects, manifest):
@@ -101,6 +106,10 @@ def verify_archived_manifest(objects, manifest):
             raise ValueError('Duplicate or unrelated archived row')
         if not isinstance(row.get('parameters'),dict) or not isinstance(row.get('progress'),dict):
             raise ValueError('Incomplete archived shadow evidence')
+        required=('asset','status','created_at','started_at','finished_at',
+                  'lease_expires_at','attempts','error_code')
+        if any(key not in row for key in required) or row['status']!='succeeded' or row['asset']!='crypto':
+            raise ValueError('Incomplete or invalid shadow database row')
         if row['progress'].get('event') not in SAFE_EVENT_KINDS:
             raise ValueError('Unexpected archived financial or control event')
         seen.add(row['id'])
