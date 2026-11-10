@@ -32,7 +32,9 @@ Use these counters, plus Render `research_job` and DB physical-size measurements
 
 Packing recent diagnostics reduces index/row overhead without reducing monitoring or learning. It does not, by itself, migrate older history to Cloudflare R2 or reclaim the existing 10 GB database.
 
-Existing R2 operator recovery is proposed separately in PR #174 and currently covers individual old `demo/shadow/event/` rows, not future `demo/shadow/event-batch/` rows. Before deployment as a permanent storage solution, implement a verified R2 offload and restoration path for both formats plus bounded, explicitly privileged purge/retention. Confirm all recorded original identities still resolve after cold archive.
+Two complementary recovery tools are now proposed. PR #174 has `services/demo/shadow_archive_recovery.py` for old uncompressed `demo/shadow/event/` diagnostic rows. This branch includes `services/demo/shadow_batch_archive_recovery.py` for the new `demo/shadow/event-batch/` rows. The packed-row archiver keeps **every original research_job column** as well as the nested original event IDs, verifies R2 readback against a manifest containing both row and event IDs, then transactionally removes exactly the selected old rows.
+
+Both tools are **operator-only**, preview-first, require a separate `RECOVERY_DATABASE_URL` and `--execute --writers-stopped`, and are limited to old non-financial diagnostics. They are not scheduled cleanup jobs and do not yet provide automatic periodic retention or dashboard browsing of archived historical events. A bounded, properly authorized recurring R2 offload path and historical query/replay support remain required before the database can safely operate at scale.
 
 ## Recovery/rollout gates
 
