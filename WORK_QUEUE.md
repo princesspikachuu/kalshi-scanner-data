@@ -97,6 +97,12 @@ The paper worker creates a new `research_job` event row for each new event UUID 
 ### Completion notes
 _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show archival was running but doing zero successful event archives. Owner forbids storage expansion; preparation of safe R2 archival + selective cleanup remains in progress, live DB changes blocked by suspension._
 
+### Prepared recovery implementation
+- Draft PR [#174](https://github.com/princesspikachuu/kalshi-scanner-data/pull/174), branch `fix/mt-019-r2-archive-reclaim`: operator-only, preview-first tool `services/demo/shadow_archive_recovery.py` for R2 verified archival + single-transaction deletion of aged `demo/shadow/event/` originals. No runtime hook; requires independent recovery DB credential and explicit --writers-stopped --execute. It does not touch live orders, wallet, research datasets or checkpoints.
+- Added `services/api/tests/test_shadow_archive_recovery.py` and `docs/audits/MT-019-no-storage-upgrade-recovery.md`. CI review pending. No live database change or deletion done.
+- **Not the final fix:** need continuous low-overhead R2 cold offload, searchable history, control backup repair, duplicate/diagnostic event reduction, and actual post-recovery physical disk monitoring, without extra Render capacity.
+
+
 ---
 
 
