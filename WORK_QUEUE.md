@@ -53,7 +53,7 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 # PRIORITY 0 — URGENT DATABASE OUTAGE & RUNAWAY STORAGE
 
 ## MT-019 — Recover automatically suspended Render Postgres and stop uncontrolled paper-history growth
-**Status:** BLOCKED  
+**Status:** IN PROGRESS  
 **Worker:** ChatGPT / storage-outage investigation  
 **Claimed:** 2026-11-10 17:30 UTC  
 **Urgency:** U0 — BLOCKER  
@@ -101,6 +101,12 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Draft PR [#174](https://github.com/princesspikachuu/kalshi-scanner-data/pull/174), branch `fix/mt-019-r2-archive-reclaim`: operator-only, preview-first tool `services/demo/shadow_archive_recovery.py` for R2 verified archival + single-transaction deletion of aged `demo/shadow/event/` originals. No runtime hook; requires independent recovery DB credential and explicit --writers-stopped --execute. It does not touch live orders, wallet, research datasets or checkpoints.
 - Added `services/api/tests/test_shadow_archive_recovery.py` and `docs/audits/MT-019-no-storage-upgrade-recovery.md`. CI review pending. No live database change or deletion done.
 - **Not the final fix:** need continuous low-overhead R2 cold offload, searchable history, control backup repair, duplicate/diagnostic event reduction, and actual post-recovery physical disk monitoring, without extra Render capacity.
+
+### Engineering progress — 2026-11-10
+- PR [#174](https://github.com/princesspikachuu/kalshi-scanner-data/pull/174), `fix/mt-019-r2-archive-reclaim`: recovery tool further limited to six **non-financial** diagnostic event kinds, protects fills/settlements/CYCLE_REPORT, uses indexed keyset paging, preserves *all original research_job columns* in checksum-verified R2 objects, and provides event-ID manifests plus restoration verification. Tests expanded; latest CI validation still pending. Draft/unmerged; no data deleted.
+- PR [#175](https://github.com/princesspikachuu/kalshi-scanner-data/pull/175), `fix/mt-019-lossless-diagnostic-batches`: preventive lossless gzip+SHA packing of consecutive Favorites/scalper diagnostic events (<=64 per database row), retaining original event IDs/payload, with recent-activity API reconstruction and protected financial event rows. Separate draft/unmerged; validation pending. Not the final R2 archival bridge; needs support for packed history before a recurring reclaim policy.
+- Verified Render DB status remains `suspended` and allocated storage remains **10 GB**. No auto-expand, delete, resume or deploy initiated. User explicitly forbids buying capacity.
+- More work required: restore without extra disk using an approved, controlled access path; verify R2 backup/restore and physical WAL/free space; implement sustainable recurring archive of both raw and packed histories; resolve stale control backup failures and confirm growth is bounded. Live recovery remains blocked while DB suspended.
 
 
 ---
