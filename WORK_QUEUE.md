@@ -748,6 +748,16 @@ If a strategy has better natural axes/segments, use those instead.
 ### Completion notes
 _Fill in when done._
 
+
+### Implementation progress
+- PR #173: https://github.com/princesspikachuu/kalshi-scanner-data/pull/173
+- Added compact per-folder learning metadata: truthful classification, current state, observation/completion counts, recorded features, segmentation, evidence threshold, sparse-data fallback, and intended decision improvements.
+- Sequential/Favorites/Statistics-Favorites are labeled data-learning only because their code actually uses historical evidence in decisions.
+- Volatility and Market Maker are labeled future-learning candidates: they collect research but current trading remains rule/live-feature driven.
+- Complete Set is labeled operational-only; paused Convexity is preserved history/future-analysis, not an active learner.
+- Added expandable Data / Learning panel to every folder without duplicating raw heavy research into the workspace.
+- Backend and frontend regression coverage added. Fast browser/focused checks are green; full PostgreSQL/API validation is running.
+
 ---
 
 # URGENT — Dashboard snapshot size failure
