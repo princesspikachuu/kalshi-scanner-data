@@ -98,6 +98,9 @@ def verify_archived_manifest(objects, manifest):
     records=read_verified(objects,reference)
     if not isinstance(records,list) or len(records)!=manifest['count']:
         raise ValueError('Archived shadow event count mismatch')
+    expected_ids=manifest.get('ids')
+    if not isinstance(expected_ids,list) or len(expected_ids)!=manifest['count']:
+        raise ValueError('Missing archive event index')
     seen=set()
     for row in records:
         if not isinstance(row,dict) or not isinstance(row.get('id'),str):
@@ -113,6 +116,8 @@ def verify_archived_manifest(objects, manifest):
         if row['progress'].get('event') not in SAFE_EVENT_KINDS:
             raise ValueError('Unexpected archived financial or control event')
         seen.add(row['id'])
+    if seen != set(expected_ids) or len(set(expected_ids))!=len(expected_ids):
+        raise ValueError('Archived shadow event IDs mismatch')
     return records
 
 def plan_only(pool, *, now, age_hours=24, batch_size=100):
@@ -152,7 +157,7 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100)
             first=min(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
             last=max(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
             manifest=dict(format='shadow-r2-event-batch-v1',reference=receipt,
-                count=len(ids),earliest=first,latest=last,
+                count=len(ids),ids=ids,earliest=first,latest=last,
                 source_prefix=PREFIX,event_kinds=sorted({r['progress']['event'] for r in rows}),
                 created_at=now,restorable=True)
             c.execute(MANIFEST_SQL,(uuid4(),Jsonb(dict(kind='shadow_event_r2_manifest')),
