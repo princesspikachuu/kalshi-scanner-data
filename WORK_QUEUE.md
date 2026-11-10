@@ -49,6 +49,46 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 ---
 
+
+# PRIORITY 0 — URGENT DATABASE OUTAGE & RUNAWAY STORAGE
+
+## MT-019 — Recover automatically suspended Render Postgres and stop uncontrolled paper-history growth
+**Status:** BLOCKED  
+**Worker:** ChatGPT / storage-outage investigation  
+**Claimed:** 2026-11-10 17:30 UTC  
+**Urgency:** U0 — BLOCKER  
+**Priority:** Immediate, before MT-011 throughput verification and any resumed trading
+
+### Confirmed incident and ownership
+- Render account email at **2026-11-10 12:34:06 UTC**: Render **automatically suspended** database `pocket_staging` after exceeding disk quota to prevent repeated restarts. This was **NOT confirmed to be initiated by the user**, despite `suspenders=["user"]` in generic Render resource metadata. Previous >90% usage alerts were delivered Nov 8/9.
+- Database id `dpg-dbgcrl6c6qcc73f1hi1g-a`, 10 GB allocated, disk autoscaling **disabled**, status **suspended**. Service/worker startup now fails to resolve DB hostname and times out on connection pools.
+- Connection and safety settings unchanged. Do not resume or increase billable storage without user direction; simply resuming at quota without space can fail again.
+
+### Measured root cause: stored table growth (not just checkpoint network write traffic)
+Database `database_storage_audit` log:
+| UTC timestamp | Total DB bytes | research_job total bytes | Approx research_job rows |
+| --- | ---: | ---: | ---: |
+| Nov 7 06:05 | 5,856,***,*** (~5.86 GB) | ~2.97 GB | ~1.94m live |
+| Nov 9 23:35 | ~8.82 GB | ~5.90 GB | ~3.13m live |
+
+**~2.93 GB of ~2.96 GB total database growth** is attributable to growth of `research_job` table + indexes during this period (measurements rounded). The table stores both background jobs and append-only `demo/shadow/event/<uuid>` paper-trading events; within sampled jobs, `demo/shadow` grew from **2,376 sampled rows / 0.656 MB sampled bytes** to **14,319 rows / 18.372 MB sampled bytes**, while campaign sample remained about 13k rows / ~7.3 MB. The sample is SYSTEM(1) and is **not** a complete exact partition of table bytes. It nevertheless strongly implicates paper-history expansion as the dominant recent contributor.
+
+The paper worker creates a new `research_job` event row for each new event UUID in `services/paper_demo/shadow/storage.py`, and preserves individual audit events by design. Its existing checkpoint upserts also generate WAL/dead tuples but do not necessarily grow the live table by 2.81 GB per 30 minutes. Postgres indexes, TOAST, dead tuples, and WAL contribute physical disk beyond stored logical values. **Do not equate 2.81 GB/30min checkpoint transport with net table growth.**
+
+### Safe recovery/engineering steps
+1. **Owner billing/storage decision**: use Render Dashboard DB page to resume and increase storage together. Render notification explicitly directs the operator to resume **and increase storage**; do not claim 10 GB is sufficient. Size increase is billable/non-reversible; obtain owner approval. Do not delete data.
+2. Once access returns, immediately measure top table/TOAST/index sizes and `research_job` family growth by counts, median/p95 event payload size, hourly rate, and per-event-kind quantities. Measure `pg_database_size`, free disk, WAL, dead tuples, autovacuum/analyze, and time-based growth.
+3. Design lossless archival/compaction or partitioned history for `demo/shadow/event` with stable, queryable aggregates and durable raw evidence. Keep settlement, P/L, bot analytics, and all research history intact. Do **not** wipe history, reset funds, truncate tables, or delete events as a quick fix.
+4. Add durable growth budget and proactive thresholds (e.g., warning at 70% and 85%, unexpected growth alert) and restrict **redundant** per-tick event logging while retaining meaningful observations. No reduction to useful Favorites or Market Maker trading/monitoring.
+5. PR #171 merged as `edd87e8d`, included in live worker version `a274d028`, to avoid identical checkpoint upserts; savings cannot be verified while database is suspended. Assess its actual value independently of the append-only-event problem.
+6. Confirm resumed worker/API health, account/history recovery, and before/after database growth. Only mark DONE after sustainable growth is verified.
+
+### Completion notes
+_Diagnosis confirmed by Render notifications and pre-outage sampled storage logs. Recovery and exact post-resume size attribution blocked by automatic suspension and pending storage-capacity decision._
+
+---
+
+
 # PRIORITY 1 — Increase Favorites data collection volume
 
 ## MT-001 — Allow repeated Favorites data-collection bids on the same market
