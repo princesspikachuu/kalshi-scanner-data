@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -20,9 +20,23 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
+test('Data Learning panel distinguishes active learning from diagnostics-only and operational strategies',()=>{
+ const data=fixture();
+ data.folders[0].learning={classification:'operational_only',state:'not_learning',observations:4,settled_observations:2,open_observations:2,bot_count:1,decisions:'No historical model currently changes set execution',segments:'event/set execution records',minimum:'Not applicable',fallback:'Current executable-cost and coverage rules',features:['executable set cost','fees']};
+ data.folders[1].learning={classification:'data_learning',state:'using_statistics_now',observations:22,settled_observations:15,open_observations:7,bot_count:1,decisions:'Entry pair selection, completion likelihood and expected net return',segments:'series × time bucket × prices',minimum:'20 matching settled attempts',fallback:'1-contract paper exploration',features:['entry leg prices','pair completion']};
+ data.folders[2].learning={classification:'data_learning',state:'using_statistics_now',observations:9,settled_observations:4,open_observations:5,bot_count:1,decisions:'Entry value ceiling',segments:'market type × price × time',minimum:'settled evidence',fallback:'paper-data collection',features:['entry price','time remaining']};
+ data.folders[3].learning={classification:'future_learning_candidate',state:'paused_history',observations:0,settled_observations:0,open_observations:0,bot_count:1,decisions:'Historical results preserved',segments:'legacy history',minimum:'No active learning threshold',fallback:'Paused; history only',features:['P/L']};
+ const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
+ assert.ok(html.includes('Data / Learning · Operational-only strategy'));
+ assert.ok(html.includes('Data / Learning · Data-learning strategy'));
+ assert.ok(html.includes('Data / Learning · Future-learning candidate'));
+ assert.ok(html.includes('20 matching settled attempts'));
+ assert.ok(html.includes('Using collected evidence now'));
+});
+
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
  const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
  for(const name of ['Complete-Set Arbitrage','Sequential Spread Trading','High-Probability Favorites','Convexity · Paused'])assert.ok(html.includes(name));
