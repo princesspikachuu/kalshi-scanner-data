@@ -265,9 +265,9 @@ Still expose, where practical:
 # PRIORITY 3 — Validate Favorites data throughput after MT-001
 
 ## MT-003 — Measure whether Favorites data collection is now fast enough
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-003 throughput measurement  
+**Claimed:** 2026-11-10 00:10 UTC  
 **Urgency:** U2 — HIGH  
 **Priority:** High, but execute after MT-001 is deployed
 
