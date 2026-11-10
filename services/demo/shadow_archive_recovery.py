@@ -20,22 +20,36 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from services.demo.maintenance import object_store, put_verified
+from services.demo.maintenance import object_store, put_verified, read_verified
 
 PREFIX = 'demo/shadow/event/'
 MANIFEST_PREFIX = 'demo/shadow/archive-manifest/'
 MAX_BATCH = 150
 MIN_AGE_HOURS = 6
 
-# research_job_queue(status, created_at) already supports a bounded age scan.
-# Do not ORDER BY an unindexed JSON field, scan entire payload histories, or
-# target the 'demo/event/' namespace (legacy finance queries depend on it).
+# Only fully restorable, non-financial diagnostics are eligible for archival
+# reclaim. Keep fills, settlements, orders, CYCLE_REPORT, money and safety
+# evidence in PostgreSQL until an independently verified read path exists.
+SAFE_EVENT_KINDS = (
+    'FAVORITE_STAT_DECISION',
+    'FAVORITE_ENTRY_DECISION',
+    'FAVORITE_REPEAT_OPPORTUNITY',
+    'FAVORITE_ENTRY_COHORT',
+    'FAVORITE_TRIAL_QUALITY',
+    'SCALPER_OBSERVATION_BATCH',
+)
+
+# The unique research_job idempotency-key index supports prefix ordering.
+# Created-at ordering can require a large sort over millions of rows.
+# Preview is strictly read-only; only the executing operator takes row locks.
 CANDIDATES = """SELECT id::text,idempotency_key,parameters,progress,created_at
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
     AND NOT (progress ? 'archive')
     AND idempotency_key>=%s AND idempotency_key<%s
-    ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED"""
+    AND progress->>'event'=ANY(%s::text[])
+    ORDER BY idempotency_key LIMIT %s"""
+LOCKED_CANDIDATES = CANDIDATES + ' FOR UPDATE SKIP LOCKED'
 
 MANIFEST_SQL = """INSERT INTO research_job
     (id,asset,parameters,progress,idempotency_key,status,finished_at)
@@ -45,7 +59,8 @@ DELETE_SQL = """DELETE FROM research_job WHERE id=ANY(%s::uuid[])
     AND status='succeeded'
     AND idempotency_key>=%s AND idempotency_key<%s
     AND created_at<to_timestamp(%s)
-    AND NOT (progress ? 'archive') RETURNING id::text"""
+    AND NOT (progress ? 'archive')
+    AND progress->>'event'=ANY(%s::text[]) RETURNING id::text"""
 
 
 def validate_window(now, age_hours, batch_size):
@@ -63,12 +78,40 @@ def archive_payload(rows):
                  created_at=r['created_at'].isoformat()) for r in rows]
 
 
+def verify_archived_manifest(objects, manifest):
+    """Read back the complete R2 payload and validate it against its manifest.
+
+    Intended for operator-led restoration checks before and after reclamation.
+    """
+    if not isinstance(manifest,dict) or manifest.get('format')!='shadow-r2-event-batch-v1':
+        raise ValueError('Invalid shadow archive manifest')
+    if manifest.get('source_prefix')!=PREFIX or type(manifest.get('count')) is not int:
+        raise ValueError('Invalid shadow archive provenance')
+    reference=manifest.get('reference')
+    if not isinstance(reference,dict):
+        raise ValueError('Missing archive reference')
+    records=read_verified(objects,reference)
+    if not isinstance(records,list) or len(records)!=manifest['count']:
+        raise ValueError('Archived shadow event count mismatch')
+    seen=set()
+    for row in records:
+        if not isinstance(row,dict) or not isinstance(row.get('id'),str):
+            raise ValueError('Invalid archived shadow row')
+        if row['id'] in seen or not str(row.get('idempotency_key','')).startswith(PREFIX):
+            raise ValueError('Duplicate or unrelated archived row')
+        if not isinstance(row.get('parameters'),dict) or not isinstance(row.get('progress'),dict):
+            raise ValueError('Incomplete archived shadow evidence')
+        if row['progress'].get('event') not in SAFE_EVENT_KINDS:
+            raise ValueError('Unexpected archived financial or control event')
+        seen.add(row['id'])
+    return records
+
 def plan_only(pool, *, now, age_hours=24, batch_size=100):
     cutoff = validate_window(now, age_hours, batch_size)
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=5000')
-            rows = c.execute(CANDIDATES, (cutoff, PREFIX, PREFIX+'zzzz', batch_size)).fetchall()
+            rows = c.execute(CANDIDATES, (cutoff, PREFIX, PREFIX+'zzzz', list(SAFE_EVENT_KINDS), batch_size)).fetchall()
     kinds = Counter(str(r['progress'].get('event','unknown')) for r in rows)
     return dict(mode='preview', eligible_in_sample=len(rows),
                 batch_limit=batch_size, hot_hours=age_hours,
@@ -87,22 +130,25 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100)
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=10000')
-            rows=c.execute(CANDIDATES,(cutoff,PREFIX,PREFIX+'zzzz',batch_size)).fetchall()
+            rows=c.execute(LOCKED_CANDIDATES,(cutoff,PREFIX,PREFIX+'zzzz',list(SAFE_EVENT_KINDS),batch_size)).fetchall()
             if not rows:
                 return dict(mode='executed', archived=0, deleted=0, hot_hours=age_hours)
             records=archive_payload(rows)
             # put_verified performs a full read-after-write SHA-256 and JSON
             # round-trip check before returning its receipt.
+            if any(r['progress'].get('event') not in SAFE_EVENT_KINDS for r in rows):
+                raise RuntimeError('Non-diagnostic audit event selected; refusing to remove')
             receipt=put_verified(objects,'events',records)
             ids=[r['id'] for r in rows]
             first=min(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
             last=max(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
             manifest=dict(format='shadow-r2-event-batch-v1',reference=receipt,
                 count=len(ids),earliest=first,latest=last,
-                source_prefix=PREFIX,created_at=now,restorable=True)
+                source_prefix=PREFIX,event_kinds=sorted({r['progress']['event'] for r in rows}),
+                created_at=now,restorable=True)
             c.execute(MANIFEST_SQL,(uuid4(),Jsonb(dict(kind='shadow_event_r2_manifest')),
                 Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-            deleted=c.execute(DELETE_SQL,(ids,PREFIX,PREFIX+'zzzz',cutoff)).fetchall()
+            deleted=c.execute(DELETE_SQL,(ids,PREFIX,PREFIX+'zzzz',cutoff,list(SAFE_EVENT_KINDS))).fetchall()
             if {r['id'] for r in deleted}!=set(ids) or len(deleted)!=len(ids):
                 raise RuntimeError('Archive/delete identity mismatch; transaction rolled back')
     return dict(mode='executed',archived=len(rows),deleted=len(rows),
