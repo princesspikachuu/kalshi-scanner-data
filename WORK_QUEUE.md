@@ -109,6 +109,12 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - More work required: restore without extra disk using an approved, controlled access path; verify R2 backup/restore and physical WAL/free space; implement sustainable recurring archive of both raw and packed histories; resolve stale control backup failures and confirm growth is bounded. Live recovery remains blocked while DB suspended.
 
 
+### Validation check
+- PR #174 code and expanded safety tests passed GitHub Actions on commit `7f557e60e99dec88ebdac5264bb8d70adaa4feb9`; a subsequent documentation-only commit `9ccf61fa48ef316417b757b41b908ff11c7ff8bb` has been pushed. Keep draft; **no cleanup executed**.
+- PR #175 new lossless diagnostic batch implementation and tests have been pushed; GitHub Actions run `42876257675` was still in progress on last inspection. Keep draft; **not deployed**.
+- Before merging either, review R2 retrieval of compressed-batch histories, PostgreSQL physical disk free space/WAL headroom, and the suspended database's recovery route. No storage purchase authorized.
+
+
 ---
 
 
