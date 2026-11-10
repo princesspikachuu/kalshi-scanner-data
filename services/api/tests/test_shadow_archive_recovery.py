@@ -78,6 +78,7 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(statements,['SET LOCAL statement_timeout=10000',LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL])
         manifest_args=c.execute.call_args_list[2].args[1]
         self.assertEqual(manifest_args[2].obj['count'],2)
+        self.assertEqual(manifest_args[2].obj['ids'],[a['id'],b['id']])
         self.assertEqual(manifest_args[2].obj['reference'],receipt)
         self.assertEqual(c.execute.call_args_list[3].args[1][0],[a['id'],b['id']])
         c.transaction.assert_called_once()
@@ -112,7 +113,8 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         from services.demo.shadow_archive_recovery import archive_payload
         original=archive_payload([self.row()])
         manifest=dict(format='shadow-r2-event-batch-v1',source_prefix=PREFIX,
-                      count=1,reference=dict(key='demo/events/abc.json.gz'))
+                      count=1,ids=[original[0]['id']],
+                      reference=dict(key='demo/events/abc.json.gz'))
         with patch('services.demo.shadow_archive_recovery.read_verified',return_value=original) as reader:
             self.assertEqual(verify_archived_manifest(MagicMock(),manifest),original)
             reader.assert_called_once()
@@ -127,6 +129,10 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         with patch('services.demo.shadow_archive_recovery.read_verified',return_value=invalid):
             with self.assertRaisesRegex(ValueError,'unrelated'):
                 verify_archived_manifest(MagicMock(),manifest)
+        altered=dict(manifest,ids=['a different archive record'])
+        with patch('services.demo.shadow_archive_recovery.read_verified',return_value=original):
+            with self.assertRaisesRegex(ValueError,'IDs mismatch'):
+                verify_archived_manifest(MagicMock(),altered)
 
 
     def test_command_line_requires_explicit_operator_confirmation(self):
