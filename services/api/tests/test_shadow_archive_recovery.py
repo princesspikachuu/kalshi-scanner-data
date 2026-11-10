@@ -11,9 +11,12 @@ from services.demo.shadow_archive_recovery import (
 
 class ShadowArchiveRecoveryTests(unittest.TestCase):
     def row(self,ident='11111111-1111-1111-1111-111111111111'):
-        return dict(id=ident,idempotency_key=PREFIX+ident,parameters=dict(kind='EXPERIMENT'),
+        return dict(id=ident,idempotency_key=PREFIX+ident,asset='crypto',
+            status='succeeded',parameters=dict(kind='EXPERIMENT'),
             progress=dict(event='FAVORITE_STAT_DECISION',details='original decision evidence'),
-            created_at=datetime(2026,11,7,tzinfo=timezone.utc))
+            created_at=datetime(2026,11,7,tzinfo=timezone.utc),
+            started_at=None,finished_at=datetime(2026,11,7,tzinfo=timezone.utc),
+            lease_expires_at=None,attempts=0,error_code=None)
 
     def db(self,rows=None,deleted=None):
         pool=MagicMock()
@@ -68,6 +71,9 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(put.call_args.args[1],'events')
         self.assertEqual([r['id'] for r in put.call_args.args[2]],[a['id'],b['id']])
         self.assertEqual(put.call_args.args[2][0]['progress'],a['progress'])
+        self.assertEqual(put.call_args.args[2][0]['finished_at'],a['finished_at'].isoformat())
+        self.assertEqual(put.call_args.args[2][0]['attempts'],a['attempts'])
+        self.assertEqual(put.call_args.args[2][0]['asset'],a['asset'])
         statements=[call.args[0] for call in c.execute.call_args_list]
         self.assertEqual(statements,['SET LOCAL statement_timeout=10000',LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL])
         manifest_args=c.execute.call_args_list[2].args[1]
