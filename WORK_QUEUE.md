@@ -83,8 +83,19 @@ The paper worker creates a new `research_job` event row for each new event UUID 
 5. PR #171 merged as `edd87e8d`, included in live worker version `a274d028`, to avoid identical checkpoint upserts; savings cannot be verified while database is suspended. Assess its actual value independently of the append-only-event problem.
 6. Confirm resumed worker/API health, account/history recovery, and before/after database growth. Only mark DONE after sustainable growth is verified.
 
+### No-storage-increase decision and corrected architecture audit (2026-11-10)
+- **Owner instruction:** NO Render storage expansion, NO disk autoscaling. Keep the 10 GB cap. Investigate unnecessary data, migrate cold evidence to the already architected Cloudflare R2 object store, and delete only after verifiable archive and safe retrieval.
+- **Correction:** Contrary to an earlier incomplete code-path inspection, active `HostedRun.control()` in `services/paper_demo/shadow/host.py` **does call** `services.demo.maintenance.maintenance()` about every five minutes. The archiver was not absent: verified live `demo_archive_scan` logs repeatedly show `scanned:129–200, archived:0` through Nov 10 00:14 UTC.
+- **Why it made no progress:** `archive_events()` waits **30 days normally / 7 days under pressure**, but the large flood of paper event rows accrued over only a few days. It handles **at most 200 rows per pass**, alternates `demo/event` and `demo/shadow/event`, and merely replaces `progress` JSON with an R2 pointer while retaining each Postgres row and indexes. At five-minute cadence the shadow path reaches only **~28,800 rows/day** even when eligible, far below measured creation rates. This cannot keep active DB small.
+- **Backup also degraded:** live `demo_backup_verification_failed` logs show repeated `QueryCanceled` (SQLSTATE 57014) and later `backup_capacity`; verified R2 control backup last seen Nov 8 04:36 UTC, not current. Diagnose backup separately; don't claim archival healthy.
+- R2 adapter is implemented in `services/research/r2.py` and the verified archive contract is `services/demo/maintenance.py` and `services/research/archive.py`. Whether every intended bucket/object is configured and healthy needs operator-side verification after DB restoration; don't disclose credentials.
+- **Do not treat `VACUUM` as immediate shrinkage:** normal VACUUM makes free pages reusable inside Postgres but may not reduce disk allocation. A `VACUUM FULL` or table rewrite needs extra space and exclusive locks, unsafe near hard disk limit. Avoid mass DELETE without verified R2 and a bounded WAL/disk budget.
+- Design **bounded hot event retention** plus verifiable **R2 archive manifests / searchable metadata** and controlled batched removal of old `demo/shadow/event` rows. Preserve current executions, open orders, settlement and P/L, and allow restoration of historical evidence. Ensure the archive scanner can keep up with current creation volume.
+- Worker currently logs `paper_balance_retention_deferred` due to **no DELETE privilege**; don't grant broad DELETE to normal workers. Plan an explicitly authorized, tightly scoped recovery/operator procedure for deletion after archive verification.
+- Based on Render docs, a suspended at-capacity database may need short resumption to reclaim space, but it may be re-suspended if no room becomes available; stop new writes first. No user approval to upgrade disk.
+
 ### Completion notes
-_Diagnosis confirmed by Render notifications and pre-outage sampled storage logs. Recovery and exact post-resume size attribution blocked by automatic suspension and pending storage-capacity decision._
+_Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show archival was running but doing zero successful event archives. Owner forbids storage expansion; preparation of safe R2 archival + selective cleanup remains in progress, live DB changes blocked by suspension._
 
 ---
 
