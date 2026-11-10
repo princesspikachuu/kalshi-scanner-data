@@ -115,6 +115,28 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
  }).join('')+'</section>';
 }
 
+export function learningDiagnosticsMarkup(learning){
+ if(!learning)return '';
+ const label={data_learning:'Data-learning strategy',operational_only:'Operational-only strategy',future_learning_candidate:'Future-learning candidate'}[learning.classification]||'Operational-only strategy';
+ const state={using_statistics_now:'Using collected evidence now',collecting_only:'Collecting evidence; current rules remain fixed/configured',not_learning:'Not currently using historical learning',paused_history:'Paused history preserved; not currently learning'}[learning.state]||learning.state||'';
+ const features=(learning.features||[]).map(x=>'<li>'+e(x)+'</li>').join('');
+ const counts=[['Observations / attempts',learning.observations??0],['Settled / completed',learning.settled_observations??0],['Open / not yet usable',learning.open_observations??0],['Bots / profiles represented',learning.bot_count??0]];
+ if(learning.research_cells!=null)counts.push(['Research cells',learning.research_cells]);
+ if(learning.sample_threshold!=null)counts.push(['Preferred sample threshold',learning.sample_threshold]);
+ const reasons=learning.decision_counts&&Object.keys(learning.decision_counts).length
+  ?'<p class="small"><strong>Recent decision reasons:</strong> '+Object.entries(learning.decision_counts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>e(k.replaceAll('_',' '))+' '+e(String(v))).join(' · ')+'</p>':'';
+ return '<details class="advanced learning-diagnostics"><summary>Data / Learning · '+e(label)+'</summary>'+
+   '<p class="small"><strong>'+e(state)+'</strong></p>'+
+   '<div class="bot-stats">'+counts.map(([k,v])=>'<div><span>'+e(k)+'</span><strong>'+e(String(v))+'</strong></div>').join('')+'</div>'+
+   '<p class="small"><strong>What the evidence improves:</strong> '+e(learning.decisions||'—')+'</p>'+
+   '<p class="small"><strong>Segmentation:</strong> '+e(learning.segments||'—')+'</p>'+
+   '<p class="small"><strong>Evidence threshold:</strong> '+e(learning.minimum||'—')+'</p>'+
+   '<p class="small"><strong>Sparse-data fallback:</strong> '+e(learning.fallback||'—')+'</p>'+
+   (features?'<p class="small"><strong>Recorded features:</strong></p><ul class="small">'+features+'</ul>':'')+
+   (learning.last_refreshed_at?'<p class="small">Last aggregate refresh: '+e(new Date(Number(learning.last_refreshed_at)*1000).toLocaleString())+'</p>':'')+
+   reasons+'</details>';
+}
+
 export const pnlClass=value=>value===null||value===undefined?'':Number(value)>0?'positive':Number(value)<0?'negative':'';
 export function executionMarkup(x){
  if(!x||!x.measured)return '<p class="small">Execution measurements will appear with the next worker snapshot.</p>';
