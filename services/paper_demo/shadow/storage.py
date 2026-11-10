@@ -9,6 +9,7 @@ from .state import encode
 from .checkpoint_codec import pack_checkpoint
 from .checkpoint_segments import CheckpointSegments
 from .audit_bulk import persist_audit_rows
+from .diagnostic_batches import compact_diagnostic_rows, BATCH_PREFIX
 
 KEY='demo/shadow/checkpoint'
 # An unchanged checkpoint is already durable. Keep a periodic full UPSERT as a
@@ -97,6 +98,10 @@ class HostedAudit:
                 report=json.loads(fields['details']);report['at']=now
                 report['bot_revision']=self.engine.markets[report['ticker']].get('bot_revision',1)
                 batch.append(entry('demo/shadow/report/'+report['ticker'],dict(time=now,bot_id=report.get('bot_id')),report))
+        # Store only high-volume, non-financial diagnostics as compact,
+        # lossless rows. Every event UUID, original payload and time survives.
+        # Fills, settlements, reports, safety events and commands stay raw.
+        batch=compact_diagnostic_rows(batch,entry)
         self.snapshot_ms=(time.monotonic()-started)*1000
         return batch,commands,written_events
     def write(self,prepared):
@@ -145,6 +150,11 @@ class HostedAudit:
         elif isinstance(compressed,str):profile['checkpoint_bytes']+=len(compressed)
         else:profile['inline_checkpoint_commits']+=1
         profile['audit_and_extra_rows']+=max(0,len(batch)-1)
+        diagnostic_batches=[r[2].obj for r in rows
+            if isinstance(r[3],str) and r[3].startswith(BATCH_PREFIX)]
+        profile['diagnostic_batch_rows']+=len(diagnostic_batches)
+        profile['diagnostic_events_packed']+=sum(p['count'] for p in diagnostic_batches)
+        profile['diagnostic_rows_avoided']+=sum(p['count']-1 for p in diagnostic_batches)
         for field,value in sql_batch.items():profile[field]+=value
         profile['command_rows']+=len(commands)
         profile['prepare_ms']+=getattr(self,'snapshot_ms',0)
