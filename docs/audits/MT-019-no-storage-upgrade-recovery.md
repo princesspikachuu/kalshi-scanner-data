@@ -18,7 +18,7 @@
 
 ## Prioritized cleanup decisions
 
-1. **Safe to offload after verification**: completed `demo/shadow/event` rows older than an explicitly selected hot window (default 24 hours). Retain every original event, parameters, progress, UTC creation timestamp and row ID in R2. Preserve a durable Postgres manifest with reference/checksum/count/time bounds. They are not the active execution checkpoint and the current `/demo/shadow/events` endpoint reads only the latest 100.
+1. **Safe to offload after verification**: older diagnostic-only `demo/shadow/event/` records, restricted to the explicit six-kind allowlist in `shadow_archive_recovery.py`, beyond a hot window (default 24 hours). Preserve **all original research_job columns**, including IDs, parameters, progress, timestamps and status, in R2. Keep a durable PostgreSQL manifest with its R2 reference, checksum, full event ID list, event kinds and time bounds. This tool expressly **excludes** FILL, SETTLED, orders, cancellations, CYCLE_REPORT, monetary and safety records.
 2. **Do not delete as a quick fix**: `demo/shadow/checkpoint`, current bot/folder control rows, outstanding orders, settlement evidence, funding records, reports required for P/L and all immutable research datasets/artifacts.
 3. **Audit next**: high-volume `FAVORITE_STAT_DECISION`, `CYCLE_REPORT`, `MARKET`, `SCALPER_OBSERVATION_BATCH` and repeated status events. Determine which are genuine unique learning/financial evidence versus duplicate derived detail. The pre-outage `shadow_durability_cost.event_kinds` logs support counts by category, **not byte shares**.
 4. **Repair failed backups**: avoid retrying the same unbounded backup query every five minutes. Consider R2 chunking and bounded incremental snapshots, preserving atomic financial checkpoint logic.
@@ -33,7 +33,7 @@
 - stopped paper writers, checked by the operator and explicitly acknowledged as `--writers-stopped`,
 - `--execute`, an explicit age floor of at least six hours, and a maximum of 150 rows per batch.
 
-Per batch the routine selects only old, succeeded `demo/shadow/event/` rows, uploads all original values to R2, verifies read-back, writes a manifest under `demo/shadow/archive-manifest/` and deletes exactly the selected IDs **in one PostgreSQL transaction**. If upload, verification, manifest insertion, deletion permissions, or row counts fail, the DB transaction aborts. No normal worker invokes this script.
+Per batch the routine selects only old, succeeded **non-financial diagnostic** `demo/shadow/event/` rows using the unique key index, uploads all original columns to R2, verifies read-back, writes a manifest with the exact event-ID index under `demo/shadow/archive-manifest/` and deletes exactly the selected IDs **in one PostgreSQL transaction**. Preview performs no SELECT FOR UPDATE and makes no changes. `verify_archived_manifest()` re-reads and verifies the original event IDs and fields. If upload, verification, manifest insertion, deletion permissions, or row counts fail, the DB transaction aborts. No normal worker invokes this script.
 
 ### When a safe database connection is available
 
@@ -49,5 +49,5 @@ Per batch the routine selects only old, succeeded `demo/shadow/event/` rows, upl
 
 - Render Postgres is suspended; the connector cannot query or reclaim rows.
 - The scoped operator recovery role/connection and historical R2 restore UX need validation.
-- No recurring purge has been enabled. This tool is an explicit one-time safe recovery instrument, **not yet the permanent retention service**.
+- No recurring purge has been enabled. This tool is an explicit one-time recovery instrument, **not yet the permanent retention service**. PR #175 separately reduces new row growth via lossless compressed diagnostic batches; the operator archiver must also support its `demo/shadow/event-batch/` format before a complete R2 lifecycle is ready.
 - No Render storage was increased and no records were deleted by this code change.
