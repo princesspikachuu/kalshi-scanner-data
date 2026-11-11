@@ -178,7 +178,8 @@ class VerifiedControlBackupTests(unittest.TestCase):
         records=[self.record(1),self.record(2)]
         store=MagicMock()
         receipts=[dict(key='demo/backups/a',size=101,sha256='a'*64),
-                  dict(key='demo/backups/b',size=60,sha256='b'*64)]
+                  dict(key='demo/backups/b',size=60,sha256='b'*64),
+                  dict(key='demo/backups/roots/c',size=32,sha256='c'*64)]
         with patch('services.demo.control_backup_v2.collect_snapshot_spooled',
                    return_value=self.staged(records)), patch(
                    'services.demo.control_backup_v2.put_verified',
@@ -188,9 +189,14 @@ class VerifiedControlBackupTests(unittest.TestCase):
             result=backup_controls(store,MagicMock(),now=123)
         self.assertTrue(result['verified'])
         self.assertEqual(result['records'],2)
-        self.assertEqual(put.call_count,2)
+        self.assertEqual(put.call_count,3)
         self.assertEqual(put.call_args_list[0].args[2]['format'],PART_FORMAT)
         self.assertEqual(put.call_args_list[1].args[2]['format'],FORMAT)
+        self.assertEqual(put.call_args_list[2].args[1],'backups/roots')
+        self.assertEqual(put.call_args_list[2].args[2]['format'],
+                         'control-snapshot-root-receipt-v1')
+        self.assertEqual(put.call_args_list[2].args[2]['root_reference'],receipts[1])
+        self.assertTrue(result['catalog_stored'])
         self.assertEqual(store.put.call_args.args[0],'backup-health')
         self.assertEqual(store.put.call_args.args[1]['format'],FORMAT)
         self.assertEqual(store.put.call_args.args[1]['records'],2)
@@ -210,6 +216,21 @@ class VerifiedControlBackupTests(unittest.TestCase):
                    return_value=dict(records=1,sha256=digest_records(records),chunks=1)):
             store=MagicMock()
             with self.assertRaises(ValueError):
+                backup_controls(store,MagicMock(),now=123)
+            store.put.assert_not_called()
+
+    def test_failed_catalog_does_not_advance_backup_health(self):
+        records=[self.record(1),self.record(2)]
+        first=dict(key='demo/backups/a',size=101,sha256='a'*64)
+        second=dict(key='demo/backups/b',size=60,sha256='b'*64)
+        with patch('services.demo.control_backup_v2.collect_snapshot_spooled',
+                   return_value=self.staged(records)), patch(
+                   'services.demo.control_backup_v2.put_verified',
+                   side_effect=[first,second,RuntimeError('catalog unavailable')]), patch(
+                   'services.demo.control_backup_v2.verify_staged_archive',
+                   return_value=dict(records=2,sha256=digest_records(records),chunks=1)):
+            store=MagicMock()
+            with self.assertRaisesRegex(RuntimeError,'catalog unavailable'):
                 backup_controls(store,MagicMock(),now=123)
             store.put.assert_not_called()
 
