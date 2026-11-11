@@ -100,6 +100,12 @@ def run(settings,stop):
     if is_authorized(os.environ,settings):
         from .recovery_storage_audit import audit_once
         audit_once(settings.database_url)
+    if os.environ.get('MT_ARCHIVE_RECOVERY_LOOP') == 'true':
+        # Distinct owner-approved recovery loop: never activates during demo,
+        # research collection, acceptance checks, or normal disabled idle.
+        from services.demo.shadow_archive_automatic import configuration, run as run_archive
+        configuration(os.environ)
+        return run_archive(stop,os.environ)
     if settings.role=='demo':
         from services.trading.runtime import run as run_demo
         return run_demo(stop)
