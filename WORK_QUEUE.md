@@ -217,7 +217,9 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 
 ### Privilege guard follow-up (PR #186)
 - [PR #186](https://github.com/princesspikachuu/kalshi-scanner-data/pull/186) **PASSED GitHub Actions and MERGED** as `0ce391ac8c6bf31ca8bebd29e0489446a4bf92a0`. Recovery-only archive role validation now explicitly checks `public.research_job` and `public` schema, independent of session search_path, and rejects maintenance credentials with TRUNCATE or schema CREATE authority in addition to owner/admin and direct INSERT/UPDATE/DELETE. Regression tests and disposable PostgreSQL privilege assertions added.
-- **Render deployment of this merge still requires verification.** No automatic recovery cleanup was enabled, no new maintenance role or login was installed, and no trading/collection changes were requested. Keep MT-019 IN PROGRESS and workers recovery-held.
+- **Render deployment VERIFIED:** `pocket-processing-staging` deploy `dep-dbq1c7ks728c738v2n3g` was LIVE on commit `0ce391ac` at 2026-11-11 07:16:29 UTC. Predeploy logged recovery hold, collection disabled, trading disabled, role collector. Research worker remained LIVE and held. Render Postgres available at 15 GB with autoscaling OFF. Read-only DB metrics from 06:00-08:30 UTC showed 1-3 connections and low CPU; neither this nor logical usage proves physical disk/WAL safety. No automatic archival, cleanup, maintenance account, or trading was activated.
+- **PR #187 PREPARED (CI pending):** https://github.com/princesspikachuu/kalshi-scanner-data/pull/187 , branch `fix/mt019-archive-role-membership-fence`, head `e3f7d0e7`. Refuses role memberships, INHERIT, REPLICATION and BYPASSRLS attributes for archival login; adds regression checks and fixes function signature in runbook. Do not merge until tests pass. No live settings changed.
+- **Next:** verify PR #187 CI, then owner-only privilege installation/check and physical disk/WAL gate before any scoped archived-diagnostic cleanup; rotate previously exposed DB credentials before resuming writes. Preserve all financial/control/history evidence and current paused strategy state.
 
 ---
 
