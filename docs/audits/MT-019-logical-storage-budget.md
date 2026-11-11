@@ -5,7 +5,7 @@ reads `pg_database_size`, a bounded relation summary and a sampled research
 family breakdown. This change adds a **pure, no-extra-SQL classification**
 when the existing `DATABASE_CAPACITY_GB` environment value is set.
 
-- Logical bytes / configured cap threshold: warning >=70%, critical >=85%.
+- Logical bytes / configured cap in decimal GB (1 GB = 1,000,000,000 bytes); threshold: warning >=70%, critical >=85%.
 - Optional pure two-snapshot growth estimate (flag at >=1% of configured
   capacity/hour) takes *supplied measurements*, not another query or polling
   loop; no recurring task is enabled here.
@@ -21,3 +21,5 @@ The currently held collector can deploy this without starting collection or
 additional monitoring. This is not a substitute for Render physical disk/WAL
 metrics and a private, scoped archival operator role. No change to live env,
 database, R2, worker cadence, user funds or historical trading data.
+
+The capacity comparison uses decimal GB, consistent with Render's documented `diskSizeGB` field, to avoid understating logical usage. It remains an advisory fraction of configured capacity, **not** a physical disk-use percentage.
