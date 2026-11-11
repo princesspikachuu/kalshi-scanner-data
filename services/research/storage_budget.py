@@ -6,7 +6,7 @@ disk expansion, or background archival.
 """
 from decimal import Decimal, InvalidOperation
 
-GIB = 1024**3
+GB = 1000**3
 WARN_FRACTION = Decimal('0.70')
 CRITICAL_FRACTION = Decimal('0.85')
 
@@ -22,14 +22,14 @@ def budget_snapshot(database_bytes, capacity_gb):
         raise ValueError('Invalid configured database capacity') from exc
     if not capacity.is_finite() or not Decimal('1') <= capacity <= Decimal('1024'):
         raise ValueError('Invalid configured database capacity')
-    cap_bytes = capacity * GIB
+    cap_bytes = capacity * GB
     fraction = Decimal(database_bytes) / cap_bytes
     level = ('critical' if fraction >= CRITICAL_FRACTION else
              'warning' if fraction >= WARN_FRACTION else 'below_warning')
     return dict(
         metric='logical_pg_database_size_only',
         database_bytes=database_bytes,
-        configured_capacity_gib=str(capacity),
+        configured_capacity_gb=str(capacity),
         logical_fraction_of_capacity=str(round(fraction, 6)),
         threshold_level=level,
         warning_threshold_fraction=str(WARN_FRACTION),
