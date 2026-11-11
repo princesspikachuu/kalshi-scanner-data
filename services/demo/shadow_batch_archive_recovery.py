@@ -35,7 +35,7 @@ CANDIDATES="""SELECT id::text,idempotency_key,asset,status,parameters,progress,
     AND progress->>'format'='shadow-diagnostic-batch-v1'
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES=CANDIDATES+' FOR UPDATE SKIP LOCKED'
-SCOPED_RECLAIM_SQL='SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::jsonb)'
+SCOPED_RECLAIM_SQL='SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::text,%s::jsonb,%s::jsonb)'
 MANIFEST_SQL="""INSERT INTO research_job
     (id,asset,parameters,progress,idempotency_key,status,finished_at)
     VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())"""
@@ -147,14 +147,16 @@ def archive_one(pool,objects,*,now,age_hours=24,batch_size=1,scoped=False):
             restored=verify_batch_manifest(objects,manifest)
             if restored!=records:raise ValueError('Archived batch rows did not round-trip exactly')
             manifest_id=uuid4()
-            c.execute(MANIFEST_SQL,(manifest_id,Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
-                Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
             if scoped:
-                # Explicit DB fence allows only verified old, non-financial
-                # diagnostic batches; the login has no table DELETE grant.
+                # Manifest creation and precisely scoped deletion are one
+                # SECURITY DEFINER operation. No direct table write grants.
                 deleted=c.execute(SCOPED_RECLAIM_SQL,
-                    (manifest_id,Jsonb(records))).fetchall()
+                    (manifest_id,'diagnostic_batch_r2_manifest',
+                     Jsonb(manifest),Jsonb(records))).fetchall()
             else:
+                c.execute(MANIFEST_SQL,(manifest_id,
+                    Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
+                    Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
                 deleted=c.execute(DELETE_SQL,
                     (manifest['row_ids'],cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz')).fetchall()
             if len(deleted)!=len(rows) or {r['id'] for r in deleted}!=set(manifest['row_ids']):
