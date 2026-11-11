@@ -118,7 +118,8 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
                    return_value=dict(archived(count=1),verified=False)):
             response=client.get(uri)
         self.assertEqual(response.status_code,503)
-        self.assertNotIn('Archive',response.text)
+        self.assertIn('could not be verified',response.text)
+        self.assertNotIn('hidden-credential',response.text)
         with patch('services.demo.shadow_archive_reader.read_manifest_events',
                    return_value=None):
             self.assertEqual(client.get(uri).status_code,404)
