@@ -108,6 +108,10 @@ def run(settings,stop):
     if backup_audit_authorized(os.environ,settings):
         from services.demo.control_backup_capacity_audit import audit_once as inspect_control_backup_once
         inspect_control_backup_once(settings.database_url)
+    from services.demo.control_backup_v2 import is_authorized as control_backup_authorized
+    if control_backup_authorized(os.environ,settings):
+        from services.demo.control_backup_v2 import backup_once
+        backup_once(settings.database_url)
     from .recovery_temp_disk_audit import is_authorized as temp_disk_audit_authorized
     if temp_disk_audit_authorized(os.environ,settings):
         from .recovery_temp_disk_audit import audit_once as inspect_temp_disk_once
