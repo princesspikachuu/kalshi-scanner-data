@@ -25,8 +25,11 @@ def normalize_reclaimed_manifest_page(result, *, offset):
         raise HistoryReconciliationError('Unknown reclaimed manifest kind')
     identifier = manifest.get('manifest_id')
     key = manifest.get('manifest_key')
-    if not isinstance(identifier, str) or not isinstance(key, str) or not key.startswith(
-            'demo/shadow/archive-manifest/'):
+    expected_key_prefix = ('demo/shadow/archive-manifest/batch/'
+                           if kind == 'packed' else 'demo/shadow/archive-manifest/')
+    if (not isinstance(identifier, str) or not isinstance(key, str)
+            or not key.startswith(expected_key_prefix)
+            or (kind == 'raw' and key.startswith('demo/shadow/archive-manifest/batch/'))):
         raise HistoryReconciliationError('Invalid reclaimed manifest identity')
     original_events = manifest.get('original_events')
     if type(original_events) is not int or original_events < 1:
