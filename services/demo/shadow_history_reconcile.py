@@ -5,7 +5,6 @@ first independently verify R2 manifests and exhaust each source; this module
 cannot manufacture a completeness guarantee or perform I/O.
 """
 import json
-from datetime import datetime, timezone
 from uuid import UUID
 
 MAX_INPUT_EVENTS = 256
