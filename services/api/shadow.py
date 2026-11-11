@@ -576,6 +576,12 @@ def install_shadow(app,auth,mutate,pool):
         if not (limit_string.isascii() and limit_string.isdecimal()
                 and offset_string.isascii() and offset_string.isdecimal()):
             raise HTTPException(422,'Invalid reclaimed pagination')
+        from uuid import UUID
+        try:
+            if str(UUID(identifier))!=identifier:
+                raise ValueError('Noncanonical id')
+        except ValueError:
+            raise HTTPException(422,'Invalid archive manifest identifier') from None
         limit,offset=int(limit_string),int(offset_string)
         if not (1 <= limit <= 50 and 0 <= offset <= 10000):
             raise HTTPException(422,'Invalid reclaimed pagination')
@@ -585,10 +591,6 @@ def install_shadow(app,auth,mutate,pool):
             return normalize_reclaimed_manifest_page(result,offset=offset)
         except HTTPException:
             raise
-        except ValueError:
-            # Invalid manifest id/paging is distinguished from corrupt R2
-            # by the existing reader's input validation.
-            raise HTTPException(422,'Invalid reclaimed archive request') from None
         except ArchiveReaderUnavailable:
             raise HTTPException(503,'Cold history reader is not yet configured') from None
         except Exception as error:
