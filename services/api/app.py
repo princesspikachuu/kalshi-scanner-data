@@ -51,11 +51,16 @@ class LoginBody(BaseModel):
 def create_app(settings=None,store=None,verifier=verify_google_login,history_store=None,campaign_store=None):
     settings=settings or Settings.from_env()
     owned=store is None
-    store=store or PostgresStore(settings.database_url,require_runtime_db=settings.require_runtime_db)
+    store=store or PostgresStore(settings.database_url,
+                               require_runtime_db=settings.require_runtime_db,
+                               recovery_hold=settings.recovery_hold)
     @asynccontextmanager
     async def lifespan(app):
         if owned:
             store.open()
+        if owned and not settings.recovery_hold:
+            # Skip all optional startup DB writes in an explicit recovery hold.
+            # Import/install of routes is inert; requests are fenced below.
             # Read-only startup inventory makes recovered analysis boundaries observable.
             try:
                 from starlette.concurrency import run_in_threadpool
@@ -76,6 +81,14 @@ def create_app(settings=None,store=None,verifier=verify_google_login,history_sto
             supplied=request.headers.get('x-pocket-proxy','')
             if not secrets.compare_digest(supplied.encode(),settings.proxy_secret.encode()):
                 return JSONResponse({'detail':'Request rejected'},status_code=403,headers={'Cache-Control':'no-store'})
+        # The API can write demo controls, campaigns, login sessions and live
+        # configuration independently of held collector workers. During
+        # recovery, allow only infrastructure health checks; all other routes
+        # are rejected before their handler can access PostgreSQL.
+        if settings.recovery_hold and request.url.path not in ('/health/live','/health/ready'):
+            return JSONResponse({'detail':'Recovery maintenance in progress'},
+                                status_code=503,
+                                headers={'Retry-After':'300','Cache-Control':'no-store'})
         response=await call_next(request)
         response.headers['Cache-Control']='no-store, no-transform' if request.url.path=='/demo/shadow/workspace' else 'no-store'
         response.headers['X-Content-Type-Options']='nosniff'
