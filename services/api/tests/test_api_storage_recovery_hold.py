@@ -72,6 +72,31 @@ class APIRecoveryHoldTests(unittest.TestCase):
         store.session.assert_not_called()
         store.revoke.assert_not_called()
 
+    def test_pool_connections_enforce_read_only_when_held(self):
+        from services.api.store import PostgresStore
+        with patch('services.api.store.ConnectionPool') as pool:
+            PostgresStore('postgresql://example.invalid/research',
+                          recovery_hold=True)
+            options=pool.call_args.kwargs['kwargs']['options']
+            self.assertIn('default_transaction_read_only=on', options)
+            self.assertIn('statement_timeout=5000', options)
+            pool.reset_mock()
+            PostgresStore('postgresql://example.invalid/research',
+                          recovery_hold=False)
+            options=pool.call_args.kwargs['kwargs']['options']
+            self.assertNotIn('default_transaction_read_only=on', options)
+            with self.assertRaises(ValueError):
+                PostgresStore('postgresql://example.invalid/research',
+                              recovery_hold='true')
+
+    def test_recovery_hold_connects_with_read_only_pool(self):
+        store=self.store()
+        with patch('services.api.app.PostgresStore', return_value=store) as make_store:
+            app=create_app(settings=self.settings(True))
+            with TestClient(app) as client:
+                self.assertEqual(client.get('/health/live').status_code,200)
+        self.assertTrue(make_store.call_args.kwargs['recovery_hold'])
+
     def test_owned_api_startup_skips_all_optional_database_seeds(self):
         store=self.store()
         with patch('services.api.app.PostgresStore', return_value=store), \
