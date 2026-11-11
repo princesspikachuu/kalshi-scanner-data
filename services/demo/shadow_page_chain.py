@@ -41,9 +41,8 @@ def verify_history_page_chain(pages, source):
         if source == 'manifests':
             keys = [item.get('manifest_key') if isinstance(item, dict) else None
                     for item in items]
-            # Owner list_manifests exposes summary but not its exact cursor
-            # key; callers must attach that indexed key from a separately
-            # trusted source. Otherwise manifest chain completeness is unproven.
+            # Indexed manifest keys come from the owner-authenticated
+            # manifest listing; these are not R2 object addresses.
         else:
             keys = [item.get('key') if isinstance(item, dict) else None
                     for item in items]
