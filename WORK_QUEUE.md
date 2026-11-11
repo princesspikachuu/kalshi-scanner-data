@@ -155,6 +155,14 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Database remains **suspended**, no upgrade. Connected Render actions do not expose a database Resume or worker Suspend action; owner dashboard is needed for physical resume. Avoid re-enabling bots until DB recovery and archived history safety checks complete.
 
 
+### Live 15 GB database recovery and actual sizes (Nov 10, 2026 PT)
+- Owner **intentionally upgraded** `pocket-db-staging` to **15 GB** and resumed it. Render reports `available` and disk autoscaling `false`. No additional upgrade planned.
+- PR [#177](https://github.com/princesspikachuu/kalshi-scanner-data/pull/177) passed CI and merged as `7c680abe`. Disabled processing worker's one-shot **read-only** audit (Nov 11, 03:33 UTC) measured `pg_database_size` **9,127,323,315 bytes (~9.13 GB)**. `research_job` **6,198,132,736 bytes (6.20 GB)** including **982,048,768 index bytes**; `research_dataset` **1,351,368,704 bytes (1.35 GB)**; `collection_page` 445 MB, `raw_archive` 286 MB. Logical DB bytes are **not** true free filesystem/WAL headroom.
+- 0.25% page sample of raw shadow events: `SCALPER_OBSERVATION_BATCH` 695 rows / 2,221,489 payload bytes; `FAVORITE_STAT_DECISION` 397 / 445,534; `CYCLE_REPORT` 286 / 434,182; `DATA_GAP` 959 / 296,729. This establishes **sampled priority**, not exact whole-table totals. Do **not** delete financial audit records or datasets.
+- `MT_STORAGE_RECOVERY_AUDIT` reset to **false** and processing `DATABASE_CAPACITY_GB` set to **15**, while `WORKER_ROLE=collector`, `COLLECTION_ENABLED=false`, `MT_STORAGE_RECOVERY_HOLD=true` remain. Processing disabled replacement `dep-dbpu453l550s738v0ing` reported LIVE; both workers remain disabled. API compatibility deploy `dep-dbpu4j15efls7392nu3g` was in progress at last check.
+- Next: operator-only, R2-verified, small-batch archival and exact-row reclaim of old non-financial diagnostics using merged PR #174/#175 tools. Render's connected SQL tool is blocked by the deliberately empty external database IP allowlist; **do not expose DB**. Requires internal Render Shell and separate narrowly privileged private recovery credential. Verify R2 and Postgres WAL/physical space before more batches. No data deletion executed here.
+
+
 ---
 
 
