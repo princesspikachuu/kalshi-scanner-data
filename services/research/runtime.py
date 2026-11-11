@@ -94,6 +94,12 @@ def termination(stop):
 
 
 def run(settings,stop):
+    # Explicit one-time SELECT-only inspection of a recovered database.
+    # Always fail closed if the audit flag leaks onto an active worker.
+    from .recovery_storage_audit import is_authorized
+    if is_authorized(os.environ,settings):
+        from .recovery_storage_audit import audit_once
+        audit_once(settings.database_url)
     if settings.role=='demo':
         from services.trading.runtime import run as run_demo
         return run_demo(stop)
