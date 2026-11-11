@@ -43,6 +43,16 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
         self.assertEqual(page['total_events'],3)
         self.assertFalse(page['source_exhaustion_verified'])
 
+    def test_raw_manifest_cannot_impersonate_batch_namespace(self):
+        result=archived('raw',1)
+        result['manifest']['manifest_key']='demo/shadow/archive-manifest/batch/'+str(uuid4())
+        with self.assertRaises(HistoryReconciliationError):
+            normalize_reclaimed_manifest_page(result,offset=0)
+        result=archived('packed',1)
+        result['manifest']['manifest_key']='demo/shadow/archive-manifest/'+str(uuid4())
+        with self.assertRaises(HistoryReconciliationError):
+            normalize_reclaimed_manifest_page(result,offset=0)
+
     def test_settled_progress_preserved(self):
         result=archived(count=1)
         result['items'][0]['progress']=dict(event='SETTLED',time=100,net='1.22',fees='0.04')
