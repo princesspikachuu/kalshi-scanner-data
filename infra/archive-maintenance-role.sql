@@ -17,12 +17,11 @@ CREATE ROLE pocket_archive_maintenance NOLOGIN NOSUPERUSER NOCREATEDB
     NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public TO pocket_archive_maintenance;
 GRANT SELECT ON public.research_job TO pocket_archive_maintenance;
-GRANT INSERT (id,asset,parameters,progress,idempotency_key,status,finished_at)
-    ON public.research_job TO pocket_archive_maintenance;
+-- No INSERT privileges: the constrained function also creates the manifest.
 -- No UPDATE/DELETE/TRUNCATE/OWNERSHIP/MEMBERSHIPS or schema CREATE rights.
 
 CREATE FUNCTION public.mt_reclaim_shadow_diagnostics(
-    p_manifest_id uuid, p_original_rows jsonb
+    p_manifest_id uuid, p_kind text, p_manifest jsonb, p_original_rows jsonb
 ) RETURNS TABLE(id text)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public
 AS $function$
@@ -38,6 +37,7 @@ DECLARE
     v_count integer;
     v_deleted integer;
     v_row_id uuid;
+    v_manifest_key text;
     v_ids uuid[] := ARRAY[]::uuid[];
 BEGIN
     -- SECURITY DEFINER changes current_user; session_user remains login.
@@ -55,6 +55,24 @@ BEGIN
         RAISE EXCEPTION 'Archive snapshot size outside bounded limits';
     END IF;
 
+    IF p_kind NOT IN ('shadow_event_r2_manifest',
+                      'diagnostic_batch_r2_manifest') THEN
+        RAISE EXCEPTION 'Only nonfinancial diagnostic archive manifests allowed';
+    END IF;
+    IF jsonb_typeof(p_manifest) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'Archive manifest must be a JSON object';
+    END IF;
+    v_manifest_key:=CASE
+        WHEN p_kind='shadow_event_r2_manifest'
+        THEN 'demo/shadow/archive-manifest/'||p_manifest_id::text
+        ELSE 'demo/shadow/archive-manifest/batch/'||p_manifest_id::text
+    END;
+    -- Manifest and DELETE live inside the same SECURITY DEFINER transaction,
+    -- so the maintenance login cannot INSERT *anything* directly.
+    INSERT INTO public.research_job
+        (id,asset,parameters,progress,idempotency_key,status,finished_at)
+        VALUES (p_manifest_id,'crypto',jsonb_build_object('kind',p_kind),
+                p_manifest,v_manifest_key,'succeeded',clock_timestamp());
     SELECT j.* INTO v_manifest FROM public.research_job AS j
         WHERE j.id=p_manifest_id FOR UPDATE;
     IF NOT FOUND OR v_manifest.status <> 'succeeded'
@@ -155,8 +173,8 @@ BEGIN
 END;
 $function$;
 -- A SECURITY DEFINER function grants PUBLIC EXECUTE unless explicitly revoked.
-REVOKE ALL ON FUNCTION public.mt_reclaim_shadow_diagnostics(uuid,jsonb) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.mt_reclaim_shadow_diagnostics(uuid,jsonb)
+REVOKE ALL ON FUNCTION public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb)
     TO pocket_archive_maintenance;
 COMMIT;
 ,false) IS NOT TRUE
