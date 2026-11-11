@@ -44,6 +44,8 @@ class WALRecoveryPreflightTests(unittest.TestCase):
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 is_authorized(base, self.settings(**change))
+        self.assertIn('MT_WORKER_DISK_AUDIT_ONCE', INCOMPATIBLE_FLAGS)
+        self.assertIn('MT_BACKUP_EXACT_CENSUS', INCOMPATIBLE_FLAGS)
         for flag in INCOMPATIBLE_FLAGS:
             with self.subTest(flag=flag), self.assertRaises(ValueError):
                 is_authorized(dict(base, **{flag: 'true'}), settings)

@@ -60,15 +60,25 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
    `INSERT=false`, `DELETE=false`, `UPDATE=false`, `TRUNCATE=false`,
    `schema CREATE=false`, EXECUTE constrained SQL function=true, no owner/admin flags,
    no role memberships, NOINHERIT, NOREPLICATION, NOBYPASSRLS.
-6. **Only after those checks**, explicitly set
-   `MT_ARCHIVE_RECOVERY_LOOP=true` and
+6. **Only after those checks**, confirm that `MT_API_RECOVERY_HOLD=true`
+   is actually deployed on **every API instance**, that older API instances
+   and in-flight requests have drained, and that no cron, shell or alternate
+   writer remains. Then explicitly set `MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED=true`
+   in the paused processing worker. Separately, inspect **actual physical
+   PostgreSQL disk use and WAL headroom** (not just `pg_database_size`), then
+   set `MT_ARCHIVE_PHYSICAL_HEADROOM_ACKNOWLEDGED=true`. Only after both
+   acknowledgments, set `MT_ARCHIVE_RECOVERY_LOOP=true` and
    `MT_ARCHIVE_WRITERS_STOPPED=true`, with recovery hold and disabled
-   collection still true. The loop uses bounded 24h+ batches, verifies R2
+   collection still true. These flags document operator checks; **they do not
+   independently prove** available disk space or that all writers are stopped. The loop uses bounded 24h+ batches, verifies R2
    objects and durable manifest, then calls the SQL fence. It stops on any
    mismatch or error. During maintenance, check logical and physical
    PostgreSQL usage separately and monitor WAL and row/vacuum growth.
-7. After backlog recovery, disable both loop flags, verify worker is back
-   in held idle mode, and only then evaluate a live-safe retention schedule.
+7. After backlog recovery, disable `MT_ARCHIVE_RECOVERY_LOOP`,
+   `MT_ARCHIVE_WRITERS_STOPPED`,
+   `MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED` **and**
+   `MT_ARCHIVE_PHYSICAL_HEADROOM_ACKNOWLEDGED`, verify worker is back in held idle mode,
+   and only then evaluate a live-safe retention schedule.
 
 ## Important limits
 
