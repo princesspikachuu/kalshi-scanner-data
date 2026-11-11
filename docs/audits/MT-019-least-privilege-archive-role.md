@@ -55,8 +55,8 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
    processing worker. Do **not** replace its normal `DATABASE_URL` or grant
    DELETE/UPDATE to the application login.
 5. Operator verifies database role privileges: `SELECT=true`,
-   `INSERT=false`, `DELETE=false`, `UPDATE=false`,
-   EXECUTE constrained SQL function=true, no owner/admin flags.
+   `INSERT=false`, `DELETE=false`, `UPDATE=false`, `TRUNCATE=false`,
+   `schema CREATE=false`, EXECUTE constrained SQL function=true, no owner/admin flags.
 6. **Only after those checks**, explicitly set
    `MT_ARCHIVE_RECOVERY_LOOP=true` and
    `MT_ARCHIVE_WRITERS_STOPPED=true`, with recovery hold and disabled

@@ -51,12 +51,13 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
             p=owner.execute("""SELECT
               has_table_privilege(%s,'research_job','DELETE'),
               has_table_privilege(%s,'research_job','UPDATE'),
+              has_table_privilege(%s,'research_job','TRUNCATE'),
               has_column_privilege(%s,'research_job','id','INSERT'),
               has_function_privilege(%s,
                 'public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb)','EXECUTE'),
               has_schema_privilege(%s,'public','CREATE')
-            """,(ROLE,ROLE,ROLE,ROLE,ROLE)).fetchone()
-        self.assertEqual(p,(False,False,False,True,False))
+            """,(ROLE,ROLE,ROLE,ROLE,ROLE,ROLE)).fetchone()
+        self.assertEqual(p,(False,False,False,False,True,False))
 
     def test_direct_delete_denied_and_only_old_safe_raw_evidence_reclaimed(self):
         safe=self.create_record('demo/shadow/event/',{'event':'FAVORITE_STAT_DECISION'},aged=True)
