@@ -1,14 +1,23 @@
-# MT-019 — Zero-storage-upgrade recovery and archival runbook
+# MT-019 — Recovered database and guarded R2 archival runbook
 
-**Owner constraint: do not purchase more Render Postgres storage or enable disk autoscaling.** The current database has 10 GB provisioned and was automatically suspended by Render at 2026-11-10 12:34 UTC after reaching the physical disk limit. Its existing writes are not safe to resume unchanged.
+**CURRENT OPERATING STATE (verified November 11, 2026 UTC):** `pocket-db-staging` has already been manually resumed and increased to **15 GB**. Render reports **available**, disk autoscaling **OFF**, and an empty external IP allowlist. **Do not request another storage upgrade or resume the already-available database.** The earlier 10 GB automatic suspension at November 10, 12:34 UTC is historical incident context, not the current status. Normal high-volume writes are still unsafe to restart until retention and disk headroom are demonstrated.
+
+## Recovery checkpoint — what has actually been verified
+
+- A complete **4,190-row demo/live control snapshot** was backed up to R2 on November 11 at 06:09:40 UTC. The verified root catalog references **98 chunks** (143,900,749 compressed bytes); the upload, R2 readback and root catalog were checked. This does **not** replace a whole-database point-in-time backup.
+- The first operator-led 10-row nonfinancial diagnostic archive and exact-row reclamation was subsequently independently verified by a read-only R2/PostgreSQL audit: original archive contents and manifest available, all 10 source IDs absent. This is **not** permission for bulk cleanup.
+- PRs #174, #175, #178 and #185–#187 added lossless diagnostic packing, operator archival, disabled-by-default recovery-hold-only automation and strict least-privilege SQL fencing. **PR #187 code is LIVE** on held processing worker deployment `dep-dbqa2iu7bikc73aksil0` at 17:10:51 UTC; its predeploy logged `collection_enabled=false`, `trading_enabled=false`, `worker_role=collector`, `storage-recovery-hold-v1`.
+- **Neither the isolated maintenance account nor automatic archival is activated.** Collection and paper trading remain disabled. The latest API remains available; do not assume that stopping the two workers proves every possible API/database writer is quiescent.
+- The last full logical-size inspection measured approximately **9.13 GB** in PostgreSQL after resumption. **Actual physical volume free space and WAL headroom are NOT established by this figure or by low CPU/connection metrics.** Confirm them separately in Render before any additional deletion.
+- A previous database credential was exposed in a chat error. Rotate the affected credential and dependent service secrets before returning to normal writes; never paste secrets in chats, logs or GitHub.
 
 ## Verified root cause
 
 - Live `database_storage_audit` samples: database ~5.86 GB on Nov 7 06:05 UTC and ~8.82 GB on Nov 9 23:35 UTC. `research_job` rose from ~2.97 GB to ~5.90 GB, almost the entire measured logical growth.
 - The `demo/shadow` share of the 1% table sample increased from 2,376 sampled rows (~0.66 MB of sampled parameter+progress bytes) to 14,319 (~18.37 MB); **the 1% sample does not measure the whole table**. Causal candidates are continually appended `demo/shadow/event/<UUID>` rows, index overhead, update/WAL activity, and unbounded/retained history.
 - **Correction:** The active shadow worker *does* call `services.demo.maintenance.maintenance` approximately every five minutes from `HostedRun.control`. Live `demo_archive_scan` events showed `archived:0` with batches of 129–200 rows through Nov 10 00:14 UTC. The archiver waits 30 days normally, seven days under pressure, but the new high-volume event history is only days old.
-- Even once old enough, that routine alternates two prefixes, inspects 200 rows per run (at most ~28,800 shadow rows/day), and **updates** old PostgreSQL rows with verified R2 pointers rather than removing them. The normal runtime principals intentionally lack broad DELETE privileges. This is not a sustainable 10 GB hot-event retention system.
-- Control backups also repeatedly failed with `QueryCanceled` (SQLSTATE 57014) or `backup_capacity`; do not assume all current controls are backed up just because R2 is configured. Last verified `demo_control_backup_verified` in the sampled logs was Nov 8 04:36 UTC.
+- Even once old enough, that routine alternates two prefixes, inspects 200 rows per run (at most ~28,800 shadow rows/day), and **updates** old PostgreSQL rows with verified R2 pointers rather than removing them. The normal runtime principals intentionally lack broad DELETE privileges. This is not a sustainable hot-event retention system, even after the manual 15 GB capacity increase.
+- **Historical failure, subsequently repaired for the one-time snapshot:** Legacy control backups failed with `QueryCanceled` (SQLSTATE 57014) or `backup_capacity`; last legacy backup observed at the time was November 8, 04:36 UTC. The bounded multipart V2 backup succeeded on November 11 as described above. Recurring V2 backup is still OFF, and a new live backup cadence is not yet proven.
 
 ## Real storage roles
 
@@ -21,7 +30,7 @@
 1. **Safe to offload after verification**: older diagnostic-only `demo/shadow/event/` records, restricted to the explicit six-kind allowlist in `shadow_archive_recovery.py`, beyond a hot window (default 24 hours). Preserve **all original research_job columns**, including IDs, parameters, progress, timestamps and status, in R2. Keep a durable PostgreSQL manifest with its R2 reference, checksum, full event ID list, event kinds and time bounds. This tool expressly **excludes** FILL, SETTLED, orders, cancellations, CYCLE_REPORT, monetary and safety records.
 2. **Do not delete as a quick fix**: `demo/shadow/checkpoint`, current bot/folder control rows, outstanding orders, settlement evidence, funding records, reports required for P/L and all immutable research datasets/artifacts.
 3. **Audit next**: high-volume `FAVORITE_STAT_DECISION`, `CYCLE_REPORT`, `MARKET`, `SCALPER_OBSERVATION_BATCH` and repeated status events. Determine which are genuine unique learning/financial evidence versus duplicate derived detail. The pre-outage `shadow_durability_cost.event_kinds` logs support counts by category, **not byte shares**.
-4. **Repair failed backups**: avoid retrying the same unbounded backup query every five minutes. Consider R2 chunking and bounded incremental snapshots, preserving atomic financial checkpoint logic.
+4. **Maintain verified backups**: the one-time multipart V2 backup fixes the previous 2,000-row cap for that snapshot, but recurring V2 remains OFF. Develop/verify a sustainable backup cadence, do not resume legacy unbounded retry loops, and preserve financial checkpoints.
 5. **Repair ongoing archiving**: a separate bounded/privilege-scoped recurring archive path must keep pace with newly generated events (not just 200 rows every ten minutes). Do not grant broad DELETE to normal paper-trading workers. Add storage thresholds based on *physical* as well as logical disk bytes.
 
 ## Operator-only archive/reclaim code in this branch
@@ -35,19 +44,26 @@
 
 Per batch the routine selects only old, succeeded **non-financial diagnostic** `demo/shadow/event/` rows using the unique key index, uploads all original columns to R2, verifies read-back, writes a manifest with the exact event-ID index under `demo/shadow/archive-manifest/` and deletes exactly the selected IDs **in one PostgreSQL transaction**. Preview performs no SELECT FOR UPDATE and makes no changes. `verify_archived_manifest()` re-reads and verifies the original event IDs and fields. If upload, verification, manifest insertion, deletion permissions, or row counts fail, the DB transaction aborts. No normal worker invokes this script.
 
-### When a safe database connection is available
+### Operator-only next steps — safely staged, NOT yet performed
 
-1. Stop/disable every writer using the database (not merely new trading entries); confirm no concurrent service is producing events or checkpoints. Leave worker/service configurations intact for later restoration.
-2. Ask Render support for a way to **temporarily resume an at-quota database for an offload/reclaim operation without increasing the purchased disk allocation**, if normal Resume immediately re-suspends. Render's standard published recovery path recommends adding disk; zero-upgrade recovery is not guaranteed. Never force connection or change the IP allowlist just to make this tool run.
-3. Confirm current database backup/integrity and R2 bucket read/write/verification; test restoration of a small archived batch. Establish a pre-operation logical and physical disk snapshot. Avoid full-table copy or table rewrite at a full disk.
-4. First preview via `python -m services.demo.shadow_archive_recovery --age-hours 24 --batch-size 50`; **only after inspection/backup** use `--execute --writers-stopped --age-hours 24 --batch-size 50 --max-batches 1`.
-5. Verify one manifest and its R2 object, count retained raw records, compare deletion count, check disk/WAL free space, then repeat bounded batches only while healthy. Do not run hundreds of batches blindly against a full disk.
-6. Normal `VACUUM` only makes dead tuples/pages reusable for PostgreSQL in many cases; it is **not a promise that the Render volume shrinks**. Avoid `VACUUM FULL` or heavy rewrites near hard quota without additional free disk and an outage plan.
-7. Test recent activity, wallet, pending positions, settlements, API dashboard, R2 restoration and background worker health before restoring new trading writes. Confirm growth stays below available capacity over comparable hours.
+1. **Read-only preflight first:** From the private Render Dashboard, inspect actual PostgreSQL physical disk utilization, WAL and recent growth indicators. SQL `pg_database_size` and `pg_stat_wal` are useful supporting evidence but are **not a measurement of free physical volume space**. Check for a safe WAL/transaction headroom budget before any archive writes and row removal. Do not run `VACUUM FULL` or bulk rewrites.
+2. **Prove writer quiescence:** Verify both processing and research workers remain in the recovery hold with collection/trading off. Also account for live API endpoints, scheduled tasks, manual Shell commands and any other PostgreSQL writer. Do **not** assert `--writers-stopped` or set `MT_ARCHIVE_WRITERS_STOPPED=true` solely from a worker flag.
+3. **Confirm durable R2 evidence:** Retrieve/verify the existing 4,190-record root catalog, the prior 10-row archive receipt and a small restoration example. Preserve controls, wallets, fills, settlement, audit and all datasets in PostgreSQL. Do not confuse the control snapshot with PITR.
+4. **Install constrained authority (owner-only Shell, no secrets in chat):** Follow `docs/audits/MT-019-least-privilege-archive-role.md`. Inspect whether `pocket_archive_maintenance` already exists before applying `infra/archive-maintenance-role.sql`; installer is not idempotent. Keep NOLOGIN until manually assigning an isolated SCRAM credential. The worker must not receive owner credentials or direct INSERT/UPDATE/DELETE/TRUNCATE/schema CREATE grants. Verify it has no role memberships or elevated attributes and that only the scoped function can remove aged diagnostics.
+5. **Conservative trial only after gates pass:** Configure the isolated `RECOVERY_DATABASE_URL` privately. Prefer one operator-supervised batch of at most 10–50 eligible 24h+ nonfinancial diagnostics, with R2 checksum readback, manifest insertion and exact source-ID deletion in one atomic PostgreSQL transaction. Recheck actual disk/WAL headroom, database health and source/cold-history reconciliation between batches. Avoid unattended catch-up until all gates have been proven.
+6. **Only then evaluate the recovery-only loop:** It requires `MT_ARCHIVE_RECOVERY_LOOP=true` and `MT_ARCHIVE_WRITERS_STOPPED=true` as explicit opt-ins and a trusted narrowly scoped account. **It is not live-safe retention while trading.** After recovery, disable both flags again and verify the held worker is idle.
+7. **Normal trading restart is separate:** First establish ongoing R2 cold retention, cold-history query/restoration, recurring control backups and measured sustainable physical growth. Rotate exposed credentials, check wallets/positions/settlements/API summaries, and preserve the user's intentionally paused strategies. No automatic re-enable.
+
+Normal `VACUUM` generally makes old pages reusable inside PostgreSQL; it does not guarantee the paid physical disk shrinks. Every archive batch requires its own identity/receipt verification and new headroom assessment.
 
 ## Remaining blockers
 
-- Render Postgres is suspended; the connector cannot query or reclaim rows.
-- The scoped operator recovery role/connection and historical R2 restore UX need validation.
-- No recurring purge has been enabled. This tool is an explicit one-time recovery instrument, **not yet the permanent retention service**. PR #175 separately reduces new row growth via lossless compressed diagnostic batches; the operator archiver must also support its `demo/shadow/event-batch/` format before a complete R2 lifecycle is ready.
-- No Render storage was increased and no records were deleted by this code change.
+- **Physical storage/WAL headroom** still needs operator inspection. Connected Render SQL cannot reach the deliberately private database without altering its external IP allowlist; do not open access for convenience.
+- **Scoped maintenance account installation** is still an explicit owner-only action. The SQL fencing and tests are deployed but no private login or credential was installed here.
+- **Cold-history read path** was implemented and deployed owner-authenticated but R2 retrieval remains disabled until a separate read-only API credential is configured and verified. A time-indexed/research-friendly cold analytics view remains future work.
+- **Recurring archive and backup policy** has not been enabled, and recovery-hold archival cannot run concurrently with normal trading. After restoring service, keep diagnostic history sustainable without deleting protected monetary/settlement data.
+- **Credential rotation and end-to-end acceptance** remain required before returning to normal paper trading. No database/worker environment or stored trading data was mutated by this documentation update.
+
+## Historical note
+
+The original recovery plan sought to avoid all capacity expansion. The owner subsequently elected the one-time **10 GB to 15 GB** increase to restore access. Do not treat historical 10 GB/suspended statements in older investigation notes as current operating instructions.
