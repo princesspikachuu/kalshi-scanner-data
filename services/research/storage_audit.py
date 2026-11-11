@@ -1,5 +1,7 @@
 """Small, read-only storage diagnostics; no data values or credentials are logged."""
 import json
+import os
+from .storage_budget import budget_snapshot
 
 def inspect_storage(pool):
     with pool.connection() as c:
@@ -18,8 +20,15 @@ def inspect_storage(pool):
             count(*) AS sampled_rows,sum(pg_column_size(parameters)+pg_column_size(progress)) AS sampled_bytes
             FROM research_job TABLESAMPLE SYSTEM(1) REPEATABLE(31)
             GROUP BY 1 ORDER BY sampled_bytes DESC LIMIT 12""").fetchall()
-    return dict(event='database_storage_audit',database_bytes=size,relations=relations,
+    result=dict(event='database_storage_audit',database_bytes=size,relations=relations,
                 job_sample_percent=1,job_families=families)
+    # No new database query or extra loop. The configured capacity is a
+    # logical comparison only; never represent it as actual filesystem usage.
+    configured=os.environ.get('DATABASE_CAPACITY_GB')
+    if configured:
+        try:result['logical_storage_budget']=budget_snapshot(int(size),configured)
+        except (ValueError,TypeError):result['logical_storage_budget_unavailable']=True
+    return result
 
 def log_storage(pool):
     try:print(json.dumps(inspect_storage(pool),default=str),flush=True)
