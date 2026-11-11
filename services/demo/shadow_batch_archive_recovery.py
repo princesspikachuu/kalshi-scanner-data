@@ -120,7 +120,7 @@ def preview(pool,*,now,age_hours=24,batch_size=1):
     return dict(mode='preview',batch_rows=len(records),original_events=len(event_ids),
         eligible_sample_only=True,hot_hours=age_hours,no_writes=True)
 
-def archive_one(pool,objects,*,now,age_hours=24,batch_size=1):
+def archive_one(pool,objects,*,now,age_hours=24,batch_size=1,scoped=False):
     """Commit manifest + exact DELETE only after verified R2 readback.
 
     A failed R2 upload or manifest validation leaves the original PG rows.
@@ -130,7 +130,8 @@ def archive_one(pool,objects,*,now,age_hours=24,batch_size=1):
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=10000')
-            rows=c.execute(LOCKED_CANDIDATES,(cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',batch_size)).fetchall()
+            rows=c.execute(CANDIDATES if scoped else LOCKED_CANDIDATES,
+                (cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',batch_size)).fetchall()
             if not rows:
                 return dict(mode='executed',archived_rows=0,original_events=0,deleted_rows=0)
             records,event_ids=validated_records(rows)
@@ -145,9 +146,17 @@ def archive_one(pool,objects,*,now,age_hours=24,batch_size=1):
             # source record, before committing any deletion.
             restored=verify_batch_manifest(objects,manifest)
             if restored!=records:raise ValueError('Archived batch rows did not round-trip exactly')
-            c.execute(MANIFEST_SQL,(uuid4(),Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
+            manifest_id=uuid4()
+            c.execute(MANIFEST_SQL,(manifest_id,Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
                 Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-            deleted=c.execute(DELETE_SQL,(manifest['row_ids'],cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz')).fetchall()
+            if scoped:
+                # Explicit DB fence allows only verified old, non-financial
+                # diagnostic batches; the login has no table DELETE grant.
+                deleted=c.execute(SCOPED_RECLAIM_SQL,
+                    (manifest_id,Jsonb(records))).fetchall()
+            else:
+                deleted=c.execute(DELETE_SQL,
+                    (manifest['row_ids'],cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz')).fetchall()
             if len(deleted)!=len(rows) or {r['id'] for r in deleted}!=set(manifest['row_ids']):
                 raise RuntimeError('Incomplete batch reclaim; transaction rolled back')
     return dict(mode='executed',archived_rows=len(rows),original_events=len(event_ids),
