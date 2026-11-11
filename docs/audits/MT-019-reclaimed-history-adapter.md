@@ -30,3 +30,15 @@ Validation includes pure raw/packed conversion tests, malformed counts,
 duplicate original identities, tampered timestamps, source identity checks,
 owner authentication, invalid paging, default-off R2 read refusal, and no
 credentials disclosed in error messages.
+
+## Individual manifest completion proof
+
+The new pure `verify_reclaimed_manifest_chain()` checks consecutive bounded
+offset pages from a single previously verified manifest: stable manifest ID and
+source, unchanged total count, no repeated original UUID, no missing intermediate
+page, and a terminal page ending at the recorded original-event count. It may
+return `individual_manifest_exhausted=true` **only for that one manifest**.
+It always returns `r2_manifest_catalog_complete=false` and
+`all_time_coverage_complete=false`. The current maximum is 128 verified
+pages / 10,000 original events for one chain; oversized histories require a
+separately designed streaming receipt rather than silent truncation.
