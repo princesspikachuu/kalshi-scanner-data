@@ -292,13 +292,24 @@ def backup_controls(store,objects,*,now=None):
                 or verified['sha256']!=staging['sha256']
                 or verified['chunks']!=len(chunks)):
             raise ValueError('R2 backup restore verification mismatch')
+        # Independently discoverable R2 catalog entry is essential if the
+        # database (including backup-health) becomes unavailable. Only publish
+        # it after the entire R2 archive has passed verification. A stable
+        # prefix permits bucket-scoped recovery without scanning all chunks.
+        catalog_ref=put_verified(objects,'backups/roots',dict(
+            format='control-snapshot-root-receipt-v1',
+            verified_at=now,records=staging['records'],
+            chunks=len(chunks),root_reference=root_ref,
+            snapshot_sha256=staging['sha256']))
         store.put('backup-health',dict(at=now,verified=True,reference=root_ref,
-            records=staging['records'],format=FORMAT,chunks=len(chunks),
+            catalog_reference=catalog_ref,records=staging['records'],
+            format=FORMAT,chunks=len(chunks),
             scope='Demo and live controls, current positions and full live pilot write history; credentials excluded'))
         result=dict(event='demo_control_backup_v2_verified',
             records=staging['records'],chunks=len(chunks),
-            staged_bytes=staging['staged_bytes'],
-            compressed_bytes=total_compressed+root_ref['size'],verified=True)
+            catalog_stored=True,staged_bytes=staging['staged_bytes'],
+            compressed_bytes=total_compressed+root_ref['size']+catalog_ref['size'],
+            verified=True)
         print(json.dumps(result,sort_keys=True),flush=True)
         return result
     finally:
