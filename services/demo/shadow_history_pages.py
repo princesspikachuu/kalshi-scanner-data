@@ -79,6 +79,7 @@ def page_history(pool, source, *, cursor=None):
     return dict(contract='demo-v1', source=source,
                 order='idempotency_key_ascending', items=events,
                 source_rows=len(page), original_events=len(events),
+                source_keys=[row['idempotency_key'] for row in page],
                 next_cursor=page[-1]['idempotency_key'] if more else None,
                 more=more, max_source_rows=limit,
                 archived_rows_rehydrated=cold_rows,

@@ -56,7 +56,8 @@ def summary(row):
     original_events = count if kind == 'shadow_event_r2_manifest' else manifest.get('original_events')
     if type(original_events) is not int or original_events < count:
         raise ValueError('Invalid durable archive event count')
-    return dict(manifest_id=row['id'], kind='raw' if kind == 'shadow_event_r2_manifest' else 'packed',
+    return dict(manifest_id=row['id'], manifest_key=row['idempotency_key'],
+                kind='raw' if kind == 'shadow_event_r2_manifest' else 'packed',
                 archived_rows=count, original_events=original_events,
                 earliest=manifest.get('earliest'), latest=manifest.get('latest'),
                 manifest_created_at=row['created_at'].isoformat() if row.get('created_at') else None,
