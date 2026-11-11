@@ -33,7 +33,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             if sql == ROLE_QUERY:
                 result.fetchone.return_value = dict(
                     principal=principal, owner=owner, elevated=elevated,
-                    can_select=True, can_insert=True, can_delete=False,
+                    can_select=True, can_insert=False, can_delete=False,
                     can_update=False, can_scoped_reclaim=True)
             else:
                 result.fetchone.return_value = dict(bytes=size)
