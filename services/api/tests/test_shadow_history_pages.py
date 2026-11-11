@@ -88,12 +88,13 @@ class HostedShadowHistoryPages(unittest.TestCase):
             ident=self.demo.put(key,dict(event=event,time=i,cash_cents=100+i),
                                 parameters=dict(sample=i))
             originals[ident]='demo/'+key
-        cursor=None;seen=[];prev_cursor=None;pages=0
+        cursor=None;seen=[];prev_cursor=None;pages=0;page_chain=[]
         while True:
             params={'cursor':cursor} if cursor else None
             response=self.client.get('/demo/shadow/history/raw',params=params)
             self.assertEqual(response.status_code,200,response.text)
             body=response.json();pages+=1
+            page_chain.append(dict(body,request_cursor=cursor))
             self.assertEqual(body['source'],'raw')
             self.assertFalse(body['all_time_coverage_complete'])
             self.assertFalse(body['reclaimed_manifests_included'])
@@ -110,6 +111,8 @@ class HostedShadowHistoryPages(unittest.TestCase):
             prev_cursor=cursor=body['next_cursor']
             self.assertLess(pages,8)
         self.assertEqual(pages,3)
+        from services.demo.shadow_page_chain import verify_history_page_chain
+        self.assertEqual(verify_history_page_chain(page_chain,'raw')['supplied_keys'],11)
         self.assertEqual({x['id'] for x in seen},set(originals))
         self.assertEqual(len(seen),len(originals))
         self.assertEqual([x['key'] for x in seen],sorted(originals.values()))
@@ -136,12 +139,13 @@ class HostedShadowHistoryPages(unittest.TestCase):
                 packed=compact_diagnostic_rows(raw,entry)
                 self.assertEqual(len(packed),1)
                 c.execute(UPSERT,packed[0])
-        cursor=None;seen=[];pages=0
+        cursor=None;seen=[];pages=0;page_chain=[]
         while True:
             r=self.client.get('/demo/shadow/history/packed',
                               params={'cursor':cursor} if cursor else None)
             self.assertEqual(r.status_code,200,r.text)
             body=r.json();pages+=1
+            page_chain.append(dict(body,request_cursor=cursor))
             self.assertEqual(body['source_rows'],1)
             self.assertEqual(body['original_events'],2)
             self.assertEqual(len(body['source_keys']),1)
@@ -153,6 +157,8 @@ class HostedShadowHistoryPages(unittest.TestCase):
             cursor=body['next_cursor']
             self.assertLess(pages,6)
         self.assertEqual(pages,3)
+        from services.demo.shadow_page_chain import verify_history_page_chain
+        self.assertEqual(verify_history_page_chain(page_chain,'packed')['supplied_keys'],3)
         self.assertEqual({x['id'] for x in seen},set(originals))
         self.assertEqual(len(seen),6)
         self.assertEqual({x['progress']['original'] for x in seen},
