@@ -53,7 +53,7 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
               has_table_privilege(%s,'research_job','UPDATE'),
               has_column_privilege(%s,'research_job','id','INSERT'),
               has_function_privilege(%s,
-                'public.mt_reclaim_shadow_diagnostics(uuid,jsonb)','EXECUTE'),
+                'public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb)','EXECUTE'),
               has_schema_privilege(%s,'public','CREATE')
             """,(ROLE,ROLE,ROLE,ROLE,ROLE)).fetchone()
         self.assertEqual(p,(False,False,False,True,False))
