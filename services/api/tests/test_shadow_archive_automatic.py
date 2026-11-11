@@ -74,6 +74,12 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 configuration(dict(base, **{key: value}))
 
+    def test_privilege_audit_targets_public_schema_not_search_path(self):
+        self.assertIn("schemaname='public'", ROLE_QUERY)
+        self.assertIn("'public.research_job'", ROLE_QUERY)
+        self.assertIn("has_schema_privilege(current_user,'public','CREATE')", ROLE_QUERY)
+        self.assertNotIn('current_schema()', ROLE_QUERY)
+
     def test_refuse_database_owner_and_admin_role(self):
         for pool in (self.pool(principal='owner', owner='owner'),
                      self.pool(principal='pocket_archive_maintenance', elevated=True),
