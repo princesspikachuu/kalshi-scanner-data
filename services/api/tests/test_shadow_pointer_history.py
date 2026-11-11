@@ -79,12 +79,13 @@ class ColdDiagnosticPointerTests(unittest.TestCase):
         rows=[self.source(),self.source()]
         original=[r['progress'] for r in rows]
         pointers,store=self.archived(rows)
+        existing_readbacks=store.gets  # put_verified already verifies R2 once
         restored,count,objects=rehydrate_event_rows(
             pointers,env=dict(MT_ARCHIVE_V2_POINTER_READ_ENABLED='true'),
             store_factory=lambda _:store)
         self.assertEqual([r['progress'] for r in restored],original)
         self.assertEqual((count,objects),(2,1))
-        self.assertEqual(store.gets,1)
+        self.assertEqual(store.gets,existing_readbacks+1)
         self.assertTrue(store.closed)
         self.assertEqual(pointers[0]['progress']['archived'],True)
 
