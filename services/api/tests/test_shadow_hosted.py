@@ -43,30 +43,56 @@ class HostedPostgres(unittest.TestCase):
     def seed(self):
         self.assertTrue(initialize(self.demo,lambda:None))
 
-    def test_archive_keyset_pages_cover_both_histories_without_dropping_events(self):
+    def test_archive_preserves_trading_history_and_backs_up_only_safe_diagnostics(self):
         import io
         from services.demo.maintenance import archive_events,read_verified
+        from services.demo.legacy_event_archive import FORMAT
+        from services.demo.shadow_archive_recovery import PREFIX
         from services.paper_demo.shadow.storage import UPSERT,entry
         class Objects:
             bucket='private'
             def __init__(self):self.client=self;self.objects={}
             def put_object(self,**kw):self.objects[kw['Key']]=kw['Body']
             def get_object(self,**kw):
-                body=self.objects[kw['Key']];return dict(ContentLength=len(body),Body=io.BytesIO(body))
-        records=[entry('demo/event/'+f'{i:04}',{},dict(original=i)) for i in range(201)]
-        records.append(entry('demo/shadow/event/one',{},dict(original='shadow',restored_at=None)))
+                body=self.objects[kw['Key']]
+                return dict(ContentLength=len(body),Body=io.BytesIO(body))
+        records=[entry('demo/event/'+f'{i:04}',{},dict(original=i))
+                 for i in range(201)]
+        # Shadow diagnostics are allowlisted, while cash and trading events
+        # remain fully available in PostgreSQL, regardless of storage pressure.
+        records.append(entry('demo/shadow/event/one',{},
+            dict(event='FAVORITE_STAT_DECISION',original='shadow',
+                 restored_at=None)))
+        records.append(entry('demo/shadow/event/settlement',{},
+            dict(event='SETTLED',cash_cents=1200)))
         with self.demo.pool.connection() as c:
             with c.cursor() as cur:cur.executemany(UPSERT,records)
             c.execute("UPDATE research_job SET created_at=clock_timestamp()-interval '40 days'")
         objects=Objects()
-        for _ in range(3):archive_events(self.demo,objects,{'archive_days':7},False)
+        for _ in range(3):
+            archive_events(self.demo,objects,{'archive_days':7},False)
         with self.demo.pool.connection() as c:
-            archived=c.execute("SELECT progress FROM research_job WHERE progress ? 'archive'").fetchall()
-        self.assertEqual(len(archived),202)
-        references={r['progress']['archive']['key']:r['progress']['archive'] for r in archived}
-        restored=[row for ref in references.values() for row in read_verified(objects,ref)]
-        self.assertEqual(len(restored),202);self.assertEqual(len({r['id'] for r in restored}),202)
-        self.assertEqual(self.demo.get('archive-scan')['progress']['cursors']['demo/event/'],'demo/event/')
+            archived=c.execute("""SELECT id::text,progress FROM research_job
+                WHERE progress ? 'archive'""").fetchall()
+            hot=c.execute("""SELECT count(*)::bigint AS n FROM research_job
+                WHERE idempotency_key >= 'demo/event/'
+                AND idempotency_key < 'demo/event/zzzz'
+                AND NOT(progress ? 'archive')""").fetchone()['n']
+            safe=c.execute("""SELECT progress FROM research_job
+                WHERE idempotency_key='demo/shadow/event/settlement'""").fetchone()
+        self.assertEqual(len(archived),1)
+        self.assertEqual(hot,201)
+        self.assertEqual(safe['progress']['cash_cents'],1200)
+        reference=archived[0]['progress']['archive']
+        result=read_verified(objects,reference)
+        self.assertEqual(result['format'],FORMAT)
+        self.assertEqual(result['count'],1)
+        self.assertEqual(result['records'][0]['id'],archived[0]['id'])
+        self.assertEqual(result['records'][0]['idempotency_key'],PREFIX+'one')
+        self.assertEqual(result['records'][0]['progress']['original'],'shadow')
+        self.assertIn('created_at',result['records'][0])
+        self.assertIsNone(self.demo.get('archive-scan'))
+        self.assertEqual(self.demo.get('archive-scan-v2')['progress']['after'],PREFIX)
 
     def test_rollout_is_idempotent_and_preserves_old_history(self):
         from services.api.tests.test_demo_engine import config
