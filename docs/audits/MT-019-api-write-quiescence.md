@@ -19,8 +19,10 @@ collector and research workers are disabled.
 `MT_API_RECOVERY_HOLD=true` is an explicit private API environment toggle,
 **default OFF**. When enabled in a supported deployment:
 
-- API startup opens the DB connection as usual but skips optional analysis
-  inventory, live bot seeding and approved-pilot configuration.
+- API startup opens the DB connection with PostgreSQL
+  `default_transaction_read_only=on` on its pooled sessions, and skips
+  optional analysis inventory, live bot seeding and approved-pilot configuration.
+  The independent startup privilege audit also uses a read-only connection.
 - The HTTP gateway rejects every non-health route with status 503, including
   GET routes that mutate login/rate-limit data, collection changes, demo
   settings, and live controls. It performs this check before executing routes.
@@ -49,21 +51,28 @@ workers that are not subject to this hold.
    `MT_API_RECOVERY_HOLD=true` *only* on `pocket-api-staging`; verify
    a successful deploy and a 503 on one non-health endpoint, and health
    status on `/health/live`. Do not send authenticated trading requests.
-4. Inspect PostgreSQL sessions from private operator context. Low active
+4. **Wait until the previous API deployment is fully drained**, including
+   in-flight requests on older instances that began before the new hold. A
+   zero-downtime deployment may briefly serve both versions. Verify that every
+   live API instance is held before claiming API write-quiescence.
+5. Inspect PostgreSQL sessions from private operator context. Low active
    connection counts alone do **not** certify all database writers stopped.
    Check any cron jobs, operator shells, disconnected workers and external
    services separately. This API hold is only one part of writer quiescence.
-5. If independent R2/financial verification, actual physical disk/WAL
+6. If independent R2/financial verification, actual physical disk/WAL
    headroom, scoped maintenance credential and all writers-stopped checks
    pass, perform only a *small*, manually supervised R2-verified diagnostic
    archive. **Never delete protected financial, order, settlement or live
    control records.** Do not run automatic archival during normal trading.
-6. When the recovery operation is finished, reset
+7. When the recovery operation is finished, reset
    `MT_API_RECOVERY_HOLD=false`, verify the API's sign-in/dashboard
    functionality, and leave paper collection/trading separately disabled
    until the full MT-019 acceptance gates pass.
 
-This code cannot independently guarantee database-wide read-only operation:
-the database account retains its existing privileges. For stronger safety,
-a separate DB-enforced role/session or isolated maintenance service remains
-recommended before longer unattended archival.
+The API's PostgreSQL read-only session option protects its own pooled
+connections against accidental write queries; it is **not** database-wide
+read-only access and privileged connections can change session options.
+The API account retains its existing privileges. Other clients, including old
+API instances, operator shells and background services, may still write.
+For stronger safety, a separate DB-enforced role/session or isolated
+maintenance service remains recommended before longer unattended archival.
