@@ -32,8 +32,8 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
         with psycopg.connect(URL,autocommit=True) as c:
             script=(ROOT/'infra/archive-maintenance-role.sql').read_text()
             c.execute(script,prepare=False)
-            c.execute("ALTER ROLE pocket_archive_maintenance LOGIN PASSWORD %s",
-                      (TEST_PASSWORD,))
+            # Test-only fixed credential in a disposable local container.
+            c.execute("ALTER ROLE pocket_archive_maintenance LOGIN PASSWORD 'disposable-ci-archive-test-only'")
         cls.created_ids=[]
         cls.created_manifest_ids=[]
 
