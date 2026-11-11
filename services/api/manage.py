@@ -28,6 +28,22 @@ def verify_runtime(url,profile):
     return receipt
 
 
+def recovery_hold_predeploy(env,action,profile):
+    """Only a deliberately disabled research collector may skip DB predeploy.
+
+    The API and normal trading/collection workers always retain the existing
+    strict DB migration and privilege checks. There is no runtime write bypass.
+    """
+    return (env.get('MT_STORAGE_RECOVERY_HOLD')=='true'
+        and env.get('WORKER_ROLE')=='collector'
+        and env.get('COLLECTION_ENABLED')=='false'
+        and env.get('STAGING_ACCEPTANCE','off')=='off'
+        and env.get('STAGING_OPERATOR_ACTION','off')=='off'
+        and env.get('RUNTIME_DB_PROFILE')=='research'
+        and profile=='research'
+        and action in ('migrate','verify-runtime'))
+
+
 def deployment_check(url,profile=None):
     # Compatibility for the existing hosted preDeploy command during cutover.
     # Once a profile is configured, this path executes read-only checks only.
@@ -44,7 +60,12 @@ if __name__=='__main__':
     parser.add_argument('--profile',choices=['api','research'])
     args=parser.parse_args()
     try:
-        if args.action=='migrate':
+        profile=args.profile or os.environ.get('RUNTIME_DB_PROFILE')
+        if recovery_hold_predeploy(os.environ,args.action,profile):
+            receipt=dict(contract='storage-recovery-hold-v1',collection_enabled=False,
+                         worker_role='collector',predeploy_database_check='deferred',
+                         trading_enabled=False)
+        elif args.action=='migrate':
             receipt=deployment_check(os.environ['DATABASE_URL'],os.environ.get('RUNTIME_DB_PROFILE'))
         elif args.action=='verify-runtime':
             receipt=verify_runtime(os.environ['DATABASE_URL'],args.profile or os.environ['RUNTIME_DB_PROFILE'])
