@@ -42,3 +42,13 @@ It always returns `r2_manifest_catalog_complete=false` and
 `all_time_coverage_complete=false`. The current maximum is 128 verified
 pages / 10,000 original events for one chain; oversized histories require a
 separately designed streaming receipt rather than silent truncation.
+
+## Stable manifest fingerprint across requests
+
+Owner manifest summaries now include only an opaque SHA-256 digest of the
+manifest's canonical metadata (not the R2 object path or credentials).
+Reclaimed pages inherit this digest from the verified manifest. The
+individual-manifest chain checker requires the **same digest on every page**;
+a manifest edited or replaced between two reads will fail rather than quietly
+combine different content. This does not replace the existing full R2 object
+SHA/gzip/row readback checks and does not prove PostgreSQL snapshot isolation.
