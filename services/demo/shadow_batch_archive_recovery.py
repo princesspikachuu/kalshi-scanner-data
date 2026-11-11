@@ -27,13 +27,15 @@ MAX_BATCH=8
 MIN_AGE_HOURS=6
 
 CANDIDATES="""SELECT id::text,idempotency_key,asset,status,parameters,progress,
-    created_at,started_at,finished_at,lease_expires_at,attempts,error_code
+    created_at,started_at,finished_at,lease_expires_at,attempts,error_code,
+    available_at,max_attempts,lease_token
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
     AND idempotency_key>=%s AND idempotency_key<%s
     AND progress->>'format'='shadow-diagnostic-batch-v1'
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES=CANDIDATES+' FOR UPDATE SKIP LOCKED'
+SCOPED_RECLAIM_SQL='SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::text,%s::jsonb,%s::jsonb)'
 MANIFEST_SQL="""INSERT INTO research_job
     (id,asset,parameters,progress,idempotency_key,status,finished_at)
     VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())"""
@@ -52,10 +54,11 @@ def cutoff_at(now,age_hours,batch_size):
 
 def original_row(row):
     """Retain every original research_job column, including NULL timestamps."""
-    timestamps=('created_at','started_at','finished_at','lease_expires_at')
+    timestamps=('created_at','started_at','finished_at','lease_expires_at','available_at')
     return dict(id=row['id'],idempotency_key=row['idempotency_key'],
         asset=row['asset'],status=row['status'],parameters=row['parameters'],
         progress=row['progress'],attempts=row['attempts'],error_code=row['error_code'],
+        max_attempts=row['max_attempts'],lease_token=str(row['lease_token']) if row['lease_token'] is not None else None,
         **{k:row[k].isoformat() if row[k] is not None else None for k in timestamps})
 
 def validated_records(rows):
@@ -117,7 +120,7 @@ def preview(pool,*,now,age_hours=24,batch_size=1):
     return dict(mode='preview',batch_rows=len(records),original_events=len(event_ids),
         eligible_sample_only=True,hot_hours=age_hours,no_writes=True)
 
-def archive_one(pool,objects,*,now,age_hours=24,batch_size=1):
+def archive_one(pool,objects,*,now,age_hours=24,batch_size=1,scoped=False):
     """Commit manifest + exact DELETE only after verified R2 readback.
 
     A failed R2 upload or manifest validation leaves the original PG rows.
@@ -127,7 +130,8 @@ def archive_one(pool,objects,*,now,age_hours=24,batch_size=1):
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=10000')
-            rows=c.execute(LOCKED_CANDIDATES,(cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',batch_size)).fetchall()
+            rows=c.execute(CANDIDATES if scoped else LOCKED_CANDIDATES,
+                (cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',batch_size)).fetchall()
             if not rows:
                 return dict(mode='executed',archived_rows=0,original_events=0,deleted_rows=0)
             records,event_ids=validated_records(rows)
@@ -142,9 +146,19 @@ def archive_one(pool,objects,*,now,age_hours=24,batch_size=1):
             # source record, before committing any deletion.
             restored=verify_batch_manifest(objects,manifest)
             if restored!=records:raise ValueError('Archived batch rows did not round-trip exactly')
-            c.execute(MANIFEST_SQL,(uuid4(),Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
-                Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-            deleted=c.execute(DELETE_SQL,(manifest['row_ids'],cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz')).fetchall()
+            manifest_id=uuid4()
+            if scoped:
+                # Manifest creation and precisely scoped deletion are one
+                # SECURITY DEFINER operation. No direct table write grants.
+                deleted=c.execute(SCOPED_RECLAIM_SQL,
+                    (manifest_id,'diagnostic_batch_r2_manifest',
+                     Jsonb(manifest),Jsonb(records))).fetchall()
+            else:
+                c.execute(MANIFEST_SQL,(manifest_id,
+                    Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
+                    Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
+                deleted=c.execute(DELETE_SQL,
+                    (manifest['row_ids'],cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz')).fetchall()
             if len(deleted)!=len(rows) or {r['id'] for r in deleted}!=set(manifest['row_ids']):
                 raise RuntimeError('Incomplete batch reclaim; transaction rolled back')
     return dict(mode='executed',archived_rows=len(rows),original_events=len(event_ids),

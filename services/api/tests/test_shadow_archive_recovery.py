@@ -4,7 +4,7 @@ from datetime import datetime,timezone
 from unittest.mock import MagicMock,patch
 
 from services.demo.shadow_archive_recovery import (
-    PREFIX,MANIFEST_PREFIX,CANDIDATES,LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL,
+    PREFIX,MANIFEST_PREFIX,CANDIDATES,LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL,SCOPED_RECLAIM_SQL,
     SAFE_EVENT_KINDS,validate_window,archive_payload,plan_only,
     archive_and_reclaim_one,verify_archived_manifest,main
 )
@@ -16,7 +16,9 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             progress=dict(event='FAVORITE_STAT_DECISION',details='original decision evidence'),
             created_at=datetime(2026,11,7,tzinfo=timezone.utc),
             started_at=None,finished_at=datetime(2026,11,7,tzinfo=timezone.utc),
-            lease_expires_at=None,attempts=0,error_code=None)
+            lease_expires_at=None,attempts=0,error_code=None,
+            available_at=datetime(2026,11,7,tzinfo=timezone.utc),
+            max_attempts=5,lease_token=None)
 
     def db(self,rows=None,deleted=None):
         pool=MagicMock()
@@ -26,7 +28,7 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         def sql(statement,params=None):
             cur=MagicMock()
             if statement in (CANDIDATES,LOCKED_CANDIDATES):cur.fetchall.return_value=rows
-            if statement==DELETE_SQL:cur.fetchall.return_value=deleted
+            if statement in (DELETE_SQL,SCOPED_RECLAIM_SQL):cur.fetchall.return_value=deleted
             return cur
         c.execute.side_effect=sql
         return pool,c
@@ -82,6 +84,28 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(manifest_args[2].obj['reference'],receipt)
         self.assertEqual(c.execute.call_args_list[3].args[1][0],[a['id'],b['id']])
         c.transaction.assert_called_once()
+
+    def test_scoped_archival_uses_function_not_table_delete_or_row_update_lock(self):
+        row=self.row();pool,c=self.db([row])
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=800,at=42)
+        with patch('services.demo.shadow_archive_recovery.put_verified',
+                   return_value=receipt):
+            result=archive_and_reclaim_one(pool,MagicMock(),
+                now=1794500000,age_hours=24,batch_size=1,scoped=True)
+        self.assertEqual(result['deleted'],1)
+        operations=[call.args[0] for call in c.execute.call_args_list]
+        self.assertEqual(operations,['SET LOCAL statement_timeout=10000',
+            CANDIDATES,SCOPED_RECLAIM_SQL])
+        self.assertNotIn(DELETE_SQL,operations)
+        self.assertNotIn(LOCKED_CANDIDATES,operations)
+        scoped_args=c.execute.call_args_list[-1].args[1]
+        self.assertEqual(scoped_args[1],'shadow_event_r2_manifest')
+        self.assertEqual(scoped_args[2].obj['count'],1)
+        self.assertEqual(scoped_args[3].obj[0]['id'],row['id'])
+        self.assertEqual(scoped_args[3].obj[0]['available_at'],
+                         row['available_at'].isoformat())
+        self.assertEqual(scoped_args[3].obj[0]['max_attempts'],5)
 
     def test_archive_failure_never_reaches_manifest_or_delete(self):
         pool,c=self.db([self.row()])
