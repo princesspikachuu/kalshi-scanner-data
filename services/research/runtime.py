@@ -94,6 +94,9 @@ def termination(stop):
 
 
 def run(settings,stop):
+    # Reject overlapping one-shot recovery I/O *before* any R2 or SQL access.
+    from .recovery_one_shot_guard import check_recovery_jobs_exclusive
+    check_recovery_jobs_exclusive(os.environ)
     # Optional recovery-held read-only WAL census, never an archival trigger.
     from .recovery_wal_preflight import is_authorized as wal_preflight_authorized
     if wal_preflight_authorized(os.environ, settings):
