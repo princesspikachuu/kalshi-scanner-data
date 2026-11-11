@@ -44,7 +44,7 @@ SAFE_EVENT_KINDS = (
 # Preview is strictly read-only; only the executing operator takes row locks.
 CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
     parameters,progress,created_at,started_at,finished_at,lease_expires_at,
-    attempts,error_code
+    attempts,error_code,available_at,max_attempts,lease_token
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
     AND NOT (progress ? 'archive')
@@ -52,6 +52,7 @@ CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
     AND progress->>'event'=ANY(%s::text[])
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES = CANDIDATES + ' FOR UPDATE SKIP LOCKED'
+SCOPED_RECLAIM_SQL = 'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::jsonb)'
 
 MANIFEST_SQL = """INSERT INTO research_job
     (id,asset,parameters,progress,idempotency_key,status,finished_at)
@@ -75,10 +76,11 @@ def validate_window(now, age_hours, batch_size):
 
 def archive_payload(rows):
     """Retain every research_job column for verifiable R2 round-trip recovery."""
-    timestamps=('created_at','started_at','finished_at','lease_expires_at')
+    timestamps=('created_at','started_at','finished_at','lease_expires_at','available_at')
     return [dict(id=r['id'],idempotency_key=r['idempotency_key'],
         asset=r['asset'],status=r['status'],parameters=r['parameters'],
         progress=r['progress'],attempts=r['attempts'],error_code=r['error_code'],
+        max_attempts=r['max_attempts'],lease_token=str(r['lease_token']) if r['lease_token'] is not None else None,
         **{key:r[key].isoformat() if r[key] is not None else None for key in timestamps})
         for r in rows]
 
@@ -110,7 +112,7 @@ def verify_archived_manifest(objects, manifest):
         if not isinstance(row.get('parameters'),dict) or not isinstance(row.get('progress'),dict):
             raise ValueError('Incomplete archived shadow evidence')
         required=('asset','status','created_at','started_at','finished_at',
-                  'lease_expires_at','attempts','error_code')
+                  'lease_expires_at','attempts','error_code')  # Legacy archives predate extra columns
         if any(key not in row for key in required) or row['status']!='succeeded' or row['asset']!='crypto':
             raise ValueError('Incomplete or invalid shadow database row')
         if row['progress'].get('event') not in SAFE_EVENT_KINDS:
