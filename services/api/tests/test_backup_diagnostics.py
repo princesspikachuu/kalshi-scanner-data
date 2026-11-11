@@ -46,14 +46,24 @@ class BackupDiagnosticsTests(unittest.TestCase):
              patch('services.demo.maintenance.restore_requests'),\
              patch('services.demo.maintenance.backup') as backup,\
              patch('services.demo.maintenance.emails'),contextlib.redirect_stdout(io.StringIO()):
-            maintenance(store,{},Mock())
+            maintenance(store,{'MT_LEGACY_EVENT_ARCHIVE_V2_ENABLED':'true'},Mock())
         backup.assert_called_once();store.alert.assert_called_once()
 
     def test_failed_object_verification_cannot_advance_archive_cursor(self):
         from datetime import datetime,timezone
+        dt=datetime(2000,1,1,tzinfo=timezone.utc)
         store=Mock();store.pool=MagicMock();store.get.return_value=None
         store.pool.connection.return_value.__enter__.return_value.execute.return_value.fetchall.return_value=[
-            dict(id='one',idempotency_key='demo/event/one',parameters={},progress={},created_at=datetime(2000,1,1,tzinfo=timezone.utc))]
-        with patch('services.demo.maintenance.put_verified',side_effect=ValueError('Archive verification failed')):
-            with self.assertRaises(ValueError):archive_events(store,Mock(),{'archive_days':7},False)
+            dict(id='11111111-1111-1111-1111-111111111111',
+                 idempotency_key='demo/shadow/event/11111111-1111-1111-1111-111111111111',
+                 asset='crypto',status='succeeded',parameters={},
+                 progress=dict(event='FAVORITE_STAT_DECISION'),
+                 created_at=dt,started_at=None,finished_at=dt,
+                 lease_expires_at=None,attempts=0,error_code=None,
+                 available_at=dt,max_attempts=5,lease_token=None)]
+        with patch('services.demo.maintenance.put_verified',
+                   side_effect=ValueError('Archive verification failed')):
+            with self.assertRaises(ValueError):
+                archive_events(store,Mock(),{'archive_days':7},False)
         store.put.assert_not_called()
+
