@@ -57,6 +57,7 @@ class HistoryPageContractTests(unittest.TestCase):
         self.assertFalse(result['all_time_coverage_complete'])
         self.assertFalse(result['reclaimed_manifests_included'])
         self.assertEqual(result['archive_objects_verified'],0)
+        self.assertEqual(result['source_keys'],[RAW_PREFIX+'key'])
         sqlcalls=[x.args for x in c.execute.call_args_list]
         self.assertEqual(sqlcalls[0][0],'SET LOCAL statement_timeout=5000')
         self.assertEqual(sqlcalls[1][0],RAW_SQL)
@@ -98,6 +99,7 @@ class HostedShadowHistoryPages(unittest.TestCase):
             self.assertFalse(body['reclaimed_manifests_included'])
             self.assertLessEqual(body['source_rows'],MAX_RAW_ROWS)
             self.assertEqual(body['source_rows'],body['original_events'])
+            self.assertEqual(body['source_keys'],[item['key'] for item in body['items']])
             self.assertEqual(body['archive_objects_verified'],0)
             seen.extend(body['items'])
             if not body['more']:
@@ -142,6 +144,8 @@ class HostedShadowHistoryPages(unittest.TestCase):
             body=r.json();pages+=1
             self.assertEqual(body['source_rows'],1)
             self.assertEqual(body['original_events'],2)
+            self.assertEqual(len(body['source_keys']),1)
+            self.assertEqual(body['source_keys'][0],body['items'][0]['packed_batch_key'])
             seen.extend(body['items'])
             if not body['more']:
                 break
