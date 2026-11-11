@@ -89,5 +89,54 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
             normalize_reclaimed_manifest_page(result,offset=0)
 
 
+    def test_owner_route_requires_auth_and_does_not_serve_unverified_data(self):
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+        from unittest.mock import MagicMock, patch
+        from services.api.shadow import install_shadow
+        identifier=str(uuid4())
+        uri='/demo/shadow/history/reclaimed/'+identifier
+        app=FastAPI()
+        install_shadow(app,lambda request: (_ for _ in ()).throw(
+            HTTPException(403,'Owner authentication required')),MagicMock(),MagicMock())
+        self.assertEqual(TestClient(app).get(uri).status_code,403)
+        app=FastAPI()
+        install_shadow(app,lambda request: True,MagicMock(),MagicMock())
+        client=TestClient(app)
+        for suffix in ('?offset=-1','?limit=0','?limit=51','?unknown=1',
+                       '?offset=2&offset=3'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(client.get(uri+suffix).status_code,422)
+        self.assertEqual(client.get('/demo/shadow/history/reclaimed/not-a-uuid').status_code,422)
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   return_value=archived(count=1)):
+            response=client.get(uri)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['source'],'r2_reclaimed_raw')
+        self.assertFalse(response.json()['all_time_coverage_complete'])
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   return_value=dict(archived(count=1),verified=False)):
+            response=client.get(uri)
+        self.assertEqual(response.status_code,503)
+        self.assertNotIn('Archive',response.text)
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   return_value=None):
+            self.assertEqual(client.get(uri).status_code,404)
+
+    def test_owner_route_cold_read_gate_denied_without_credentials(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from unittest.mock import MagicMock,patch
+        from services.api.shadow import install_shadow
+        from services.demo.shadow_archive_reader import ArchiveReaderUnavailable
+        app=FastAPI()
+        install_shadow(app,lambda request: True,MagicMock(),MagicMock())
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   side_effect=ArchiveReaderUnavailable('hidden-credential')):
+            response=TestClient(app).get('/demo/shadow/history/reclaimed/'+str(uuid4()))
+        self.assertEqual(response.status_code,503)
+        self.assertNotIn('hidden-credential',response.text)
+
+
 if __name__ == '__main__':
     unittest.main()
