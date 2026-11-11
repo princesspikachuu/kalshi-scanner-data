@@ -77,18 +77,24 @@ ROLE_QUERY = """SELECT current_user AS principal,
     (SELECT (rolsuper OR rolcreaterole OR rolcreatedb) FROM pg_roles
       WHERE rolname=current_user) AS elevated,
     has_table_privilege(current_user,'research_job','SELECT') AS can_select,
-    has_table_privilege(current_user,'research_job','INSERT') AS can_insert,
-    has_table_privilege(current_user,'research_job','DELETE') AS can_delete"""
+    has_column_privilege(current_user,'research_job','id','INSERT') AS can_insert,
+    has_table_privilege(current_user,'research_job','DELETE') AS can_delete,
+    has_table_privilege(current_user,'research_job','UPDATE') AS can_update,
+    has_function_privilege(current_user,
+      'public.mt_reclaim_shadow_diagnostics(uuid,jsonb)','EXECUTE') AS can_scoped_reclaim"""
 
 
 def verify_scoped_role(pool):
     """Refuse database owner/admin accounts or missing table-specific grants."""
     with pool.connection() as connection:
         row = connection.execute(ROLE_QUERY).fetchone()
-    if (not row or row['owner'] is None or row['principal'] == row['owner']
-            or row['elevated'] is not False or
-            not all(row[k] is True for k in ('can_select', 'can_insert', 'can_delete'))):
-        raise ValueError('Dedicated non-owner archive role with SELECT/INSERT/DELETE is required')
+    if (not row or row['principal'] != 'pocket_archive_maintenance'
+            or row['owner'] is None or row['principal'] == row['owner']
+            or row['elevated'] is not False
+            or row['can_delete'] is not False or row['can_update'] is not False
+            or not all(row[k] is True for k in
+                       ('can_select','can_insert','can_scoped_reclaim'))):
+        raise ValueError('Dedicated non-owner archive role with scoped SQL reclaim only is required')
 
 
 def database_bytes(pool):
@@ -112,7 +118,8 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False):
         if stopped():
             break
         receipt = archive_and_reclaim_one(
-            pool, objects, now=current, age_hours=24, batch_size=limits.raw_batch_size)
+            pool, objects, now=current, age_hours=24, batch_size=limits.raw_batch_size,
+            scoped=True)
         if (receipt.get('archived', 0) != receipt.get('deleted', 0)
                 or (receipt.get('archived', 0) and
                     (receipt.get('verified') is not True or receipt.get('manifest_stored') is not True))):
@@ -125,7 +132,8 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False):
         if stopped():
             break
         receipt = archive_one(
-            pool, objects, now=current, age_hours=24, batch_size=limits.packed_batch_size)
+            pool, objects, now=current, age_hours=24, batch_size=limits.packed_batch_size,
+            scoped=True)
         if (receipt.get('archived_rows', 0) != receipt.get('deleted_rows', 0)
                 or (receipt.get('archived_rows', 0) and receipt.get('verified') is not True)):
             raise RuntimeError('Packed diagnostic archival verification mismatch')
