@@ -94,6 +94,11 @@ def termination(stop):
 
 
 def run(settings,stop):
+    # Optional recovery-held read-only WAL census, never an archival trigger.
+    from .recovery_wal_preflight import is_authorized as wal_preflight_authorized
+    if wal_preflight_authorized(os.environ, settings):
+        from .recovery_wal_preflight import audit_once as wal_preflight_once
+        wal_preflight_once(settings.database_url)
     # Explicit one-time SELECT-only inspection of a recovered database.
     # Always fail closed if the audit flag leaks onto an active worker.
     from .recovery_storage_audit import is_authorized
