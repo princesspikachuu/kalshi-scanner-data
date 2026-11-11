@@ -13,6 +13,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
         return dict(
             MT_ARCHIVE_RECOVERY_LOOP='true',
             MT_ARCHIVE_WRITERS_STOPPED='true',
+            MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED='true',
             MT_STORAGE_RECOVERY_HOLD='true',
             WORKER_ROLE='collector',
             COLLECTION_ENABLED='false',
@@ -52,6 +53,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
         for key, invalid in (
                 ('MT_ARCHIVE_RECOVERY_LOOP', 'false'),
                 ('MT_ARCHIVE_WRITERS_STOPPED', 'false'),
+                ('MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED', 'false'),
                 ('MT_STORAGE_RECOVERY_HOLD', 'false'),
                 ('WORKER_ROLE', 'demo'),
                 ('COLLECTION_ENABLED', 'true'),
@@ -61,6 +63,8 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             invalid_env = dict(base, **{key: invalid})
             with self.subTest(key=key), self.assertRaises(ValueError):
                 configuration(invalid_env)
+        with self.assertRaises(ValueError):
+            configuration(dict(base, MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED=''))
         with self.assertRaises(ValueError):
             configuration(dict(base, RECOVERY_DATABASE_URL=base['DATABASE_URL']))
         with self.assertRaises(ValueError):
