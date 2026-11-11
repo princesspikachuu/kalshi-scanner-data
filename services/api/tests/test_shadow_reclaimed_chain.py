@@ -9,7 +9,8 @@ def make_pages(total=3, first_size=2):
     ident=str(uuid4())
     key='demo/shadow/archive-manifest/'+ident
     original=[dict(id=str(uuid4())) for _ in range(total)]
-    a=dict(manifest_id=ident,manifest_key=key,source='r2_reclaimed_raw',
+    a=dict(manifest_id=ident,manifest_key=key,manifest_digest='a'*64,
+           source='r2_reclaimed_raw',
            total_events=total,offset=0,page_events=first_size,
            items=original[:first_size],next_offset=first_size if first_size<total else None,
            verified=True)
@@ -38,6 +39,12 @@ class ReclaimedChainTests(unittest.TestCase):
             with self.subTest(modified=modified):
                 with self.assertRaises(HistoryReconciliationError):
                     verify_reclaimed_manifest_chain(modified)
+
+    def test_changed_manifest_content_digest_fails(self):
+        pages=make_pages()
+        replaced=dict(pages[1],manifest_digest='b'*64)
+        with self.assertRaises(HistoryReconciliationError):
+            verify_reclaimed_manifest_chain([pages[0],replaced])
 
     def test_repeated_original_id_fails(self):
         pages=make_pages()
