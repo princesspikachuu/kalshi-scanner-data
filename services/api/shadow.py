@@ -566,6 +566,23 @@ def install_shadow(app,auth,mutate,pool):
     def events(request:Request):
         auth(request);query(request)
         with pool.connection() as c:
-            rows=c.execute("SELECT progress,created_at FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz' ORDER BY created_at DESC,id DESC LIMIT 100").fetchall()
+            rows=c.execute("SELECT id::text,idempotency_key,parameters,progress,created_at FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz' ORDER BY created_at DESC,id DESC LIMIT 100").fetchall()
             batches=c.execute("SELECT progress,created_at FROM research_job WHERE idempotency_key>='demo/shadow/event-batch/' AND idempotency_key<'demo/shadow/event-batch/zzzz' ORDER BY created_at DESC,id DESC LIMIT 100").fetchall()
-        return dict(contract='demo-v1',items=merge_recent_events(rows,batches),real_orders_enabled=False)
+        # An archive pointer is not a decision or an outcome. Resolve it via
+        # verified R2 read-only receipts before showing recent history; fail
+        # closed, never silently truncate archived Favorites learning evidence.
+        from services.demo.shadow_pointer_history import rehydrate_event_rows
+        from services.demo.shadow_archive_reader import ArchiveReaderUnavailable
+        try:
+            rows,cold_rows,verified_objects=rehydrate_event_rows(rows)
+            items=merge_recent_events(rows,batches)
+        except ArchiveReaderUnavailable:
+            raise HTTPException(503,'Archived diagnostic history is not yet readable') from None
+        except Exception as error:
+            print(json.dumps(dict(event='shadow_pointer_history_unavailable',
+                                  error_type=type(error).__name__)),flush=True)
+            raise HTTPException(503,'Archived diagnostic history could not be verified') from None
+        return dict(contract='demo-v1',items=items,real_orders_enabled=False,
+                    recent_history_complete=True,
+                    archived_rows_rehydrated=cold_rows,
+                    archive_objects_verified=verified_objects)
