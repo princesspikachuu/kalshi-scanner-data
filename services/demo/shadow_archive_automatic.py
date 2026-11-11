@@ -35,6 +35,7 @@ def configuration(env):
         'MT_ARCHIVE_RECOVERY_LOOP': 'true',
         'MT_ARCHIVE_WRITERS_STOPPED': 'true',
         'MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED': 'true',
+        'MT_ARCHIVE_PHYSICAL_HEADROOM_ACKNOWLEDGED': 'true',
         'MT_STORAGE_RECOVERY_HOLD': 'true',
         'WORKER_ROLE': 'collector',
         'COLLECTION_ENABLED': 'false',
