@@ -41,6 +41,20 @@ class LogicalStorageBudgetTests(unittest.TestCase):
         self.assertFalse(decreased['rapid_growth_flag'])
         self.assertLess(decreased['delta_bytes'],0)
 
+    def test_existing_read_only_audit_adds_budget_without_more_sql(self):
+        from unittest.mock import MagicMock,patch
+        from services.research.storage_audit import inspect_storage
+        pool=MagicMock()
+        c=pool.connection.return_value.__enter__.return_value
+        c.execute.return_value.fetchone.return_value=dict(bytes=11*GIB)
+        c.execute.return_value.fetchall.return_value=[]
+        with patch.dict('os.environ',{'DATABASE_CAPACITY_GB':'15'}):
+            result=inspect_storage(pool)
+        self.assertEqual(result['logical_storage_budget']['threshold_level'],'warning')
+        self.assertFalse(result['logical_storage_budget']['physical_headroom_verified'])
+        self.assertEqual(c.execute.call_count,5)
+        self.assertEqual(pool.connection.call_count,2)
+
     def test_invalid_time_and_duplicate_timestamp_rejected(self):
         a=dict(at=100,database_bytes=100)
         for b in (dict(at=100,database_bytes=200),
