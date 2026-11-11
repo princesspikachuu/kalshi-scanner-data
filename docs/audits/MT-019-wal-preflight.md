@@ -41,7 +41,9 @@ The audit record always contains:
    on the established `pocket-processing-staging` recovery-held deployment,
    with `WORKER_ROLE=collector`, `COLLECTION_ENABLED=false`,
    `MT_STORAGE_RECOVERY_HOLD=true`, operator action/acceptance OFF.
-2. Confirm all other one-shots and `MT_ARCHIVE_RECOVERY_LOOP` are OFF. Keep
+2. Confirm all other one-shots (including `MT_WORKER_DISK_AUDIT_ONCE`
+   and the `MT_BACKUP_EXACT_CENSUS` inventory option) and
+   `MT_ARCHIVE_RECOVERY_LOOP` are OFF. Keep
    the research worker held. Do not enable trading or archival.
 3. Only on the processing worker, use Render's private environment settings
    to temporarily set `MT_WAL_PREFLIGHT_ONCE=true`. The change deploys that
