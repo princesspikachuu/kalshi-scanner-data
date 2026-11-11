@@ -52,7 +52,7 @@ CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
     AND progress->>'event'=ANY(%s::text[])
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES = CANDIDATES + ' FOR UPDATE SKIP LOCKED'
-SCOPED_RECLAIM_SQL = 'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::jsonb)'
+SCOPED_RECLAIM_SQL = 'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::text,%s::jsonb,%s::jsonb)'
 
 MANIFEST_SQL = """INSERT INTO research_job
     (id,asset,parameters,progress,idempotency_key,status,finished_at)
@@ -164,17 +164,17 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100,
                 source_prefix=PREFIX,event_kinds=sorted({r['progress']['event'] for r in rows}),
                 created_at=now,restorable=True)
             manifest_id=uuid4()
-            c.execute(MANIFEST_SQL,(manifest_id,Jsonb(dict(kind='shadow_event_r2_manifest')),
-                Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-            # The automatic role has no table DELETE or UPDATE rights.
-            # A SECURITY DEFINER function rechecks every source column,
-            # 24-hour age, diagnostic kind and original R2 manifest before
-            # deleting the exact IDs. Old privileged manual path is retained
-            # for operator-only emergency recovery.
             if scoped:
+                # SECURITY DEFINER atomically inserts the verified manifest
+                # and removes only unchanged, old, non-financial rows.
+                # The maintenance login has no direct INSERT/UPDATE/DELETE.
                 deleted=c.execute(SCOPED_RECLAIM_SQL,
-                    (manifest_id,Jsonb(records))).fetchall()
+                    (manifest_id,'shadow_event_r2_manifest',
+                     Jsonb(manifest),Jsonb(records))).fetchall()
             else:
+                c.execute(MANIFEST_SQL,(manifest_id,
+                    Jsonb(dict(kind='shadow_event_r2_manifest')),
+                    Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
                 deleted=c.execute(DELETE_SQL,
                     (ids,PREFIX,PREFIX+'zzzz',cutoff,list(SAFE_EVENT_KINDS))).fetchall()
             if {r['id'] for r in deleted}!=set(ids) or len(deleted)!=len(ids):
