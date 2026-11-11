@@ -24,7 +24,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             RECOVERY_DATABASE_URL='postgresql://archive:placeholder@localhost/db',
         )
 
-    def pool(self, *, size=9_000_000_000, principal='archive', owner='owner', elevated=False):
+    def pool(self, *, size=9_000_000_000, principal='pocket_archive_maintenance', owner='owner', elevated=False):
         pool = MagicMock()
         conn = pool.connection.return_value.__enter__.return_value
 
@@ -33,7 +33,8 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             if sql == ROLE_QUERY:
                 result.fetchone.return_value = dict(
                     principal=principal, owner=owner, elevated=elevated,
-                    can_select=True, can_insert=True, can_delete=True)
+                    can_select=True, can_insert=True, can_delete=False,
+                    can_update=False, can_scoped_reclaim=True)
             else:
                 result.fetchone.return_value = dict(bytes=size)
             return result
@@ -74,8 +75,9 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
 
     def test_refuse_database_owner_and_admin_role(self):
         for pool in (self.pool(principal='owner', owner='owner'),
-                     self.pool(principal='archive', elevated=True),
-                     self.pool(owner=None)):
+                     self.pool(principal='pocket_archive_maintenance', elevated=True),
+                     self.pool(owner=None),
+                     self.pool(principal='different-scoped-role')):
             with self.assertRaises(ValueError):
                 verify_scoped_role(pool)
         good = self.pool()
@@ -102,6 +104,8 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
         self.assertEqual(b.call_count, 2)
         self.assertEqual(a.call_args.kwargs['age_hours'], 24)
         self.assertEqual(a.call_args.kwargs['batch_size'], 50)
+        self.assertTrue(a.call_args.kwargs['scoped'])
+        self.assertTrue(b.call_args.kwargs['scoped'])
         self.assertEqual(b.call_args.kwargs['batch_size'], 2)
 
     def test_no_archival_near_capacity(self):
