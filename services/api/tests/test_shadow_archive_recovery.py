@@ -16,7 +16,9 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             progress=dict(event='FAVORITE_STAT_DECISION',details='original decision evidence'),
             created_at=datetime(2026,11,7,tzinfo=timezone.utc),
             started_at=None,finished_at=datetime(2026,11,7,tzinfo=timezone.utc),
-            lease_expires_at=None,attempts=0,error_code=None)
+            lease_expires_at=None,attempts=0,error_code=None,
+            available_at=datetime(2026,11,7,tzinfo=timezone.utc),
+            max_attempts=5,lease_token=None)
 
     def db(self,rows=None,deleted=None):
         pool=MagicMock()
