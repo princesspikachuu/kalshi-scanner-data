@@ -562,6 +562,45 @@ def install_shadow(app,auth,mutate,pool):
         if result is None:raise HTTPException(404,'Archive manifest not found')
         return result
 
+    @app.get('/demo/shadow/history/reclaimed/{identifier}')
+    def reclaimed_history_page(identifier:str,request:Request):
+        # This endpoint is deliberately source-specific, not an all-time
+        # merged view. The existing R2 reader remains separately opt-in.
+        from services.demo.shadow_archive_reader import (
+            ArchiveReaderUnavailable, read_manifest_events
+        )
+        from services.demo.shadow_reclaimed_history import normalize_reclaimed_manifest_page
+        auth(request);query(request,('limit','offset'))
+        limit_string=request.query_params.get('limit','25')
+        offset_string=request.query_params.get('offset','0')
+        if not (limit_string.isascii() and limit_string.isdecimal()
+                and offset_string.isascii() and offset_string.isdecimal()):
+            raise HTTPException(422,'Invalid reclaimed pagination')
+        from uuid import UUID
+        try:
+            if str(UUID(identifier))!=identifier:
+                raise ValueError('Noncanonical id')
+        except ValueError:
+            raise HTTPException(422,'Invalid archive manifest identifier') from None
+        limit,offset=int(limit_string),int(offset_string)
+        if not (1 <= limit <= 50 and 0 <= offset <= 10000):
+            raise HTTPException(422,'Invalid reclaimed pagination')
+        try:
+            result=read_manifest_events(pool,identifier,offset=offset,limit=limit)
+            if result is None:raise HTTPException(404,'Archive manifest not found')
+            normalized=normalize_reclaimed_manifest_page(result,offset=offset)
+            if normalized['manifest_id']!=identifier:
+                raise ValueError('Requested manifest differs from verified receipt')
+            return normalized
+        except HTTPException:
+            raise
+        except ArchiveReaderUnavailable:
+            raise HTTPException(503,'Cold history reader is not yet configured') from None
+        except Exception as error:
+            print(json.dumps(dict(event='reclaimed_archive_page_unavailable',
+                                  error_type=type(error).__name__)),flush=True)
+            raise HTTPException(503,'Archived history could not be verified') from None
+
     @app.get('/demo/shadow/events')
     def events(request:Request):
         auth(request);query(request)
