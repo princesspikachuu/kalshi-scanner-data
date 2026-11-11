@@ -12,7 +12,7 @@ from services.demo.maintenance import read_verified
 from services.demo.shadow_archive_reader import ArchiveReaderUnavailable, read_store
 from services.demo.shadow_archive_recovery import PREFIX
 
-MAX_COLD_OBJECTS_PER_PAGE = 8
+MAX_COLD_OBJECTS_PER_PAGE = 4
 MAX_COLD_ROWS_PER_PAGE = 100
 MAX_COMPRESSED = 4 * 1024 * 1024
 _KEY = re.compile(r'^demo/events/([0-9a-f]{64})\.json\.gz$')
