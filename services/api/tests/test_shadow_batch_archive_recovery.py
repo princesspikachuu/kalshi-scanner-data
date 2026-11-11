@@ -101,10 +101,11 @@ class ShadowBatchArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(result['deleted_rows'],1)
         operations=[call.args[0] for call in c.execute.call_args_list]
         self.assertEqual(operations,['SET LOCAL statement_timeout=10000',
-            CANDIDATES,MANIFEST_SQL,SCOPED_RECLAIM_SQL])
+            CANDIDATES,SCOPED_RECLAIM_SQL])
         self.assertNotIn(DELETE_SQL,operations)
         scoped=c.execute.call_args_list[-1].args[1]
-        self.assertEqual(scoped[1].obj,[record])
+        self.assertEqual(scoped[1],'diagnostic_batch_r2_manifest')
+        self.assertEqual(scoped[3].obj,[record])
         self.assertEqual(record['available_at'],row['available_at'].isoformat())
         self.assertEqual(record['max_attempts'],5)
 
