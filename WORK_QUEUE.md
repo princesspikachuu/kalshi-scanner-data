@@ -214,6 +214,11 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Disposable PostgreSQL integration tests and full 1,487+ API test suite **PASSED**: denied direct INSERT/DELETE, allowed old safe diagnostics only, financial/fresh/wrong-namespace denial, tampered-row and owner invocation denial. SQL file was repaired after tests identified malformed duplicated content; latest clean single-transaction version passed.
 - **No archive role has been installed/activated in Render, and no automatic cleanup has started.** Existing R2 control backup remains independently verified (4,190 source rows; 98 chunks; root catalog). Processing/research workers stay recovery-held with trading/collection disabled; Render predeploy explicitly confirmed `collection_enabled=false`, `trading_enabled=false`, role `collector`. NEXT: only in a private owner Render Shell, install the NOLOGIN role, activate an isolated SCRAM credential, and configure `RECOVERY_DATABASE_URL` on the held worker. Do not install blanket research_job INSERT/UPDATE/DELETE grants or enable retention before role privilege verification. Rotate leaked owner credential before returning to trading.
 
+
+### Privilege guard follow-up (PR #186)
+- [PR #186](https://github.com/princesspikachuu/kalshi-scanner-data/pull/186) **PASSED GitHub Actions and MERGED** as `0ce391ac8c6bf31ca8bebd29e0489446a4bf92a0`. Recovery-only archive role validation now explicitly checks `public.research_job` and `public` schema, independent of session search_path, and rejects maintenance credentials with TRUNCATE or schema CREATE authority in addition to owner/admin and direct INSERT/UPDATE/DELETE. Regression tests and disposable PostgreSQL privilege assertions added.
+- **Render deployment of this merge still requires verification.** No automatic recovery cleanup was enabled, no new maintenance role or login was installed, and no trading/collection changes were requested. Keep MT-019 IN PROGRESS and workers recovery-held.
+
 ---
 
 
