@@ -63,8 +63,8 @@ class ShadowArchiveIntegrityTests(unittest.TestCase):
                       dict(acceptance='r2-v1'), dict(operator_action='prepare-roles-v1')):
             with self.assertRaises(ValueError):
                 is_authorized(self.env(), SimpleNamespace(**dict(
-                    role='collector', enabled=False, acceptance='off',
-                    operator_action='off', **value)))
+                    dict(role='collector', enabled=False, acceptance='off',
+                         operator_action='off'), **value)))
 
     def test_verified_manifest_and_raw_rows_absent(self):
         manifest = self.manifest('shadow_event_r2_manifest')
