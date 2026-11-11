@@ -114,5 +114,59 @@ class ControlBackupAuditTests(unittest.TestCase):
         self.assertEqual(report['error_type'],'RuntimeError')
         self.assertNotIn('password',failed[0])
 
+    def test_exact_shadow_bot_census_is_read_only_bounded_and_secret_safe(self):
+        from services.demo.control_backup_capacity_audit import (
+            SHADOW_BOT_CENSUS_SQL,census_shadow_bots
+        )
+        pool=MagicMock()
+        c=pool.connection.return_value.__enter__.return_value
+        cur=MagicMock()
+        cur.fetchone.return_value=dict(source_rows=9876,
+            source_payload_bytes=215000000,maximum_record_payload_bytes=600000)
+        c.execute.side_effect=lambda sql:cur
+        result=census_shadow_bots(pool)
+        self.assertEqual(result['rows'],9876)
+        self.assertEqual(result['payload_bytes'],215000000)
+        self.assertEqual(result['maximum_record_payload_bytes'],600000)
+        self.assertIn('count(*)',SHADOW_BOT_CENSUS_SQL)
+        self.assertIn('demo/shadow/bot/',SHADOW_BOT_CENSUS_SQL)
+        self.assertEqual([call.args[0] for call in c.execute.call_args_list],
+            ['SET LOCAL statement_timeout=10000',SHADOW_BOT_CENSUS_SQL])
+        self.assertNotIn('UPDATE ',SHADOW_BOT_CENSUS_SQL)
+        self.assertNotIn('DELETE ',SHADOW_BOT_CENSUS_SQL)
+        c.transaction.assert_called_once()
+
+    def test_exact_census_opt_in_and_sql_timeout_is_sanitized(self):
+        from unittest.mock import patch
+        pool=MagicMock()
+        factory=MagicMock()
+        factory.return_value.__enter__.return_value=pool
+        baseline=dict(failed_scopes=[],scopes=[],candidate_count_exact=False)
+        with patch('services.demo.control_backup_capacity_audit.inspect_control_backup',
+                   return_value=baseline),patch(
+                   'services.demo.control_backup_capacity_audit.census_shadow_bots',
+                   return_value=dict(rows=4200,payload_bytes=70000000,
+                                     maximum_record_payload_bytes=130000)) as census:
+            ordinary=audit_once('postgresql://secret',pool_factory=factory,
+                env={},emit=lambda *a,**kw:None)
+            self.assertNotIn('exact_shadow_bots',ordinary)
+            census.assert_not_called()
+            exact=audit_once('postgresql://secret',pool_factory=factory,
+                env=dict(MT_BACKUP_EXACT_CENSUS='true'),emit=lambda *a,**kw:None)
+            self.assertEqual(exact['exact_shadow_bots']['rows'],4200)
+            self.assertTrue(exact['verified'])
+        outputs=[]
+        with patch('services.demo.control_backup_capacity_audit.inspect_control_backup',
+                   return_value=baseline),patch(
+                   'services.demo.control_backup_capacity_audit.census_shadow_bots',
+                   side_effect=TimeoutError('private-password')):
+            result=audit_once('postgresql://secret',pool_factory=factory,
+                env=dict(MT_BACKUP_EXACT_CENSUS='true'),
+                emit=lambda value,**kw:outputs.append(value))
+        self.assertFalse(result['verified'])
+        self.assertEqual(result['census_error_type'],'TimeoutError')
+        self.assertNotIn('password',outputs[0])
+        self.assertNotIn('secret',outputs[0])
+
 if __name__=='__main__':
     unittest.main()
