@@ -148,6 +148,13 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - No database resume was performed: the Render connector has no Resume action. Owner may need to use Render dashboard after confirming worker deployments are live and disabled.
 
 
+### Recovery hold active on Render
+- On Nov 11 00:05:57–00:06:11 UTC, Render reported both **new worker deployments LIVE**: processing `dep-dbpr2849v7es73c7vhlg`, research `dep-dbpr28u7bikc73b54ecg`, commit `bca89f1b`.
+- Render predeploy log explicitly reported `storage-recovery-hold-v1`, `collection_enabled=false`, `worker_role=collector`, `trading_enabled=false`, `predeploy_database_check=deferred`. Both preceding worker revisions marked `deactivated`.
+- Some **old process shutdown logs** briefly continued after live replacement (PoolTimeout / DB hostname resolution); avoid claiming strict quiescence until log activity stops past maxShutdownDelaySeconds=120.
+- Database remains **suspended**, no upgrade. Connected Render actions do not expose a database Resume or worker Suspend action; owner dashboard is needed for physical resume. Avoid re-enabling bots until DB recovery and archived history safety checks complete.
+
+
 ---
 
 
