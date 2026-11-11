@@ -588,7 +588,10 @@ def install_shadow(app,auth,mutate,pool):
         try:
             result=read_manifest_events(pool,identifier,offset=offset,limit=limit)
             if result is None:raise HTTPException(404,'Archive manifest not found')
-            return normalize_reclaimed_manifest_page(result,offset=offset)
+            normalized=normalize_reclaimed_manifest_page(result,offset=offset)
+            if normalized['manifest_id']!=identifier:
+                raise ValueError('Requested manifest differs from verified receipt')
+            return normalized
         except HTTPException:
             raise
         except ArchiveReaderUnavailable:
