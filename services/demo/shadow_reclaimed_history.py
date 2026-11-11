@@ -5,6 +5,7 @@ is the existing SHA/gzip/full-row manifest reader. An incomplete page never
 claims an all-time historical dataset or changes Favorites financial totals.
 """
 from uuid import UUID
+import re
 
 from services.demo.shadow_history_reconcile import (
     HistoryReconciliationError, reconcile_verified_pages,
@@ -36,6 +37,9 @@ def normalize_reclaimed_manifest_page(result, *, offset):
         raise HistoryReconciliationError('Invalid reclaimed manifest identity') from exc
     if not isinstance(key, str) or key != expected_key_prefix+identifier:
         raise HistoryReconciliationError('Invalid reclaimed manifest identity')
+    digest = manifest.get('manifest_digest')
+    if not isinstance(digest,str) or re.fullmatch(r'[0-9a-f]{64}',digest) is None:
+        raise HistoryReconciliationError('Verified manifest fingerprint missing')
     original_events = manifest.get('original_events')
     if type(original_events) is not int or original_events < 1:
         raise HistoryReconciliationError('Invalid manifest event count')
@@ -72,7 +76,8 @@ def normalize_reclaimed_manifest_page(result, *, offset):
     if verified['unique_events'] != len(events):
         raise HistoryReconciliationError('Duplicate events inside one R2 page')
     return dict(contract='demo-v1',source=KINDS[kind],manifest_id=identifier,
-                manifest_key=key,offset=offset,total_events=total,
+                manifest_key=key,manifest_digest=digest,
+                offset=offset,total_events=total,
                 items=verified['items'],next_offset=expected_next,
                 page_events=len(events),verified=True,
                 source_exhaustion_verified=False,
