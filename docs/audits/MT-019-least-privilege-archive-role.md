@@ -71,8 +71,10 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
    objects and durable manifest, then calls the SQL fence. It stops on any
    mismatch or error. During maintenance, check logical and physical
    PostgreSQL usage separately and monitor WAL and row/vacuum growth.
-7. After backlog recovery, disable both loop flags, verify worker is back
-   in held idle mode, and only then evaluate a live-safe retention schedule.
+7. After backlog recovery, disable `MT_ARCHIVE_RECOVERY_LOOP`,
+   `MT_ARCHIVE_WRITERS_STOPPED` **and**
+   `MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED`, verify worker is back in held idle mode,
+   and only then evaluate a live-safe retention schedule.
 
 ## Important limits
 
