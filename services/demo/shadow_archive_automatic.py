@@ -74,8 +74,12 @@ def configuration(env):
 ROLE_QUERY = """SELECT current_user AS principal,
     (SELECT tableowner FROM pg_tables
       WHERE schemaname='public' AND tablename='research_job') AS owner,
-    (SELECT (rolsuper OR rolcreaterole OR rolcreatedb) FROM pg_roles
+    (SELECT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication
+             OR rolbypassrls OR rolinherit) FROM pg_roles
       WHERE rolname=current_user) AS elevated,
+    EXISTS (SELECT 1 FROM pg_auth_members AS m
+      JOIN pg_roles AS r ON r.oid=m.member
+      WHERE r.rolname=current_user) AS has_memberships,
     has_table_privilege(current_user,'public.research_job','SELECT') AS can_select,
     has_table_privilege(current_user,'public.research_job','INSERT') AS can_insert,
     has_table_privilege(current_user,'public.research_job','DELETE') AS can_delete,
@@ -87,12 +91,13 @@ ROLE_QUERY = """SELECT current_user AS principal,
 
 
 def verify_scoped_role(pool):
-    """Refuse database owner/admin accounts or missing table-specific grants."""
+    """Refuse owner/admin, inherited/member privileges or broad table writes."""
     with pool.connection() as connection:
         row = connection.execute(ROLE_QUERY).fetchone()
     if (not row or row['principal'] != 'pocket_archive_maintenance'
             or row['owner'] is None or row['principal'] == row['owner']
             or row['elevated'] is not False
+            or row['has_memberships'] is not False
             or row['can_insert'] is not False
             or row['can_delete'] is not False or row['can_update'] is not False
             or row['can_truncate'] is not False
