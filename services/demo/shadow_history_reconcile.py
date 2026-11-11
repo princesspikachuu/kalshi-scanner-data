@@ -5,6 +5,8 @@ first independently verify R2 manifests and exhaust each source; this module
 cannot manufacture a completeness guarantee or perform I/O.
 """
 import json
+import re
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 MAX_INPUT_EVENTS = 256
@@ -54,13 +56,26 @@ def _validated_event(item, source):
     time_value = item.get('event_time', progress.get('time'))
     if time_value != progress.get('time'):
         raise HistoryReconciliationError('Event timestamp disagrees with progress')
-    if time_value is not None and (
-            isinstance(time_value, bool) or
-            not isinstance(time_value, (int, float)) or
-            not (0 <= time_value < 1e15)):
-        raise HistoryReconciliationError('Invalid event timestamp')
+    # Engine Audit.log serializes the original timestamp as a decimal
+    # string. Parse only for time ordering; never rewrite the source progress.
+    if time_value is None:
+        event_time = None
+    else:
+        if isinstance(time_value, bool) or not isinstance(time_value, (int,float,str)):
+            raise HistoryReconciliationError('Invalid event timestamp')
+        if isinstance(time_value,str) and (
+                len(time_value)>40 or
+                re.fullmatch(r'[0-9]+(?:[.][0-9]+)?',time_value) is None):
+            raise HistoryReconciliationError('Invalid event timestamp')
+        try:
+            parsed=Decimal(str(time_value))
+        except (InvalidOperation,ValueError) as exc:
+            raise HistoryReconciliationError('Invalid event timestamp') from exc
+        if not parsed.is_finite() or not Decimal(0)<=parsed<Decimal('1e15'):
+            raise HistoryReconciliationError('Invalid event timestamp')
+        event_time=float(parsed)
     return dict(id=ident, key=key, parameters=params, progress=progress,
-                event_time=time_value)
+                event_time=event_time)
 
 
 def reconcile_verified_pages(pages):
