@@ -134,5 +134,37 @@ class ShadowArchiveReaderTests(unittest.TestCase):
             self.assertNotIn('write-token',str(connect.call_args))
 
 
+    def test_owner_routes_require_auth_and_are_query_bounded(self):
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+        from services.api.shadow import install_shadow
+
+        app=FastAPI()
+        def unauthenticated(request):
+            raise HTTPException(401, 'Sign in required')
+        install_shadow(app,unauthenticated,MagicMock(),MagicMock())
+        client=TestClient(app)
+        self.assertEqual(client.get('/demo/shadow/archives').status_code,401)
+        self.assertEqual(client.get(
+            '/demo/shadow/archives/11111111-1111-1111-1111-111111111111').status_code,401)
+
+        app=FastAPI()
+        install_shadow(app,lambda _: True,MagicMock(),MagicMock())
+        client=TestClient(app)
+        with patch('services.demo.shadow_archive_reader.list_manifests',
+                   return_value=dict(items=[],more=False,next_cursor=None)) as listing:
+            self.assertEqual(client.get('/demo/shadow/archives').status_code,200)
+            listing.assert_called_once()
+        self.assertEqual(client.get('/demo/shadow/archives?limit=999').status_code,422)
+        self.assertEqual(client.get('/demo/shadow/archives?cursor=../../bad').status_code,422)
+        self.assertEqual(client.get('/demo/shadow/archives?limit=3&limit=4').status_code,422)
+        self.assertEqual(client.get('/demo/shadow/archives?secret=1').status_code,422)
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   side_effect=ArchiveReaderUnavailable('private-secret')):
+            response=client.get('/demo/shadow/archives/11111111-1111-1111-1111-111111111111')
+        self.assertEqual(response.status_code,503)
+        self.assertNotIn('private-secret',response.text)
+
+
 if __name__=='__main__':
     unittest.main()
