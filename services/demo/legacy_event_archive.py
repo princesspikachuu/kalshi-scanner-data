@@ -57,12 +57,15 @@ def verified_records(payload):
         return payload,False
     if not isinstance(payload,dict) or payload.get('format')!=FORMAT:
         raise ValueError('Unrecognized archived event format')
+    if payload.get('source_prefix')!=PREFIX:
+        raise ValueError('Archive provenance does not match diagnostics')
     rows=payload.get('records')
     ids=payload.get('ids')
     if (not isinstance(rows,list) or not 1<=len(rows)<=PAGE_SIZE
             or type(payload.get('count')) is not int
             or len(rows)!=payload['count'] or not isinstance(ids,list)
-            or len(ids)!=len(rows) or len(set(ids))!=len(ids)):
+            or len(ids)!=len(rows) or any(not isinstance(x,str) for x in ids)
+            or len(set(ids))!=len(ids)):
         raise ValueError('Invalid full-row archive manifest')
     for row,ident in zip(rows,ids):
         if (not isinstance(row,dict) or row.get('id')!=ident
