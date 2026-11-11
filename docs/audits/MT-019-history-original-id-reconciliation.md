@@ -40,12 +40,14 @@ incorrect namespace, and invalid raw/packed/manifest source labels. This is
 pure validation of supplied pages, not an R2 or SQL fetch. The collecting
 caller must retain the exact request cursor and source row key for each page.
 
-**Integration gap:** existing paginated raw responses expose `items[].key`.
-Packed responses expose expanded event keys but do not yet expose the indexed
-batch-row keys as a first-class list. Existing manifest-list responses expose
-IDs/summary but omit indexed manifest keys. Thus an eventual all-source
-orchestrator must expose authenticated source-row cursor keys before it can
-use this checker; **do not invent missing keys from event IDs or hashes**.
+**Indexed-key visibility now added by this draft:** authenticated raw and
+packed history responses expose `source_keys` taken from their actual
+PostgreSQL rows, and owner manifest summaries expose `manifest_key`
+from their indexed manifest record. These are *not* Cloudflare object
+paths, credentials, or links. The future orchestrator must record the
+exact request cursor alongside each response before asking the pure
+checker to validate pagination. These changes remain draft until CI
+passes and do not activate any R2 read or archive operation.
 Every return still reports `database_snapshot_verified=false`,
 `r2_manifest_catalog_complete=false`, and
 `all_time_coverage_complete=false`.
