@@ -1,5 +1,6 @@
 """Partial multi-source receipts never establish missing global coverage."""
 import unittest
+from copy import deepcopy
 from uuid import uuid4
 
 from services.demo.shadow_history_reconcile import HistoryReconciliationError
@@ -40,7 +41,7 @@ def fixture():
                   request_cursor=None,items=[summary],more=False,next_cursor=None)]
     cold=[dict(source='r2_reclaimed_raw',verified=True,
                manifest_id=ident,manifest_key=key,manifest_digest=digest,
-               total_events=1,offset=0,page_events=1,items=[dict(original)],
+               total_events=1,offset=0,page_events=1,items=[deepcopy(original)],
                next_offset=None)]
     return original,[hot('raw',[original])],[hot('packed',[event()])],catalog,{ident:cold}
 
