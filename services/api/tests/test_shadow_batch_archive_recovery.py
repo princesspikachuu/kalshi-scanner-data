@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from services.paper_demo.shadow.storage import entry
 from services.paper_demo.shadow.diagnostic_batches import compact_diagnostic_rows
 from services.demo.shadow_batch_archive_recovery import (
-    BATCH_PREFIX, CANDIDATES, LOCKED_CANDIDATES, MANIFEST_SQL, DELETE_SQL,
+    BATCH_PREFIX, CANDIDATES, LOCKED_CANDIDATES, MANIFEST_SQL, DELETE_SQL, SCOPED_RECLAIM_SQL,
     FORMAT, archive_one, cutoff_at, original_row, preview,
     validated_records, verify_batch_manifest, main,
 )
@@ -41,7 +41,7 @@ class ShadowBatchArchiveRecoveryTests(unittest.TestCase):
             cur=MagicMock()
             if query in (CANDIDATES,LOCKED_CANDIDATES):
                 cur.fetchall.return_value=rows
-            elif query==DELETE_SQL:
+            elif query in (DELETE_SQL,SCOPED_RECLAIM_SQL):
                 cur.fetchall.return_value=deleted
             return cur
         c.execute.side_effect=execute
@@ -86,6 +86,27 @@ class ShadowBatchArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(len(manifest['event_ids']),4)
         self.assertEqual(c.execute.call_args_list[3].args[1][0],manifest['row_ids'])
         c.transaction.assert_called_once()
+
+    def test_scoped_packed_archive_cannot_execute_table_delete(self):
+        row=self.row();pool,c=self.pool([row])
+        record=original_row(row)
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=300)
+        with patch('services.demo.shadow_batch_archive_recovery.put_verified',
+                   return_value=receipt),patch(
+                   'services.demo.shadow_batch_archive_recovery.read_verified',
+                   return_value=[record]):
+            result=archive_one(pool,MagicMock(),now=1794500000,
+                batch_size=1,scoped=True)
+        self.assertEqual(result['deleted_rows'],1)
+        operations=[call.args[0] for call in c.execute.call_args_list]
+        self.assertEqual(operations,['SET LOCAL statement_timeout=10000',
+            CANDIDATES,MANIFEST_SQL,SCOPED_RECLAIM_SQL])
+        self.assertNotIn(DELETE_SQL,operations)
+        scoped=c.execute.call_args_list[-1].args[1]
+        self.assertEqual(scoped[1].obj,[record])
+        self.assertEqual(record['available_at'],row['available_at'].isoformat())
+        self.assertEqual(record['max_attempts'],5)
 
     def test_archiving_must_validate_real_r2_readback(self):
         r=self.row();pool,c=self.pool([r])
