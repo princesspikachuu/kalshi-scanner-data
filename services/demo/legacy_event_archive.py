@@ -113,7 +113,7 @@ def archive_events_v2(store,objects,policy,pressure):
         originals=archive_payload(rows)
         ids=[r['id'] for r in originals]
         verified_records(dict(format=FORMAT,count=len(ids),ids=ids,
-                              records=originals))
+                              source_prefix=PREFIX,records=originals))
         payload=dict(format=FORMAT,count=len(ids),ids=ids,
                      source_prefix=PREFIX,records=originals,created_at=now)
         receipt=put_verified(objects,'events',payload)
