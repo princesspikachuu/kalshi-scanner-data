@@ -53,6 +53,23 @@ class LegacyArchiveV2UnitTests(unittest.TestCase):
         original=archive_payload([sample_row()])[0]
         payload=dict(format=FORMAT,count=1,ids=[original['id']],
                      source_prefix=PREFIX,records=[original])
+        from io import BytesIO
+        from types import SimpleNamespace
+        from services.demo.maintenance import put_verified, read_verified
+        class MemoryClient:
+            def __init__(self):
+                self.rows={}
+            def put_object(self,**kwargs):
+                self.rows[kwargs['Key']]=kwargs['Body']
+            def get_object(self,**kwargs):
+                data=self.rows[kwargs['Key']]
+                return dict(Body=BytesIO(data),ContentLength=len(data))
+        objects=SimpleNamespace(client=MemoryClient(),bucket='archive-test')
+        receipt=put_verified(objects,'events',payload)
+        self.assertEqual(read_verified(objects,receipt),payload)
+        self.assertEqual(receipt['size'],
+                         len(objects.client.rows[receipt['key']]))
+
         records,full=verified_records(payload)
         self.assertTrue(full)
         self.assertEqual(records[0],original)
@@ -61,6 +78,7 @@ class LegacyArchiveV2UnitTests(unittest.TestCase):
                        progress=original['progress'])]
         self.assertEqual(verified_records(previous),(previous,False))
         for broken in (
+            dict(payload,source_prefix='demo/event/'),
             dict(payload,ids=['another-id']),
             dict(payload,count=2),
             dict(payload,records=[dict(original,progress=dict(event='SETTLED'))]),
@@ -302,8 +320,8 @@ class LegacyArchiveV2PostgresTests(unittest.TestCase):
             # A separate connection modifies the source AFTER the SELECT
             # transaction has ended and BEFORE the FOR UPDATE/compare phase.
             with self.pool.connection() as c:
-                c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
-                    (Jsonb(dict(row['progress'],newer_financial=False)),
+                c.execute('UPDATE research_job SET parameters=%s WHERE id=%s',
+                    (Jsonb(dict(row['parameters'],newer_research='retained')),
                      row['id']))
             return RECEIPT
         with patch('services.demo.maintenance.put_verified',
@@ -311,7 +329,10 @@ class LegacyArchiveV2PostgresTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'source changed'):
                 archive_events_v2(self.store,object(),
                                   dict(archive_days=30),False)
-        self.assertTrue(self.progress(row['id'])['newer_financial'] is False)
+        with self.pool.connection() as c:
+            retained=c.execute('SELECT parameters FROM research_job WHERE id=%s',
+                               (row['id'],)).fetchone()['parameters']
+        self.assertEqual(retained['newer_research'],'retained')
         self.assertNotIn('archive',self.progress(row['id']))
         self.assertIsNone(self.store.get('archive-scan-v2'))
 
