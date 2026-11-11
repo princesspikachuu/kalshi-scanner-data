@@ -6,6 +6,8 @@ Never returns R2 object paths, signed URLs or database credentials.
 """
 import os
 import re
+import hashlib
+import json
 from uuid import UUID
 
 from services.demo.shadow_archive_recovery import verify_archived_manifest
@@ -56,7 +58,10 @@ def summary(row):
     original_events = count if kind == 'shadow_event_r2_manifest' else manifest.get('original_events')
     if type(original_events) is not int or original_events < count:
         raise ValueError('Invalid durable archive event count')
+    digest=hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':'),
+                                    allow_nan=False).encode('utf-8')).hexdigest()
     return dict(manifest_id=row['id'], manifest_key=row['idempotency_key'],
+                manifest_digest=digest,
                 kind='raw' if kind == 'shadow_event_r2_manifest' else 'packed',
                 archived_rows=count, original_events=original_events,
                 earliest=manifest.get('earliest'), latest=manifest.get('latest'),
