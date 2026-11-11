@@ -42,7 +42,7 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
         with psycopg.connect(URL,autocommit=True) as c:
             for ident in cls.created_ids+cls.created_manifest_ids:
                 c.execute('DELETE FROM research_job WHERE id=%s',(ident,))
-            c.execute('DROP FUNCTION IF EXISTS public.mt_reclaim_shadow_diagnostics(uuid,jsonb)')
+            c.execute('DROP FUNCTION IF EXISTS public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb)')
             c.execute('DROP OWNED BY pocket_archive_maintenance')
             c.execute('DROP ROLE pocket_archive_maintenance')
 
@@ -56,7 +56,7 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
                 'public.mt_reclaim_shadow_diagnostics(uuid,jsonb)','EXECUTE'),
               has_schema_privilege(%s,'public','CREATE')
             """,(ROLE,ROLE,ROLE,ROLE,ROLE)).fetchone()
-        self.assertEqual(p,(False,False,True,True,False))
+        self.assertEqual(p,(False,False,False,True,False))
 
     def test_direct_delete_denied_and_only_old_safe_raw_evidence_reclaimed(self):
         safe=self.create_record('demo/shadow/event/',{'event':'FAVORITE_STAT_DECISION'},aged=True)
@@ -64,15 +64,21 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
         with psycopg.connect(URL,user=ROLE,password=TEST_PASSWORD,autocommit=True) as archive:
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 archive.execute('DELETE FROM public.research_job WHERE id=%s',(safe['id'],))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                archive.execute("""INSERT INTO public.research_job(
+                    id,asset,parameters,progress,idempotency_key,status)
+                    VALUES (%s,'crypto','{}','{}',%s,'succeeded')""",
+                    (uuid4(),'demo/shadow/event/'+str(uuid4())))
             result=archive.execute(
-                'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s)',
-                (manifest,Jsonb([archive_payload([safe])[0]]))).fetchall()
+                'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s,%s,%s)',
+                (manifest[0],'shadow_event_r2_manifest',Jsonb(manifest[1]),
+                 Jsonb([archive_payload([safe])[0]]))).fetchall()
             self.assertEqual(result,[(str(safe['id']),)])
         with psycopg.connect(URL) as owner:
             self.assertIsNone(owner.execute(
                 'SELECT id FROM research_job WHERE id=%s',(safe['id'],)).fetchone())
             self.assertIsNotNone(owner.execute(
-                'SELECT id FROM research_job WHERE id=%s',(manifest,)).fetchone())
+                'SELECT id FROM research_job WHERE id=%s',(manifest[0],)).fetchone())
 
     def test_financial_and_fresh_diagnostics_cannot_be_reclaimed(self):
         financial=self.create_record('demo/shadow/event/',{'event':'SETTLED','cash':100},aged=True)
@@ -84,7 +90,8 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
                 with self.assertRaises(psycopg.Error):
                     archive.execute(
                         'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s)',
-                        (manifest,Jsonb([archive_payload([row])[0]]))).fetchall()
+                        (manifest[0],'shadow_event_r2_manifest',Jsonb(manifest[1]),
+                         Jsonb([archive_payload([row])[0]]))).fetchall()
             with psycopg.connect(URL) as owner:
                 self.assertIsNotNone(owner.execute(
                     'SELECT id FROM research_job WHERE id=%s',(row['id'],)).fetchone())
@@ -98,7 +105,8 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
             with self.assertRaises(psycopg.Error):
                 archive.execute(
                     'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s)',
-                    (manifest,Jsonb([altered])))
+                    (manifest[0],'shadow_event_r2_manifest',Jsonb(manifest[1]),
+                     Jsonb([altered])))
         with psycopg.connect(URL,autocommit=True) as owner:
             with self.assertRaises(psycopg.Error):
                 owner.execute(
@@ -132,14 +140,10 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
             restorable=True,created_at=datetime.now(timezone.utc).timestamp(),
             reference=dict(key='demo/events/'+'a'*64+'.json.gz',
                            sha256='a'*64,size=320))
-        with psycopg.connect(URL,autocommit=True) as c:
-            c.execute("""INSERT INTO research_job(id,asset,parameters,progress,
-                idempotency_key,status,finished_at)
-                VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())""",
-                (ident,Jsonb(dict(kind='shadow_event_r2_manifest')),
-                 Jsonb(payload),'demo/shadow/archive-manifest/'+str(ident)))
+        # The function creates its manifest atomically; no table INSERT
+        # privilege is granted to the maintenance login itself.
         self.created_manifest_ids.append(ident)
-        return ident
+        return ident,payload
 
 
 if __name__=='__main__':
