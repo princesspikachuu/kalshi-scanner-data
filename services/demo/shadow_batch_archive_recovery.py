@@ -27,13 +27,15 @@ MAX_BATCH=8
 MIN_AGE_HOURS=6
 
 CANDIDATES="""SELECT id::text,idempotency_key,asset,status,parameters,progress,
-    created_at,started_at,finished_at,lease_expires_at,attempts,error_code
+    created_at,started_at,finished_at,lease_expires_at,attempts,error_code,
+    available_at,max_attempts,lease_token
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
     AND idempotency_key>=%s AND idempotency_key<%s
     AND progress->>'format'='shadow-diagnostic-batch-v1'
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES=CANDIDATES+' FOR UPDATE SKIP LOCKED'
+SCOPED_RECLAIM_SQL='SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::jsonb)'
 MANIFEST_SQL="""INSERT INTO research_job
     (id,asset,parameters,progress,idempotency_key,status,finished_at)
     VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())"""
@@ -52,10 +54,11 @@ def cutoff_at(now,age_hours,batch_size):
 
 def original_row(row):
     """Retain every original research_job column, including NULL timestamps."""
-    timestamps=('created_at','started_at','finished_at','lease_expires_at')
+    timestamps=('created_at','started_at','finished_at','lease_expires_at','available_at')
     return dict(id=row['id'],idempotency_key=row['idempotency_key'],
         asset=row['asset'],status=row['status'],parameters=row['parameters'],
         progress=row['progress'],attempts=row['attempts'],error_code=row['error_code'],
+        max_attempts=row['max_attempts'],lease_token=str(row['lease_token']) if row['lease_token'] is not None else None,
         **{k:row[k].isoformat() if row[k] is not None else None for k in timestamps})
 
 def validated_records(rows):
