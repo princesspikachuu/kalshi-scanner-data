@@ -76,47 +76,17 @@ def read_verified(objects,reference):
     finally:stream.close()
 
 def archive_events(store,objects,policy,pressure):
-    # Keyset pages use the unique idempotency-key index. Do not sort/filter the
-    # entire event history (including large JSON payloads) every five minutes.
-    prefixes=('demo/event/','demo/shadow/event/')
-    saved=store.get('archive-scan');state=dict(saved['progress']) if saved else {}
-    which=state.get('next_prefix',0)%len(prefixes);prefix=prefixes[which]
-    cursors=dict(state.get('cursors',{}));after=cursors.get(prefix,prefix)
-    if not isinstance(after,str) or not after.startswith(prefix):after=prefix
-    with store.pool.connection() as c:
-        page=c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at
-            FROM research_job WHERE idempotency_key>%s AND idempotency_key<%s
-            ORDER BY idempotency_key LIMIT 200""",(after,prefix+'zzzz')).fetchall()
-    now=time.time();cutoff=now-(7 if pressure else policy['archive_days'])*86400
-    rows=[dict(id=r['id'],parameters=r['parameters'],progress=r['progress']) for r in page
-          if 'archive' not in r['progress'] and
-          float(r['progress'].get('restored_at') or 0)<now-86400 and r['created_at'].timestamp()<cutoff]
-    if rows:
-        reference=put_verified(objects,'events',rows)
-        # Only verified bytes may replace details with a searchable pointer.
-        with store.pool.connection() as c:
-            for row in rows:
-                c.execute("UPDATE research_job SET progress=%s WHERE id=%s AND NOT(progress ? 'archive')",
-                    (Jsonb(dict(archive=reference,archived=True)),row['id']))
-        store.put('archive-health',dict(at=time.time(),last_count=len(rows),verified=True))
-    cursors[prefix]=page[-1]['idempotency_key'] if len(page)==200 else prefix
-    store.put('archive-scan',dict(cursors=cursors,next_prefix=(which+1)%len(prefixes)))
-    print(json.dumps(dict(event='demo_archive_scan',scanned=len(page),archived=len(rows),bounded=True)),flush=True)
+    # P0 #196: only lossless allowlisted diagnostics; short locked CAS
+    # protects rows against modification during R2 upload.
+    from services.demo.legacy_event_archive import archive_events_v2
+    return archive_events_v2(store,objects,policy,pressure)
 
 
 def restore_requests(store,objects):
-    for request in store.rows('restore/',5):
-        if request['progress'].get('done'):continue
-        identifier=request['progress']['event_id']
-        with store.pool.connection() as c:
-            row=c.execute('SELECT progress FROM research_job WHERE id=%s',(identifier,)).fetchone()
-        reference=row['progress'].get('archive') if row else None
-        if reference:
-            records=read_verified(objects,reference)
-            record=next((r for r in records if r['id']==identifier),None)
-            if not record:raise ValueError('Archive member not found')
-            with store.pool.connection() as c:c.execute('UPDATE research_job SET progress=%s WHERE id=%s',(Jsonb(dict(record['progress'],restored_at=time.time())),identifier))
-        store.put(request['idempotency_key'][5:],dict(request['progress'],done=True))
+    # Preserve v1 progress-only restore compatibility while validating v2
+    # full-row metadata and refusing concurrent pointer changes.
+    from services.demo.legacy_event_archive import restore_requests_v2
+    return restore_requests_v2(store,objects)
 
 def backup(store,objects):
     # Back up mutable controls/open positions, not duplicate immutable historical
@@ -203,7 +173,10 @@ def maintenance(store,env,stop):
                     backup(store,objects)
         try:
             for stage,operation in (
-                    ('archive',lambda:archive_events(store,objects,policy,used>=policy['storage_warning_percent']) if policy['archive_enabled'] else None),
+                    ('archive',lambda:archive_events(store,objects,policy,used>=policy['storage_warning_percent'])
+                     if (policy['archive_enabled'] and
+                         env.get('MT_LEGACY_EVENT_ARCHIVE_V2_ENABLED','false')=='true')
+                     else None),
                     ('restore',lambda:restore_requests(store,objects)),('backup',due_backup)):
                 try:operation()
                 except Exception as error:failure(error,stage)
