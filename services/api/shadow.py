@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
+from services.paper_demo.shadow.diagnostic_batches import merge_recent_events
 from services.paper_demo.shadow.performance import folder_performance
 from services.paper_demo.shadow.bot_performance import bot_performance
 from services.trading.mode import require_demo,ModeConflict
@@ -526,5 +527,6 @@ def install_shadow(app,auth,mutate,pool):
     def events(request:Request):
         auth(request);query(request)
         with pool.connection() as c:
-            rows=c.execute("SELECT progress FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz' ORDER BY created_at DESC,id DESC LIMIT 100").fetchall()
-        return dict(contract='demo-v1',items=[r['progress'] for r in rows],real_orders_enabled=False)
+            rows=c.execute("SELECT progress,created_at FROM research_job WHERE idempotency_key>='demo/shadow/event/' AND idempotency_key<'demo/shadow/event/zzzz' ORDER BY created_at DESC,id DESC LIMIT 100").fetchall()
+            batches=c.execute("SELECT progress,created_at FROM research_job WHERE idempotency_key>='demo/shadow/event-batch/' AND idempotency_key<'demo/shadow/event-batch/zzzz' ORDER BY created_at DESC,id DESC LIMIT 100").fetchall()
+        return dict(contract='demo-v1',items=merge_recent_events(rows,batches),real_orders_enabled=False)
