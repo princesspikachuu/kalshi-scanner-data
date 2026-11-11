@@ -89,6 +89,40 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
             normalize_reclaimed_manifest_page(result,offset=0)
 
 
+    def test_reclaimed_and_hot_duplicate_counted_once_with_original_payload(self):
+        from services.demo.shadow_history_reconcile import reconcile_verified_pages
+        result=archived(count=1)
+        cold=normalize_reclaimed_manifest_page(result,offset=0)
+        original=result['items'][0]
+        hot=dict(id=original['id'],key=original['key'],
+                 parameters=original['parameters'],progress=original['progress'],
+                 event_time=original['progress']['time'])
+        combined=reconcile_verified_pages([
+            dict(source='hot_raw',items=[hot]),
+            dict(source=cold['source'],items=cold['items'],verified=cold['verified'])
+        ])
+        self.assertEqual(combined['input_events'],2)
+        self.assertEqual(combined['unique_events'],1)
+        self.assertEqual(combined['duplicate_copies'],1)
+        self.assertFalse(combined['all_time_coverage_complete'])
+        self.assertEqual(combined['items'][0]['sources'],
+                         ['hot_raw','r2_reclaimed_raw'])
+
+    def test_modified_reclaimed_copy_not_counted_as_separate_success(self):
+        from services.demo.shadow_history_reconcile import reconcile_verified_pages
+        result=archived(count=1)
+        cold=normalize_reclaimed_manifest_page(result,offset=0)
+        original=result['items'][0]
+        modified=dict(id=original['id'],key=original['key'],
+                      parameters=original['parameters'],
+                      progress=dict(original['progress'],amount_cents=100000),
+                      event_time=original['progress']['time'])
+        with self.assertRaises(HistoryReconciliationError):
+            reconcile_verified_pages([
+                dict(source='hot_raw',items=[modified]),
+                dict(source=cold['source'],items=cold['items'],verified=True)
+            ])
+
     def test_owner_route_requires_auth_and_does_not_serve_unverified_data(self):
         from fastapi import FastAPI, HTTPException
         from fastapi.testclient import TestClient
