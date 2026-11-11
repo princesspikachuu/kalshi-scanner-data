@@ -148,10 +148,10 @@ BEGIN
         END IF;
 
         IF v_kind='shadow_event_r2_manifest' THEN
-            IF COALESCE(v_row.progress->>'event' IN (
+            IF COALESCE(v_row.progress->>'event','') NOT IN (
                 'FAVORITE_STAT_DECISION','FAVORITE_ENTRY_DECISION',
                 'FAVORITE_REPEAT_OPPORTUNITY','FAVORITE_ENTRY_COHORT',
-                'FAVORITE_TRIAL_QUALITY','SCALPER_OBSERVATION_BATCH'),false) IS NOT TRUE THEN
+                'FAVORITE_TRIAL_QUALITY','SCALPER_OBSERVATION_BATCH') THEN
                 RAISE EXCEPTION 'Financial or control event cannot be reclaimed';
             END IF;
         ELSIF v_row.progress->>'format' IS DISTINCT FROM 'shadow-diagnostic-batch-v1' THEN
