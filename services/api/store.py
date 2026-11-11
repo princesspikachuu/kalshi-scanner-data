@@ -5,12 +5,19 @@ from .auth_policy import LoginRejected, require_owner
 
 
 class PostgresStore:
-    def __init__(self,url,*,require_runtime_db=False):
+    def __init__(self,url,*,require_runtime_db=False,recovery_hold=False):
         self._url=url
         self._require_runtime_db=require_runtime_db
+        if type(recovery_hold) is not bool:
+            raise ValueError('Invalid API recovery hold')
+        # A second fence beyond HTTP request rejection. This applies to
+        # every connection opened by the API's own PostgreSQL pool in hold.
+        options='-c statement_timeout=5000'
+        if recovery_hold:
+            options+=' -c default_transaction_read_only=on'
         self.pool=ConnectionPool(url,min_size=1,max_size=5,open=False,timeout=5,
                                  kwargs={'row_factory':dict_row,'connect_timeout':5,
-                                         'options':'-c statement_timeout=5000'})
+                                         'options':options})
 
     def open(self):
         if self._require_runtime_db:
