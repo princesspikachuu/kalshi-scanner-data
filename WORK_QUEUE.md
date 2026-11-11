@@ -163,6 +163,12 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Next: operator-only, R2-verified, small-batch archival and exact-row reclaim of old non-financial diagnostics using merged PR #174/#175 tools. Render's connected SQL tool is blocked by the deliberately empty external database IP allowlist; **do not expose DB**. Requires internal Render Shell and separate narrowly privileged private recovery credential. Verify R2 and Postgres WAL/physical space before more batches. No data deletion executed here.
 
 
+### API compatibility deployed and zero-cost preview handoff
+- API `pocket-api-staging` deployment `dep-dbpu4j15efls7392nu3g` finished **LIVE** at Nov 11 03:35:58 UTC on `7c680abe` (contains PR #175 batched diagnostic reading).
+- Source-of-truth configuration/report commit `98de5af94d28016017df79086888c71b9ed03d1e` on `build/google-auth-foundation` aligns draft Blueprint Postgres to 15 GB, autoscaling `false`, processing `DATABASE_CAPACITY_GB=15`, and stores [measured audit](docs/audits/MT-019-resumed-storage-baseline-2026-11-11.md). This **did not** sync a Blueprint or change paid database allocation.
+- NEXT safe operator step via Render **processing worker Shell** (not the connected read-only SQL tool): `RECOVERY_DATABASE_URL="$DATABASE_URL" python -m services.demo.shadow_archive_recovery --age-hours 24 --batch-size 50`. Default is **read-only preview**, no R2 write, no SQL DELETE; outputs one bounded candidate page. Do not add `--execute` or paste credentials into chat.
+- Before any execute, provision narrowly privileged private `RECOVERY_DATABASE_URL` in Render, validate R2 bucket readback and financial integrity, then perform a single 50-row verified batch via the operator tool and measure WAL/free physical disk. Normal workers stay disabled throughout.
+
 ---
 
 
