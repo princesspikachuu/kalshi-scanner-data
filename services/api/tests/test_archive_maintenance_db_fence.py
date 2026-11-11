@@ -89,7 +89,7 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
             with psycopg.connect(URL,user=ROLE,password=TEST_PASSWORD,autocommit=True) as archive:
                 with self.assertRaises(psycopg.Error):
                     archive.execute(
-                        'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s)',
+                        'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s,%s,%s)',
                         (manifest[0],'shadow_event_r2_manifest',Jsonb(manifest[1]),
                          Jsonb([archive_payload([row])[0]]))).fetchall()
             with psycopg.connect(URL) as owner:
@@ -104,14 +104,15 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
         with psycopg.connect(URL,user=ROLE,password=TEST_PASSWORD,autocommit=True) as archive:
             with self.assertRaises(psycopg.Error):
                 archive.execute(
-                    'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s)',
+                    'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s,%s,%s)',
                     (manifest[0],'shadow_event_r2_manifest',Jsonb(manifest[1]),
                      Jsonb([altered])))
         with psycopg.connect(URL,autocommit=True) as owner:
             with self.assertRaises(psycopg.Error):
                 owner.execute(
-                    'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s)',
-                    (manifest,Jsonb([archive_payload([safe])[0]])))
+                    'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s,%s,%s,%s)',
+                    (manifest[0],'shadow_event_r2_manifest',Jsonb(manifest[1]),
+                     Jsonb([archive_payload([safe])[0]])))
             self.assertIsNotNone(owner.execute(
                 'SELECT id FROM research_job WHERE id=%s',(safe['id'],)).fetchone())
 
