@@ -80,6 +80,8 @@ ROLE_QUERY = """SELECT current_user AS principal,
     has_table_privilege(current_user,'research_job','INSERT') AS can_insert,
     has_table_privilege(current_user,'research_job','DELETE') AS can_delete,
     has_table_privilege(current_user,'research_job','UPDATE') AS can_update,
+    has_table_privilege(current_user,'research_job','TRUNCATE') AS can_truncate,
+    has_schema_privilege(current_user,current_schema(),'CREATE') AS can_schema_create,
     has_function_privilege(current_user,
       'public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb)','EXECUTE') AS can_scoped_reclaim"""
 
@@ -93,6 +95,8 @@ def verify_scoped_role(pool):
             or row['elevated'] is not False
             or row['can_insert'] is not False
             or row['can_delete'] is not False or row['can_update'] is not False
+            or row['can_truncate'] is not False
+            or row['can_schema_create'] is not False
             or not all(row[k] is True for k in
                        ('can_select','can_scoped_reclaim'))):
         raise ValueError('Dedicated non-owner archive role with scoped SQL reclaim only is required')
