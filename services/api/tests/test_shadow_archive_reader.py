@@ -45,6 +45,8 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         self.assertEqual(len(result['items']),1)
         self.assertTrue(result['more'])
         self.assertEqual(result['next_cursor'],rows[0]['idempotency_key'])
+        self.assertIsNone(result['request_cursor'])
+        self.assertEqual(result['source'],'manifests')
         self.assertEqual(result['items'][0]['manifest_key'],rows[0]['idempotency_key'])
         self.assertTrue(result['no_r2_reads'])
         self.assertEqual(c.execute.call_args.args[0],MANIFEST_SCAN)
