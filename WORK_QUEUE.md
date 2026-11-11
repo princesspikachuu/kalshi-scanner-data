@@ -123,6 +123,15 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Standard Render guidance says a full suspended DB can temporarily resume before being suspended again, but zero-upgrade recovery is not guaranteed. Do not start bulk cleanup without a controlled recovery and no concurrent writers.
 
 
+### Owner-directed emergency recovery action (2026-11-10 afternoon PT)
+- User authorized: **stop all data collection**, then resume existing 10 GB DB, then apply verified fixes. NO storage expansion. Do not automatically reactivate worker trading after DB resume.
+- Render environment configuration accepted on `pocket-research-staging`: `COLLECTION_ENABLED=false` (deployment `dep-dbpqv90u01pc738ujna0`), but **pre_deploy_failed** because database is suspended; old live worker revision still exists.
+- Render environment configuration accepted on `pocket-processing-staging`: `WORKER_ROLE=collector`, `COLLECTION_ENABLED=false`, `STAGING_ACCEPTANCE=off`, `STAGING_OPERATOR_ACTION=off` (deployment `dep-dbpqvauk1f9s73cnaosg`); not yet verified live. Using role `collector` is essential because `WORKER_ROLE=demo` ignores `COLLECTION_ENABLED`.
+- PR [#176](https://github.com/princesspikachuu/kalshi-scanner-data/pull/176) introduces an explicit `MT_STORAGE_RECOVERY_HOLD=true` predeploy skip restricted to a disabled `collector` research-role worker. API and active worker DB safety checks remain enforced. **Wait for tests before merge**.
+- **Restore-sequence gate**: both workers must be confirmed idle after completed deployment before resuming Postgres; account/API may still write and must remain quiescent during recovery. Render connector currently offers no Postgres Resume or service Suspend action; a dashboard action from the owner is needed. Do not claim database was resumed.
+- PR #174 R2 old diagnostic reclaim and PR #175 packed diagnostic prevention / R2 recovery both passed CI, but remain draft/unmerged; cannot execute cleanup while Postgres suspended. Reclaim requires verified bucket/backup, narrow privileges, and WAL/free-space checks.
+
+
 ---
 
 
