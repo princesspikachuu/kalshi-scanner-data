@@ -16,6 +16,7 @@ def archived(kind='raw', count=2):
                            progress=dict(event='FAVORITE_STAT_DECISION',time=100+i,
                                          amount_cents=i+50)))
     return dict(manifest=dict(manifest_id=manifest_id,manifest_key=manifest_key,
+                              manifest_digest='a'*64,
                               kind=kind,original_events=count),
                 source='cloudflare-r2',verified=True,
                 total_events=count,items=events,next_offset=None)
@@ -50,6 +51,12 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
             normalize_reclaimed_manifest_page(result,offset=0)
         result=archived('packed',1)
         result['manifest']['manifest_key']='demo/shadow/archive-manifest/'+str(uuid4())
+        with self.assertRaises(HistoryReconciliationError):
+            normalize_reclaimed_manifest_page(result,offset=0)
+
+    def test_missing_manifest_fingerprint_fails_closed(self):
+        result=archived('raw',1)
+        result['manifest'].pop('manifest_digest')
         with self.assertRaises(HistoryReconciliationError):
             normalize_reclaimed_manifest_page(result,offset=0)
 
