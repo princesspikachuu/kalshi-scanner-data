@@ -5,6 +5,7 @@ measures each indexed prefix independently, without returning control values or
 any wallet/order contents. All counts >=2001 are explicitly *lower bounds*.
 """
 import json
+import os
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -70,6 +71,27 @@ def sample_rows(pool,sql,params):
     return dict(rows_seen=min(len(rows),MAX_PER_SCOPE), truncated=len(rows)>=MAX_PER_SCOPE,
                 payload_bytes_lower_bound=payload)
 
+SHADOW_BOT_CENSUS_SQL="""SELECT count(*)::bigint AS source_rows,
+    coalesce(sum(pg_column_size(parameters)+pg_column_size(progress)),0)::bigint
+       AS source_payload_bytes,
+    coalesce(max(pg_column_size(parameters)+pg_column_size(progress)),0)::bigint
+       AS maximum_record_payload_bytes
+    FROM research_job WHERE idempotency_key >= 'demo/shadow/bot/'
+      AND idempotency_key < 'demo/shadow/bot/zzzz'"""
+
+def census_shadow_bots(pool):
+    """Explicit 10s-bounded exact count only; returns no row contents."""
+    with pool.connection() as c:
+        with c.transaction():
+            c.execute('SET LOCAL statement_timeout=10000')
+            row=c.execute(SHADOW_BOT_CENSUS_SQL).fetchone()
+    if not row or any(type(row.get(k)) is not int for k in
+                      ('source_rows','source_payload_bytes','maximum_record_payload_bytes')):
+        raise ValueError('Invalid exact shadow-bot inventory')
+    return dict(rows=row['source_rows'],
+                payload_bytes=row['source_payload_bytes'],
+                maximum_record_payload_bytes=row['maximum_record_payload_bytes'])
+
 def inspect_control_backup(pool):
     scopes=[];failed=[]
     for name,prefix,predicate in PREFIX_SCOPES:
@@ -95,7 +117,7 @@ def inspect_control_backup(pool):
         legacy_query_would_fail_on_count=lower_bound>2000,
         note='Capped scope counts are lower bounds; SQL row bytes exclude serialization and R2 overhead')
 
-def audit_once(database_url,*,pool_factory=ConnectionPool,emit=print):
+def audit_once(database_url,*,pool_factory=ConnectionPool,emit=print,env=None):
     report=dict(event='control_backup_capacity_audit',mode='read_only',
                 verified=False)
     try:
@@ -103,7 +125,12 @@ def audit_once(database_url,*,pool_factory=ConnectionPool,emit=print):
             timeout=6,kwargs=dict(row_factory=dict_row,connect_timeout=5,
                 options=CONNECTION_OPTIONS)) as pool:
             report.update(inspect_control_backup(pool))
-            report['verified']=not report['failed_scopes']
+            if (os.environ if env is None else env).get('MT_BACKUP_EXACT_CENSUS','false')=='true':
+                try:
+                    report['exact_shadow_bots']=census_shadow_bots(pool)
+                except Exception as error:
+                    report['census_error_type']=type(error).__name__
+            report['verified']=not report['failed_scopes'] and not report.get('census_error_type')
     except Exception as error:
         report['error_type']=type(error).__name__
     emit(json.dumps(report,sort_keys=True),flush=True)
