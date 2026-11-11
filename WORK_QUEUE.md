@@ -169,6 +169,15 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - NEXT safe operator step via Render **processing worker Shell** (not the connected read-only SQL tool): `RECOVERY_DATABASE_URL="$DATABASE_URL" python -m services.demo.shadow_archive_recovery --age-hours 24 --batch-size 50`. Default is **read-only preview**, no R2 write, no SQL DELETE; outputs one bounded candidate page. Do not add `--execute` or paste credentials into chat.
 - Before any execute, provision narrowly privileged private `RECOVERY_DATABASE_URL` in Render, validate R2 bucket readback and financial integrity, then perform a single 50-row verified batch via the operator tool and measure WAL/free physical disk. Normal workers stay disabled throughout.
 
+
+### Verified first R2 archive-and-reclaim transaction (Nov 10, 2026 evening PT)
+- Operator ran bounded preview against the resumed 15 GB Postgres: 50 eligible diagnostic rows in a **single sample page** (33 `SCALPER_OBSERVATION_BATCH`, 13 `FAVORITE_STAT_DECISION`, two each `FAVORITE_ENTRY_DECISION` and `FAVORITE_REPEAT_OPPORTUNITY`). No whole-table count implied.
+- Runtime DB `pocket_research_runtime` has `DELETE=false, INSERT=true`, as intended. Separate owner account `pocket_staging` has `DELETE=true, INSERT=true`. R2 bucket connectivity and one small independent write/readback verification succeeded.
+- **First exact-row reclaim succeeded:** `--execute --writers-stopped --age-hours 24 --batch-size 10 --max-batches 1` returned `{"archived":10,"compressed_bytes":7892,"deleted":10,"manifest_stored":true,"verified":true}`. Contents and manifest preserved in R2; no financial records selected. This does not prove physical disk free space increased. Workers stay held/disabled.
+- Security: earlier Shell error disclosed a runtime DB password into chat. Rotate it and update dependent service secrets before restoring normal trading; never paste owner or app connection URLs.
+- New [PR #178](https://github.com/princesspikachuu/kalshi-scanner-data/pull/178): **disabled-by-default, recovery-hold-only** automatic archive loop supporting both raw and compressed diagnostic histories, explicit writer-stopped acknowledgement, dedicated non-owner SQL maintenance role, conservative capacity/batch guards, receipt verification and unit tests. Validation pending. This is *not* live ongoing retention. No automatic task enabled or operator credential installed.
+- Remaining U0: validate/merge #178, create isolated maintenance role (owner secret must NOT be persisted to the worker), verify Render physical disk/WAL and control backup integrity; run bounded backlog only while stopped, then add live-safe cold-history read-through/retention before resuming normal writes. 
+
 ---
 
 
