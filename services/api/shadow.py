@@ -586,3 +586,27 @@ def install_shadow(app,auth,mutate,pool):
                     recent_history_complete=True,
                     archived_rows_rehydrated=cold_rows,
                     archive_objects_verified=verified_objects)
+    
+    @app.get('/demo/shadow/history/{source}')
+    def historical_event_page(source:str,request:Request):
+        # Explicit source selector and indexed cursor, never a full-table scan
+        # or an unbounded cold R2 listing. All-time archive manifest histories
+        # are intentionally NOT included in this source-specific endpoint.
+        auth(request);query(request,('cursor',))
+        from services.demo.shadow_history_pages import (
+            page_history,validate_cursor
+        )
+        from services.demo.shadow_archive_reader import ArchiveReaderUnavailable
+        cursor=request.query_params.get('cursor')
+        try:
+            validate_cursor(source,cursor)
+        except ValueError:
+            raise HTTPException(422,'Invalid history source or cursor') from None
+        try:
+            return page_history(pool,source,cursor=cursor)
+        except ArchiveReaderUnavailable:
+            raise HTTPException(503,'Archived diagnostic history is not yet readable') from None
+        except Exception as error:
+            print(json.dumps(dict(event='shadow_paginated_history_unavailable',
+                                  error_type=type(error).__name__)),flush=True)
+            raise HTTPException(503,'Diagnostic history could not be verified') from None
