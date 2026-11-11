@@ -17,8 +17,10 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
 - `pocket_archive_maintenance`: NOT owner, not admin, no membership, NOLOGIN
   until activated as a separate operator step; can SELECT existing
   `research_job` records only. It has **no direct INSERT, UPDATE, DELETE,
-  TRUNCATE, schema CREATE or table ownership**.
-- `public.mt_reclaim_shadow_diagnostics(uuid,jsonb)`: EXECUTE privilege
+  TRUNCATE, schema CREATE or table ownership**. The runtime guard
+  also refuses role memberships, inherited-role capability, replication and
+  RLS-bypass attributes, even if direct table grants appear harmless.
+- `public.mt_reclaim_shadow_diagnostics(uuid,text,jsonb,jsonb)`: EXECUTE privilege
   only on the maintenance role (removed from PUBLIC). It accepts the
   already-R2-verified manifest and all original source row values, atomically
   INSERTS the manifest itself, then rechecks the ordered UUID list, immutable
@@ -56,7 +58,8 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
    DELETE/UPDATE to the application login.
 5. Operator verifies database role privileges: `SELECT=true`,
    `INSERT=false`, `DELETE=false`, `UPDATE=false`, `TRUNCATE=false`,
-   `schema CREATE=false`, EXECUTE constrained SQL function=true, no owner/admin flags.
+   `schema CREATE=false`, EXECUTE constrained SQL function=true, no owner/admin flags,
+   no role memberships, NOINHERIT, NOREPLICATION, NOBYPASSRLS.
 6. **Only after those checks**, explicitly set
    `MT_ARCHIVE_RECOVERY_LOOP=true` and
    `MT_ARCHIVE_WRITERS_STOPPED=true`, with recovery hold and disabled
