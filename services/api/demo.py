@@ -404,18 +404,29 @@ def install_demo(app,auth,mutate,pool):
                 AND idempotency_key >= 'demo/shadow/event/'
                 AND idempotency_key < 'demo/shadow/event/zzzz'""",
                 (identifier,)).fetchone()
-        if not row or not isinstance(row['progress'].get('archive'),dict):
+        # A successful restore replaces the archived pointer with the
+        # original event progress. Consult the owner-scoped request receipt
+        # before deciding an unarchived diagnostic is "not found".
+        if not row:
             raise HTTPException(404,'Archived diagnostic not found')
         progress=row['progress']
-        fmt=progress.get('archive_format')
+        queued=store.get('restore/'+str(identifier))
+        request_progress=(queued or {}).get('progress') or {}
+        owner_request=(request_progress.get('source')=='owner_shadow_diagnostic'
+                       and request_progress.get('event_id')==str(identifier))
+        has_archive=isinstance(progress.get('archive'),dict)
+        restored=(owner_request and request_progress.get('done') is True
+                  and bool(progress.get('restored_at')) and not has_archive)
+        if not has_archive and not restored:
+            raise HTTPException(404,'Archived diagnostic not found')
+        fmt=(progress.get('archive_format') if has_archive
+             else request_progress.get('archive_format'))
         if fmt not in (None,'demo-shadow-diagnostic-full-row-v2'):
             raise HTTPException(409,'Unsupported diagnostic archive format')
-        queued=store.get('restore/'+str(identifier))
-        restored=bool(queued and queued['progress'].get('done'))
-        return dict(contract='demo-v1',id=str(identifier),archived=True,
+        return dict(contract='demo-v1',id=str(identifier),archived=has_archive,
                     format=fmt or 'legacy-v1',
                     restore_status='completed' if restored else
-                                   'requested' if queued else 'not_requested',
+                                   'requested' if owner_request else 'not_requested',
                     contents_returned=False)
 
     # Explicit separate opt-in: the API is write-capable even when paper
@@ -438,7 +449,8 @@ def install_demo(app,auth,mutate,pool):
             raise HTTPException(409,'Unsupported diagnostic archive format')
         store.put('restore/'+str(identifier),
                   dict(event_id=str(identifier),requested_at=time.time(),
-                       source='owner_shadow_diagnostic'))
+                       source='owner_shadow_diagnostic',
+                       archive_format=row['progress'].get('archive_format')))
         return dict(contract='demo-v1',accepted=True,
                     status='queued_for_maintenance')
 

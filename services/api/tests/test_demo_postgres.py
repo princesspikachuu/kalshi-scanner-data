@@ -69,6 +69,79 @@ class DemoPostgres(unittest.TestCase):
                               (ident,)).fetchone()['progress']
         self.assertEqual(pointer['archive'],receipt)
 
+    def test_shadow_archive_status_reports_completed_after_verified_pointer_restore(self):
+        from uuid import uuid4
+        from datetime import datetime,timezone
+        from psycopg.types.json import Jsonb
+        receipt=dict(key='demo/events/'+'b'*64+'.json.gz',
+                     sha256='b'*64,size=128)
+        ident=self.demo.put('shadow/event/'+str(uuid4()),
+                            dict(archive=receipt,archived=True,
+                                 archive_format='demo-shadow-diagnostic-full-row-v2'))
+        route='/demo/shadow/archive/'+ident
+        with patch.dict(os.environ,
+                        {'MT_SHADOW_ARCHIVE_RESTORE_REQUESTS_ENABLED':'true'}):
+            result=self.client.post('/demo/shadow/restore/'+ident)
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(self.client.get(route).json()['restore_status'],'requested')
+        queued=self.demo.get('restore/'+ident)['progress']
+        self.assertEqual(queued['archive_format'],'demo-shadow-diagnostic-full-row-v2')
+        # Simulate the completed backend restore without accessing R2 or
+        # changing any real system. A finished marker alone is insufficient:
+        # the old archive pointer must actually be gone.
+        self.demo.put('restore/'+ident,dict(queued,done=True))
+        still=self.client.get(route).json()
+        self.assertEqual(still['restore_status'],'requested')
+        self.assertTrue(still['archived'])
+        with self.store.pool.connection() as c:
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
+                      (Jsonb(dict(event='FAVORITE_STAT_DECISION',
+                                  restored_at=datetime.now(timezone.utc).timestamp(),
+                                  evidence='retained')),ident))
+        completed=self.client.get(route)
+        self.assertEqual(completed.status_code,200)
+        result=completed.json()
+        self.assertEqual(result['restore_status'],'completed')
+        self.assertFalse(result['archived'])
+        self.assertEqual(result['format'],'demo-shadow-diagnostic-full-row-v2')
+        self.assertFalse(result['contents_returned'])
+        self.assertNotIn('archive',result)
+        self.assertNotIn('key',result)
+        self.assertEqual(self.client.post('/demo/shadow/restore/'+ident).status_code,409)
+        self.assertEqual(self.client.get(route,
+                         headers={'x-pocket-proxy':'incorrect'}).status_code,403)
+
+    def test_shadow_completed_marker_never_exposes_unrelated_or_unrestored_source(self):
+        from uuid import uuid4
+        from psycopg.types.json import Jsonb
+        source=self.demo.put('shadow/event/'+str(uuid4()),
+                             dict(event='FAVORITE_STAT_DECISION',
+                                  restored_at=1794500000))
+        route='/demo/shadow/archive/'+source
+        self.demo.put('restore/'+source,
+                      dict(event_id=source,source='other_source',done=True))
+        self.assertEqual(self.client.get(route).status_code,404)
+        self.demo.put('restore/'+source,
+                      dict(event_id=str(uuid4()),
+                           source='owner_shadow_diagnostic',done=True))
+        self.assertEqual(self.client.get(route).status_code,404)
+        self.demo.put('restore/'+source,
+                      dict(event_id=source,source='owner_shadow_diagnostic',
+                           done=True,archive_format='demo-shadow-diagnostic-full-row-v2'))
+        self.assertEqual(self.client.get(route).json()['restore_status'],'completed')
+        with self.store.pool.connection() as c:
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
+                      (Jsonb(dict(event='FAVORITE_STAT_DECISION')),source))
+        self.assertEqual(self.client.get(route).status_code,404)
+        # A completed marker for a control must not let the owner route
+        # cross into another namespace.
+        other=self.demo.put('shadow/bot/'+str(uuid4()),
+                            dict(event='FAVORITE_STAT_DECISION',restored_at=1))
+        self.demo.put('restore/'+other,
+                      dict(event_id=other,source='owner_shadow_diagnostic',
+                           done=True))
+        self.assertEqual(self.client.get('/demo/shadow/archive/'+other).status_code,404)
+
     def test_shadow_archive_restore_route_never_crosses_history_namespaces(self):
         from uuid import uuid4
         from unittest.mock import patch
