@@ -113,8 +113,10 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False):
             break
         receipt = archive_and_reclaim_one(
             pool, objects, now=current, age_hours=24, batch_size=limits.raw_batch_size)
-        if receipt.get('archived', 0) != receipt.get('deleted', 0):
-            raise RuntimeError('Raw event archival count mismatch')
+        if (receipt.get('archived', 0) != receipt.get('deleted', 0)
+                or (receipt.get('archived', 0) and
+                    (receipt.get('verified') is not True or receipt.get('manifest_stored') is not True))):
+            raise RuntimeError('Raw event archival verification mismatch')
         result['raw_rows'] += receipt.get('archived', 0)
         result['compressed_bytes'] += receipt.get('compressed_bytes', 0)
         if not receipt.get('archived'):
@@ -124,8 +126,9 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False):
             break
         receipt = archive_one(
             pool, objects, now=current, age_hours=24, batch_size=limits.packed_batch_size)
-        if receipt.get('archived_rows', 0) != receipt.get('deleted_rows', 0):
-            raise RuntimeError('Packed diagnostic archival count mismatch')
+        if (receipt.get('archived_rows', 0) != receipt.get('deleted_rows', 0)
+                or (receipt.get('archived_rows', 0) and receipt.get('verified') is not True)):
+            raise RuntimeError('Packed diagnostic archival verification mismatch')
         result['packed_rows'] += receipt.get('archived_rows', 0)
         result['original_packed_events'] += receipt.get('original_events', 0)
         result['compressed_bytes'] += receipt.get('compressed_bytes', 0)
