@@ -132,6 +132,15 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - PR #174 R2 old diagnostic reclaim and PR #175 packed diagnostic prevention / R2 recovery both passed CI, but remain draft/unmerged; cannot execute cleanup while Postgres suspended. Reclaim requires verified bucket/backup, narrow privileges, and WAL/free-space checks.
 
 
+### Shutdown-preparation / code merges
+- PR #174 merged as `0d2f47e8505b486306242dc0598beca06b3ea027` (operator-only, preverified R2 raw-event recovery).
+- PR #175 merged as `5cd7f38abe72525428fbfbbac4d12a44518cc980` (lossless diagnostic batching and R2 packed-event recovery).
+- Neither change has been executed against DB. The processor auto-deploy is NOT confirmation that revised code is running while PostgreSQL is suspended.
+- Both Render worker env updates attempted; both deployment attempts failed `pre_deploy_failed` due to suspended DB. **Old live instances must not be assumed idle.**
+- PR #176 supplies explicit `MT_STORAGE_RECOVERY_HOLD=true` for disabled collector-role worker predeploy; awaiting test/merge. Need set this recovery hold on both workers, get live deployments, verify no collection, before DB resumption.
+- Render connector lacks a native Postgres Resume or service Suspend action. Manual dashboard resume is required once worker safety gates pass. No storage upgrade.
+
+
 ---
 
 
