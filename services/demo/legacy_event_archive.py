@@ -33,6 +33,11 @@ POINTER_UPDATE = """UPDATE research_job SET progress=%s::jsonb
     RETURNING id::text"""
 RESTORE_UPDATE = """UPDATE research_job SET progress=%s::jsonb
     WHERE id=%s::uuid AND progress=%s::jsonb RETURNING id::text"""
+PENDING_RESTORE_SQL = """SELECT idempotency_key,progress FROM research_job
+    WHERE idempotency_key >= 'demo/restore/'
+      AND idempotency_key < 'demo/restore/zzzz'
+      AND progress->>'done' IS DISTINCT FROM 'true'
+    ORDER BY idempotency_key LIMIT %s"""
 # Metadata comparison is performed under FOR UPDATE before the pointer
 # update; no window exists for another writer to modify the locked row.
 FULL_ROW_FIELDS = (
@@ -147,9 +152,9 @@ def restore_requests_v2(store,objects):
     """Restore old v1 and new v2 references using a locked pointer CAS."""
     from services.demo.maintenance import read_verified
 
-    for request in store.rows('restore/',5):
-        if request['progress'].get('done'):
-            continue
+    with store.pool.connection() as c:
+        requests=c.execute(PENDING_RESTORE_SQL,(5,)).fetchall()
+    for request in requests:
         ident=request['progress']['event_id']
         with store.pool.connection() as conn:
             row=conn.execute('SELECT progress FROM research_job WHERE id=%s::uuid',
