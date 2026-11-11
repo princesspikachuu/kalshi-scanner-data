@@ -141,6 +141,13 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - Render connector lacks a native Postgres Resume or service Suspend action. Manual dashboard resume is required once worker safety gates pass. No storage upgrade.
 
 
+### Recovery hold merged and deployment queued
+- PR #176 passed full GitHub CI; merged as `bca89f1b295dbb92c13547d606209fdc0b35648b`.
+- Both Render workers now have `WORKER_ROLE=collector`, `COLLECTION_ENABLED=false`, `STAGING_ACCEPTANCE=off`, `STAGING_OPERATOR_ACTION=off`, and `MT_STORAGE_RECOVERY_HOLD=true` set (additive environment updates; no secrets replaced).
+- Processing deployment `dep-dbpr2849v7es73c7vhlg` and research deployment `dep-dbpr28u7bikc73b54ecg` started with merged recovery hold code. **Not marked idle/live until verified.**
+- No database resume was performed: the Render connector has no Resume action. Owner may need to use Render dashboard after confirming worker deployments are live and disabled.
+
+
 ---
 
 
