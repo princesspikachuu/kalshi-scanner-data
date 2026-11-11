@@ -59,7 +59,7 @@ def growth_snapshot(earlier, later, capacity_gb):
     delta = newer_bytes-older_bytes
     per_hour = Decimal(delta)*3600/(newer_at-older_at)
     later_budget = budget_snapshot(newer_bytes, capacity_gb)
-    cap_bytes = Decimal(later_budget['configured_capacity_gib'])*GIB
+    cap_bytes = Decimal(later_budget['configured_capacity_gb'])*GIB
     rate_fraction = per_hour/cap_bytes
     return dict(
         older_database_bytes=older_bytes,
