@@ -100,6 +100,10 @@ def run(settings,stop):
     if is_authorized(os.environ,settings):
         from .recovery_storage_audit import audit_once
         audit_once(settings.database_url)
+    from services.demo.shadow_archive_integrity import is_authorized as integrity_authorized
+    if integrity_authorized(os.environ,settings):
+        from services.demo.shadow_archive_integrity import audit_once as verify_archives_once
+        verify_archives_once(settings.database_url)
     if os.environ.get('MT_ARCHIVE_RECOVERY_LOOP') == 'true':
         # Distinct owner-approved recovery loop: never activates during demo,
         # research collection, acceptance checks, or normal disabled idle.
