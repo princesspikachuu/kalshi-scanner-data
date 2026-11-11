@@ -4,6 +4,8 @@ No R2 or database access lives here. The only caller that may set verified
 is the existing SHA/gzip/full-row manifest reader. An incomplete page never
 claims an all-time historical dataset or changes Favorites financial totals.
 """
+from uuid import UUID
+
 from services.demo.shadow_history_reconcile import (
     HistoryReconciliationError, reconcile_verified_pages,
 )
@@ -27,9 +29,12 @@ def normalize_reclaimed_manifest_page(result, *, offset):
     key = manifest.get('manifest_key')
     expected_key_prefix = ('demo/shadow/archive-manifest/batch/'
                            if kind == 'packed' else 'demo/shadow/archive-manifest/')
-    if (not isinstance(identifier, str) or not isinstance(key, str)
-            or not key.startswith(expected_key_prefix)
-            or (kind == 'raw' and key.startswith('demo/shadow/archive-manifest/batch/'))):
+    try:
+        if not isinstance(identifier, str) or str(UUID(identifier)) != identifier:
+            raise ValueError('Noncanonical manifest UUID')
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HistoryReconciliationError('Invalid reclaimed manifest identity') from exc
+    if not isinstance(key, str) or key != expected_key_prefix+identifier:
         raise HistoryReconciliationError('Invalid reclaimed manifest identity')
     original_events = manifest.get('original_events')
     if type(original_events) is not int or original_events < 1:
