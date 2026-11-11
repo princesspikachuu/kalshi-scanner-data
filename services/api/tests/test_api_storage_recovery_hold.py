@@ -72,6 +72,19 @@ class APIRecoveryHoldTests(unittest.TestCase):
         store.session.assert_not_called()
         store.revoke.assert_not_called()
 
+    def test_owned_api_startup_skips_all_optional_database_seeds(self):
+        store=self.store()
+        with patch('services.api.app.PostgresStore', return_value=store), \
+             patch('services.live.workspace.seed_live_bots') as seed, \
+             patch('services.live.workspace.configure_approved_pilot') as pilot:
+            app=create_app(settings=self.settings(True))
+            with TestClient(app) as client:
+                self.assertEqual(client.get('/health/live').status_code,200)
+            store.open.assert_called_once()
+            store.close.assert_called_once()
+            seed.assert_not_called()
+            pilot.assert_not_called()
+
     def test_default_mode_preserves_owner_auth_challenge(self):
         store=self.store()
         app=create_app(settings=self.settings(False),store=store)
