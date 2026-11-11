@@ -152,12 +152,18 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 self.assertEqual(client.get(uri+suffix).status_code,422)
         self.assertEqual(client.get('/demo/shadow/history/reclaimed/not-a-uuid').status_code,422)
+        matching=archived(count=1)
+        matching['manifest']['manifest_id']=identifier
+        matching['manifest']['manifest_key']='demo/shadow/archive-manifest/'+identifier
         with patch('services.demo.shadow_archive_reader.read_manifest_events',
-                   return_value=archived(count=1)):
+                   return_value=matching):
             response=client.get(uri)
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['source'],'r2_reclaimed_raw')
         self.assertFalse(response.json()['all_time_coverage_complete'])
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   return_value=archived(count=1)):
+            self.assertEqual(client.get(uri).status_code,503)
         with patch('services.demo.shadow_archive_reader.read_manifest_events',
                    return_value=dict(archived(count=1),verified=False)):
             response=client.get(uri)
