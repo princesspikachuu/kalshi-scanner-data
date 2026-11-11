@@ -173,7 +173,10 @@ def maintenance(store,env,stop):
                     backup(store,objects)
         try:
             for stage,operation in (
-                    ('archive',lambda:archive_events(store,objects,policy,used>=policy['storage_warning_percent']) if policy['archive_enabled'] else None),
+                    ('archive',lambda:archive_events(store,objects,policy,used>=policy['storage_warning_percent'])
+                     if (policy['archive_enabled'] and
+                         env.get('MT_LEGACY_EVENT_ARCHIVE_V2_ENABLED','false')=='true')
+                     else None),
                     ('restore',lambda:restore_requests(store,objects)),('backup',due_backup)):
                 try:operation()
                 except Exception as error:failure(error,stage)
