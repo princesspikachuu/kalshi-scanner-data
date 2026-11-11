@@ -24,7 +24,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             RECOVERY_DATABASE_URL='postgresql://archive:placeholder@localhost/db',
         )
 
-    def pool(self, *, size=9_000_000_000, principal='pocket_archive_maintenance', owner='owner', elevated=False):
+    def pool(self, *, size=9_000_000_000, principal='pocket_archive_maintenance', owner='owner', elevated=False, truncate=False, schema_create=False):
         pool = MagicMock()
         conn = pool.connection.return_value.__enter__.return_value
 
@@ -34,7 +34,8 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
                 result.fetchone.return_value = dict(
                     principal=principal, owner=owner, elevated=elevated,
                     can_select=True, can_insert=False, can_delete=False,
-                    can_update=False, can_scoped_reclaim=True)
+                    can_update=False, can_truncate=truncate,
+                    can_schema_create=schema_create, can_scoped_reclaim=True)
             else:
                 result.fetchone.return_value = dict(bytes=size)
             return result
@@ -77,6 +78,8 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
         for pool in (self.pool(principal='owner', owner='owner'),
                      self.pool(principal='pocket_archive_maintenance', elevated=True),
                      self.pool(owner=None),
+                     self.pool(truncate=True),
+                     self.pool(schema_create=True),
                      self.pool(principal='different-scoped-role')):
             with self.assertRaises(ValueError):
                 verify_scoped_role(pool)
