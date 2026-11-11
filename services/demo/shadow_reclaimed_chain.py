@@ -3,6 +3,7 @@
 This does not imply the PostgreSQL manifest catalog was exhaustively listed,
 nor that trading events in other stores have been incorporated.
 """
+import re
 from services.demo.shadow_history_reconcile import HistoryReconciliationError
 
 MAX_MANIFEST_PAGES = 128
@@ -14,14 +15,16 @@ def verify_reclaimed_manifest_chain(pages):
     first = pages[0]
     if not isinstance(first, dict):
         raise HistoryReconciliationError('Invalid reclaimed page')
-    ident, key, source, total = (first.get('manifest_id'),
+    ident, key, source, total, digest = (first.get('manifest_id'),
                                   first.get('manifest_key'),
                                   first.get('source'),
-                                  first.get('total_events'))
+                                  first.get('total_events'),
+                                  first.get('manifest_digest'))
     if (source not in ('r2_reclaimed_raw','r2_reclaimed_packed')
             or not isinstance(ident, str) or not isinstance(key, str)
             or not key.startswith('demo/shadow/archive-manifest/')
-            or type(total) is not int or not 1 <= total <= 10000):
+            or type(total) is not int or not 1 <= total <= 10000
+            or not isinstance(digest,str) or re.fullmatch(r'[0-9a-f]{64}',digest) is None):
         raise HistoryReconciliationError('Invalid reclaimed manifest metadata')
     seen_ids = set()
     position = 0
@@ -29,6 +32,7 @@ def verify_reclaimed_manifest_chain(pages):
         if (not isinstance(page, dict) or page.get('verified') is not True
                 or page.get('manifest_id') != ident
                 or page.get('manifest_key') != key
+                or page.get('manifest_digest') != digest
                 or page.get('source') != source
                 or page.get('total_events') != total
                 or page.get('offset') != position):
@@ -56,7 +60,8 @@ def verify_reclaimed_manifest_chain(pages):
             raise HistoryReconciliationError('Missing reclaimed manifest pages')
     if position != total or len(seen_ids) != total:
         raise HistoryReconciliationError('Incomplete reclaimed manifest')
-    return dict(manifest_id=ident,manifest_key=key,source=source,
+    return dict(manifest_id=ident,manifest_key=key,manifest_digest=digest,
+                source=source,
                 original_events_verified=total,verified_pages=len(pages),
                 individual_manifest_exhausted=True,
                 source_exhaustion_verified=False,
