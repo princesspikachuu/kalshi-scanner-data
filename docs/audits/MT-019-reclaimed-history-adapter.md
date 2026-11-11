@@ -52,3 +52,12 @@ individual-manifest chain checker requires the **same digest on every page**;
 a manifest edited or replaced between two reads will fail rather than quietly
 combine different content. This does not replace the existing full R2 object
 SHA/gzip/row readback checks and does not prove PostgreSQL snapshot isolation.
+
+## Original audit timestamps
+
+`Engine.audit.log` serializes `progress.time` as a decimal string.
+The shared identity reconciler now accepts safe nonnegative decimal-string
+timestamps as well as numeric timestamps for ordering while **preserving the
+original string inside `progress`**. Nonfinite, negative, exponent, malformed,
+oversized and injected values fail closed. This is necessary for real Favorites
+cohort/settlement audit compatibility; it does not convert or rewrite R2 data.
