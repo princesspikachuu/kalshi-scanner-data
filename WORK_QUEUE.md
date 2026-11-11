@@ -178,6 +178,13 @@ _Confirmed auto-suspension due to full 10 GB allocation. Code-path and logs show
 - [PR #178](https://github.com/princesspikachuu/kalshi-scanner-data/pull/178) **PASSED full GitHub CI and MERGED** into `build/google-auth-foundation` as `ba16bba8011264985f6892d9cdc35d8dbef0e53a`: **disabled-by-default, recovery-hold-only** automatic archive loop for both raw and compressed diagnostic histories; explicit writer-stopped acknowledgement, dedicated non-owner SQL maintenance role, conservative capacity/batch guards, receipt verification and unit tests. This is *not* live ongoing retention. No automatic cleanup enabled or operator credential installed.
 - Remaining U0: create isolated maintenance role (owner secret must NOT be persisted to the worker), verify Render physical disk/WAL and control backup integrity; run bounded backlog only while stopped, then add live-safe cold-history read-through/retention before resuming normal writes. 
 
+
+### Independently verified first real cold archive (Nov 10, 2026, ~20:42 PT)
+- [PR #179](https://github.com/princesspikachuu/kalshi-scanner-data/pull/179) passed full CI and merged as `af4a269e642581c1dcc48df252976b439b9a804b`. Its one-shot, SELECT-only + R2-read-only audit ran on the explicitly disabled processing collector using `MT_ARCHIVE_VERIFY_ONCE=true`.
+- **Live Render output 2026-11-11 04:42:24 UTC**: `shadow_archive_r2_integrity` reported `verified=true`, `manifests_scanned=1`, `verified_manifests=1`, `original_rows_verified=10`, `original_events_verified=10`, `deleted_rows_absent=10`, `compressed_bytes_verified=7892`, `no_deletion=true`. Actual R2 object and PostgreSQL absence independently verified. This reconciles the operator's earlier execute receipt without additional deletion.
+- `MT_ARCHIVE_VERIFY_ONCE` immediately reset to `false` via Render (new disabled-worker deployment underway). Both paper/research workers remain recovery-held, collection disabled. Do not turn on live paper trading until backup/growth/automated retention is safe.
+- [PR #180](https://github.com/princesspikachuu/kalshi-scanner-data/pull/180) adds owner-authenticated **metadata and verified cold-history read endpoints** for raw and compressed diagnostics. R2 reads default OFF and require a separate Cloudflare R2 read-only bucket credential in the API. CI pending as of this note; API auto-deploy is disabled. This gives a bounded restoration/browsing path but is not yet integrated historical analytics/search.
+
 ---
 
 
