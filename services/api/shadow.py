@@ -523,6 +523,45 @@ def install_shadow(app,auth,mutate,pool):
         if not row:raise HTTPException(404,'Session not found')
         return dict(contract='demo-v1',session=row['progress'],real_orders_enabled=False)
 
+    # Metadata listing stays PostgreSQL-only; full restored events require
+    # separate read-only Cloudflare R2 credentials and explicit API opt-in.
+    @app.get('/demo/shadow/archives')
+    def archives(request:Request):
+        from services.demo.shadow_archive_reader import list_manifests
+        auth(request);query(request,('limit','cursor'))
+        raw=request.query_params.get('limit','10')
+        if not raw.isascii() or not raw.isdecimal():
+            raise HTTPException(422,'Invalid archive page limit')
+        try:
+            return list_manifests(pool,limit=int(raw),cursor=request.query_params.get('cursor'))
+        except ValueError:
+            raise HTTPException(422,'Invalid archive pagination') from None
+
+    @app.get('/demo/shadow/archives/{identifier}')
+    def archive_events(identifier:str,request:Request):
+        from services.demo.shadow_archive_reader import (
+            ArchiveReaderUnavailable,read_manifest_events
+        )
+        auth(request);query(request,('limit','offset'))
+        raw_limit=request.query_params.get('limit','25')
+        raw_offset=request.query_params.get('offset','0')
+        if not (raw_limit.isascii() and raw_limit.isdecimal()
+                and raw_offset.isascii() and raw_offset.isdecimal()):
+            raise HTTPException(422,'Invalid archive event pagination')
+        try:
+            result=read_manifest_events(pool,identifier,
+                limit=int(raw_limit),offset=int(raw_offset))
+        except ValueError:
+            raise HTTPException(422,'Invalid archive request') from None
+        except ArchiveReaderUnavailable:
+            raise HTTPException(503,'Cold history reader is not yet configured') from None
+        except Exception as error:
+            print(json.dumps(dict(event='cold_archive_verify_failed',
+                error_type=type(error).__name__)),flush=True)
+            raise HTTPException(503,'Archived history could not be verified') from None
+        if result is None:raise HTTPException(404,'Archive manifest not found')
+        return result
+
     @app.get('/demo/shadow/events')
     def events(request:Request):
         auth(request);query(request)
