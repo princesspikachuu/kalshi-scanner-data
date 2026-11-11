@@ -135,53 +135,73 @@ def plan_only(pool, *, now, age_hours=24, batch_size=100):
                 note='One bounded candidate page; not a count of all old history')
 
 
-def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100, scoped=False):
-    """Verified upload, immutable manifest and exact-row DELETE in one DB transaction.
+def _prepare_verified_archive(rows, objects, now):
+    """Make a complete verified R2 receipt before granting any reclaim call."""
+    records = archive_payload(rows)
+    if any(r['progress'].get('event') not in SAFE_EVENT_KINDS for r in rows):
+        raise RuntimeError('Non-diagnostic audit event selected; refusing to remove')
+    # put_verified completes full R2 read-after-write SHA-256 and JSON check.
+    receipt = put_verified(objects, 'events', records)
+    ids = [r['id'] for r in rows]
+    first = min(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
+    last = max(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
+    manifest = dict(format='shadow-r2-event-batch-v1', reference=receipt,
+        count=len(ids), ids=ids, earliest=first, latest=last,
+        source_prefix=PREFIX, event_kinds=sorted({r['progress']['event'] for r in rows}),
+        created_at=now, restorable=True)
+    return records, ids, manifest, receipt
 
-    Failure to upload, verify, persist the manifest, or delete ALL selected
-    IDs aborts the database transaction. R2 objects uploaded before a later
-    database failure are safe, content-addressed orphans (never data loss).
+
+def _check_reclaimed(deleted, ids):
+    if {r['id'] for r in deleted} != set(ids) or len(deleted) != len(ids):
+        raise RuntimeError('Archive/delete identity mismatch; transaction rolled back')
+
+
+def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100, scoped=False):
+    """R2 verification precedes an atomic manifest+exact-row reclaim.
+
+    For a constrained maintenance login, the candidate read transaction ends
+    *before* any R2 network I/O. A second short transaction invokes the SQL
+    fence, which locks and rechecks every original row before deleting. If
+    a writer changed a row, the SQL function rolls back without deleting it.
+    The legacy direct-owner path retains its original row-lock transaction.
     """
-    cutoff=validate_window(now,age_hours,batch_size)
-    with pool.connection() as c:
-        with c.transaction():
-            c.execute('SET LOCAL statement_timeout=10000')
-            rows=c.execute(CANDIDATES if scoped else LOCKED_CANDIDATES,
-                (cutoff,PREFIX,PREFIX+'zzzz',list(SAFE_EVENT_KINDS),batch_size)).fetchall()
-            if not rows:
-                return dict(mode='executed', archived=0, deleted=0, hot_hours=age_hours)
-            records=archive_payload(rows)
-            # put_verified performs a full read-after-write SHA-256 and JSON
-            # round-trip check before returning its receipt.
-            if any(r['progress'].get('event') not in SAFE_EVENT_KINDS for r in rows):
-                raise RuntimeError('Non-diagnostic audit event selected; refusing to remove')
-            receipt=put_verified(objects,'events',records)
-            ids=[r['id'] for r in rows]
-            first=min(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
-            last=max(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat()
-            manifest=dict(format='shadow-r2-event-batch-v1',reference=receipt,
-                count=len(ids),ids=ids,earliest=first,latest=last,
-                source_prefix=PREFIX,event_kinds=sorted({r['progress']['event'] for r in rows}),
-                created_at=now,restorable=True)
-            manifest_id=uuid4()
-            if scoped:
-                # SECURITY DEFINER atomically inserts the verified manifest
-                # and removes only unchanged, old, non-financial rows.
-                # The maintenance login has no direct INSERT/UPDATE/DELETE.
-                deleted=c.execute(SCOPED_RECLAIM_SQL,
-                    (manifest_id,'shadow_event_r2_manifest',
-                     Jsonb(manifest),Jsonb(records))).fetchall()
-            else:
-                c.execute(MANIFEST_SQL,(manifest_id,
+    cutoff = validate_window(now, age_hours, batch_size)
+    args = (cutoff, PREFIX, PREFIX+'zzzz', list(SAFE_EVENT_KINDS), batch_size)
+    if scoped:
+        with pool.connection() as connection:
+            with connection.transaction():
+                connection.execute('SET LOCAL statement_timeout=5000')
+                rows = connection.execute(CANDIDATES, args).fetchall()
+        if not rows:
+            return dict(mode='executed', archived=0, deleted=0, hot_hours=age_hours)
+        records, ids, manifest, receipt = _prepare_verified_archive(rows, objects, now)
+        with pool.connection() as connection:
+            with connection.transaction():
+                connection.execute('SET LOCAL statement_timeout=10000')
+                deleted = connection.execute(SCOPED_RECLAIM_SQL,
+                    (uuid4(), 'shadow_event_r2_manifest',
+                     Jsonb(manifest), Jsonb(records))).fetchall()
+                _check_reclaimed(deleted, ids)
+    else:
+        # Existing operator-only compatibility mode: SELECT FOR UPDATE and
+        # manifest/delete remain in the same transaction with their locks.
+        with pool.connection() as connection:
+            with connection.transaction():
+                connection.execute('SET LOCAL statement_timeout=10000')
+                rows = connection.execute(LOCKED_CANDIDATES, args).fetchall()
+                if not rows:
+                    return dict(mode='executed', archived=0, deleted=0, hot_hours=age_hours)
+                records, ids, manifest, receipt = _prepare_verified_archive(rows, objects, now)
+                connection.execute(MANIFEST_SQL, (uuid4(),
                     Jsonb(dict(kind='shadow_event_r2_manifest')),
-                    Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-                deleted=c.execute(DELETE_SQL,
-                    (ids,PREFIX,PREFIX+'zzzz',cutoff,list(SAFE_EVENT_KINDS))).fetchall()
-            if {r['id'] for r in deleted}!=set(ids) or len(deleted)!=len(ids):
-                raise RuntimeError('Archive/delete identity mismatch; transaction rolled back')
-    return dict(mode='executed',archived=len(rows),deleted=len(rows),
-                compressed_bytes=receipt['size'],hot_hours=age_hours,
-                verified=True,manifest_stored=True)
+                    Jsonb(manifest), MANIFEST_PREFIX+str(uuid4())))
+                deleted = connection.execute(DELETE_SQL,
+                    (ids, PREFIX, PREFIX+'zzzz', cutoff, list(SAFE_EVENT_KINDS))).fetchall()
+                _check_reclaimed(deleted, ids)
+    return dict(mode='executed', archived=len(rows), deleted=len(rows),
+                compressed_bytes=receipt['size'], hot_hours=age_hours,
+                verified=True, manifest_stored=True)
 
 
 def main(argv=None):

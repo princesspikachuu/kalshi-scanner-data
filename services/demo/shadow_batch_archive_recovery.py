@@ -120,49 +120,77 @@ def preview(pool,*,now,age_hours=24,batch_size=1):
     return dict(mode='preview',batch_rows=len(records),original_events=len(event_ids),
         eligible_sample_only=True,hot_hours=age_hours,no_writes=True)
 
-def archive_one(pool,objects,*,now,age_hours=24,batch_size=1,scoped=False):
-    """Commit manifest + exact DELETE only after verified R2 readback.
+def _prepare_verified_batch(rows, objects, now):
+    """Validate every embedded event and restore the complete durable R2 object."""
+    records, event_ids = validated_records(rows)
+    receipt = put_verified(objects, 'events', records)
+    manifest = dict(format=FORMAT, source_prefix=BATCH_PREFIX, reference=receipt,
+        count=len(rows), row_ids=[r['id'] for r in rows],
+        event_ids=event_ids, original_events=len(event_ids),
+        earliest=min(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat(),
+        latest=max(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat(),
+        created_at=now, restorable=True)
+    restored = verify_batch_manifest(objects, manifest)
+    if restored != records:
+        raise ValueError('Archived batch rows did not round-trip exactly')
+    return records, event_ids, receipt, manifest
 
-    A failed R2 upload or manifest validation leaves the original PG rows.
-    The operator must budget WAL and physical disk headroom before execution.
+
+def _check_batch_reclaim(deleted, manifest, source_count):
+    if len(deleted) != source_count or {
+            r['id'] for r in deleted} != set(manifest['row_ids']):
+        raise RuntimeError('Incomplete batch reclaim; transaction rolled back')
+
+
+def archive_one(pool, objects, *, now, age_hours=24, batch_size=1, scoped=False):
+    """Commit manifest+exact deletion only after full R2 readback.
+
+    Scoped maintenance mode closes its SELECT-only candidate transaction
+    before network I/O. A new short transaction invokes the SECURITY DEFINER
+    fence to lock and compare the unchanged original rows. On any mismatch,
+    all source records remain in PostgreSQL and the R2 object is a harmless
+    content-addressed orphan. Legacy direct-owner execution keeps its locks.
     """
-    cutoff=cutoff_at(now,age_hours,batch_size)
-    with pool.connection() as c:
-        with c.transaction():
-            c.execute('SET LOCAL statement_timeout=10000')
-            rows=c.execute(CANDIDATES if scoped else LOCKED_CANDIDATES,
-                (cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',batch_size)).fetchall()
-            if not rows:
-                return dict(mode='executed',archived_rows=0,original_events=0,deleted_rows=0)
-            records,event_ids=validated_records(rows)
-            receipt=put_verified(objects,'events',records)
-            manifest=dict(format=FORMAT,source_prefix=BATCH_PREFIX,reference=receipt,
-                count=len(rows),row_ids=[r['id'] for r in rows],
-                event_ids=event_ids,original_events=len(event_ids),
-                earliest=min(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat(),
-                latest=max(r['created_at'] for r in rows).astimezone(timezone.utc).isoformat(),
-                created_at=now,restorable=True)
-            # Integrity-check the actual durable object, not just the in-memory
-            # source record, before committing any deletion.
-            restored=verify_batch_manifest(objects,manifest)
-            if restored!=records:raise ValueError('Archived batch rows did not round-trip exactly')
-            manifest_id=uuid4()
-            if scoped:
-                # Manifest creation and precisely scoped deletion are one
-                # SECURITY DEFINER operation. No direct table write grants.
-                deleted=c.execute(SCOPED_RECLAIM_SQL,
-                    (manifest_id,'diagnostic_batch_r2_manifest',
-                     Jsonb(manifest),Jsonb(records))).fetchall()
-            else:
-                c.execute(MANIFEST_SQL,(manifest_id,
+    cutoff = cutoff_at(now, age_hours, batch_size)
+    args = (cutoff, BATCH_PREFIX, BATCH_PREFIX+'zzzz', batch_size)
+    if scoped:
+        with pool.connection() as connection:
+            with connection.transaction():
+                connection.execute('SET LOCAL statement_timeout=5000')
+                rows = connection.execute(CANDIDATES, args).fetchall()
+        if not rows:
+            return dict(mode='executed', archived_rows=0,
+                        original_events=0, deleted_rows=0)
+        records, event_ids, receipt, manifest = _prepare_verified_batch(
+            rows, objects, now)
+        with pool.connection() as connection:
+            with connection.transaction():
+                connection.execute('SET LOCAL statement_timeout=10000')
+                deleted = connection.execute(SCOPED_RECLAIM_SQL,
+                    (uuid4(), 'diagnostic_batch_r2_manifest',
+                     Jsonb(manifest), Jsonb(records))).fetchall()
+                _check_batch_reclaim(deleted, manifest, len(rows))
+    else:
+        with pool.connection() as connection:
+            with connection.transaction():
+                connection.execute('SET LOCAL statement_timeout=10000')
+                rows = connection.execute(LOCKED_CANDIDATES, args).fetchall()
+                if not rows:
+                    return dict(mode='executed', archived_rows=0,
+                                original_events=0, deleted_rows=0)
+                records, event_ids, receipt, manifest = _prepare_verified_batch(
+                    rows, objects, now)
+                connection.execute(MANIFEST_SQL, (uuid4(),
                     Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
-                    Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-                deleted=c.execute(DELETE_SQL,
-                    (manifest['row_ids'],cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz')).fetchall()
-            if len(deleted)!=len(rows) or {r['id'] for r in deleted}!=set(manifest['row_ids']):
-                raise RuntimeError('Incomplete batch reclaim; transaction rolled back')
-    return dict(mode='executed',archived_rows=len(rows),original_events=len(event_ids),
-        deleted_rows=len(rows),verified=True,compressed_bytes=receipt['size'])
+                    Jsonb(manifest), MANIFEST_PREFIX+str(uuid4())))
+                deleted = connection.execute(DELETE_SQL,
+                    (manifest['row_ids'], cutoff,
+                     BATCH_PREFIX, BATCH_PREFIX+'zzzz')).fetchall()
+                _check_batch_reclaim(deleted, manifest, len(rows))
+    return dict(mode='executed', archived_rows=len(rows),
+                original_events=len(event_ids), deleted_rows=len(rows),
+                verified=True, compressed_bytes=receipt['size'])
+
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Operator-only R2 recovery of compressed paper diagnostics')

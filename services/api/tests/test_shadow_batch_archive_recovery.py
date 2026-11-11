@@ -100,14 +100,66 @@ class ShadowBatchArchiveRecoveryTests(unittest.TestCase):
                 batch_size=1,scoped=True)
         self.assertEqual(result['deleted_rows'],1)
         operations=[call.args[0] for call in c.execute.call_args_list]
-        self.assertEqual(operations,['SET LOCAL statement_timeout=10000',
-            CANDIDATES,SCOPED_RECLAIM_SQL])
+        self.assertEqual(operations,['SET LOCAL statement_timeout=5000',
+            CANDIDATES,'SET LOCAL statement_timeout=10000',SCOPED_RECLAIM_SQL])
+        self.assertEqual(c.transaction.call_count,2)
+        self.assertEqual(pool.connection.call_count,2)
         self.assertNotIn(DELETE_SQL,operations)
         scoped=c.execute.call_args_list[-1].args[1]
         self.assertEqual(scoped[1],'diagnostic_batch_r2_manifest')
         self.assertEqual(scoped[3].obj,[record])
         self.assertEqual(record['available_at'],row['available_at'].isoformat())
         self.assertEqual(record['max_attempts'],5)
+
+    def test_scoped_packed_r2_verification_never_holds_db_transaction(self):
+        from contextlib import contextmanager
+        row=self.row()
+        pool,c=self.pool([row])
+        original=original_row(row)
+        events=[];depth=[0]
+        @contextmanager
+        def tracked():
+            depth[0]+=1
+            events.append('begin')
+            try:yield
+            finally:
+                events.append('end')
+                depth[0]-=1
+        c.transaction.side_effect=tracked
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=300)
+        def put(*args,**kwargs):
+            self.assertEqual(depth[0],0)
+            events.append('R2-put-verified')
+            return receipt
+        def read(*args,**kwargs):
+            self.assertEqual(depth[0],0)
+            events.append('R2-read-verified')
+            return [original]
+        with patch('services.demo.shadow_batch_archive_recovery.put_verified',
+                   side_effect=put),patch(
+                   'services.demo.shadow_batch_archive_recovery.read_verified',
+                   side_effect=read):
+            report=archive_one(pool,MagicMock(),now=1794500000,
+                               batch_size=1,scoped=True)
+        self.assertEqual(report['deleted_rows'],1)
+        self.assertEqual(events,['begin','end','R2-put-verified',
+                                 'R2-read-verified','begin','end'])
+
+    def test_scoped_packed_reclaim_rejects_modified_row(self):
+        row=self.row()
+        pool,c=self.pool([row],deleted=[])
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=300)
+        with patch('services.demo.shadow_batch_archive_recovery.put_verified',
+                   return_value=receipt),patch(
+                   'services.demo.shadow_batch_archive_recovery.read_verified',
+                   return_value=[original_row(row)]):
+            with self.assertRaisesRegex(RuntimeError,'Incomplete batch reclaim'):
+                archive_one(pool,MagicMock(),now=1794500000,
+                            batch_size=1,scoped=True)
+        self.assertNotIn(DELETE_SQL,[call.args[0] for call in c.execute.call_args_list])
+        self.assertEqual(c.transaction.call_count,2)
 
     def test_archiving_must_validate_real_r2_readback(self):
         r=self.row();pool,c=self.pool([r])

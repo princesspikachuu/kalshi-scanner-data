@@ -95,8 +95,10 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
                 now=1794500000,age_hours=24,batch_size=1,scoped=True)
         self.assertEqual(result['deleted'],1)
         operations=[call.args[0] for call in c.execute.call_args_list]
-        self.assertEqual(operations,['SET LOCAL statement_timeout=10000',
-            CANDIDATES,SCOPED_RECLAIM_SQL])
+        self.assertEqual(operations,['SET LOCAL statement_timeout=5000',
+            CANDIDATES,'SET LOCAL statement_timeout=10000',SCOPED_RECLAIM_SQL])
+        self.assertEqual(c.transaction.call_count,2)
+        self.assertEqual(pool.connection.call_count,2)
         self.assertNotIn(DELETE_SQL,operations)
         self.assertNotIn(LOCKED_CANDIDATES,operations)
         scoped_args=c.execute.call_args_list[-1].args[1]
@@ -106,6 +108,46 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(scoped_args[3].obj[0]['available_at'],
                          row['available_at'].isoformat())
         self.assertEqual(scoped_args[3].obj[0]['max_attempts'],5)
+
+    def test_scoped_r2_io_occurs_after_snapshot_tx_and_before_reclaim_tx(self):
+        from contextlib import contextmanager
+        row=self.row()
+        pool,c=self.db([row])
+        events=[];depth=[0]
+        @contextmanager
+        def tracked():
+            depth[0]+=1
+            events.append('begin')
+            try:yield
+            finally:
+                events.append('end')
+                depth[0]-=1
+        c.transaction.side_effect=tracked
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=800,at=42)
+        def verify(*args,**kwargs):
+            self.assertEqual(depth[0],0,'R2 I/O must never hold scoped SQL transaction')
+            events.append('verified-R2')
+            return receipt
+        with patch('services.demo.shadow_archive_recovery.put_verified',
+                   side_effect=verify):
+            report=archive_and_reclaim_one(pool,MagicMock(),
+                now=1794500000,age_hours=24,batch_size=1,scoped=True)
+        self.assertTrue(report['verified'])
+        self.assertEqual(events,['begin','end','verified-R2','begin','end'])
+
+    def test_scoped_changed_source_aborts_short_reclaim(self):
+        row=self.row()
+        pool,c=self.db([row],deleted=[])
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=800,at=42)
+        with patch('services.demo.shadow_archive_recovery.put_verified',
+                   return_value=receipt):
+            with self.assertRaisesRegex(RuntimeError,'identity mismatch'):
+                archive_and_reclaim_one(pool,MagicMock(),now=1794500000,
+                    age_hours=24,batch_size=1,scoped=True)
+        self.assertEqual(c.transaction.call_count,2)
+        self.assertNotIn(DELETE_SQL,[call.args[0] for call in c.execute.call_args_list])
 
     def test_archive_failure_never_reaches_manifest_or_delete(self):
         pool,c=self.db([self.row()])
