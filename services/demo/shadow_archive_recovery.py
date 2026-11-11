@@ -135,7 +135,7 @@ def plan_only(pool, *, now, age_hours=24, batch_size=100):
                 note='One bounded candidate page; not a count of all old history')
 
 
-def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100):
+def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100, scoped=False):
     """Verified upload, immutable manifest and exact-row DELETE in one DB transaction.
 
     Failure to upload, verify, persist the manifest, or delete ALL selected
@@ -146,7 +146,8 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100)
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=10000')
-            rows=c.execute(LOCKED_CANDIDATES,(cutoff,PREFIX,PREFIX+'zzzz',list(SAFE_EVENT_KINDS),batch_size)).fetchall()
+            rows=c.execute(CANDIDATES if scoped else LOCKED_CANDIDATES,
+                (cutoff,PREFIX,PREFIX+'zzzz',list(SAFE_EVENT_KINDS),batch_size)).fetchall()
             if not rows:
                 return dict(mode='executed', archived=0, deleted=0, hot_hours=age_hours)
             records=archive_payload(rows)
@@ -162,9 +163,20 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100)
                 count=len(ids),ids=ids,earliest=first,latest=last,
                 source_prefix=PREFIX,event_kinds=sorted({r['progress']['event'] for r in rows}),
                 created_at=now,restorable=True)
-            c.execute(MANIFEST_SQL,(uuid4(),Jsonb(dict(kind='shadow_event_r2_manifest')),
+            manifest_id=uuid4()
+            c.execute(MANIFEST_SQL,(manifest_id,Jsonb(dict(kind='shadow_event_r2_manifest')),
                 Jsonb(manifest),MANIFEST_PREFIX+str(uuid4())))
-            deleted=c.execute(DELETE_SQL,(ids,PREFIX,PREFIX+'zzzz',cutoff,list(SAFE_EVENT_KINDS))).fetchall()
+            # The automatic role has no table DELETE or UPDATE rights.
+            # A SECURITY DEFINER function rechecks every source column,
+            # 24-hour age, diagnostic kind and original R2 manifest before
+            # deleting the exact IDs. Old privileged manual path is retained
+            # for operator-only emergency recovery.
+            if scoped:
+                deleted=c.execute(SCOPED_RECLAIM_SQL,
+                    (manifest_id,Jsonb(records))).fetchall()
+            else:
+                deleted=c.execute(DELETE_SQL,
+                    (ids,PREFIX,PREFIX+'zzzz',cutoff,list(SAFE_EVENT_KINDS))).fetchall()
             if {r['id'] for r in deleted}!=set(ids) or len(deleted)!=len(ids):
                 raise RuntimeError('Archive/delete identity mismatch; transaction rolled back')
     return dict(mode='executed',archived=len(rows),deleted=len(rows),
