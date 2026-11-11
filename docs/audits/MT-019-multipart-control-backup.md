@@ -32,6 +32,11 @@ open orders, unsettled positions, live execution history or other controls.
   **every chunk back from R2**, recomputing count, duplicate-free keys and
   digest **without keeping the reconstructed full backup in RAM** before
   publishing `demo/backup-health`.
+- After the full R2 restore check, publish a small independent content-addressed
+  receipt under **`demo/backups/roots/`**, containing the verified root reference,
+  record count and digest. This prefix is discoverable using an R2 bucket listing
+  even if PostgreSQL loses its `demo/backup-health` record. Verify the catalog
+  receipt by readback **before** updating backup-health.
 - Failure leaves the prior backup-health marker untouched and **never deletes**
   any database record. Orphaned content-addressed R2 chunks may remain after
   failure but are not claimed to constitute a complete backup.
@@ -59,7 +64,10 @@ To remain fully safe, inspect the measured breakdown from
 `MT_CONTROL_BACKUP_AUDIT=true` before trying V2. The first live audit already found at least 2,001 shadow-bot records / 67.8 MB,
 exceeding the original 64 MiB in-memory V2 cap. We replaced that with a bounded
 local spool, but **it is still not automatically safe for recurrent backups**:
-await exact-size census, physical worker disk headroom and measured R2 throughput.
+the 4,190-row exact census (~190,253,997 bytes of JSONB), the one-time
+read-only 512 MiB spool budget preflight (reported 52.9 GB available on /tmp),
+and measured R2 throughput during a controlled one-time backup trial. The
+filesystem report was advisory, not proof of per-instance ephemeral quotas.
 If the complete source exceeds 100,000 rows / 512 MiB, implement incremental
 versioned R2 backups rather than increasing caps blindly. A verified R2 control backup is
 not a PostgreSQL point-in-time backup and does not replace database backups.
