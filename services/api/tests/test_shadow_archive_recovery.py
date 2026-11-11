@@ -96,14 +96,16 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(result['deleted'],1)
         operations=[call.args[0] for call in c.execute.call_args_list]
         self.assertEqual(operations,['SET LOCAL statement_timeout=10000',
-            CANDIDATES,MANIFEST_SQL,SCOPED_RECLAIM_SQL])
+            CANDIDATES,SCOPED_RECLAIM_SQL])
         self.assertNotIn(DELETE_SQL,operations)
         self.assertNotIn(LOCKED_CANDIDATES,operations)
         scoped_args=c.execute.call_args_list[-1].args[1]
-        self.assertEqual(scoped_args[1].obj[0]['id'],row['id'])
-        self.assertEqual(scoped_args[1].obj[0]['available_at'],
+        self.assertEqual(scoped_args[1],'shadow_event_r2_manifest')
+        self.assertEqual(scoped_args[2].obj['count'],1)
+        self.assertEqual(scoped_args[3].obj[0]['id'],row['id'])
+        self.assertEqual(scoped_args[3].obj[0]['available_at'],
                          row['available_at'].isoformat())
-        self.assertEqual(scoped_args[1].obj[0]['max_attempts'],5)
+        self.assertEqual(scoped_args[3].obj[0]['max_attempts'],5)
 
     def test_archive_failure_never_reaches_manifest_or_delete(self):
         pool,c=self.db([self.row()])
