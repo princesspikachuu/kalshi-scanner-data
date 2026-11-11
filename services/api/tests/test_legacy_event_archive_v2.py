@@ -219,8 +219,8 @@ class LegacyArchiveV2PostgresTests(unittest.TestCase):
         self.assertEqual(pointer['archive_format'],FORMAT)
         self.assertEqual(pointer['archive']['sha256'],RECEIPT['sha256'])
         req=str(uuid4())
-        self.ids.append(req)
-        self.store.put('restore/'+req,dict(event_id=row['id']))
+        request_row_id=self.store.put('restore/'+req,dict(event_id=row['id']))
+        self.ids.append(request_row_id)
         with patch('services.demo.maintenance.read_verified',
                    return_value=snapshot):
             restore_requests_v2(self.store,object())
