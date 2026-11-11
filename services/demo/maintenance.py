@@ -194,7 +194,13 @@ def maintenance(store,env,stop):
         def due_backup():
             last=store.get('backup-health')
             if not last or time.time()-last['progress'].get('at',0)>policy['backup_hours']*3600:
-                backup(store,objects)
+                if env.get('MT_CONTROL_BACKUP_V2_ENABLED','false')=='true':
+                    # Opt-in only after a verified paused-worker trial.
+                    # Source records are preserved and never deleted here.
+                    from services.demo.control_backup_v2 import backup_controls
+                    backup_controls(store,objects)
+                else:
+                    backup(store,objects)
         try:
             for stage,operation in (
                     ('archive',lambda:archive_events(store,objects,policy,used>=policy['storage_warning_percent']) if policy['archive_enabled'] else None),
