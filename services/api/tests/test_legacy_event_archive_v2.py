@@ -145,6 +145,36 @@ class LegacyArchiveV2UnitTests(unittest.TestCase):
                 store.put.assert_not_called()
 
 
+    def test_demo_auto_archive_default_off_even_with_policy_enabled(self):
+        from services.demo.maintenance import maintenance
+        from threading import Event
+        pool=MagicMock()
+        c=pool.connection.return_value.__enter__.return_value
+        def sql(stmt,params=None):
+            cursor=MagicMock()
+            if 'pg_database_size(' in stmt:
+                cursor.fetchone.return_value=dict(size=1024)
+            elif 'pg_stat_user_tables' in stmt:
+                cursor.fetchall.return_value=[]
+            elif 'pg_stat_database' in stmt:
+                cursor.fetchone.return_value=dict(numbackends=1)
+            return cursor
+        c.execute.side_effect=sql
+        store=MagicMock(pool=pool)
+        store.get.return_value=None
+        objects=MagicMock()
+        with patch('services.demo.maintenance.object_store',return_value=objects), \
+             patch('services.demo.maintenance.archive_events') as archive, \
+             patch('services.demo.maintenance.restore_requests'), \
+             patch('services.demo.maintenance.backup'), \
+             patch('services.demo.maintenance.emails'):
+            maintenance(store,dict(DATABASE_CAPACITY_GB='15'),Event())
+            archive.assert_not_called()
+            maintenance(store,dict(DATABASE_CAPACITY_GB='15',
+                                   MT_LEGACY_EVENT_ARCHIVE_V2_ENABLED='true'),
+                        Event())
+            archive.assert_called_once()
+
 @unittest.skipUnless(URL,'Disposable PostgreSQL database required')
 class LegacyArchiveV2PostgresTests(unittest.TestCase):
     @classmethod
@@ -195,6 +225,42 @@ class LegacyArchiveV2PostgresTests(unittest.TestCase):
         with self.pool.connection() as c:
             return c.execute('SELECT progress FROM research_job WHERE id=%s',
                              (ident,)).fetchone()['progress']
+
+    def test_v1_progress_only_archive_still_restores_without_metadata_loss(self):
+        row=self.insert()
+        with self.pool.connection() as c:
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
+                      (Jsonb(dict(archive=RECEIPT,archived=True)),row['id']))
+        request_key=str(uuid4())
+        self.ids.append(self.store.put('restore/'+request_key,
+                                       dict(event_id=row['id'])))
+        legacy=[dict(id=row['id'],parameters=row['parameters'],
+                     progress=row['progress'])]
+        with patch('services.demo.maintenance.read_verified',
+                   return_value=legacy):
+            restore_requests_v2(self.store,object())
+        self.assertEqual(self.progress(row['id'])['details'],'must survive')
+        self.assertTrue(self.store.get('restore/'+request_key)['progress']['done'])
+
+    def test_recovery_restore_rejects_changed_database_metadata(self):
+        row=self.insert()
+        snapshots=[]
+        with patch('services.demo.maintenance.put_verified',
+                   side_effect=lambda _o,_k,p:(snapshots.append(p),RECEIPT)[1]):
+            archive_events_v2(self.store,object(),dict(archive_days=30),False)
+        request_key=str(uuid4())
+        self.ids.append(self.store.put('restore/'+request_key,
+                                       dict(event_id=row['id'])))
+        with self.pool.connection() as c:
+            c.execute('UPDATE research_job SET parameters=%s WHERE id=%s',
+                      (Jsonb(dict(kind='EXP',edited_after_archive=True)),
+                       row['id']))
+        with patch('services.demo.maintenance.read_verified',
+                   return_value=snapshots[0]):
+            with self.assertRaisesRegex(RuntimeError,'metadata changed'):
+                restore_requests_v2(self.store,object())
+        self.assertIn('archive',self.progress(row['id']))
+        self.assertFalse(self.store.get('restore/'+request_key)['progress'].get('done'))
 
     def test_exact_full_row_archive_and_restore_legacy_compatibility(self):
         row=self.insert()
