@@ -77,7 +77,8 @@ def page_history(pool, source, *, cursor=None):
                                    packed_batch_key=batch['idempotency_key']))
     more = len(rows) > limit
     return dict(contract='demo-v1', source=source,
-                order='idempotency_key_ascending', items=events,
+                order='idempotency_key_ascending', request_cursor=cursor,
+                items=events,
                 source_rows=len(page), original_events=len(events),
                 source_keys=[row['idempotency_key'] for row in page],
                 next_cursor=page[-1]['idempotency_key'] if more else None,

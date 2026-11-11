@@ -58,6 +58,7 @@ class HistoryPageContractTests(unittest.TestCase):
         self.assertFalse(result['reclaimed_manifests_included'])
         self.assertEqual(result['archive_objects_verified'],0)
         self.assertEqual(result['source_keys'],[RAW_PREFIX+'key'])
+        self.assertIsNone(result['request_cursor'])
         sqlcalls=[x.args for x in c.execute.call_args_list]
         self.assertEqual(sqlcalls[0][0],'SET LOCAL statement_timeout=5000')
         self.assertEqual(sqlcalls[1][0],RAW_SQL)
@@ -94,7 +95,8 @@ class HostedShadowHistoryPages(unittest.TestCase):
             response=self.client.get('/demo/shadow/history/raw',params=params)
             self.assertEqual(response.status_code,200,response.text)
             body=response.json();pages+=1
-            page_chain.append(dict(body,request_cursor=cursor))
+            self.assertEqual(body['request_cursor'],cursor)
+            page_chain.append(body)
             self.assertEqual(body['source'],'raw')
             self.assertFalse(body['all_time_coverage_complete'])
             self.assertFalse(body['reclaimed_manifests_included'])

@@ -75,7 +75,8 @@ def list_manifests(pool, *, limit=10, cursor=None):
         rows=connection.execute(MANIFEST_SCAN, (PREFIX, PREFIX+'zzzz',
             cursor,cursor,limit+1)).fetchall()
     page=rows[:limit]
-    return dict(contract='demo-v1', items=[summary(row) for row in page],
+    return dict(contract='demo-v1', source='manifests',
+                request_cursor=cursor, items=[summary(row) for row in page],
                 next_cursor=page[-1]['idempotency_key'] if len(rows)>limit else None,
                 more=len(rows)>limit, order='manifest_key', no_r2_reads=True)
 
