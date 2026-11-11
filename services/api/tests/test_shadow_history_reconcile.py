@@ -89,6 +89,24 @@ class VerifiedHistoryReconciliationTests(unittest.TestCase):
         result = reconcile_verified_pages([page('hot_raw', original)])
         self.assertEqual(result['items'][0]['progress'], original['progress'])
 
+    def test_decimal_string_audit_times_are_supported_without_rewriting_progress(self):
+        original=event()
+        original['progress']['time']='1794437000.123456'
+        original['event_time']='1794437000.123456'
+        result=reconcile_verified_pages([page('hot_raw',original)])
+        self.assertAlmostEqual(result['items'][0]['event_time'],1794437000.123456)
+        self.assertEqual(result['items'][0]['progress']['time'],'1794437000.123456')
+
+    def test_unsafe_timestamp_strings_rejected(self):
+        for value in ('NaN','Infinity','-100','1e10','', '123; DROP TABLE',
+                      '1'*42):
+            sample=event()
+            sample['progress']['time']=value
+            sample['event_time']=value
+            with self.subTest(value=value):
+                with self.assertRaises(HistoryReconciliationError):
+                    reconcile_verified_pages([page('hot_raw',sample)])
+
     def test_null_time_not_invented(self):
         first = event()
         first['progress'].pop('time')
