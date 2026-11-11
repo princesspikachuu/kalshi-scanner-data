@@ -31,3 +31,27 @@ flags, restores, or trading based on this library.
 Automated tests cover duplicate and mismatched source copies, payload and
 timestamp tampering, UUID/key collisions, private source allowlist and caps,
 protected financial progress, and explicit incomplete coverage.
+
+## Second safeguard: pagination-chain validation
+
+`verify_history_page_chain()` additionally rejects repeated or out-of-order
+source-row keys, incorrect continuation cursors, missing terminal pages,
+incorrect namespace, and invalid raw/packed/manifest source labels. This is
+pure validation of supplied pages, not an R2 or SQL fetch. The collecting
+caller must retain the exact request cursor and source row key for each page.
+
+**Integration gap:** existing paginated raw responses expose `items[].key`.
+Packed responses expose expanded event keys but do not yet expose the indexed
+batch-row keys as a first-class list. Existing manifest-list responses expose
+IDs/summary but omit indexed manifest keys. Thus an eventual all-source
+orchestrator must expose authenticated source-row cursor keys before it can
+use this checker; **do not invent missing keys from event IDs or hashes**.
+Every return still reports `database_snapshot_verified=false`,
+`r2_manifest_catalog_complete=false`, and
+`all_time_coverage_complete=false`.
+
+This only helps detect malformed *supplied* page chains. It cannot detect a
+missing database row between two apparently contiguous keyset results,
+writer interference across separate transactions, or an omitted R2 manifest
+outside the enumerated set. A final completeness receipt needs independent
+source exhaustion and stable snapshot/cutoff verification.
