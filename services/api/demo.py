@@ -393,6 +393,55 @@ def install_demo(app,auth,mutate,pool):
     def refresh(request:Request):
         mutate(request);require_query(request);store.put('refresh',dict(requested_at=time.time()))
         return dict(contract='demo-v1',accepted=True)
+    # A read-only owner view of an R2-backed diagnostic pointer. Never return
+    # private object keys, full R2 receipts, original research fields, or URLs.
+    # This route performs NO R2 I/O, SQL UPDATE, or restoration.
+    @app.get('/demo/shadow/archive/{identifier}')
+    def shadow_archive_status(identifier:UUID,request:Request):
+        auth(request);require_query(request)
+        with pool.connection() as c:
+            row=c.execute("""SELECT progress FROM research_job WHERE id=%s
+                AND idempotency_key >= 'demo/shadow/event/'
+                AND idempotency_key < 'demo/shadow/event/zzzz'""",
+                (identifier,)).fetchone()
+        if not row or not isinstance(row['progress'].get('archive'),dict):
+            raise HTTPException(404,'Archived diagnostic not found')
+        progress=row['progress']
+        fmt=progress.get('archive_format')
+        if fmt not in (None,'demo-shadow-diagnostic-full-row-v2'):
+            raise HTTPException(409,'Unsupported diagnostic archive format')
+        queued=store.get('restore/'+str(identifier))
+        restored=bool(queued and queued['progress'].get('done'))
+        return dict(contract='demo-v1',id=str(identifier),archived=True,
+                    format=fmt or 'legacy-v1',
+                    restore_status='completed' if restored else
+                                   'requested' if queued else 'not_requested',
+                    contents_returned=False)
+
+    # Explicit separate opt-in: the API is write-capable even when paper
+    # collectors are held. Queue nothing without a private operator grant.
+    # The existing v1 /demo/restore/{id} remains untouched for legacy events.
+    @app.post('/demo/shadow/restore/{identifier}')
+    def restore_shadow_diagnostic(identifier:UUID,request:Request):
+        mutate(request);require_query(request)
+        if os.environ.get('MT_SHADOW_ARCHIVE_RESTORE_REQUESTS_ENABLED','false')!='true':
+            raise HTTPException(409,'Diagnostic restoration is disabled')
+        with pool.connection() as c:
+            row=c.execute("""SELECT progress FROM research_job WHERE id=%s
+                AND idempotency_key >= 'demo/shadow/event/'
+                AND idempotency_key < 'demo/shadow/event/zzzz'""",
+                (identifier,)).fetchone()
+        if not row or not isinstance(row['progress'].get('archive'),dict):
+            raise HTTPException(404,'Archived diagnostic not found')
+        if row['progress'].get('archive_format') not in (
+                None,'demo-shadow-diagnostic-full-row-v2'):
+            raise HTTPException(409,'Unsupported diagnostic archive format')
+        store.put('restore/'+str(identifier),
+                  dict(event_id=str(identifier),requested_at=time.time(),
+                       source='owner_shadow_diagnostic'))
+        return dict(contract='demo-v1',accepted=True,
+                    status='queued_for_maintenance')
+
     @app.post('/demo/restore/{identifier}')
     def restore(identifier:UUID,request:Request):
         mutate(request);require_query(request)
