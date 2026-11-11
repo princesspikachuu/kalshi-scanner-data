@@ -244,6 +244,34 @@ class LegacyArchiveV2PostgresTests(unittest.TestCase):
             return c.execute('SELECT progress FROM research_job WHERE id=%s',
                              (ident,)).fetchone()['progress']
 
+    def test_restore_query_is_keyset_bounded_and_skips_done_requests(self):
+        from services.demo.legacy_event_archive import PENDING_RESTORE_SQL
+        self.assertIn("idempotency_key >= 'demo/restore/'",PENDING_RESTORE_SQL)
+        self.assertIn("idempotency_key < 'demo/restore/zzzz'",PENDING_RESTORE_SQL)
+        self.assertIn("progress->>'done' IS DISTINCT FROM 'true'",PENDING_RESTORE_SQL)
+        self.assertIn('ORDER BY idempotency_key LIMIT %s',PENDING_RESTORE_SQL)
+
+    def test_many_completed_requests_cannot_hide_a_pending_restore(self):
+        row=self.insert()
+        with self.pool.connection() as c:
+            c.execute('UPDATE research_job SET progress=%s WHERE id=%s',
+                      (Jsonb(dict(archive=RECEIPT,archived=True)),row['id']))
+        for idx in range(12):
+            self.ids.append(self.store.put('restore/completed-'+str(idx),
+                dict(event_id=row['id'],done=True)))
+        key='restore/pending-original'
+        self.ids.append(self.store.put(key,dict(event_id=row['id'])))
+        payload=[dict(id=row['id'],parameters=row['parameters'],
+                      progress=row['progress'])]
+        with patch('services.demo.maintenance.read_verified',
+                   return_value=payload):
+            restore_requests_v2(self.store,object())
+        self.assertEqual(self.progress(row['id'])['details'],'must survive')
+        self.assertTrue(self.store.get(key)['progress']['done'])
+        for idx in range(12):
+            self.assertTrue(self.store.get(
+                'restore/completed-'+str(idx))['progress']['done'])
+
     def test_v1_progress_only_archive_still_restores_without_metadata_loss(self):
         row=self.insert()
         with self.pool.connection() as c:
