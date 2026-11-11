@@ -16,15 +16,15 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
 
 - `pocket_archive_maintenance`: NOT owner, not admin, no membership, NOLOGIN
   until activated as a separate operator step; can SELECT existing
-  `research_job` records and INSERT only the columns needed for a manifest.
-  It has **no direct UPDATE, DELETE, TRUNCATE, schema CREATE or table ownership**.
+  `research_job` records only. It has **no direct INSERT, UPDATE, DELETE,
+  TRUNCATE, schema CREATE or table ownership**.
 - `public.mt_reclaim_shadow_diagnostics(uuid,jsonb)`: EXECUTE privilege
-  only on the maintenance role (removed from PUBLIC). It accepts one freshly
-  inserted R2 archive manifest plus all original source row values, then
-  rechecks the exact ordered UUID list, full row identity, immutable
+  only on the maintenance role (removed from PUBLIC). It accepts the
+  already-R2-verified manifest and all original source row values, atomically
+  INSERTS the manifest itself, then rechecks the ordered UUID list, immutable
   timestamps and column values, source namespace, success state, 24-hour age,
-  and the allowlisted nonfinancial diagnostic kind. All selected records are
-  locked, matched and deleted **atomically**, or none are deleted.
+  and the allowlisted nonfinancial diagnostic kind. The manifest creation and
+  precise DELETE occur **atomically**, or neither happens.
 - Compressed event-batches are allowed only under the dedicated diagnostic
   `demo/shadow/event-batch/` prefix and their required format. Actual
   embedded diagnostic event IDs are validated by the Python R2 archive
@@ -55,7 +55,7 @@ one **NOLOGIN** principal and one `SECURITY DEFINER` function:
    processing worker. Do **not** replace its normal `DATABASE_URL` or grant
    DELETE/UPDATE to the application login.
 5. Operator verifies database role privileges: `SELECT=true`,
-   INSERT for manifest columns=true, `DELETE=false`, `UPDATE=false`,
+   `INSERT=false`, `DELETE=false`, `UPDATE=false`,
    EXECUTE constrained SQL function=true, no owner/admin flags.
 6. **Only after those checks**, explicitly set
    `MT_ARCHIVE_RECOVERY_LOOP=true` and
