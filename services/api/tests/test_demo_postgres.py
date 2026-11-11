@@ -26,6 +26,86 @@ class DemoPostgres(unittest.TestCase):
         challenge=self.client.get('/auth/challenge').json();self.client.post('/auth/google',json=dict(credential='opaque',nonce=challenge['nonce'],csrf_token=challenge['csrf_token']))
         self.client.headers['x-csrf-token']=self.client.cookies[CSRF]
     def tearDown(self):self.client.close()
+    def test_owner_can_inspect_shadow_archive_without_r2_data_or_writes(self):
+        from uuid import uuid4
+        from psycopg.types.json import Jsonb
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=489)
+        ident=self.demo.put('shadow/event/'+str(uuid4()),
+                            dict(archived=True,archive=receipt,
+                                 archive_format='demo-shadow-diagnostic-full-row-v2'),
+                            parameters=dict(kind='EXPERIMENT'))
+        path='/demo/shadow/archive/'+ident
+        resp=self.client.get(path)
+        self.assertEqual(resp.status_code,200)
+        data=resp.json()
+        self.assertEqual(data['format'],'demo-shadow-diagnostic-full-row-v2')
+        self.assertEqual(data['restore_status'],'not_requested')
+        self.assertTrue(data['archived'])
+        self.assertFalse(data['contents_returned'])
+        self.assertNotIn('archive',data)
+        self.assertNotIn('key',data)
+        self.assertNotIn('sha256',str(data))
+        self.assertEqual(self.client.get(path,
+            headers={'x-pocket-proxy':'incorrect'}).status_code,403)
+        self.assertEqual(self.client.get(path+'?unknown=1').status_code,422)
+        self.assertEqual(self.client.post('/demo/shadow/restore/'+ident).status_code,409)
+        self.assertIsNone(self.demo.get('restore/'+ident))
+        self.assertEqual(self.client.post('/demo/shadow/restore/'+ident,
+            headers={'x-csrf-token':'incorrect'}).status_code,403)
+        # RESTORE requests never reach the paused worker until a separate
+        # private, explicit API opt-in, and never restore inline.
+        with patch.dict(os.environ,
+                        {'MT_SHADOW_ARCHIVE_RESTORE_REQUESTS_ENABLED':'true'}):
+            queued=self.client.post('/demo/shadow/restore/'+ident)
+        self.assertEqual(queued.status_code,200)
+        self.assertEqual(queued.json()['status'],'queued_for_maintenance')
+        req=self.demo.get('restore/'+ident)
+        self.assertEqual(req['progress']['event_id'],ident)
+        self.assertEqual(req['progress']['source'],'owner_shadow_diagnostic')
+        self.assertEqual(self.client.get(path).json()['restore_status'],'requested')
+        with self.store.pool.connection() as c:
+            pointer=c.execute('SELECT progress FROM research_job WHERE id=%s',
+                              (ident,)).fetchone()['progress']
+        self.assertEqual(pointer['archive'],receipt)
+
+    def test_shadow_archive_restore_route_never_crosses_history_namespaces(self):
+        from uuid import uuid4
+        from unittest.mock import patch
+        receipt=dict(key='demo/events/'+'a'*64+'.json.gz',
+                     sha256='a'*64,size=489)
+        ordinary_id=self.demo.put('event/'+str(uuid4()),
+                                  dict(archived=True,archive=receipt))
+        control_id=self.demo.put('shadow/checkpoint-archive-'+str(uuid4()),
+                                 dict(archived=True,archive=receipt))
+        fresh_id=self.demo.put('shadow/event/'+str(uuid4()),
+                               dict(event='FAVORITE_STAT_DECISION'))
+        unknown_id=self.demo.put('shadow/event/'+str(uuid4()),
+                                 dict(archive=receipt,archived=True,
+                                      archive_format='untrusted-format'))
+        legacy_id=self.demo.put('shadow/event/'+str(uuid4()),
+                                dict(archive=receipt,archived=True))
+        with patch.dict(os.environ,
+                        {'MT_SHADOW_ARCHIVE_RESTORE_REQUESTS_ENABLED':'true'}):
+            for ident in (ordinary_id,control_id,fresh_id):
+                self.assertEqual(self.client.get(
+                    '/demo/shadow/archive/'+ident).status_code,404)
+                self.assertEqual(self.client.post(
+                    '/demo/shadow/restore/'+ident).status_code,404)
+                self.assertIsNone(self.demo.get('restore/'+ident))
+            self.assertEqual(self.client.get(
+                '/demo/shadow/archive/'+unknown_id).status_code,409)
+            self.assertEqual(self.client.post(
+                '/demo/shadow/restore/'+unknown_id).status_code,409)
+            self.assertEqual(self.client.get(
+                '/demo/shadow/archive/'+legacy_id).json()['format'],'legacy-v1')
+            resp=self.client.post('/demo/shadow/restore/'+legacy_id)
+            self.assertEqual(resp.status_code,200)
+            self.assertIsNotNone(self.demo.get('restore/'+legacy_id))
+        # Original legacy event restore API must continue to accept the old
+        # format independent of the new restricted shadow route.
+        self.assertEqual(self.client.post('/demo/restore/'+ordinary_id).status_code,200)
+
     def test_live_handover_pauses_all_demo_and_blocks_every_resume_path(self):
         from services.trading.mode import request_live,read_mode
         from services.live.workspace import seed_live_bots
