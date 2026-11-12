@@ -54,6 +54,28 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
         with self.assertRaises(HistoryReconciliationError):
             normalize_reclaimed_manifest_page(result,offset=0)
 
+    def test_legacy_independent_manifest_key_uuid_preserves_archived_history(self):
+        for kind in ('raw','packed'):
+            result=archived(kind,1)
+            original_id=result['manifest']['manifest_id']
+            result['manifest']['manifest_key']=(
+                'demo/shadow/archive-manifest/'+('batch/' if kind=='packed' else '')
+                +str(uuid4()))
+            page=normalize_reclaimed_manifest_page(result,offset=0)
+            self.assertEqual(page['manifest_id'],original_id)
+            self.assertEqual(page['manifest_identity_mode'],'legacy_independent_key')
+            self.assertEqual(page['items'][0]['id'],result['items'][0]['id'])
+            self.assertFalse(page['all_time_coverage_complete'])
+
+    def test_invalid_non_uuid_archive_index_suffix_fails_closed(self):
+        for kind in ('raw','packed'):
+            result=archived(kind,1)
+            result['manifest']['manifest_key']=(
+                'demo/shadow/archive-manifest/'+('batch/' if kind=='packed' else '')
+                +'not-a-uuid')
+            with self.assertRaises(HistoryReconciliationError):
+                normalize_reclaimed_manifest_page(result,offset=0)
+
     def test_missing_manifest_fingerprint_fails_closed(self):
         result=archived('raw',1)
         result['manifest'].pop('manifest_digest')
@@ -168,6 +190,14 @@ class ReclaimedManifestHistoryTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['source'],'r2_reclaimed_raw')
         self.assertFalse(response.json()['all_time_coverage_complete'])
+        legacy=dict(matching,manifest=dict(matching['manifest'],
+                    manifest_key='demo/shadow/archive-manifest/'+str(uuid4())))
+        with patch('services.demo.shadow_archive_reader.read_manifest_events',
+                   return_value=legacy):
+            response=client.get(uri)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['manifest_identity_mode'],
+                         'legacy_independent_key')
         with patch('services.demo.shadow_archive_reader.read_manifest_events',
                    return_value=archived(count=1)):
             self.assertEqual(client.get(uri).status_code,503)
