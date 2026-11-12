@@ -88,8 +88,12 @@ def inspect_supplied_favorite_fill_links(pages):
     fills = []
     for item in evidence['items']:
         p = item['progress']
-        if (p.get('event') == 'FILL'
-                and p.get('order_id') in order_ids):
+        if p.get('event') != 'FILL':
+            continue
+        oid = p.get('order_id')
+        if not isinstance(oid, str):
+            raise HistoryReconciliationError('Invalid original paper fill order ID')
+        if oid in order_ids:
             parsed = _original_buy_fill(item)
             if parsed is not None:
                 fills.append(parsed)
