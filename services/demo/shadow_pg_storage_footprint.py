@@ -7,8 +7,6 @@ PostgreSQL's pg_database_size() and relation sizes are NOT physical free-disk
 or pg_wal occupancy. Render's host filesystem metrics must be checked
 separately before any write-capable operation is considered.
 """
-from psycopg.rows import dict_row
-
 MAX_RELATIONS = 12
 
 DATABASE_SQL = """SELECT current_database() AS database_name,
@@ -114,3 +112,42 @@ def inspect_readonly_pg_footprint(pool, *, top_relations=10):
         safe_to_train=False,
         real_orders_enabled=False,
     )
+
+
+def main(argv=None):
+    """One explicit operator command, never invoked by services or migrations."""
+    import argparse
+    import json
+    import os
+    import sys
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--execute-readonly',action='store_true',
+                        help='Run bounded read-only metadata queries')
+    parser.add_argument('--top-relations',type=int,default=10)
+    args = parser.parse_args(argv)
+    if not args.execute_readonly:
+        print('No query run. Pass --execute-readonly on an authorized Render shell.')
+        return 0
+    url = os.environ.get('RECOVERY_DATABASE_URL')
+    if not url:
+        print('RECOVERY_DATABASE_URL missing; no query run.',file=sys.stderr)
+        return 2
+    # Never print the URL, exceptions with connection detail, or raw row data.
+    try:
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+        with ConnectionPool(conninfo=url,min_size=1,max_size=1,
+                            timeout=5.0,kwargs={'row_factory':dict_row}) as pool:
+            output=inspect_readonly_pg_footprint(
+                pool,top_relations=args.top_relations)
+        print(json.dumps(output,sort_keys=True))
+        return 0
+    except Exception as exc:
+        print('Read-only storage footprint unavailable: '
+              +type(exc).__name__,file=sys.stderr)
+        return 2
+
+
+if __name__=='__main__':
+    raise SystemExit(main())
