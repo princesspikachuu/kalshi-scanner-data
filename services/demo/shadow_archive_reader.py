@@ -60,18 +60,25 @@ def summary(row):
     original_events = count if kind == 'shadow_event_r2_manifest' else manifest.get('original_events')
     if type(original_events) is not int or original_events < count:
         raise ValueError('Invalid durable archive event count')
-    # The indexed key must refer to this exact durable manifest row and
-    # its raw/packed namespace; the SQL prefix guard alone is insufficient.
+    # Earlier authorized operator archivers wrote a random row UUID and a
+    # separate random key UUID. Preserve their verified legacy archives:
+    # require valid canonical UUIDs and an exact raw/packed namespace but
+    # do not falsely equate these two independent identifiers.
     identifier = row.get('id')
+    key = row.get('idempotency_key')
+    key_prefix = PREFIX + ('batch/' if kind == 'diagnostic_batch_r2_manifest' else '')
     try:
         if not isinstance(identifier, str) or str(UUID(identifier)) != identifier:
-            raise ValueError('Invalid canonical archive UUID')
+            raise ValueError('Invalid canonical archive row UUID')
+        if not isinstance(key,str) or not key.startswith(key_prefix):
+            raise ValueError('Incorrect archive manifest namespace')
+        key_identifier=key[len(key_prefix):]
+        if str(UUID(key_identifier)) != key_identifier:
+            raise ValueError('Invalid archive key UUID')
     except (TypeError, ValueError, AttributeError) as exc:
         raise ValueError('Invalid archive manifest identity') from exc
-    expected_key = (PREFIX + ('batch/' if kind == 'diagnostic_batch_r2_manifest' else '')
-                    + identifier)
-    if row.get('idempotency_key') != expected_key:
-        raise ValueError('Archive manifest key/identity mismatch')
+    identity_mode=('canonical_row_key' if key_identifier==identifier
+                   else 'legacy_independent_key')
     expected_format = ('shadow-r2-event-batch-v1' if kind == 'shadow_event_r2_manifest'
                        else 'shadow-diagnostic-r2-manifest-v1')
     if manifest.get('format') != expected_format:
@@ -79,7 +86,7 @@ def summary(row):
     digest=hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':'),
                                     allow_nan=False).encode('utf-8')).hexdigest()
     return dict(manifest_id=row['id'], manifest_key=row['idempotency_key'],
-                manifest_digest=digest,
+                manifest_digest=digest,manifest_identity_mode=identity_mode,
                 kind='raw' if kind == 'shadow_event_r2_manifest' else 'packed',
                 archived_rows=count, original_events=original_events,
                 earliest=manifest.get('earliest'), latest=manifest.get('latest'),
