@@ -31,3 +31,5 @@ Future work must separately join authoritative order close/partial fill,
 fee, verified outcome and original event ticker, then compare against current
 evidence cells without counting multiple fills on one event as independent
 wins. This helper is **only** an offline validation stage.
+
+The audit's original `side`, six-field entry key, integer-cent paid price and six-decimal audit time must also agree with the recorded cohort. A 2-microsecond comparison tolerance only accounts for audit timestamp formatting and does not imply settlement-time reconciliation.
