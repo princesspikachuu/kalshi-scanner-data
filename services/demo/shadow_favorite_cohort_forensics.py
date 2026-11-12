@@ -48,6 +48,13 @@ def inspect_original_cohort(original):
     if not isinstance(chunk['key'],str) or not chunk['key'].startswith(
             ('entry-v2|','paper-data-v3|entry-v2|')):
         raise HistoryReconciliationError('Unsupported cohort entry key')
+    parts=chunk['key'].removeprefix('paper-data-v3|').split('|')
+    if (len(parts)!=6 or parts[0]!='entry-v2'
+            or parts[2] not in ('yes','no')
+            or parts[5] not in ('market_close','estimated_game_end')):
+        raise HistoryReconciliationError('Malformed Favorites cohort entry dimensions')
+    if progress.get('side') != parts[2]:
+        raise HistoryReconciliationError('Cohort entry side disagrees with order audit')
     if not isinstance(chunk['order_id'],str) or not 1<=len(chunk['order_id'])<=150:
         raise HistoryReconciliationError('Missing original paper order ID')
     quantity=_decimal(chunk['quantity'],'quantity',strictly_positive=True)
@@ -57,9 +64,14 @@ def inspect_original_cohort(original):
     remaining_cost=_decimal(chunk['remaining_cost'],'remaining_cost')
     at=_decimal(chunk['at'],'time')
     fee=_decimal(progress.get('fee'),'fee')
+    logged_at=_decimal(progress.get('time'),'audited event time')
+    if abs(at-logged_at)>Decimal('0.000002'):
+        raise HistoryReconciliationError('Cohort time disagrees with original audit')
     audited_quantity=_decimal(progress.get('quantity'),'audited quantity',strictly_positive=True)
     audited_price=_decimal(progress.get('price'),'audited price',strictly_positive=True)
     if (quantity!=audited_quantity or price!=audited_price or price>=1 or
+            not (price*100).to_integral_value()==price*100 or
+            parts[3]!=str(int(price*100)) or
             remaining>quantity or remaining_cost>cost or
             cost!=quantity*price+fee):
         raise HistoryReconciliationError('Cohort does not match original audited fill')
