@@ -202,5 +202,59 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         self.assertNotIn('private-secret',response.text)
 
 
+from services.api.tests import test_demo_postgres as fixture
+
+@unittest.skipUnless(fixture.URL, 'Disposable PostgreSQL is required')
+class LiveDisposableManifestNamespaceTests(unittest.TestCase):
+    setUp=fixture.DemoPostgres.setUp
+    tearDown=fixture.DemoPostgres.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        fixture.DemoPostgres.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture.DemoPostgres.tearDownClass.__func__(cls)
+
+    def test_real_manifest_listing_excludes_neighbor_and_preserves_both_kinds(self):
+        from uuid import uuid4
+        from psycopg.types.json import Jsonb
+        identifiers=[str(uuid4()) for _ in range(3)]
+        raw_key=PREFIX+identifiers[0]
+        packed_key=PREFIX+'batch/'+identifiers[1]
+        neighbor_key='demo/shadow/archive-manifest-extra/'+identifiers[2]
+        rows=[
+            (identifiers[0],raw_key,'shadow_event_r2_manifest',
+             dict(format='shadow-r2-event-batch-v1',count=1)),
+            (identifiers[1],packed_key,'diagnostic_batch_r2_manifest',
+             dict(format='shadow-diagnostic-r2-manifest-v1',
+                  count=1,original_events=3)),
+            (identifiers[2],neighbor_key,'shadow_event_r2_manifest',
+             dict(format='shadow-r2-event-batch-v1',count=1)),
+        ]
+        with self.store.pool.connection() as c:
+            for ident,key,kind,progress in rows:
+                c.execute("""INSERT INTO research_job
+                    (id,asset,parameters,progress,idempotency_key,status,finished_at)
+                    VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())""",
+                    (ident,Jsonb(dict(kind=kind)),Jsonb(progress),key))
+        first=list_manifests(self.store.pool,limit=1)
+        self.assertTrue(first['more'])
+        second=list_manifests(self.store.pool,limit=1,cursor=first['next_cursor'])
+        self.assertFalse(second['more'])
+        self.assertEqual({x['manifest_key'] for x in
+                          first['items']+second['items']},{raw_key,packed_key})
+        self.assertIsNone(find_manifest(self.store.pool,identifiers[2]))
+        self.assertEqual(find_manifest(self.store.pool,identifiers[0])['id'],
+                         identifiers[0])
+        self.assertEqual(find_manifest(self.store.pool,identifiers[1])['id'],
+                         identifiers[1])
+        with self.store.pool.connection() as c:
+            total=c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE idempotency_key LIKE 'demo/shadow/archive-manifest%'""").fetchone()['n']
+        self.assertEqual(total,3)  # listing never changes or deletes source rows
+
+
 if __name__=='__main__':
     unittest.main()
