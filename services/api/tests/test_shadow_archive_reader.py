@@ -50,6 +50,8 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         self.assertEqual(result['items'][0]['manifest_key'],rows[0]['idempotency_key'])
         self.assertTrue(result['no_r2_reads'])
         self.assertEqual(c.execute.call_args.args[0],MANIFEST_SCAN)
+        self.assertIn('idempotency_key LIKE %s',MANIFEST_SCAN)
+        self.assertEqual(c.execute.call_args.args[1][2],PREFIX+'%')
         self.assertEqual(c.execute.call_args.args[1][-1],2)
         result=list_manifests(self.pool(rows=rows[:1])[0],limit=2)
         self.assertFalse(result['more'])
@@ -68,6 +70,37 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         wrong['progress']['format']='financial-history'
         with self.assertRaises(ValueError):find_manifest(self.pool(target=wrong)[0],wrong['id'])
         self.assertIsNone(find_manifest(self.pool(target=None)[0],self.manifest()['id']))
+
+    def test_manifest_index_refuses_neighboring_or_mismatched_identity(self):
+        raw=self.manifest()
+        packed=self.manifest(packed=True,index='2')
+        forged=[]
+        row=dict(raw,idempotency_key='demo/shadow/archive-manifest-extra/'+raw['id'])
+        forged.append(row)
+        row=dict(raw,idempotency_key=PREFIX+'batch/'+raw['id'])
+        forged.append(row)
+        row=dict(packed,idempotency_key=PREFIX+packed['id'])
+        forged.append(row)
+        row=dict(raw,idempotency_key=PREFIX+'11111111-1111-1111-1111-000000000099')
+        forged.append(row)
+        row=dict(raw,id='not-canonical-uuid')
+        forged.append(row)
+        row=dict(raw,progress=dict(raw['progress'],format='wrong-format'))
+        forged.append(row)
+        for candidate in forged:
+            with self.subTest(row=candidate['idempotency_key']):
+                with self.assertRaises(ValueError):
+                    list_manifests(self.pool(rows=[candidate])[0])
+                with self.assertRaises(ValueError):
+                    find_manifest(self.pool(target=candidate)[0],raw['id'])
+
+    def test_manifest_lookup_is_exactly_namespace_bounded(self):
+        row=self.manifest(packed=True,index='3')
+        pool,c=self.pool(target=row)
+        found=find_manifest(pool,row['id'])
+        self.assertEqual(found['id'],row['id'])
+        self.assertIn('idempotency_key LIKE %s',MANIFEST_BY_ID)
+        self.assertEqual(c.execute.call_args.args[1][-1],PREFIX+'%')
 
     def test_read_raw_original_rows_with_checksum_verified_by_existing_verifier(self):
         row=self.manifest()
