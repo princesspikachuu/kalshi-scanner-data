@@ -59,6 +59,11 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 continuation checkpoint — postmerge and held worker verified (2026-11-12 UTC)
+- **PR #217 postmerge CI `43147221170` SUCCESS** on merged `69071ad2c481a44956257a57c64e103dfc131c0d`; no data writes or strategy training.
+- **Render processing worker LIVE** on `69071ad2` at 03:23:31 UTC; predeploy 03:23:20 `storage-recovery-hold-v1` states `collection_enabled=false`, `trading_enabled=false`, `worker_role=collector`. Separate research worker remains LIVE held `585252f2`; API remains older manual release `93c86efc`.
+- Next independent code work targets strict comparison of a supplied index catalog against individually verified R2 manifest readback originals, including cross-manifest duplicate UUID rejection. Does **not** assert all-time PostgreSQL snapshot/catalog completeness, P/L or trading readiness. Operator disk/WAL, R2 READ credential, role and DB secret gates unchanged.
+
 ### MT-019 latest checkpoint — verified paper settlement marker audit merged (2026-11-12 UTC)
 - **PR #217 MERGED** `69071ad2c481a44956257a57c64e103dfc131c0d`, full CI `43146605782` SUCCESS on exact head `f3ee38506c5be1841c6ca6079af8de62d85a62b2`, postmerge CI `43147221170` running. Read-only original UUID-deduped paper market SETTLED marker review requires merged PR #216 1:1 Favorites cohort ↔ FILL linkage. Missing, earlier or multiple markers remain explicitly non-authoritative; single later marker is only a review lead. Never counts resolved wins/P&L or feeds training.
 - **PR #216 pre/postmerge full CI SUCCESS** (`43145870632`, `43146327085`), merged `8b5bf5d8`. Render processing worker LIVE that commit at 2026-11-12 03:16:20 UTC; predeploy 03:16:05 `storage-recovery-hold-v1` confirms collection=false, trading=false, worker_role=collector. Research worker held `585252f2`, API old manual `93c86efc`. Latest live worker/API state must be reconfirmed before any operational change; collection/trading/automatic archival remain held. Full data-source exhaustion, venue payout verification, lot fee/cash reconciliation and physical database/WAL headroom still not proven.
