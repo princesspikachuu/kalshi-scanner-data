@@ -5,7 +5,6 @@ does not prove an unvisited source row exists or that a writer was stopped,
 and cannot justify archival, all-time learning, or financial reconciliation.
 """
 import hashlib
-import json
 import re
 
 from services.demo.shadow_history_reconcile import HistoryReconciliationError
