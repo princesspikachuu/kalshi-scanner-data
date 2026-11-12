@@ -59,6 +59,12 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 continued checkpoint — manifest index hardening (2026-11-12 UTC)
+- **PR #213 MERGED** `0043ebee13e290b86b190d29abaa758a18bd3bc9` (CI `43135463110` SUCCESS); postmerge `43138279697` pending. Owner raw/packed history queries now include fixed bound namespace `LIKE` guard; confirmed collation issue regression tests.
+- **PR #212 MERGED** `7f1d098a0d431e6ad2fc41975e189bfa08c8e139` (CI `43135636103` SUCCESS); postmerge `43138293535` pending. Bounded READ ONLY/REPEATABLE READ same-snapshot inspection of raw/packed/manifest index windows. Not global historical coverage.
+- **Draft PR #214** `fix/mt019-manifest-index-namespace-identity` head `107a2e033ac8a6b2c9950f26f8eaa27de35b74c4`; full CI `43138568927` IN PROGRESS. Archive index and per-ID query exact prefix LIKE; catalog summary requires canonical UUID, exact raw/packed key-to-kind, and expected format; includes disposable PG mixed manifests/neighbor regression. Do not merge without green latest full CI.
+- Render worker services held and no new API history routes verified live; no production SQL/R2 writes, deleted history, paid capacity, trading/collection activation or credential changes. Operator gates still open: actual physical free disk/WAL, least privilege archive role, separate R2 READ creds, rotate DB secret, authoritative Favorites outcomes.
+
 ### MT-019 newest checkpoint — namespace isolation merged (2026-11-12 UTC)
 - **PR #213 MERGED** at `0043ebee13e290b86b190d29abaa758a18bd3bc9`, exact tested head `2ca8c611b66b43e815480d5289baede4e7cc5128`, full CI `43135463110` SUCCESS, postmerge CI `43138279697` in progress at last check. Added exact bound `LIKE prefix%` to raw and packed owner history keyset SELECTs with mixed-source disposable PostgreSQL tests.
 - **PR #212 MERGED** at `7f1d098a0d431e6ad2fc41975e189bfa08c8e139`, exact tested head `698f6956ce6f029924378e0ddd21f91d12fbd602`, full CI `43135636103` SUCCESS, postmerge CI not observed yet. Read-only REPEATABLE READ one-transaction snapshot of raw/packed/manifest index windows, strict cursor+namespace boundaries; no source completeness claim.
