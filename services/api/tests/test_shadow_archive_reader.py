@@ -81,7 +81,7 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         forged.append(row)
         row=dict(packed,idempotency_key=PREFIX+packed['id'])
         forged.append(row)
-        row=dict(raw,idempotency_key=PREFIX+'11111111-1111-1111-1111-000000000099')
+        row=dict(raw,idempotency_key=PREFIX+'invalid-key-suffix')
         forged.append(row)
         row=dict(raw,id='not-canonical-uuid')
         forged.append(row)
@@ -93,6 +93,18 @@ class ShadowArchiveReaderTests(unittest.TestCase):
                     list_manifests(self.pool(rows=[candidate])[0])
                 with self.assertRaises(ValueError):
                     find_manifest(self.pool(target=candidate)[0],raw['id'])
+
+    def test_older_manifest_with_independent_index_key_remains_accessible(self):
+        legacy=self.manifest()
+        legacy['idempotency_key']=PREFIX+'11111111-1111-1111-1111-000000000099'
+        listed=list_manifests(self.pool(rows=[legacy])[0])['items'][0]
+        self.assertEqual(listed['manifest_id'],legacy['id'])
+        self.assertEqual(listed['manifest_identity_mode'],'legacy_independent_key')
+        row=find_manifest(self.pool(target=legacy)[0],legacy['id'])
+        self.assertEqual(row['idempotency_key'],legacy['idempotency_key'])
+        direct=self.manifest(packed=True)
+        self.assertEqual(list_manifests(self.pool(rows=[direct])[0])['items'][0][
+            'manifest_identity_mode'],'canonical_row_key')
 
     def test_manifest_lookup_is_exactly_namespace_bounded(self):
         row=self.manifest(packed=True,index='3')
@@ -220,10 +232,11 @@ class LiveDisposableManifestNamespaceTests(unittest.TestCase):
     def test_real_manifest_listing_excludes_neighbor_and_preserves_both_kinds(self):
         from uuid import uuid4
         from psycopg.types.json import Jsonb
-        identifiers=[str(uuid4()) for _ in range(3)]
+        identifiers=[str(uuid4()) for _ in range(5)]
         raw_key=PREFIX+identifiers[0]
         packed_key=PREFIX+'batch/'+identifiers[1]
         neighbor_key='demo/shadow/archive-manifest-extra/'+identifiers[2]
+        legacy_key=PREFIX+identifiers[4]  # index UUID predates row UUID binding
         rows=[
             (identifiers[0],raw_key,'shadow_event_r2_manifest',
              dict(format='shadow-r2-event-batch-v1',count=1)),
@@ -232,6 +245,8 @@ class LiveDisposableManifestNamespaceTests(unittest.TestCase):
                   count=1,original_events=3)),
             (identifiers[2],neighbor_key,'shadow_event_r2_manifest',
              dict(format='shadow-r2-event-batch-v1',count=1)),
+            (identifiers[3],legacy_key,'shadow_event_r2_manifest',
+             dict(format='shadow-r2-event-batch-v1',count=1)),
         ]
         with self.store.pool.connection() as c:
             for ident,key,kind,progress in rows:
@@ -239,12 +254,16 @@ class LiveDisposableManifestNamespaceTests(unittest.TestCase):
                     (id,asset,parameters,progress,idempotency_key,status,finished_at)
                     VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())""",
                     (ident,Jsonb(dict(kind=kind)),Jsonb(progress),key))
-        first=list_manifests(self.store.pool,limit=1)
+        first=list_manifests(self.store.pool,limit=2)
         self.assertTrue(first['more'])
-        second=list_manifests(self.store.pool,limit=1,cursor=first['next_cursor'])
+        second=list_manifests(self.store.pool,limit=2,cursor=first['next_cursor'])
         self.assertFalse(second['more'])
-        self.assertEqual({x['manifest_key'] for x in
-                          first['items']+second['items']},{raw_key,packed_key})
+        combined=first['items']+second['items']
+        self.assertEqual({x['manifest_key'] for x in combined},
+                         {raw_key,packed_key,legacy_key})
+        self.assertEqual(next(x for x in combined if
+                              x['manifest_key']==legacy_key)['manifest_identity_mode'],
+                         'legacy_independent_key')
         self.assertIsNone(find_manifest(self.store.pool,identifiers[2]))
         self.assertEqual(find_manifest(self.store.pool,identifiers[0])['id'],
                          identifiers[0])
@@ -253,7 +272,7 @@ class LiveDisposableManifestNamespaceTests(unittest.TestCase):
         with self.store.pool.connection() as c:
             total=c.execute("""SELECT count(*) AS n FROM research_job
                 WHERE idempotency_key LIKE 'demo/shadow/archive-manifest%'""").fetchone()['n']
-        self.assertEqual(total,3)  # listing never changes or deletes source rows
+        self.assertEqual(total,4)  # listing never changes or deletes source rows
 
 
 if __name__=='__main__':
