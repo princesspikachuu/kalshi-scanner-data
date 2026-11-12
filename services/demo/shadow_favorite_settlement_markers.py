@@ -50,6 +50,8 @@ def inspect_supplied_favorite_settlement_markers(pages):
         if p.get('event')!='SETTLED':
             continue
         ticker=p.get('ticker')
+        if not isinstance(ticker,str) or not 1<=len(ticker)<=140:
+            raise HistoryReconciliationError('Invalid paper settlement ticker')
         if ticker not in entry_by_ticker:
             continue
         payout=_number(p.get('price'),'yes payout')
