@@ -102,9 +102,16 @@ class LiveDisposableSnapshotWindow(unittest.TestCase):
         for number in range(5):
             self.demo.put('shadow/event/'+f'{number:04d}',
                           {'event':'FAVORITE_STAT_DECISION','time':number})
+        self.demo.put('shadow/event-batch/'+str(uuid4()),
+                      {'format':'shadow-diagnostic-batch-v1'})
+        self.demo.put('shadow/archive-manifest/'+str(uuid4()),
+                      {'format':'shadow-r2-event-batch-v1'},
+                      parameters={'kind':'shadow_event_r2_manifest'})
         result=read_postgres_snapshot_window(self.store.pool,page_size=4)
         raw=result['windows']['raw']
         self.assertEqual(raw['rows_in_window'],4)
+        self.assertEqual(result['windows']['packed']['rows_in_window'],1)
+        self.assertEqual(result['windows']['manifests']['rows_in_window'],1)
         self.assertTrue(raw['more'])
         self.assertEqual(raw['next_cursor'],'demo/shadow/event/0003')
         self.assertEqual(result['isolation'],'repeatable_read_read_only')
