@@ -28,7 +28,7 @@ class SnapshotWindowUnitTests(unittest.TestCase):
         self.assertEqual(connection.execute.call_count,6)
         sqlcalls=[call.args[0] for call in connection.execute.call_args_list]
         self.assertEqual(sqlcalls[0],
-                         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+                         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         self.assertEqual(sqlcalls[1],'SET LOCAL statement_timeout=5000')
         self.assertEqual(sqlcalls[2],'SELECT txid_current_snapshot()::text AS snapshot')
         self.assertEqual(sqlcalls[3],KEY_SQL)
@@ -67,6 +67,18 @@ class SnapshotWindowUnitTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     read_postgres_snapshot_window(pool,**params)
         pool.connection.assert_not_called()
+
+    def test_invalid_index_key_which_cannot_be_resumed_fails(self):
+        pool=MagicMock()
+        c=pool.connection.return_value.__enter__.return_value
+        snap=MagicMock()
+        snap.fetchone.return_value={'snapshot':'1:2:'}
+        invalid=MagicMock()
+        invalid.fetchall.return_value=[
+            {'idempotency_key':'demo/shadow/event/a/slash'}]
+        c.execute.side_effect=[MagicMock(),MagicMock(),snap,invalid]
+        with self.assertRaises(ValueError):
+            read_postgres_snapshot_window(pool)
 
     def test_tampered_result_order_refused(self):
         pool=MagicMock()
