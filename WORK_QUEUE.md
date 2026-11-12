@@ -59,6 +59,11 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 checkpoint — bounded PostgreSQL/R2 archive-catalog crosscheck (2026-11-12 UTC)
+- **DRAFT PR #218** `fix/mt019-catalog-r2-crosscheck`, latest head `2480f531676a05f4e14a8179e92cac3743925140`, full GitHub Actions `43155287949` in progress. Pure, bounded offline comparison of terminal *supplied* PostgreSQL manifest keyset pages with per-manifest checksum-attested R2 original page chains. Requires manifest ID/kind/key/digest/count agreement, legacy independent key UUID support, no extra or missing manifests and globally unique original UUID/key across listed archives. 8 catalog pages / 32 manifests / 128 readback pages / 4,000 originals max; outputs explicitly FALSE for global source exhaustion, stable live DB snapshot, independent R2 re-verification, full history/P&L/training. Adds disposable PG manifest index keyset test and identity-digest page-boundary tests. **Do not merge until full latest CI SUCCESS.**
+- PR #217 postmerge full CI `43147221170` **SUCCESS**, processing Render worker LIVE on merged `69071ad2` since 03:23:31 UTC with 03:23:20 recovery-hold predeploy `collection_enabled=false`/`trading_enabled=false`. Separate research worker held `585252f2`; API older manual `93c86efc`. No worker trading/collection/archive/restore activation, no data or access changes.
+- Still operator-blocked: actual physical free disk/WAL, scoped SQL archive role, separate R2 read-only credentials, rotation of exposed DB secret, global original hot/R2 enumeration and authoritative market payout + virtual lot/fee/cash reconciliation.
+
 ### MT-019 continuation checkpoint — postmerge and held worker verified (2026-11-12 UTC)
 - **PR #217 postmerge CI `43147221170` SUCCESS** on merged `69071ad2c481a44956257a57c64e103dfc131c0d`; no data writes or strategy training.
 - **Render processing worker LIVE** on `69071ad2` at 03:23:31 UTC; predeploy 03:23:20 `storage-recovery-hold-v1` states `collection_enabled=false`, `trading_enabled=false`, `worker_role=collector`. Separate research worker remains LIVE held `585252f2`; API remains older manual release `93c86efc`.
