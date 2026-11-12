@@ -97,6 +97,20 @@ class VerifiedHistoryReconciliationTests(unittest.TestCase):
         self.assertAlmostEqual(result['items'][0]['event_time'],1794437000.123456)
         self.assertEqual(result['items'][0]['progress']['time'],'1794437000.123456')
 
+    def test_normalized_r2_float_timestamp_matches_original_decimal_string(self):
+        original=event()
+        original['progress']['time']='1794437000.123456'
+        original['event_time']='1794437000.123456'
+        first=reconcile_verified_pages([page('r2_reclaimed_raw',original,verified=True)])
+        archived=first['items'][0]
+        second=reconcile_verified_pages([
+            page('r2_reclaimed_raw',archived,verified=True)])
+        self.assertEqual(second['unique_events'],1)
+        self.assertEqual(second['items'][0]['progress']['time'],'1794437000.123456')
+        altered=dict(archived,event_time=1794437000.123999)
+        with self.assertRaises(HistoryReconciliationError):
+            reconcile_verified_pages([page('r2_reclaimed_raw',altered,verified=True)])
+
     def test_unsafe_timestamp_strings_rejected(self):
         for value in ('NaN','Infinity','-100','1e10','', '123; DROP TABLE',
                       '1'*42):
