@@ -5,6 +5,7 @@ The snapshot covers PostgreSQL source *index keys*, not verified R2 objects
 or authoritative historical Favorites outcomes.
 """
 import hashlib
+import json
 
 from services.demo.shadow_history_pages import (
     RAW_PREFIX, PACKED_PREFIX, validate_cursor,
@@ -50,7 +51,7 @@ def read_postgres_snapshot_window(pool, *, page_size=16, cursors=None):
         with connection.transaction():
             # Must precede the first SELECT. If this cannot be applied, abort
             # instead of claiming a stable/consistent snapshot.
-            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
             connection.execute('SET LOCAL statement_timeout=5000')
             marker=connection.execute(
                 'SELECT txid_current_snapshot()::text AS snapshot').fetchone()['snapshot']
@@ -64,9 +65,14 @@ def read_postgres_snapshot_window(pool, *, page_size=16, cursors=None):
                     raise ValueError('Invalid scanned index key')
                 if keys!=sorted(keys) or len(set(keys))!=len(keys):
                     raise ValueError('Unsorted or repeated snapshot index keys')
+                for key in keys:
+                    if source=='manifests':
+                        validate_manifest_page(1,key)
+                    else:
+                        validate_cursor(source,key)
                 more=len(rows)>page_size
                 digest=hashlib.sha256(
-                    '\n'.join(keys).encode('utf-8')).hexdigest()
+                    json.dumps(keys,separators=(',',':'),ensure_ascii=True).encode('utf-8')).hexdigest()
                 windows[source]=dict(source=source,
                     request_cursor=cursors.get(source),
                     rows_in_window=len(keys),
