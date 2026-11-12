@@ -33,3 +33,16 @@ or an explicit fixed immutable cutoff with independent change-detection,
 plus R2 manifest catalog and SHA/gzip checks, before asserting completeness.
 Do not leave long-lived PostgreSQL transactions open during active storage
 pressure without understanding vacuum/WAL costs.
+
+## Verified namespace-boundary finding
+
+Disposable PostgreSQL tests showed that a range bounded by
+`demo/shadow/event/` and `demo/shadow/event/zzzz` also counted a
+neighboring `demo/shadow/event-batch/` row under the active collation.
+The snapshot helper now requires **both** the existing indexed bounds
+and an explicit bound `idempotency_key LIKE 'demo/shadow/event/%'`
+(or the corresponding packed/manifest prefix). Its verification count
+uses the same strict predicate. This prevents incorrect source counts
+without relaxing the fail-closed index-key validation.
+The production owner history endpoint mitigation is separately reviewed
+in PR #213.
