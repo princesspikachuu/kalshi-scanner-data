@@ -59,6 +59,12 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 checkpoint — operator namespace fixes merged (2026-11-12 UTC)
+- **PR #215 MERGED** `8677e13682b8572cd0107863b68d09be004033f7`, exact tested head `40d8be68ad1b7d97e887d09355279f2cfc5de201`, full premerge CI `43139534217` SUCCESS. Read-only previews and operator-only direct reclaim now restrict raw/packed SQL with exact namespace predicates; pre-R2 validation rejects neighboring keys; direct-owner new manifest IDs match keys. Postmerge CI pending at checkpoint.
+- **PR #214 postmerge CI `43139617921` SUCCESS** for merged `48c6d72c`; both legacy independent manifest key UUIDs and new exact row UUID/key remain supported. Neither fix enables archive deletion or R2 READ authorization.
+- Independent next step: read-only original audit `FILL` to Favorites `FAVORITE_ENTRY_COHORT` pairing (non-financial evidence linking), still blocked on full authoritative settlement/P&L and source exhaustion before any statistics training. Processing/research workers held and API still manually older unless fresh Render deploy verification proves otherwise.
+- Physical disk/WAL headroom, scoped maintenance role, separate R2 READ credentials, DB secret rotation still operator-only gates; do not resume collectors or trading or execute archive/deletion.
+
 ### MT-019 checkpoint — archive-index legacy compatibility & reclaim namespace fences (2026-11-12 UTC)
 - PR #213 `0043ebee` and PR #212 `7f1d098a`: **both premerge and postmerge CI SUCCESS** (postmerge `43138279697`, `43138293535`). New history code not verified deployed in API, manually deployed API still older `93c86efc`.
 - **PR #214 MERGED** as `48c6d72cc6cf705c427e4a42f36696003e4b3209`, tested head `84728880bf880daa53bd070bc77b843db1bce4e7`, premerge CI `43139098844` SUCCESS, postmerge `43139617921` in progress. Legacy-safe archive index metadata and R2 page normalization. Exact manifest listing and per-ID prefix LIKE and canonical UUIDs, but allows **legacy operator archives with different row UUID and key UUID** (existing direct-owner tool generated two independently). Reclaimed raw/packed page normalization and chain audit now accept verified legacy identifiers, never permit wrong kind/format or malformed UUID. Real disposable PG mixed index tests. No merge until latest full CI SUCCESS.
