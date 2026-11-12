@@ -173,17 +173,42 @@ class RealPostgresFavoriteFillLinkageTests(unittest.TestCase):
         self.assertEqual(len(packed),1)
         with self.store.pool.connection() as connection:
             connection.execute(UPSERT,packed[0])
-        raw_page=self.client.get('/demo/shadow/history/raw')
-        packed_page=self.client.get('/demo/shadow/history/packed')
-        self.assertEqual(raw_page.status_code,200,raw_page.text)
-        self.assertEqual(packed_page.status_code,200,packed_page.text)
-        raw_body,packed_body=raw_page.json(),packed_page.json()
-        self.assertEqual(raw_body['source_rows'],1)
-        self.assertEqual(packed_body['source_rows'],1)
-        self.assertEqual(packed_body['original_events'],1)
+        # Authentication and other disposable test infrastructure may
+        # record additional hot audit rows. Verify the inserted originals by
+        # UUID after draining bounded keyset pages, not by assuming that a
+        # database page has exactly one row.
+        def drain(source):
+            cursor=None;items=[];seen_keys=set()
+            for _ in range(16):
+                params={'cursor':cursor} if cursor is not None else None
+                response=self.client.get('/demo/shadow/history/'+source,
+                                         params=params)
+                self.assertEqual(response.status_code,200,response.text)
+                body=response.json()
+                self.assertEqual(body['request_cursor'],cursor)
+                self.assertTrue(set(body['source_keys']).isdisjoint(seen_keys))
+                seen_keys.update(body['source_keys'])
+                items.extend(body['items'])
+                if not body['more']:
+                    return items,seen_keys
+                self.assertIsInstance(body['next_cursor'],str)
+                cursor=body['next_cursor']
+            self.fail('Disposable source pagination did not terminate')
+        raw_items,raw_keys=drain('raw')
+        packed_items,packed_keys=drain('packed')
+        self.assertTrue(all(k.startswith(RAW_PREFIX) for k in raw_keys))
+        self.assertTrue(all(k.startswith('demo/shadow/event-batch/')
+                            for k in packed_keys))
+        raw_matches=[e for e in raw_items if e['id']==fill_id]
+        packed_matches=[e for e in packed_items
+                        if e['id']==str(packed_original[0])]
+        self.assertEqual(len(raw_matches),1)
+        self.assertEqual(len(packed_matches),1)
+        self.assertEqual(packed_matches[0]['progress']['event'],
+                         'FAVORITE_ENTRY_COHORT')
         result=inspect_supplied_favorite_fill_links([
-            page(*raw_body['items'],source='hot_raw'),
-            page(*packed_body['items'],source='hot_packed')])
+            page(*raw_items,source='hot_raw'),
+            page(*packed_items,source='hot_packed')])
         self.assertEqual(result['unambiguous_fill_links'],1)
         self.assertEqual(result['matched_originals'][0]['fill_original_id'],
                          fill_id)
