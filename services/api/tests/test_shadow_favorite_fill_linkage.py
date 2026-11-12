@@ -17,15 +17,11 @@ def original(progress):
 def events(order=None, *, qty='2',price='0.80',fee='0.02',
            time='1794437000.123456',ticker='KXFAV'):
     order=order or str(uuid4())
+    from decimal import Decimal
+    cost=str(Decimal(qty)*Decimal(price)+Decimal(fee))
     detail=dict(key='entry-v2|KXFAV|yes|80|<3m|market_close',
                 at=float(time),price=price,quantity=qty,remaining=qty,
-                cost=str(int(qty)*0.8+0.02) if qty=='2' and price=='0.80'
-                and fee=='0.02' else str(__import__('decimal').Decimal(qty)*
-                  __import__('decimal').Decimal(price)+__import__('decimal').Decimal(fee)),
-                remaining_cost='1.62' if qty=='2' and price=='0.80'
-                and fee=='0.02' else str(__import__('decimal').Decimal(qty)*
-                  __import__('decimal').Decimal(price)+__import__('decimal').Decimal(fee)),
-                verified=True,order_id=order)
+                cost=cost,remaining_cost=cost,verified=True,order_id=order)
     cohort=original(dict(event='FAVORITE_ENTRY_COHORT',ticker=ticker,
                          order_id=order,side='yes',action='buy',
                          quantity=qty,price=price,fee=fee,time=time,
@@ -117,7 +113,8 @@ class FavoriteOriginalFillLinkageTests(unittest.TestCase):
         cohort,fill=events()
         for field,value in (('quantity','NaN'),('price','Infinity'),
                             ('fee','-0.01'),('time','x'),('side','maybe'),
-                            ('ticker',''),('action','wrong')):
+                            ('ticker',''),('action','wrong'),
+                            ('order_id',[]),('order_id',{})):
             bad=deepcopy(fill)
             bad['progress'][field]=value
             with self.subTest(field=field):
