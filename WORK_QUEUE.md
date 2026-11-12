@@ -59,6 +59,11 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 latest saved checkpoint — PR #212 CI repair (2026-11-12 UTC)
+- PR #211 postmerge CI `43128969913` **SUCCESS** after squash merge `b708b27f`.
+- PR #212 **DRAFT** `fix/mt019-readonly-snapshot-windows`, latest HEAD `d334089f330f7931893cf9c513c238e507a41349`, full CI `43135161853` in progress. Earlier full run `43129178720` failed 1 of 1,628 tests in the second disposable-PostgreSQL snapshot window due to invalid source index key. Diagnostic run `43134981174` was also in progress. Added nonsecret range/cursor classification and strict SQL same-prefix `LIKE` filter to guard adjacent namespace leakage under text collation, with test assertions. **Do not merge unless latest full CI passes**.
+- Still no API historical endpoint deployment or verified physical disk/WAL headroom. Processing worker held on `00f7c9f4`; research worker held on `585252f2`; API manual older `93c86efc`. Do not enable writers, recurring archive, trading, or delete histories.
+
 ### MT-019 newest independently saved checkpoint — 2026-11-12 00:41 UTC
 - **PR #211 MERGED** `b708b27fef46fc69a84ec9c365a6c010d5346f1c`, premerge full CI `43128441137` SUCCESS on exact head `d55ccff0d87c4850de4da14a86042cddc013a1aa`, postmerge CI `43128969913` running. Constant-memory original SQL indexed-source keyset continuity receipts for raw, packed and manifest pages; tests exercised real disposable PostgreSQL 11 raw/3 packed page sources. All-time coverage and safe-to-train remain explicitly false.
 - **Draft PR #212** `fix/mt019-readonly-snapshot-windows`, latest head `78e236a01c9eacf16b969c99f4d02c3b353e9a9a`, full CI `43129178720` in progress; source key formats now validated with existing cursor validators, unambiguous key digest, SQL-standard comma-separated readonly isolation options, with regressions. Read-only REPEATABLE READ bounded same-transaction scan of all 3 indexed PostgreSQL namespaces with query 5s timeout and max 32 keys/source, verified with mock and disposable PostgreSQL. No R2 read, no complete historical data claim, no production deployment. Merge only after latest CI success.
