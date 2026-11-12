@@ -29,6 +29,26 @@ class ReclaimedChainTests(unittest.TestCase):
         self.assertFalse(result['r2_manifest_catalog_complete'])
         self.assertFalse(result['all_time_coverage_complete'])
 
+    def test_legacy_independent_key_uuid_allowed_but_wrong_kind_rejected(self):
+        first=make_pages(1,1)
+        first[0]['manifest_key']='demo/shadow/archive-manifest/'+str(uuid4())
+        receipt=verify_reclaimed_manifest_chain(first)
+        self.assertTrue(receipt['individual_manifest_exhausted'])
+        for bad in (
+            'demo/shadow/archive-manifest/batch/'+str(uuid4()),
+            'demo/shadow/archive-manifest/not-a-uuid',
+            'demo/shadow/archive-manifest-extra/'+str(uuid4()),
+        ):
+            with self.subTest(key=bad):
+                with self.assertRaises(HistoryReconciliationError):
+                    verify_reclaimed_manifest_chain([dict(first[0],manifest_key=bad)])
+        packed=[dict(first[0],source='r2_reclaimed_packed',
+                     manifest_key='demo/shadow/archive-manifest/batch/'+str(uuid4()))]
+        self.assertTrue(verify_reclaimed_manifest_chain(packed)['individual_manifest_exhausted'])
+        with self.assertRaises(HistoryReconciliationError):
+            verify_reclaimed_manifest_chain([
+                dict(packed[0],manifest_key='demo/shadow/archive-manifest/'+str(uuid4()))])
+
     def test_missing_page_or_skipped_offset_fails(self):
         pages=make_pages()
         for modified in ([pages[0]], [pages[1]],
