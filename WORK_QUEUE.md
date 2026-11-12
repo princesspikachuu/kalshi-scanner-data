@@ -59,6 +59,12 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 newest independently saved checkpoint — 2026-11-12 00:41 UTC
+- **PR #211 MERGED** `b708b27fef46fc69a84ec9c365a6c010d5346f1c`, premerge full CI `43128441137` SUCCESS on exact head `d55ccff0d87c4850de4da14a86042cddc013a1aa`, postmerge CI `43128969913` running. Constant-memory original SQL indexed-source keyset continuity receipts for raw, packed and manifest pages; tests exercised real disposable PostgreSQL 11 raw/3 packed page sources. All-time coverage and safe-to-train remain explicitly false.
+- **Draft PR #212** `fix/mt019-readonly-snapshot-windows`, latest head `f603a7d562b9e31382ad089d0eb5ca62179e882a`, full CI `43128932710` in progress. Read-only REPEATABLE READ bounded same-transaction scan of all 3 indexed PostgreSQL namespaces with query 5s timeout and max 32 keys/source, verified with mock and disposable PostgreSQL. No R2 read, no complete historical data claim, no production deployment. Merge only after latest CI success.
+- Last verified Render processing worker LIVE `00f7c9f4` with recovery hold collection/trading OFF; research worker LIVE `585252f2` with explicit COLLECTION_ENABLED=false; API LIVE manual old `93c86efc`. Do not enable trading, background collection, archive cleanup or restoration before operator safety gates.
+- Full R2 catalog/history and Favorites financial/settlement reconstruction still incomplete, physical disk/WAL headroom, scoped maintenance role, separate R2 READ credentials, and DB secret rotation still require operator action.
+
 ### MT-019 latest independently saved checkpoint — 2026-11-12 00:36 UTC
 - **PR #210 postmerge GitHub Actions `43127592634` SUCCESS**; processing worker now LIVE on merged `00f7c9f4534b15a81b5f59cdb69360fe1d4c2677` since 00:33:54 UTC. Verified predeploy `storage-recovery-hold-v1` 00:33:43 with `collection_enabled=false` and `trading_enabled=false`.
 - **Separate research worker explicitly held**: `COLLECTION_ENABLED=false`, LIVE `585252f2` since 00:29:29 UTC; recovery-hold receipt verified at 00:29:17. Recent inspected logs showed no collection attempts. API LIVE older manual `93c86efc`; none of new history endpoints verified deployed there.
