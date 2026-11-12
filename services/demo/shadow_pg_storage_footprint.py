@@ -129,6 +129,9 @@ def main(argv=None):
     if not args.execute_readonly:
         print('No query run. Pass --execute-readonly on an authorized Render shell.')
         return 0
+    if not 1 <= args.top_relations <= MAX_RELATIONS:
+        print('Invalid bounded relation count; no query run.',file=sys.stderr)
+        return 2
     url = os.environ.get('RECOVERY_DATABASE_URL')
     if not url:
         print('RECOVERY_DATABASE_URL missing; no query run.',file=sys.stderr)
