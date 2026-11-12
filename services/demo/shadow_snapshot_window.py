@@ -62,7 +62,7 @@ def read_postgres_snapshot_window(pool, *, page_size=16, cursors=None):
                 keys=[row['idempotency_key'] for row in rows[:page_size]]
                 if any(not isinstance(k,str) or not prefix<k<prefix+'zzzz'
                        or k<=after for k in keys):
-                    raise ValueError('Invalid scanned index key')
+                    raise ValueError('Invalid scanned index key in '+source)
                 if keys!=sorted(keys) or len(set(keys))!=len(keys):
                     raise ValueError('Unsorted or repeated snapshot index keys')
                 for key in keys:
