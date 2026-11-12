@@ -36,6 +36,8 @@ class SnapshotWindowUnitTests(unittest.TestCase):
         self.assertEqual(sqlcalls[5],MANIFEST_KEYS_SQL)
         for call in connection.execute.call_args_list[3:]:
             self.assertEqual(call.args[1][-1],5)
+            self.assertTrue(call.args[1][2].endswith('/%'))
+            self.assertIn('idempotency_key LIKE %s',call.args[0])
 
     def test_partial_windows_can_never_claim_entire_namespace(self):
         pool=MagicMock()
