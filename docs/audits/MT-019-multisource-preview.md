@@ -30,3 +30,5 @@ worker. It does not change Favorites evidence cells, compute wins, alter
 historical P/L, restart collection/trading, enable archive cleanup or use
 credentials. The next source-of-truth step requires a stable cutoff/snapshot,
 streaming catalog and per-original evidence acceptance without double-counting.
+
+The shared original-ID reconciler tolerates a previously normalized numeric event_time alongside the unchanged decimal-string original progress.time, but rejects inconsistent numeric times. This permits verified R2 page adaptation to pass through a second reconciliation stage without modifying its source audit payload.
