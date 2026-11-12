@@ -49,6 +49,7 @@ CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
     AND created_at<to_timestamp(%s)
     AND NOT (progress ? 'archive')
     AND idempotency_key>=%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     AND progress->>'event'=ANY(%s::text[])
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES = CANDIDATES + ' FOR UPDATE SKIP LOCKED'
@@ -61,6 +62,7 @@ MANIFEST_SQL = """INSERT INTO research_job
 DELETE_SQL = """DELETE FROM research_job WHERE id=ANY(%s::uuid[])
     AND status='succeeded'
     AND idempotency_key>=%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     AND created_at<to_timestamp(%s)
     AND NOT (progress ? 'archive')
     AND progress->>'event'=ANY(%s::text[]) RETURNING id::text"""
@@ -127,7 +129,8 @@ def plan_only(pool, *, now, age_hours=24, batch_size=100):
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=5000')
-            rows = c.execute(CANDIDATES, (cutoff, PREFIX, PREFIX+'zzzz', list(SAFE_EVENT_KINDS), batch_size)).fetchall()
+            rows = c.execute(CANDIDATES, (cutoff, PREFIX, PREFIX+'zzzz',
+                                  PREFIX+'%',list(SAFE_EVENT_KINDS), batch_size)).fetchall()
     kinds = Counter(str(r['progress'].get('event','unknown')) for r in rows)
     return dict(mode='preview', eligible_in_sample=len(rows),
                 batch_limit=batch_size, hot_hours=age_hours,
@@ -140,6 +143,9 @@ def _prepare_verified_archive(rows, objects, now):
     records = archive_payload(rows)
     if any(r['progress'].get('event') not in SAFE_EVENT_KINDS for r in rows):
         raise RuntimeError('Non-diagnostic audit event selected; refusing to remove')
+    if any(not isinstance(r.get('idempotency_key'),str)
+            or not r['idempotency_key'].startswith(PREFIX) for r in rows):
+        raise RuntimeError('Unrelated row selected for diagnostic archival')
     # put_verified completes full R2 read-after-write SHA-256 and JSON check.
     receipt = put_verified(objects, 'events', records)
     ids = [r['id'] for r in rows]
@@ -167,7 +173,8 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100,
     The legacy direct-owner path retains its original row-lock transaction.
     """
     cutoff = validate_window(now, age_hours, batch_size)
-    args = (cutoff, PREFIX, PREFIX+'zzzz', list(SAFE_EVENT_KINDS), batch_size)
+    args = (cutoff, PREFIX, PREFIX+'zzzz', PREFIX+'%',
+            list(SAFE_EVENT_KINDS), batch_size)
     if scoped:
         with pool.connection() as connection:
             with connection.transaction():
@@ -193,11 +200,13 @@ def archive_and_reclaim_one(pool, objects, *, now, age_hours=24, batch_size=100,
                 if not rows:
                     return dict(mode='executed', archived=0, deleted=0, hot_hours=age_hours)
                 records, ids, manifest, receipt = _prepare_verified_archive(rows, objects, now)
-                connection.execute(MANIFEST_SQL, (uuid4(),
+                manifest_id=uuid4()
+                connection.execute(MANIFEST_SQL, (manifest_id,
                     Jsonb(dict(kind='shadow_event_r2_manifest')),
-                    Jsonb(manifest), MANIFEST_PREFIX+str(uuid4())))
+                    Jsonb(manifest), MANIFEST_PREFIX+str(manifest_id)))
                 deleted = connection.execute(DELETE_SQL,
-                    (ids, PREFIX, PREFIX+'zzzz', cutoff, list(SAFE_EVENT_KINDS))).fetchall()
+                    (ids, PREFIX, PREFIX+'zzzz', PREFIX+'%',
+                     cutoff, list(SAFE_EVENT_KINDS))).fetchall()
                 _check_reclaimed(deleted, ids)
     return dict(mode='executed', archived=len(rows), deleted=len(rows),
                 compressed_bytes=receipt['size'], hot_hours=age_hours,
