@@ -108,6 +108,37 @@ class ReadonlyStorageFootprintUnitTests(unittest.TestCase):
         self.assertFalse(out['safe_to_archive_or_delete'])
 
 
+class StorageFootprintCommandSafetyTests(unittest.TestCase):
+    def test_cli_does_not_connect_without_explicit_flag(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from unittest.mock import patch
+        from services.demo.shadow_pg_storage_footprint import main
+        with patch.dict('os.environ',{},clear=True):
+            output=io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main([]),0)
+            self.assertIn('No query run',output.getvalue())
+            error=io.StringIO()
+            with redirect_stderr(error):
+                self.assertEqual(main(['--execute-readonly']),2)
+            self.assertIn('RECOVERY_DATABASE_URL missing',error.getvalue())
+            self.assertNotIn('postgres://',error.getvalue())
+
+    def test_bad_cli_budget_is_rejected_before_database_connection(self):
+        import io
+        from contextlib import redirect_stderr
+        from unittest.mock import patch
+        from services.demo.shadow_pg_storage_footprint import main
+        with patch.dict('os.environ',{'RECOVERY_DATABASE_URL':'sensitive-do-not-print'}):
+            err=io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(
+                    main(['--execute-readonly','--top-relations','13']),2)
+            self.assertIn('Invalid bounded relation count',err.getvalue())
+            self.assertNotIn('sensitive-do-not-print',err.getvalue())
+
+
 from services.api.tests import test_demo_postgres as fixture
 
 
