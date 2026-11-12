@@ -4,6 +4,7 @@ This does not imply the PostgreSQL manifest catalog was exhaustively listed,
 nor that trading events in other stores have been incorporated.
 """
 import re
+from uuid import UUID
 from services.demo.shadow_history_reconcile import HistoryReconciliationError
 
 MAX_MANIFEST_PAGES = 128
@@ -26,6 +27,16 @@ def verify_reclaimed_manifest_chain(pages):
             or type(total) is not int or not 1 <= total <= 10000
             or not isinstance(digest,str) or re.fullmatch(r'[0-9a-f]{64}',digest) is None):
         raise HistoryReconciliationError('Invalid reclaimed manifest metadata')
+    prefix=('demo/shadow/archive-manifest/batch/'
+            if source=='r2_reclaimed_packed'
+            else 'demo/shadow/archive-manifest/')
+    try:
+        if not key.startswith(prefix) or str(UUID(key[len(prefix):])) != key[len(prefix):]:
+            raise ValueError('Invalid index suffix')
+        if str(UUID(ident)) != ident:
+            raise ValueError('Invalid durable manifest ID')
+    except (TypeError,ValueError,AttributeError) as exc:
+        raise HistoryReconciliationError('Reclaimed manifest key/ID not canonical') from exc
     seen_ids = set()
     position = 0
     for index, page in enumerate(pages):

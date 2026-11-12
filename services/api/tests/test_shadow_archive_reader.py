@@ -50,6 +50,8 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         self.assertEqual(result['items'][0]['manifest_key'],rows[0]['idempotency_key'])
         self.assertTrue(result['no_r2_reads'])
         self.assertEqual(c.execute.call_args.args[0],MANIFEST_SCAN)
+        self.assertIn('idempotency_key LIKE %s',MANIFEST_SCAN)
+        self.assertEqual(c.execute.call_args.args[1][2],PREFIX+'%')
         self.assertEqual(c.execute.call_args.args[1][-1],2)
         result=list_manifests(self.pool(rows=rows[:1])[0],limit=2)
         self.assertFalse(result['more'])
@@ -68,6 +70,49 @@ class ShadowArchiveReaderTests(unittest.TestCase):
         wrong['progress']['format']='financial-history'
         with self.assertRaises(ValueError):find_manifest(self.pool(target=wrong)[0],wrong['id'])
         self.assertIsNone(find_manifest(self.pool(target=None)[0],self.manifest()['id']))
+
+    def test_manifest_index_refuses_neighboring_or_mismatched_identity(self):
+        raw=self.manifest()
+        packed=self.manifest(packed=True,index='2')
+        forged=[]
+        row=dict(raw,idempotency_key='demo/shadow/archive-manifest-extra/'+raw['id'])
+        forged.append(row)
+        row=dict(raw,idempotency_key=PREFIX+'batch/'+raw['id'])
+        forged.append(row)
+        row=dict(packed,idempotency_key=PREFIX+packed['id'])
+        forged.append(row)
+        row=dict(raw,idempotency_key=PREFIX+'invalid-key-suffix')
+        forged.append(row)
+        row=dict(raw,id='not-canonical-uuid')
+        forged.append(row)
+        row=dict(raw,progress=dict(raw['progress'],format='wrong-format'))
+        forged.append(row)
+        for candidate in forged:
+            with self.subTest(row=candidate['idempotency_key']):
+                with self.assertRaises(ValueError):
+                    list_manifests(self.pool(rows=[candidate])[0])
+                with self.assertRaises(ValueError):
+                    find_manifest(self.pool(target=candidate)[0],raw['id'])
+
+    def test_older_manifest_with_independent_index_key_remains_accessible(self):
+        legacy=self.manifest()
+        legacy['idempotency_key']=PREFIX+'11111111-1111-1111-1111-000000000099'
+        listed=list_manifests(self.pool(rows=[legacy])[0])['items'][0]
+        self.assertEqual(listed['manifest_id'],legacy['id'])
+        self.assertEqual(listed['manifest_identity_mode'],'legacy_independent_key')
+        row=find_manifest(self.pool(target=legacy)[0],legacy['id'])
+        self.assertEqual(row['idempotency_key'],legacy['idempotency_key'])
+        direct=self.manifest(packed=True)
+        self.assertEqual(list_manifests(self.pool(rows=[direct])[0])['items'][0][
+            'manifest_identity_mode'],'canonical_row_key')
+
+    def test_manifest_lookup_is_exactly_namespace_bounded(self):
+        row=self.manifest(packed=True,index='3')
+        pool,c=self.pool(target=row)
+        found=find_manifest(pool,row['id'])
+        self.assertEqual(found['id'],row['id'])
+        self.assertIn('idempotency_key LIKE %s',MANIFEST_BY_ID)
+        self.assertEqual(c.execute.call_args.args[1][-1],PREFIX+'%')
 
     def test_read_raw_original_rows_with_checksum_verified_by_existing_verifier(self):
         row=self.manifest()
@@ -167,6 +212,67 @@ class ShadowArchiveReaderTests(unittest.TestCase):
             response=client.get('/demo/shadow/archives/11111111-1111-1111-1111-111111111111')
         self.assertEqual(response.status_code,503)
         self.assertNotIn('private-secret',response.text)
+
+
+from services.api.tests import test_demo_postgres as fixture
+
+@unittest.skipUnless(fixture.URL, 'Disposable PostgreSQL is required')
+class LiveDisposableManifestNamespaceTests(unittest.TestCase):
+    setUp=fixture.DemoPostgres.setUp
+    tearDown=fixture.DemoPostgres.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        fixture.DemoPostgres.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture.DemoPostgres.tearDownClass.__func__(cls)
+
+    def test_real_manifest_listing_excludes_neighbor_and_preserves_both_kinds(self):
+        from uuid import uuid4
+        from psycopg.types.json import Jsonb
+        identifiers=[str(uuid4()) for _ in range(5)]
+        raw_key=PREFIX+identifiers[0]
+        packed_key=PREFIX+'batch/'+identifiers[1]
+        neighbor_key='demo/shadow/archive-manifest-extra/'+identifiers[2]
+        legacy_key=PREFIX+identifiers[4]  # index UUID predates row UUID binding
+        rows=[
+            (identifiers[0],raw_key,'shadow_event_r2_manifest',
+             dict(format='shadow-r2-event-batch-v1',count=1)),
+            (identifiers[1],packed_key,'diagnostic_batch_r2_manifest',
+             dict(format='shadow-diagnostic-r2-manifest-v1',
+                  count=1,original_events=3)),
+            (identifiers[2],neighbor_key,'shadow_event_r2_manifest',
+             dict(format='shadow-r2-event-batch-v1',count=1)),
+            (identifiers[3],legacy_key,'shadow_event_r2_manifest',
+             dict(format='shadow-r2-event-batch-v1',count=1)),
+        ]
+        with self.store.pool.connection() as c:
+            for ident,key,kind,progress in rows:
+                c.execute("""INSERT INTO research_job
+                    (id,asset,parameters,progress,idempotency_key,status,finished_at)
+                    VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())""",
+                    (ident,Jsonb(dict(kind=kind)),Jsonb(progress),key))
+        first=list_manifests(self.store.pool,limit=2)
+        self.assertTrue(first['more'])
+        second=list_manifests(self.store.pool,limit=2,cursor=first['next_cursor'])
+        self.assertFalse(second['more'])
+        combined=first['items']+second['items']
+        self.assertEqual({x['manifest_key'] for x in combined},
+                         {raw_key,packed_key,legacy_key})
+        self.assertEqual(next(x for x in combined if
+                              x['manifest_key']==legacy_key)['manifest_identity_mode'],
+                         'legacy_independent_key')
+        self.assertIsNone(find_manifest(self.store.pool,identifiers[2]))
+        self.assertEqual(find_manifest(self.store.pool,identifiers[0])['id'],
+                         identifiers[0])
+        self.assertEqual(find_manifest(self.store.pool,identifiers[1])['id'],
+                         identifiers[1])
+        with self.store.pool.connection() as c:
+            total=c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE idempotency_key LIKE 'demo/shadow/archive-manifest%'""").fetchone()['n']
+        self.assertEqual(total,4)  # listing never changes or deletes source rows
 
 
 if __name__=='__main__':

@@ -20,7 +20,8 @@ MAX_PAGE = 25
 MAX_EVENTS = 50
 MANIFEST_SCAN = """SELECT id::text,idempotency_key,parameters,progress,created_at
     FROM research_job WHERE idempotency_key>=%s
-    AND idempotency_key<%s AND (%s::text IS NULL OR idempotency_key>%s)
+    AND idempotency_key<%s AND idempotency_key LIKE %s
+    AND (%s::text IS NULL OR idempotency_key>%s)
     AND status='succeeded'
     AND parameters->>'kind' IN
         ('shadow_event_r2_manifest','diagnostic_batch_r2_manifest')
@@ -30,6 +31,7 @@ MANIFEST_SCAN = """SELECT id::text,idempotency_key,parameters,progress,created_a
 MANIFEST_BY_ID = """SELECT id::text,idempotency_key,parameters,progress,created_at
     FROM research_job WHERE id=%s::uuid
     AND idempotency_key>=%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     AND status='succeeded'"""
 
 
@@ -58,10 +60,33 @@ def summary(row):
     original_events = count if kind == 'shadow_event_r2_manifest' else manifest.get('original_events')
     if type(original_events) is not int or original_events < count:
         raise ValueError('Invalid durable archive event count')
+    # Earlier authorized operator archivers wrote a random row UUID and a
+    # separate random key UUID. Preserve their verified legacy archives:
+    # require valid canonical UUIDs and an exact raw/packed namespace but
+    # do not falsely equate these two independent identifiers.
+    identifier = row.get('id')
+    key = row.get('idempotency_key')
+    key_prefix = PREFIX + ('batch/' if kind == 'diagnostic_batch_r2_manifest' else '')
+    try:
+        if not isinstance(identifier, str) or str(UUID(identifier)) != identifier:
+            raise ValueError('Invalid canonical archive row UUID')
+        if not isinstance(key,str) or not key.startswith(key_prefix):
+            raise ValueError('Incorrect archive manifest namespace')
+        key_identifier=key[len(key_prefix):]
+        if str(UUID(key_identifier)) != key_identifier:
+            raise ValueError('Invalid archive key UUID')
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError('Invalid archive manifest identity') from exc
+    identity_mode=('canonical_row_key' if key_identifier==identifier
+                   else 'legacy_independent_key')
+    expected_format = ('shadow-r2-event-batch-v1' if kind == 'shadow_event_r2_manifest'
+                       else 'shadow-diagnostic-r2-manifest-v1')
+    if manifest.get('format') != expected_format:
+        raise ValueError('Archive manifest kind/format mismatch')
     digest=hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':'),
                                     allow_nan=False).encode('utf-8')).hexdigest()
     return dict(manifest_id=row['id'], manifest_key=row['idempotency_key'],
-                manifest_digest=digest,
+                manifest_digest=digest,manifest_identity_mode=identity_mode,
                 kind='raw' if kind == 'shadow_event_r2_manifest' else 'packed',
                 archived_rows=count, original_events=original_events,
                 earliest=manifest.get('earliest'), latest=manifest.get('latest'),
@@ -73,7 +98,7 @@ def list_manifests(pool, *, limit=10, cursor=None):
     limit,cursor=validate_page(limit,cursor)
     with pool.connection() as connection:
         rows=connection.execute(MANIFEST_SCAN, (PREFIX, PREFIX+'zzzz',
-            cursor,cursor,limit+1)).fetchall()
+            PREFIX+'%',cursor,cursor,limit+1)).fetchall()
     page=rows[:limit]
     return dict(contract='demo-v1', source='manifests',
                 request_cursor=cursor, items=[summary(row) for row in page],
@@ -87,7 +112,8 @@ def find_manifest(pool, identifier):
     except (ValueError,TypeError,AttributeError):
         raise ValueError('Invalid archive manifest identifier') from None
     with pool.connection() as connection:
-        row=connection.execute(MANIFEST_BY_ID,(ident,PREFIX,PREFIX+'zzzz')).fetchone()
+        row=connection.execute(MANIFEST_BY_ID,(ident,PREFIX,PREFIX+'zzzz',
+                                                  PREFIX+'%')).fetchone()
     if not row:
         return None
     # Fail closed if another type of research_job row occupies the archive namespace.
