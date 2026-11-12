@@ -37,19 +37,21 @@ class RealPostgresHotR2OverlapTests(unittest.TestCase):
         # Five real raw rows require a two-page pagination walk (max 4/page).
         for number in range(5):
             ident=self.demo.put('shadow/event/'+f'{number:04d}',
-                dict(event='FAVORITE_STAT_DECISION',time=100+number,
-                     audit_label='raw-'+str(number)),
+                dict(event=('SETTLED' if number==4
+                            else 'FAVORITE_STAT_DECISION'),time=100+number,
+                     audit_label='raw-'+str(number),
+                     fee_cents=7 if number==4 else 0),
                 parameters=dict(series='KXTEST',index=number))
             original_keys.add(str(ident))
 
-        # Two genuine diagnostic originals are compacted into one real packed
-        # research_job row; one is a settlement audit to verify preservation.
+        # Financial SETTLED remains a separate raw audit; only two
+        # eligible diagnostic originals form a real compressed batch.
         originals=[]
         for number in range(2):
             originals.append(entry('demo/shadow/event/'+str(uuid4()),
                 dict(series='KXTEST',packed=number),
-                dict(event='SETTLED' if number==1 else 'FAVORITE_STAT_DECISION',
-                     time=200+number,fee_cents=number+3)))
+                dict(event='FAVORITE_STAT_DECISION',
+                     time=200+number,trial_quality=number+3)))
         batch=compact_diagnostic_rows(originals,entry)
         self.assertEqual(len(batch),1)
         with self.store.pool.connection() as c:
@@ -105,6 +107,9 @@ class RealPostgresHotR2OverlapTests(unittest.TestCase):
         self.assertFalse(result['safe_to_train'])
         self.assertFalse(result['safe_to_restart_writers'])
         self.assertTrue(any(x['progress']['event']=='SETTLED'
+                            and x['progress']['fee_cents']==7
+                            for p in raw for x in p['items']))
+        self.assertTrue(all(x['progress']['event']=='FAVORITE_STAT_DECISION'
                             for x in packed[0]['items']))
         # The operation is read-only: all five original raw rows remain.
         with self.store.pool.connection() as c:
