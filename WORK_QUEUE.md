@@ -59,6 +59,11 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 follow-on checkpoint — namespace safety (2026-11-12 UTC)
+- **PR #212 DRAFT** `fix/mt019-readonly-snapshot-windows`, latest `d334089f330f7931893cf9c513c238e507a41349`, CI `43135161853` IN PROGRESS. Uses explicit bounded namespace `LIKE` predicate with existing keyset range to guard cross-prefix leakage; prior diagnostic CI `43134981174` also running. Earlier `43129178720` failed one/1628 disposable-DB tests at second snapshot window.
+- **PR #213 DRAFT** `fix/mt019-history-namespace-isolation`, latest `2ca8c611b66b43e815480d5289baede4e7cc5128`, CI `43135463110` IN PROGRESS. Adds same fixed prefix bound `LIKE` constraint to existing read-only raw/packed owner APIs (no extra queries), plus mixed raw/packed disposable PostgreSQL test; no deployment until full CI passes.
+- PR #211 postmerge `43128969913` SUCCESS, held processing worker LIVE `b708b27f` with predeploy `collection_enabled=false`, `trading_enabled=false`. Research worker remains separately held. **Keep all P0 operator gates open and no auto archives/trading/collection/deletion.**
+
 ### MT-019 latest saved checkpoint — PR #212 CI repair (2026-11-12 UTC)
 - PR #211 postmerge CI `43128969913` **SUCCESS** after squash merge `b708b27f`.
 - PR #212 **DRAFT** `fix/mt019-readonly-snapshot-windows`, latest HEAD `d334089f330f7931893cf9c513c238e507a41349`, full CI `43135161853` in progress. Earlier full run `43129178720` failed 1 of 1,628 tests in the second disposable-PostgreSQL snapshot window due to invalid source index key. Diagnostic run `43134981174` was also in progress. Added nonsecret range/cursor classification and strict SQL same-prefix `LIKE` filter to guard adjacent namespace leakage under text collation, with test assertions. **Do not merge unless latest full CI passes**.
