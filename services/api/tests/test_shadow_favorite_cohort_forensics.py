@@ -14,13 +14,13 @@ def cohort():
     identifier=str(uuid4())
     oid=str(uuid4())
     detail=dict(key='entry-v2|KXFAV|yes|80|<3m|market_close',
-                at=1794437000.12,price='0.80',quantity='2',
+                at=1794437000.123456,price='0.80',quantity='2',
                 remaining='2',cost='1.62',remaining_cost='1.62',
                 verified=True,order_id=oid)
     return dict(id=identifier,key='demo/shadow/event/'+identifier,
                 parameters={},
                 progress=dict(event='FAVORITE_ENTRY_COHORT',
-                              order_id=oid,quantity='2',price='0.80',
+                              order_id=oid,side='yes',quantity='2',price='0.80',
                               fee='0.02',time='1794437000.123456',
                               details=json.dumps(detail)))
 
@@ -41,6 +41,18 @@ class FavoriteCohortForensicsTests(unittest.TestCase):
             e=cohort()
             e['progress'][field]=value
             with self.subTest(field=field):
+                with self.assertRaises(HistoryReconciliationError):
+                    inspect_original_cohort(e)
+
+    def test_mismatched_original_fill_time_and_entry_key_refused(self):
+        for changed in ('at','side','price_cents'):
+            e=cohort()
+            detail=json.loads(e['progress']['details'])
+            if changed=='at':detail['at']=1794437100
+            elif changed=='side':e['progress']['side']='no'
+            else:detail['key']='entry-v2|KXFAV|yes|85|<3m|market_close'
+            e['progress']['details']=json.dumps(detail)
+            with self.subTest(changed=changed):
                 with self.assertRaises(HistoryReconciliationError):
                     inspect_original_cohort(e)
 
