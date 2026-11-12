@@ -146,5 +146,51 @@ class FavoriteOriginalFillLinkageTests(unittest.TestCase):
             inspect_supplied_favorite_fill_links([page(*many)])
 
 
+from services.api.tests import test_demo_postgres as fixture
+
+@unittest.skipUnless(fixture.URL,'Disposable PostgreSQL is required')
+class RealPostgresFavoriteFillLinkageTests(unittest.TestCase):
+    setUp=fixture.DemoPostgres.setUp
+    tearDown=fixture.DemoPostgres.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        fixture.DemoPostgres.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture.DemoPostgres.tearDownClass.__func__(cls)
+
+    def test_original_raw_fill_and_packed_cohort_link_after_api_readback(self):
+        from services.paper_demo.shadow.storage import UPSERT,entry
+        from services.paper_demo.shadow.diagnostic_batches import compact_diagnostic_rows
+        from services.demo.shadow_history_pages import RAW_PREFIX
+        cohort,fill=events()
+        fill_id=self.demo.put('shadow/event/'+str(uuid4()),fill['progress'])
+        packed_original=entry(RAW_PREFIX+str(uuid4()),{},
+                              cohort['progress'])
+        packed=compact_diagnostic_rows([packed_original],entry)
+        self.assertEqual(len(packed),1)
+        with self.store.pool.connection() as connection:
+            connection.execute(UPSERT,packed[0])
+        raw_page=self.client.get('/demo/shadow/history/raw')
+        packed_page=self.client.get('/demo/shadow/history/packed')
+        self.assertEqual(raw_page.status_code,200,raw_page.text)
+        self.assertEqual(packed_page.status_code,200,packed_page.text)
+        raw_body,packed_body=raw_page.json(),packed_page.json()
+        self.assertEqual(raw_body['source_rows'],1)
+        self.assertEqual(packed_body['source_rows'],1)
+        self.assertEqual(packed_body['original_events'],1)
+        result=inspect_supplied_favorite_fill_links([
+            page(*raw_body['items'],source='hot_raw'),
+            page(*packed_body['items'],source='hot_packed')])
+        self.assertEqual(result['unambiguous_fill_links'],1)
+        self.assertEqual(result['matched_originals'][0]['fill_original_id'],
+                         fill_id)
+        self.assertEqual(result['matched_originals'][0]['cohort_original_id'],
+                         str(packed_original[0]))
+        self.assertFalse(result['safe_to_train'])
+
+
 if __name__=='__main__':
     unittest.main()
