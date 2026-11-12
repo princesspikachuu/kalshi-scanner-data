@@ -169,8 +169,15 @@ class RealPostgresFavoriteFillLinkageTests(unittest.TestCase):
         fill_id=self.demo.put('shadow/event/'+str(uuid4()),fill['progress'])
         packed_original=entry(RAW_PREFIX+str(uuid4()),{},
                               cohort['progress'])
-        packed=compact_diagnostic_rows([packed_original],entry)
+        # Real diagnostic batches require >=2 consecutive source events.
+        # A lone cohort deliberately stays uncompressed in production.
+        companion=entry(RAW_PREFIX+str(uuid4()),{},
+                        dict(event='FAVORITE_TRIAL_QUALITY',
+                             ticker='UNRELATED',time='1794437000.123457'))
+        packed=compact_diagnostic_rows([packed_original,companion],entry)
         self.assertEqual(len(packed),1)
+        self.assertTrue(packed[0][3].startswith(
+            'demo/shadow/event-batch/'))
         with self.store.pool.connection() as connection:
             connection.execute(UPSERT,packed[0])
         # Authentication and other disposable test infrastructure may
@@ -204,6 +211,7 @@ class RealPostgresFavoriteFillLinkageTests(unittest.TestCase):
                         if e['id']==str(packed_original[0])]
         self.assertEqual(len(raw_matches),1)
         self.assertEqual(len(packed_matches),1)
+        self.assertEqual(len(packed_items),2)
         self.assertEqual(packed_matches[0]['progress']['event'],
                          'FAVORITE_ENTRY_COHORT')
         result=inspect_supplied_favorite_fill_links([
