@@ -59,6 +59,11 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 checkpoint — original Favorites fill/cohort linkage (2026-11-12 UTC)
+- **PR #215 postmerge full CI `43142838660` SUCCESS** on merged `8677e13682b8572cd0107863b68d09be004033f7`; operator-only raw/packed SQL candidate, R2 prewrite, direct DELETE namespace fences verified. No automatic archival activated.
+- **Draft PR #216** `fix/mt019-favorites-fill-cohort-linkage`, exact head `f4b60e4dea9dae4556b8b8fa1429e00433c8f5c4`, full CI `43143156780` IN PROGRESS; do not merge until SUCCESS. Pure no-I/O supplied original `FAVORITE_ENTRY_COHORT` / paper `FILL` 1:1 matching by ticker/order/action/side/Decimal price/quantity/fee/audit time, rejects malformed source originals and deduplicates verified hot/cold copies. Multiple partial fills per order require separate unambiguous matches. All outcomes, P/L, learning, all-time history flags remain FALSE. Tests for repeated/ambiguous, partially supplied, conflicting hot/R2 and malformed fill/entry audits.
+- Render processing/research workers remain under recovery hold and API old manual; do not resume writers, activate archive, delete rows or claim Favorites statistical recovery. Physical free disk/WAL, separate R2 READ creds, scoped operator role, full source exhaustion and authoritative settlement still outstanding.
+
 ### MT-019 checkpoint — operator namespace fixes merged (2026-11-12 UTC)
 - **PR #215 MERGED** `8677e13682b8572cd0107863b68d09be004033f7`, exact tested head `40d8be68ad1b7d97e887d09355279f2cfc5de201`, full premerge CI `43139534217` SUCCESS. Read-only previews and operator-only direct reclaim now restrict raw/packed SQL with exact namespace predicates; pre-R2 validation rejects neighboring keys; direct-owner new manifest IDs match keys. Postmerge CI pending at checkpoint.
 - **PR #214 postmerge CI `43139617921` SUCCESS** for merged `48c6d72c`; both legacy independent manifest key UUIDs and new exact row UUID/key remain supported. Neither fix enables archive deletion or R2 READ authorization.
