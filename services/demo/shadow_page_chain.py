@@ -52,6 +52,19 @@ def verify_history_page_chain(pages, source):
                 keys = page.get('source_keys')
                 if not isinstance(keys, list):
                     raise HistoryReconciliationError('Packed source keys missing')
+        if source in ('raw','packed'):
+            rows=page.get('source_rows')
+            originals=page.get('original_events')
+            if rows is not None and (
+                    type(rows) is not int or rows<0 or rows!=len(keys)):
+                raise HistoryReconciliationError('History source row count mismatch')
+            if originals is not None and (
+                    type(originals) is not int or originals!=len(items)):
+                raise HistoryReconciliationError('History original event count mismatch')
+            if source=='raw' and len(keys)!=len(items):
+                raise HistoryReconciliationError('Raw original/source row mismatch')
+            if source=='packed' and items and not keys:
+                raise HistoryReconciliationError('Expanded packed events lack source row key')
         if any(not isinstance(key, str) or not key.startswith(prefix)
                or key <= (cursor or prefix) for key in keys):
             raise HistoryReconciliationError('Invalid history key order')

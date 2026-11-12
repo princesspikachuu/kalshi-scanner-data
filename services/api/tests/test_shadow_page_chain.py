@@ -68,6 +68,21 @@ class PageChainSafetyTests(unittest.TestCase):
         self.assertFalse(result['r2_manifest_catalog_complete'])
         self.assertFalse(result['all_time_coverage_complete'])
 
+    def test_source_row_and_original_count_tampering_fails(self):
+        raw=raw_page([1])
+        for changed in (dict(raw,source_rows=2),
+                        dict(raw,original_events=0)):
+            with self.subTest(changed=changed):
+                with self.assertRaises(HistoryReconciliationError):
+                    verify_history_page_chain([changed],'raw')
+        packed=packed_page([1])
+        for changed in (dict(packed,source_keys=[]),
+                        dict(packed,source_rows=2),
+                        dict(packed,original_events=0)):
+            with self.subTest(changed=changed):
+                with self.assertRaises(HistoryReconciliationError):
+                    verify_history_page_chain([changed],'packed')
+
     def test_rejects_unbounded_and_missing_pages(self):
         with self.assertRaises(HistoryReconciliationError):
             verify_history_page_chain([],'raw')
