@@ -89,7 +89,7 @@ class HostedShadowHistoryPages(unittest.TestCase):
             ident=self.demo.put(key,dict(event=event,time=i,cash_cents=100+i),
                                 parameters=dict(sample=i))
             originals[ident]='demo/'+key
-        cursor=None;seen=[];prev_cursor=None;pages=0;page_chain=[]
+        cursor=None;seen=[];prev_cursor=None;pages=0;page_chain=[];rolling=None
         while True:
             params={'cursor':cursor} if cursor else None
             response=self.client.get('/demo/shadow/history/raw',params=params)
@@ -97,6 +97,8 @@ class HostedShadowHistoryPages(unittest.TestCase):
             body=response.json();pages+=1
             self.assertEqual(body['request_cursor'],cursor)
             page_chain.append(body)
+            from services.demo.shadow_keyset_receipts import extend_keyset_receipt
+            rolling=extend_keyset_receipt(rolling,'raw',body)
             self.assertEqual(body['source'],'raw')
             self.assertFalse(body['all_time_coverage_complete'])
             self.assertFalse(body['reclaimed_manifests_included'])
@@ -115,6 +117,10 @@ class HostedShadowHistoryPages(unittest.TestCase):
         self.assertEqual(pages,3)
         from services.demo.shadow_page_chain import verify_history_page_chain
         self.assertEqual(verify_history_page_chain(page_chain,'raw')['supplied_keys'],11)
+        self.assertTrue(rolling['terminal'])
+        self.assertEqual(rolling['source_rows'],11)
+        self.assertEqual(rolling['original_events'],11)
+        self.assertFalse(rolling['all_time_coverage_complete'])
         self.assertEqual({x['id'] for x in seen},set(originals))
         self.assertEqual(len(seen),len(originals))
         self.assertEqual([x['key'] for x in seen],sorted(originals.values()))
@@ -141,13 +147,15 @@ class HostedShadowHistoryPages(unittest.TestCase):
                 packed=compact_diagnostic_rows(raw,entry)
                 self.assertEqual(len(packed),1)
                 c.execute(UPSERT,packed[0])
-        cursor=None;seen=[];pages=0;page_chain=[]
+        cursor=None;seen=[];pages=0;page_chain=[];rolling=None
         while True:
             r=self.client.get('/demo/shadow/history/packed',
                               params={'cursor':cursor} if cursor else None)
             self.assertEqual(r.status_code,200,r.text)
             body=r.json();pages+=1
             page_chain.append(dict(body,request_cursor=cursor))
+            from services.demo.shadow_keyset_receipts import extend_keyset_receipt
+            rolling=extend_keyset_receipt(rolling,'packed',body)
             self.assertEqual(body['source_rows'],1)
             self.assertEqual(body['original_events'],2)
             self.assertEqual(len(body['source_keys']),1)
@@ -161,6 +169,10 @@ class HostedShadowHistoryPages(unittest.TestCase):
         self.assertEqual(pages,3)
         from services.demo.shadow_page_chain import verify_history_page_chain
         self.assertEqual(verify_history_page_chain(page_chain,'packed')['supplied_keys'],3)
+        self.assertTrue(rolling['terminal'])
+        self.assertEqual(rolling['source_rows'],3)
+        self.assertEqual(rolling['original_events'],6)
+        self.assertFalse(rolling['safe_to_train'])
         self.assertEqual({x['id'] for x in seen},set(originals))
         self.assertEqual(len(seen),6)
         self.assertEqual({x['progress']['original'] for x in seen},
