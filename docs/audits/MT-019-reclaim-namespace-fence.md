@@ -19,7 +19,7 @@ the UUID used inside its indexed manifest key, rather than independently
 generating two UUIDs. This makes future metadata easier to audit. Already
 stored archives with independent row/key UUIDs remain fully supported by the
 legacy-compatible reader in PR #214; they are **not rewritten or deleted**.
-The separate scoped SECURITY DEFINER maintenance SQL function is not changed.
+The separate scoped SECURITY DEFINER maintenance SQL function is not changed. Review of `infra/archive-maintenance-role.sql` confirms that it already binds new manifest keys to `p_manifest_id` and rechecks every locked source row against `v_prefix || '%'` before its exact-ID DELETE; this PR extends the corresponding protection to Python-side candidate queries and direct-owner compatibility mode.
 
 No automatic task or worker calls these operator-only tools. The normal
 paper trading worker does not gain new database DELETE permissions.
