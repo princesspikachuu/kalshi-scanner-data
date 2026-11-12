@@ -40,6 +40,8 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):validate_window(10000,24,batch)
         self.assertEqual(validate_window(10000,6,1),10000-6*3600)
         self.assertIn("idempotency_key>=%s",CANDIDATES)
+        self.assertIn("idempotency_key LIKE %s",CANDIDATES)
+        self.assertIn("idempotency_key LIKE %s",DELETE_SQL)
         self.assertIn("created_at<to_timestamp(%s)",DELETE_SQL)
         self.assertIn("ORDER BY idempotency_key LIMIT %s",CANDIDATES)
         self.assertNotIn("FOR UPDATE",CANDIDATES)
@@ -79,11 +81,24 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         statements=[call.args[0] for call in c.execute.call_args_list]
         self.assertEqual(statements,['SET LOCAL statement_timeout=10000',LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL])
         manifest_args=c.execute.call_args_list[2].args[1]
+        self.assertEqual(manifest_args[3],MANIFEST_PREFIX+str(manifest_args[0]))
         self.assertEqual(manifest_args[2].obj['count'],2)
         self.assertEqual(manifest_args[2].obj['ids'],[a['id'],b['id']])
         self.assertEqual(manifest_args[2].obj['reference'],receipt)
         self.assertEqual(c.execute.call_args_list[3].args[1][0],[a['id'],b['id']])
         c.transaction.assert_called_once()
+
+    def test_collector_unrelated_namespace_never_reaches_r2_or_delete(self):
+        row=self.row()
+        row['idempotency_key']='demo/shadow/event-batch/'+row['id']
+        pool,c=self.db([row])
+        with patch('services.demo.shadow_archive_recovery.put_verified') as write:
+            with self.assertRaisesRegex(RuntimeError,'Unrelated row'):
+                archive_and_reclaim_one(pool,MagicMock(),now=1794500000)
+        write.assert_not_called()
+        statements=[call.args[0] for call in c.execute.call_args_list]
+        self.assertNotIn(MANIFEST_SQL,statements)
+        self.assertNotIn(DELETE_SQL,statements)
 
     def test_scoped_archival_uses_function_not_table_delete_or_row_update_lock(self):
         row=self.row();pool,c=self.db([row])
