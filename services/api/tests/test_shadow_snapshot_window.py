@@ -141,7 +141,8 @@ class LiveDisposableSnapshotWindow(unittest.TestCase):
         with self.store.pool.connection() as c:
             count=c.execute("""SELECT count(*) AS n FROM research_job WHERE
                 idempotency_key>'demo/shadow/event/'
-                AND idempotency_key<'demo/shadow/event/zzzz'""").fetchone()['n']
+                AND idempotency_key<'demo/shadow/event/zzzz'
+                AND idempotency_key LIKE 'demo/shadow/event/%'""").fetchone()['n']
         self.assertEqual(count,5)
 
 
