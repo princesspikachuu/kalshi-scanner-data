@@ -225,4 +225,40 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
                 main([])
         self.assertEqual(caught.exception.code,2)
 
+
+from services.api.tests import test_demo_postgres as fixture
+
+@unittest.skipUnless(fixture.URL,'Disposable PostgreSQL is required')
+class RealDisposableReclaimNamespaceTests(unittest.TestCase):
+    setUp=fixture.DemoPostgres.setUp
+    tearDown=fixture.DemoPostgres.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        fixture.DemoPostgres.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture.DemoPostgres.tearDownClass.__func__(cls)
+
+    def test_aged_packed_neighbor_does_not_enter_raw_reclaim_preview(self):
+        import time
+        from uuid import uuid4
+        raw=self.demo.put('shadow/event/'+str(uuid4()),
+            dict(event='FAVORITE_STAT_DECISION',time=123))
+        neighbor=self.demo.put('shadow/event-batch/'+str(uuid4()),
+            dict(event='FAVORITE_STAT_DECISION',time=124))
+        with self.store.pool.connection() as c:
+            c.execute("""UPDATE research_job SET
+                created_at=clock_timestamp()-interval '72 hours'
+                WHERE id=ANY(%s::uuid[])""",([raw,neighbor],))
+        result=plan_only(self.store.pool,now=time.time(),
+                         age_hours=24,batch_size=10)
+        self.assertEqual(result['eligible_in_sample'],1)
+        self.assertEqual(result['mode'],'preview')
+        with self.store.pool.connection() as c:
+            intact=c.execute("""SELECT id::text FROM research_job
+                WHERE id=ANY(%s::uuid[])""",([raw,neighbor],)).fetchall()
+        self.assertEqual({r['id'] for r in intact},{raw,neighbor})
+
 if __name__=='__main__':unittest.main()
