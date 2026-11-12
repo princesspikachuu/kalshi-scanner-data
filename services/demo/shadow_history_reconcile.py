@@ -53,27 +53,29 @@ def _validated_event(item, source):
                 not isinstance(batch_key, str)
                 or not batch_key.startswith('demo/shadow/event-batch/')):
             raise HistoryReconciliationError('Invalid packed batch provenance')
-    time_value = item.get('event_time', progress.get('time'))
-    if time_value != progress.get('time'):
-        raise HistoryReconciliationError('Event timestamp disagrees with progress')
-    # Engine Audit.log serializes the original timestamp as a decimal
-    # string. Parse only for time ordering; never rewrite the source progress.
-    if time_value is None:
-        event_time = None
-    else:
-        if isinstance(time_value, bool) or not isinstance(time_value, (int,float,str)):
+    # An archived readback may have already normalized event_time to a
+    # Python float, while original audit progress.time remains a decimal
+    # string. Compare their *parsed ordering values*, never rewrite source.
+    def validated_timestamp(value):
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int,float,str)):
             raise HistoryReconciliationError('Invalid event timestamp')
-        if isinstance(time_value,str) and (
-                len(time_value)>40 or
-                re.fullmatch(r'[0-9]+(?:[.][0-9]+)?',time_value) is None):
+        if isinstance(value,str) and (
+                len(value)>40 or
+                re.fullmatch(r'[0-9]+(?:[.][0-9]+)?',value) is None):
             raise HistoryReconciliationError('Invalid event timestamp')
         try:
-            parsed=Decimal(str(time_value))
+            number=Decimal(str(value))
         except (InvalidOperation,ValueError) as exc:
             raise HistoryReconciliationError('Invalid event timestamp') from exc
-        if not parsed.is_finite() or not Decimal(0)<=parsed<Decimal('1e15'):
+        if not number.is_finite() or not Decimal(0)<=number<Decimal('1e15'):
             raise HistoryReconciliationError('Invalid event timestamp')
-        event_time=float(parsed)
+        return float(number)
+    original_time=validated_timestamp(progress.get('time'))
+    event_time=validated_timestamp(item.get('event_time',progress.get('time')))
+    if original_time != event_time:
+        raise HistoryReconciliationError('Event timestamp disagrees with progress')
     return dict(id=ident, key=key, parameters=params, progress=progress,
                 event_time=event_time)
 
