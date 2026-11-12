@@ -41,7 +41,7 @@ def fixture():
                   request_cursor=None,items=[summary],more=False,next_cursor=None)]
     cold=[dict(source='r2_reclaimed_raw',verified=True,
                manifest_id=ident,manifest_key=key,manifest_digest=digest,
-               total_events=1,offset=0,page_events=1,items=[deepcopy(original)],
+               total_events=1,offset=0,page_events=1,items=[dict(deepcopy(original),event_time=1794437000.123456)],
                next_offset=None)]
     return original,[hot('raw',[original])],[hot('packed',[event()])],catalog,{ident:cold}
 
