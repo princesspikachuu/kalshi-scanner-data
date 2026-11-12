@@ -158,5 +158,69 @@ class CatalogR2CrosscheckTests(unittest.TestCase):
             audit_supplied_catalog_readbacks([catalog(many)],entries)
 
 
+from services.api.tests import test_demo_postgres as fixture
+
+
+@unittest.skipUnless(fixture.URL, 'Disposable PostgreSQL is required')
+class RealPostgresCatalogCrosscheckTests(unittest.TestCase):
+    setUp=fixture.DemoPostgres.setUp
+    tearDown=fixture.DemoPostgres.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        fixture.DemoPostgres.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture.DemoPostgres.tearDownClass.__func__(cls)
+
+    def test_exact_sql_manifest_catalog_pages_match_verified_raw_and_packed(self):
+        import hashlib
+        import json
+        from psycopg.types.json import Jsonb
+        from services.demo.shadow_archive_reader import list_manifests
+        readbacks={}
+        for kind,legacy in (('raw',True),('packed',False)):
+            row=archived(kind,2)
+            ident=row['manifest']['manifest_id']
+            key=row['manifest']['manifest_key']
+            if legacy:
+                key='demo/shadow/archive-manifest/'+str(uuid4())
+                row['manifest']['manifest_key']=key
+            is_raw=kind=='raw'
+            pg_manifest=dict(
+                format=('shadow-r2-event-batch-v1' if is_raw else
+                        'shadow-diagnostic-r2-manifest-v1'),
+                count=(2 if is_raw else 1),
+                **({} if is_raw else dict(original_events=2)))
+            digest=hashlib.sha256(json.dumps(
+                pg_manifest,sort_keys=True,separators=(',',':'),
+                allow_nan=False).encode('utf-8')).hexdigest()
+            row['manifest']['manifest_digest']=digest
+            with self.store.pool.connection() as c:
+                c.execute("""INSERT INTO research_job
+                    (id,asset,parameters,progress,idempotency_key,status,finished_at)
+                    VALUES (%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())""",
+                    (ident,Jsonb(dict(kind=('shadow_event_r2_manifest' if is_raw else
+                          'diagnostic_batch_r2_manifest'))),
+                     Jsonb(pg_manifest),key))
+            readbacks[key]=[normalize_reclaimed_manifest_page(row,offset=0)]
+        first=list_manifests(self.store.pool,limit=1)
+        self.assertTrue(first['more'])
+        second=list_manifests(self.store.pool,limit=1,
+                              cursor=first['next_cursor'])
+        self.assertFalse(second['more'])
+        result=audit_supplied_catalog_readbacks([first,second],readbacks)
+        self.assertEqual(result['listed_manifests'],2)
+        self.assertEqual(result['checked_archived_originals'],4)
+        self.assertTrue(result['readbacks_match_every_listed_manifest'])
+        self.assertFalse(result['all_time_coverage_complete'])
+        # Genuine source manifests remain intact after this read-only audit.
+        with self.store.pool.connection() as c:
+            count=c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE idempotency_key LIKE 'demo/shadow/archive-manifest/%'""").fetchone()['n']
+        self.assertEqual(count,2)
+
+
 if __name__=='__main__':
     unittest.main()
