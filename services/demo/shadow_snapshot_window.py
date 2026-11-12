@@ -18,9 +18,11 @@ MAX_WINDOW_KEYS=32
 SOURCE_PREFIXES={'raw':RAW_PREFIX,'packed':PACKED_PREFIX,'manifests':MANIFEST_PREFIX}
 KEY_SQL="""SELECT idempotency_key FROM research_job
     WHERE idempotency_key>%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     ORDER BY idempotency_key LIMIT %s"""
 MANIFEST_KEYS_SQL="""SELECT idempotency_key FROM research_job
     WHERE idempotency_key>%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     AND status='succeeded'
     AND parameters->>'kind' IN
        ('shadow_event_r2_manifest','diagnostic_batch_r2_manifest')
@@ -58,7 +60,7 @@ def read_postgres_snapshot_window(pool, *, page_size=16, cursors=None):
             for source,prefix in SOURCE_PREFIXES.items():
                 after=cursors.get(source) or prefix
                 query=MANIFEST_KEYS_SQL if source=='manifests' else KEY_SQL
-                rows=connection.execute(query,(after,prefix+'zzzz',page_size+1)).fetchall()
+                rows=connection.execute(query,(after,prefix+'zzzz',prefix+'%',page_size+1)).fetchall()
                 keys=[row['idempotency_key'] for row in rows[:page_size]]
                 if any(not isinstance(k,str) or not prefix<k<prefix+'zzzz'
                        or k<=after for k in keys):
