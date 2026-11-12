@@ -117,6 +117,32 @@ class CatalogR2CrosscheckTests(unittest.TestCase):
                 [catalog([one,two])],
                 {one['manifest_key']:pone,two['manifest_key']:ptwo})
 
+    def test_duplicate_original_key_under_different_uuids_fails(self):
+        first,pfirst=evidence('raw',2)
+        second,psecond=evidence('packed',2)
+        modified=deepcopy(psecond)
+        modified[0]['items'][0]['key']=pfirst[0]['items'][0]['key']
+        with self.assertRaisesRegex(HistoryReconciliationError,'repeated across'):
+            audit_supplied_catalog_readbacks(
+                [catalog([first,second])],
+                {first['manifest_key']:pfirst,
+                 second['manifest_key']:modified})
+
+    def test_identity_digest_independent_of_catalog_page_boundaries(self):
+        first,pfirst=evidence('raw',2)
+        second,psecond=evidence('packed',3)
+        rows=sorted([first,second],key=lambda row:row['manifest_key'])
+        readbacks={first['manifest_key']:pfirst,
+                   second['manifest_key']:psecond}
+        all_in_one=audit_supplied_catalog_readbacks([catalog(rows)],readbacks)
+        split=audit_supplied_catalog_readbacks([
+            catalog(rows[:1],more=True),
+            catalog(rows[1:],cursor=rows[0]['manifest_key'])],readbacks)
+        self.assertEqual(all_in_one['cross_manifest_identity_digest'],
+                         split['cross_manifest_identity_digest'])
+        self.assertEqual(all_in_one['checked_archived_originals'],
+                         split['checked_archived_originals'])
+
     def test_cold_without_verified_flag_or_missing_final_offset_fails(self):
         item,pages=evidence('raw',2)
         for changed in (dict(verified=False),dict(next_offset=1),
