@@ -57,6 +57,8 @@ class ShadowBatchArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(queries,['SET LOCAL statement_timeout=5000',CANDIDATES])
         self.assertNotIn('FOR UPDATE',CANDIDATES)
         self.assertIn('ORDER BY idempotency_key LIMIT %s',CANDIDATES)
+        self.assertIn('idempotency_key LIKE %s',CANDIDATES)
+        self.assertIn('idempotency_key LIKE %s',DELETE_SQL)
         self.assertIn('FOR UPDATE SKIP LOCKED',LOCKED_CANDIDATES)
 
     def test_verified_r2_manifest_and_exact_delete_in_same_transaction(self):
@@ -80,6 +82,9 @@ class ShadowBatchArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(queries,['SET LOCAL statement_timeout=10000',
                                   LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL])
         manifest=c.execute.call_args_list[2].args[1][2].obj
+        archive_args=c.execute.call_args_list[2].args[1]
+        self.assertEqual(archive_args[3],
+                         'demo/shadow/archive-manifest/batch/'+str(archive_args[0]))
         self.assertEqual(manifest['format'],FORMAT)
         self.assertEqual(manifest['row_ids'],[row['id'] for row in rows])
         self.assertEqual(manifest['original_events'],4)

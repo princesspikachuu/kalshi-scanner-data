@@ -40,6 +40,8 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):validate_window(10000,24,batch)
         self.assertEqual(validate_window(10000,6,1),10000-6*3600)
         self.assertIn("idempotency_key>=%s",CANDIDATES)
+        self.assertIn("idempotency_key LIKE %s",CANDIDATES)
+        self.assertIn("idempotency_key LIKE %s",DELETE_SQL)
         self.assertIn("created_at<to_timestamp(%s)",DELETE_SQL)
         self.assertIn("ORDER BY idempotency_key LIMIT %s",CANDIDATES)
         self.assertNotIn("FOR UPDATE",CANDIDATES)
@@ -79,11 +81,24 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         statements=[call.args[0] for call in c.execute.call_args_list]
         self.assertEqual(statements,['SET LOCAL statement_timeout=10000',LOCKED_CANDIDATES,MANIFEST_SQL,DELETE_SQL])
         manifest_args=c.execute.call_args_list[2].args[1]
+        self.assertEqual(manifest_args[3],MANIFEST_PREFIX+str(manifest_args[0]))
         self.assertEqual(manifest_args[2].obj['count'],2)
         self.assertEqual(manifest_args[2].obj['ids'],[a['id'],b['id']])
         self.assertEqual(manifest_args[2].obj['reference'],receipt)
         self.assertEqual(c.execute.call_args_list[3].args[1][0],[a['id'],b['id']])
         c.transaction.assert_called_once()
+
+    def test_collector_unrelated_namespace_never_reaches_r2_or_delete(self):
+        row=self.row()
+        row['idempotency_key']='demo/shadow/event-batch/'+row['id']
+        pool,c=self.db([row])
+        with patch('services.demo.shadow_archive_recovery.put_verified') as write:
+            with self.assertRaisesRegex(RuntimeError,'Unrelated row'):
+                archive_and_reclaim_one(pool,MagicMock(),now=1794500000)
+        write.assert_not_called()
+        statements=[call.args[0] for call in c.execute.call_args_list]
+        self.assertNotIn(MANIFEST_SQL,statements)
+        self.assertNotIn(DELETE_SQL,statements)
 
     def test_scoped_archival_uses_function_not_table_delete_or_row_update_lock(self):
         row=self.row();pool,c=self.db([row])
@@ -209,5 +224,41 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as caught:
                 main([])
         self.assertEqual(caught.exception.code,2)
+
+
+from services.api.tests import test_demo_postgres as fixture
+
+@unittest.skipUnless(fixture.URL,'Disposable PostgreSQL is required')
+class RealDisposableReclaimNamespaceTests(unittest.TestCase):
+    setUp=fixture.DemoPostgres.setUp
+    tearDown=fixture.DemoPostgres.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        fixture.DemoPostgres.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture.DemoPostgres.tearDownClass.__func__(cls)
+
+    def test_aged_packed_neighbor_does_not_enter_raw_reclaim_preview(self):
+        import time
+        from uuid import uuid4
+        raw=self.demo.put('shadow/event/'+str(uuid4()),
+            dict(event='FAVORITE_STAT_DECISION',time=123))
+        neighbor=self.demo.put('shadow/event-batch/'+str(uuid4()),
+            dict(event='FAVORITE_STAT_DECISION',time=124))
+        with self.store.pool.connection() as c:
+            c.execute("""UPDATE research_job SET
+                created_at=clock_timestamp()-interval '72 hours'
+                WHERE id=ANY(%s::uuid[])""",([raw,neighbor],))
+        result=plan_only(self.store.pool,now=time.time(),
+                         age_hours=24,batch_size=10)
+        self.assertEqual(result['eligible_in_sample'],1)
+        self.assertEqual(result['mode'],'preview')
+        with self.store.pool.connection() as c:
+            intact=c.execute("""SELECT id::text FROM research_job
+                WHERE id=ANY(%s::uuid[])""",([raw,neighbor],)).fetchall()
+        self.assertEqual({r['id'] for r in intact},{raw,neighbor})
 
 if __name__=='__main__':unittest.main()
