@@ -37,6 +37,7 @@ class HistoryPageContractTests(unittest.TestCase):
         for sql in (RAW_SQL,PACKED_SQL):
             self.assertIn('idempotency_key>%s',sql)
             self.assertIn('idempotency_key<%s',sql)
+            self.assertIn('idempotency_key LIKE %s',sql)
             self.assertIn('ORDER BY idempotency_key LIMIT %s',sql)
             self.assertNotIn('count(*)',sql.lower())
             self.assertNotIn('offset',sql.lower())
@@ -63,6 +64,7 @@ class HistoryPageContractTests(unittest.TestCase):
         self.assertEqual(sqlcalls[0][0],'SET LOCAL statement_timeout=5000')
         self.assertEqual(sqlcalls[1][0],RAW_SQL)
         self.assertEqual(sqlcalls[1][1][-1],5)
+        self.assertEqual(sqlcalls[1][1][2],RAW_PREFIX+'%')
 
 
 from services.api.tests import test_demo_postgres as fixture
@@ -130,6 +132,42 @@ class HostedShadowHistoryPages(unittest.TestCase):
                 idempotency_key>='demo/shadow/event/'
                 AND idempotency_key<'demo/shadow/event/zzzz'""").fetchone()['n']
         self.assertEqual(n,len(originals))  # pagination never mutated source
+
+    def test_mixed_raw_and_packed_namespaces_never_leak_across_pages(self):
+        from services.paper_demo.shadow.storage import UPSERT,entry
+        from services.paper_demo.shadow.diagnostic_batches import compact_diagnostic_rows
+        raw_ids=[]
+        for i in range(7):
+            raw_ids.append(str(self.demo.put('shadow/event/'+f'{i:04d}',
+                dict(event='FAVORITE_STAT_DECISION',time=i),
+                parameters=dict(source='raw'))))
+        originals=[entry(RAW_PREFIX+str(uuid4()),dict(source='packed'),
+                         dict(event='FAVORITE_STAT_DECISION',time=200+i))
+                   for i in range(2)]
+        packed=compact_diagnostic_rows(originals,entry)
+        self.assertEqual(len(packed),1)
+        with self.store.pool.connection() as c:
+            c.execute(UPSERT,packed[0])
+        raw_seen=[];cursor=None
+        while True:
+            result=self.client.get('/demo/shadow/history/raw',
+                params={'cursor':cursor} if cursor is not None else None)
+            self.assertEqual(result.status_code,200,result.text)
+            body=result.json()
+            self.assertTrue(all(item['key'].startswith(RAW_PREFIX) for item in body['items']))
+            self.assertTrue(all(key.startswith(RAW_PREFIX) for key in body['source_keys']))
+            raw_seen.extend(body['items'])
+            if not body['more']:break
+            cursor=body['next_cursor']
+            self.assertLessEqual(len(raw_seen),7)
+        self.assertEqual({item['id'] for item in raw_seen},set(raw_ids))
+        packed_result=self.client.get('/demo/shadow/history/packed')
+        self.assertEqual(packed_result.status_code,200,packed_result.text)
+        packed_body=packed_result.json()
+        self.assertEqual(len(packed_body['source_keys']),1)
+        self.assertTrue(packed_body['source_keys'][0].startswith(PACKED_PREFIX))
+        self.assertEqual({item['id'] for item in packed_body['items']},
+                         {str(item[0]) for item in originals})
 
     def test_packed_batches_recover_all_original_ids_without_double_counting(self):
         from services.paper_demo.shadow.storage import UPSERT,entry

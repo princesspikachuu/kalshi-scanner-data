@@ -17,9 +17,11 @@ MAX_PACKED_ROWS = 1  # A batch can represent up to 64 original events.
 
 RAW_SQL = """SELECT id::text,idempotency_key,parameters,progress,created_at
     FROM research_job WHERE idempotency_key>%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     ORDER BY idempotency_key LIMIT %s"""
 PACKED_SQL = """SELECT id::text,idempotency_key,parameters,progress,created_at
     FROM research_job WHERE idempotency_key>%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     ORDER BY idempotency_key LIMIT %s"""
 
 
@@ -52,7 +54,7 @@ def page_history(pool, source, *, cursor=None):
         with connection.transaction():
             connection.execute('SET LOCAL statement_timeout=5000')
             rows = connection.execute(sql, (after, prefix + 'zzzz',
-                                            limit + 1)).fetchall()
+                                            prefix + '%', limit + 1)).fetchall()
     page = rows[:limit]
     cold_rows = cold_objects = 0
     if raw:
