@@ -35,8 +35,19 @@ def normalize_reclaimed_manifest_page(result, *, offset):
             raise ValueError('Noncanonical manifest UUID')
     except (TypeError, ValueError, AttributeError) as exc:
         raise HistoryReconciliationError('Invalid reclaimed manifest identity') from exc
-    if not isinstance(key, str) or key != expected_key_prefix+identifier:
+    # Existing operator archives may have a separate random UUID in the
+    # index key. Require the correct kind-specific namespace and canonical
+    # key suffix, but do not discard checksum-verified legacy R2 evidence.
+    if not isinstance(key, str) or not key.startswith(expected_key_prefix):
         raise HistoryReconciliationError('Invalid reclaimed manifest identity')
+    key_identifier=key[len(expected_key_prefix):]
+    try:
+        if str(UUID(key_identifier)) != key_identifier:
+            raise ValueError('Noncanonical archive index suffix')
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HistoryReconciliationError('Invalid reclaimed manifest identity') from exc
+    identity_mode=('canonical_row_key' if key_identifier==identifier
+                   else 'legacy_independent_key')
     digest = manifest.get('manifest_digest')
     if not isinstance(digest,str) or re.fullmatch(r'[0-9a-f]{64}',digest) is None:
         raise HistoryReconciliationError('Verified manifest fingerprint missing')
@@ -77,6 +88,7 @@ def normalize_reclaimed_manifest_page(result, *, offset):
         raise HistoryReconciliationError('Duplicate events inside one R2 page')
     return dict(contract='demo-v1',source=KINDS[kind],manifest_id=identifier,
                 manifest_key=key,manifest_digest=digest,
+                manifest_identity_mode=identity_mode,
                 offset=offset,total_events=total,
                 items=verified['items'],next_offset=expected_next,
                 page_events=len(events),verified=True,
