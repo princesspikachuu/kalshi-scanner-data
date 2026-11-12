@@ -32,6 +32,7 @@ CANDIDATES="""SELECT id::text,idempotency_key,asset,status,parameters,progress,
     FROM research_job WHERE status='succeeded'
     AND created_at<to_timestamp(%s)
     AND idempotency_key>=%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     AND progress->>'format'='shadow-diagnostic-batch-v1'
     ORDER BY idempotency_key LIMIT %s"""
 LOCKED_CANDIDATES=CANDIDATES+' FOR UPDATE SKIP LOCKED'
@@ -42,6 +43,7 @@ MANIFEST_SQL="""INSERT INTO research_job
 DELETE_SQL="""DELETE FROM research_job WHERE id=ANY(%s::uuid[])
     AND status='succeeded' AND created_at<to_timestamp(%s)
     AND idempotency_key>=%s AND idempotency_key<%s
+    AND idempotency_key LIKE %s
     AND progress->>'format'='shadow-diagnostic-batch-v1'
     RETURNING id::text"""
 
@@ -115,7 +117,8 @@ def preview(pool,*,now,age_hours=24,batch_size=1):
     with pool.connection() as c:
         with c.transaction():
             c.execute('SET LOCAL statement_timeout=5000')
-            rows=c.execute(CANDIDATES,(cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',batch_size)).fetchall()
+            rows=c.execute(CANDIDATES,(cutoff,BATCH_PREFIX,BATCH_PREFIX+'zzzz',
+                               BATCH_PREFIX+'%',batch_size)).fetchall()
     records,event_ids=validated_records(rows)
     return dict(mode='preview',batch_rows=len(records),original_events=len(event_ids),
         eligible_sample_only=True,hot_hours=age_hours,no_writes=True)
@@ -152,7 +155,8 @@ def archive_one(pool, objects, *, now, age_hours=24, batch_size=1, scoped=False)
     content-addressed orphan. Legacy direct-owner execution keeps its locks.
     """
     cutoff = cutoff_at(now, age_hours, batch_size)
-    args = (cutoff, BATCH_PREFIX, BATCH_PREFIX+'zzzz', batch_size)
+    args = (cutoff, BATCH_PREFIX, BATCH_PREFIX+'zzzz', BATCH_PREFIX+'%',
+            batch_size)
     if scoped:
         with pool.connection() as connection:
             with connection.transaction():
@@ -180,12 +184,14 @@ def archive_one(pool, objects, *, now, age_hours=24, batch_size=1, scoped=False)
                                 original_events=0, deleted_rows=0)
                 records, event_ids, receipt, manifest = _prepare_verified_batch(
                     rows, objects, now)
-                connection.execute(MANIFEST_SQL, (uuid4(),
+                manifest_id=uuid4()
+                connection.execute(MANIFEST_SQL, (manifest_id,
                     Jsonb(dict(kind='diagnostic_batch_r2_manifest')),
-                    Jsonb(manifest), MANIFEST_PREFIX+str(uuid4())))
+                    Jsonb(manifest), MANIFEST_PREFIX+str(manifest_id)))
                 deleted = connection.execute(DELETE_SQL,
                     (manifest['row_ids'], cutoff,
-                     BATCH_PREFIX, BATCH_PREFIX+'zzzz')).fetchall()
+                     BATCH_PREFIX, BATCH_PREFIX+'zzzz',
+                     BATCH_PREFIX+'%')).fetchall()
                 _check_batch_reclaim(deleted, manifest, len(rows))
     return dict(mode='executed', archived_rows=len(rows),
                 original_events=len(event_ids), deleted_rows=len(rows),
