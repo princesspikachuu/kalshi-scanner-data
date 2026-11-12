@@ -84,6 +84,14 @@ class SuppliedSettlementMarkerTests(unittest.TestCase):
                     inspect_supplied_favorite_settlement_markers([
                         page(cohort,fill,settle(at=at))])
 
+    def test_malformed_settlement_ticker_fails_not_unhashable_crash(self):
+        for ticker in ([],{},None,''):
+            cohort,fill=events()
+            with self.subTest(ticker=ticker):
+                with self.assertRaises(HistoryReconciliationError):
+                    inspect_supplied_favorite_settlement_markers([
+                        page(cohort,fill,settle(ticker=ticker))])
+
     def test_unverified_r2_and_ambiguous_fills_not_promoted(self):
         cohort,fill=events()
         marker=settle()
