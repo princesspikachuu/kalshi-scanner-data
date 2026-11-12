@@ -13,16 +13,19 @@ namespace restriction. There are no additional queries or R2 calls.
 
 Each returned catalog record must also have:
 
-- A canonical UUID matching the indexed manifest key exactly.
+- Canonical UUIDs in both the durable manifest row ID and indexed key suffix.
+- A transparent `canonical_row_key` / `legacy_independent_key` receipt label; existing operator-generated manifests often have different random UUIDs in these two fields and must remain readable after SHA verification.
 - A raw or packed manifest key namespace matching its durable kind.
 - The matching expected manifest format.
 - Valid positive archived/source-event counts.
 
-An inconsistent, stale, or neighboring record fails closed instead of being
-presented as a verified archive. This check runs before any requested R2
+An inconsistent, malformed, or neighboring record fails closed instead of being
+presented as a verified archive. A legacy independent key is not treated as
+proof of identity equality; the lookup is still by the durable row UUID and
+full R2 SHA/gzip/readback is still required. This check runs before any requested R2
 readback and does not change original archive content.
 
-Tests cover both raw and packed legitimate manifests; mismatched identifiers,
+Tests cover both raw and packed legitimate manifests; legacy independent UUIDs,
 opposite namespaces, malformed UUIDs, unexpected formats, and SQL parameters.
 This is an owner-only, read-only metadata change. It does not verify the full
 R2 catalog, prove financial settlement, enable history restoration, start
