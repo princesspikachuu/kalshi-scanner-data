@@ -59,6 +59,11 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 **Urgency:** U0 — BLOCKER  
 **Priority:** Immediate, before MT-011 throughput verification and any resumed trading
 
+### MT-019 newest checkpoint — namespace isolation merged (2026-11-12 UTC)
+- **PR #213 MERGED** at `0043ebee13e290b86b190d29abaa758a18bd3bc9`, exact tested head `2ca8c611b66b43e815480d5289baede4e7cc5128`, full CI `43135463110` SUCCESS, postmerge CI `43138279697` in progress at last check. Added exact bound `LIKE prefix%` to raw and packed owner history keyset SELECTs with mixed-source disposable PostgreSQL tests.
+- **PR #212 MERGED** at `7f1d098a0d431e6ad2fc41975e189bfa08c8e139`, exact tested head `698f6956ce6f029924378e0ddd21f91d12fbd602`, full CI `43135636103` SUCCESS, postmerge CI not observed yet. Read-only REPEATABLE READ one-transaction snapshot of raw/packed/manifest index windows, strict cursor+namespace boundaries; no source completeness claim.
+- Render held processing worker last LIVE `b708b27f` and research worker LIVE `585252f2` with collection disabled; **API still manual older `93c86efc`**. Merged changes not yet independently verified deployed. No trading, collection, automatic archive or deletion activation. Operator physical disk/WAL, least privilege maintenance role, separate R2 READ credentials and DB password rotation still open.
+
 ### MT-019 follow-on checkpoint — namespace safety (2026-11-12 UTC)
 - **PR #212 DRAFT** `fix/mt019-readonly-snapshot-windows`, latest `d334089f330f7931893cf9c513c238e507a41349`, CI `43135161853` IN PROGRESS. Uses explicit bounded namespace `LIKE` predicate with existing keyset range to guard cross-prefix leakage; prior diagnostic CI `43134981174` also running. Earlier `43129178720` failed one/1628 disposable-DB tests at second snapshot window.
 - **PR #213 DRAFT** `fix/mt019-history-namespace-isolation`, latest `2ca8c611b66b43e815480d5289baede4e7cc5128`, CI `43135463110` IN PROGRESS. Adds same fixed prefix bound `LIKE` constraint to existing read-only raw/packed owner APIs (no extra queries), plus mixed raw/packed disposable PostgreSQL test; no deployment until full CI passes.
