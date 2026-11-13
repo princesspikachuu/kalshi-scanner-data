@@ -24,8 +24,8 @@ class RealPostgresControlBackupTailTests(unittest.TestCase):
         fixture.DemoPostgres.tearDownClass.__func__(cls)
 
     def test_unusual_live_control_key_refuses_both_snapshot_paths(self):
-        key='live/write/zzzzzz-legacy'
-        self.demo.put(key,dict(event='CONTROL',status='resting'))
+        key='demo/shadow/bot/zzzzzz-legacy'
+        self.demo.put('shadow/bot/zzzzzz-legacy',dict(event='CONTROL',status='resting'))
         # This previously appeared to be a complete empty snapshot because
         # the key sorts after the hard-coded end of the indexed window.
         with self.assertRaisesRegex(ValueError,'upper boundary'):
@@ -39,8 +39,8 @@ class RealPostgresControlBackupTailTests(unittest.TestCase):
         self.assertEqual(row['idempotency_key'],key)
 
     def test_normal_control_snapshot_still_works(self):
-        key='live/write/0001'
-        self.demo.put(key,dict(event='CONTROL',status='resting'))
+        key='demo/shadow/bot/0001'
+        self.demo.put('shadow/bot/0001',dict(event='CONTROL',status='resting'))
         captured=collect_snapshot(self.store.pool)
         self.assertIn(key,[row['idempotency_key'] for row in captured])
         staged=collect_snapshot_spooled(self.store.pool)
