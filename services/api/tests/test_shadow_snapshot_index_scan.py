@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from services.demo.shadow_snapshot_index_scan import scan_postgres_index_snapshot
 from services.demo.shadow_snapshot_window import KEY_SQL, MANIFEST_KEYS_SQL
+from services.demo.shadow_prefix_boundary_guard import EXACT_PREFIX_SQL, ABOVE_UPPER_SQL
 
 
 class SnapshotIndexScanUnitTests(unittest.TestCase):
@@ -27,8 +28,11 @@ class SnapshotIndexScanUnitTests(unittest.TestCase):
         snapshot.fetchone.return_value = {'snapshot': '12:18:'}
         empty = MagicMock()
         empty.fetchall.return_value = []
+        no_match = MagicMock()
+        no_match.fetchone.return_value = None
         connection.execute.side_effect = [
             MagicMock(), MagicMock(), snapshot, empty, empty, empty,
+            *([no_match] * 6),
         ]
         audit = scan_postgres_index_snapshot(pool)
         self.assertTrue(audit['indexed_namespaces_fully_scanned_in_this_snapshot'])
@@ -36,14 +40,18 @@ class SnapshotIndexScanUnitTests(unittest.TestCase):
         self.assertEqual(audit['transaction_snapshot'], '12:18:')
         self.assertFalse(audit['all_time_coverage_complete'])
         self.assertFalse(audit['safe_to_restart_writers'])
+        self.assertTrue(audit['bounded_prefix_key_boundaries_verified'])
         commands = [call.args[0] for call in connection.execute.call_args_list]
         self.assertEqual(commands, [
             'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
             'SET LOCAL statement_timeout=5000',
             'SELECT txid_current_snapshot()::text AS snapshot',
             KEY_SQL, KEY_SQL, MANIFEST_KEYS_SQL,
+            EXACT_PREFIX_SQL, ABOVE_UPPER_SQL,
+            EXACT_PREFIX_SQL, ABOVE_UPPER_SQL,
+            EXACT_PREFIX_SQL, ABOVE_UPPER_SQL,
         ])
-        for call in connection.execute.call_args_list[3:]:
+        for call in connection.execute.call_args_list[3:6]:
             self.assertIn('idempotency_key LIKE %s', call.args[0])
             self.assertEqual(call.args[1][-1], 17)
 
