@@ -13,6 +13,7 @@ from services.demo.shadow_history_pages import (
 from services.demo.shadow_archive_reader import (
     PREFIX as MANIFEST_PREFIX, validate_page as validate_manifest_page,
 )
+from services.demo.shadow_prefix_boundary_guard import assert_no_hidden_prefix_keys
 
 MAX_WINDOW_KEYS=32
 SOURCE_PREFIXES={'raw':RAW_PREFIX,'packed':PACKED_PREFIX,'manifests':MANIFEST_PREFIX}
@@ -89,12 +90,14 @@ def read_postgres_snapshot_window(pool, *, page_size=16, cursors=None):
                     last_index_key=keys[-1] if keys else None,
                     more=more,
                     next_cursor=keys[-1] if more else None)
+            assert_no_hidden_prefix_keys(connection, list(SOURCE_PREFIXES.values()))
     first_window=all(cursors.get(source) is None for source in SOURCE_PREFIXES)
     all_end=all(not value['more'] for value in windows.values())
     return dict(contract='mt019-postgres-index-snapshot-window-v1',
                 transaction_snapshot=str(marker),
                 isolation='repeatable_read_read_only',
                 postgres_source_window_consistent=True,
+        bounded_prefix_key_boundaries_verified=True,
                 indexed_namespaces_fully_scanned_in_this_snapshot=first_window and all_end,
                 windows=windows,
                 source_exhaustion_verified=False,
