@@ -97,7 +97,7 @@ def read_postgres_snapshot_window(pool, *, page_size=16, cursors=None):
                 transaction_snapshot=str(marker),
                 isolation='repeatable_read_read_only',
                 postgres_source_window_consistent=True,
-        bounded_prefix_key_boundaries_verified=True,
+                bounded_prefix_key_boundaries_verified=True,
                 indexed_namespaces_fully_scanned_in_this_snapshot=first_window and all_end,
                 windows=windows,
                 source_exhaustion_verified=False,
