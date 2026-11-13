@@ -9,6 +9,7 @@ from unittest.mock import MagicMock,patch
 from services.demo.control_backup_v2 import (
     FORMAT,PART_FORMAT,MAX_CHUNK_ROWS,MAX_ROWS,MAX_CHUNK_BYTES,
     canonical,select_prefix_query,collect_snapshot,collect_snapshot_spooled,
+    UPPER_TAIL_SQL,assert_no_hidden_control_tail,
     split_snapshot,digest_records,restore_verified_snapshot,verify_staged_archive,backup_controls,
     is_authorized,backup_once
 )
@@ -41,6 +42,9 @@ class VerifiedControlBackupTests(unittest.TestCase):
         def execute(sql,args=None):
             requested.append(sql)
             cur=MagicMock()
+            if sql == UPPER_TAIL_SQL:
+                cur.fetchone.return_value=None
+                return cur
             if 'FROM research_job' not in sql:
                 return cur
             if 'idempotency_key=ANY' in sql:
@@ -62,6 +66,46 @@ class VerifiedControlBackupTests(unittest.TestCase):
         self.assertIn('ORDER BY idempotency_key LIMIT %s',select_prefix_query(None))
         with self.assertRaises(ValueError):
             select_prefix_query("progress->>'event'='FILL'")
+
+    def test_legacy_high_key_blocks_snapshot_before_publish(self):
+        from services.demo.control_backup_capacity_audit import PREFIX_SCOPES
+        connection=MagicMock()
+        missing=MagicMock()
+        missing.fetchone.return_value=None
+        connection.execute.return_value=missing
+        self.assertIsNone(assert_no_hidden_control_tail(connection))
+        self.assertEqual(connection.execute.call_count,len(PREFIX_SCOPES))
+        self.assertTrue(all(call.args[0]==UPPER_TAIL_SQL
+                            for call in connection.execute.call_args_list))
+        self.assertEqual(connection.execute.call_args_list[0].args[1],
+                         (PREFIX_SCOPES[0][1]+'zzzz',PREFIX_SCOPES[0][1]+'%'))
+
+        present=MagicMock()
+        present.fetchone.return_value={'present':1}
+        connection=MagicMock()
+        connection.execute.return_value=present
+        with self.assertRaisesRegex(ValueError,'upper boundary'):
+            assert_no_hidden_control_tail(connection)
+        self.assertEqual(connection.execute.call_count,1)
+
+    def test_hidden_key_aborts_spool_and_closes_file(self):
+        fake=BytesIO()
+        pool=MagicMock()
+        connection=pool.connection.return_value.__enter__.return_value
+        def execute(sql,args=None):
+            cur=MagicMock()
+            if sql == UPPER_TAIL_SQL:
+                cur.fetchone.return_value={'present':1}
+            elif 'FROM research_job' in sql:
+                cur.fetchall.return_value=[]
+            return cur
+        connection.execute.side_effect=execute
+        with patch('services.demo.control_backup_v2.tempfile.TemporaryFile',
+                   return_value=fake):
+            with self.assertRaisesRegex(ValueError,'upper boundary'):
+                collect_snapshot_spooled(pool)
+        self.assertTrue(fake.closed)
+        connection.transaction.assert_called_once()
 
     def test_corrupt_control_record_fails_closed(self):
         for invalid in (dict(self.record(),parameters=[]),
@@ -118,6 +162,9 @@ class VerifiedControlBackupTests(unittest.TestCase):
         c=pool.connection.return_value.__enter__.return_value
         def execute(sql,args=None):
             result=MagicMock()
+            if sql == UPPER_TAIL_SQL:
+                result.fetchone.return_value=None
+                return result
             if 'FROM research_job' in sql:
                 if 'idempotency_key=ANY' in sql:
                     result.fetchall.return_value=[]
