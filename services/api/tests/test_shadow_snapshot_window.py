@@ -7,6 +7,7 @@ from services.demo.shadow_snapshot_window import (
     read_postgres_snapshot_window,KEY_SQL,MANIFEST_KEYS_SQL,
     SOURCE_PREFIXES,
 )
+from services.demo.shadow_prefix_boundary_guard import EXACT_PREFIX_SQL, ABOVE_UPPER_SQL
 
 
 class SnapshotWindowUnitTests(unittest.TestCase):
@@ -17,15 +18,18 @@ class SnapshotWindowUnitTests(unittest.TestCase):
         snapshot.fetchone.return_value={'snapshot':'101:107:'}
         empty=MagicMock()
         empty.fetchall.return_value=[]
+        no_match=MagicMock()
+        no_match.fetchone.return_value=None
         connection.execute.side_effect=[MagicMock(),MagicMock(),snapshot,
-                                        empty,empty,empty]
+                                        empty,empty,empty,*([no_match]*6)]
         out=read_postgres_snapshot_window(pool,page_size=4)
         self.assertTrue(out['postgres_source_window_consistent'])
         self.assertEqual(out['isolation'],'repeatable_read_read_only')
         self.assertTrue(out['indexed_namespaces_fully_scanned_in_this_snapshot'])
+        self.assertTrue(out['bounded_prefix_key_boundaries_verified'])
         self.assertFalse(out['all_time_coverage_complete'])
         self.assertFalse(out['safe_to_train'])
-        self.assertEqual(connection.execute.call_count,6)
+        self.assertEqual(connection.execute.call_count,12)
         sqlcalls=[call.args[0] for call in connection.execute.call_args_list]
         self.assertEqual(sqlcalls[0],
                          'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
@@ -34,7 +38,9 @@ class SnapshotWindowUnitTests(unittest.TestCase):
         self.assertEqual(sqlcalls[3],KEY_SQL)
         self.assertEqual(sqlcalls[4],KEY_SQL)
         self.assertEqual(sqlcalls[5],MANIFEST_KEYS_SQL)
-        for call in connection.execute.call_args_list[3:]:
+        self.assertEqual(sqlcalls[6:],
+                         [EXACT_PREFIX_SQL,ABOVE_UPPER_SQL]*3)
+        for call in connection.execute.call_args_list[3:6]:
             self.assertEqual(call.args[1][-1],5)
             self.assertTrue(call.args[1][2].endswith('/%'))
             self.assertIn('idempotency_key LIKE %s',call.args[0])
@@ -50,7 +56,10 @@ class SnapshotWindowUnitTests(unittest.TestCase):
             {'idempotency_key':'demo/shadow/event/0002'}]
         empty=MagicMock()
         empty.fetchall.return_value=[]
-        connection.execute.side_effect=[MagicMock(),MagicMock(),snap,rows,empty,empty]
+        no_match=MagicMock()
+        no_match.fetchone.return_value=None
+        connection.execute.side_effect=[MagicMock(),MagicMock(),snap,rows,empty,empty,
+                                        *([no_match]*6)]
         result=read_postgres_snapshot_window(pool,page_size=1)
         self.assertTrue(result['windows']['raw']['more'])
         self.assertEqual(result['windows']['raw']['next_cursor'],

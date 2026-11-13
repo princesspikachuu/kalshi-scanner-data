@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from services.demo.shadow_manifest_namespace_inventory import (
     audit_manifest_namespace_snapshot, NAMESPACE_SQL,
 )
+from services.demo.shadow_prefix_boundary_guard import EXACT_PREFIX_SQL, ABOVE_UPPER_SQL
 
 
 def archive_row(*, kind='shadow_event_r2_manifest',
@@ -26,8 +27,10 @@ def mocked(rows):
     snapshot.fetchone.return_value = {'snapshot':'100:104:'}
     selected = MagicMock()
     selected.fetchall.return_value = rows
+    no_match=MagicMock()
+    no_match.fetchone.return_value=None
     connection.execute.side_effect = [
-        MagicMock(),MagicMock(),snapshot,selected]
+        MagicMock(),MagicMock(),snapshot,selected,no_match,no_match]
     return pool,connection
 
 
@@ -52,12 +55,13 @@ class ManifestNamespaceInventoryUnitTests(unittest.TestCase):
         self.assertEqual(result['unrecognized_or_unsafe_rows'],0)
         self.assertFalse(result['all_time_coverage_complete'])
         self.assertFalse(result['safe_to_restart_writers'])
+        self.assertTrue(result['bounded_prefix_key_boundaries_verified'])
         calls=[call.args[0] for call in c.execute.call_args_list]
         self.assertEqual(calls,[
             'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
             'SET LOCAL statement_timeout=5000',
             'SELECT txid_current_snapshot()::text AS snapshot',
-            NAMESPACE_SQL,
+            NAMESPACE_SQL,EXACT_PREFIX_SQL,ABOVE_UPPER_SQL,
         ])
         self.assertEqual(c.execute.call_args_list[3].args[1][-1],17)
 

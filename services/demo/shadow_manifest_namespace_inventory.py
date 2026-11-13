@@ -8,6 +8,7 @@ or treated as safely reclaimable. No data is moved or quarantined.
 import hashlib
 
 from services.demo.shadow_archive_reader import PREFIX, summary
+from services.demo.shadow_prefix_boundary_guard import assert_no_hidden_prefix_keys
 
 MAX_PAGE_SIZE = 25
 MAX_PAGES = 8
@@ -118,6 +119,7 @@ def audit_manifest_namespace_snapshot(pool, *, page_size=16, max_pages=MAX_PAGES
                 if pages_seen >= max_pages or not taken:
                     raise ValueError('Manifest namespace page budget exceeded')
                 after = keys[page_size - 1]
+            assert_no_hidden_prefix_keys(connection, [PREFIX])
 
     recognized = classifications.get('recognized', 0)
     unrecognized = seen_keys - recognized
@@ -126,6 +128,7 @@ def audit_manifest_namespace_snapshot(pool, *, page_size=16, max_pages=MAX_PAGES
         isolation='repeatable_read_read_only',
         transaction_snapshot=snapshot,
         full_prefix_keyset_terminal_in_one_snapshot=True,
+        bounded_prefix_key_boundaries_verified=True,
         namespace_rows=seen_keys,
         keyset_pages=pages_seen,
         recognized_manifest_rows=recognized,

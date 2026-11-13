@@ -12,6 +12,7 @@ from services.demo.shadow_snapshot_window import (
     KEY_SQL, MANIFEST_KEYS_SQL, SOURCE_PREFIXES, MAX_WINDOW_KEYS,
 )
 from services.demo.shadow_history_pages import validate_cursor
+from services.demo.shadow_prefix_boundary_guard import assert_no_hidden_prefix_keys
 from services.demo.shadow_archive_reader import validate_page as validate_manifest_page
 
 MAX_PAGES_PER_SOURCE = 8
@@ -101,6 +102,8 @@ def scan_postgres_index_snapshot(pool, *, page_size=16,
                                          index_key_digest=hash_state.hexdigest(),
                                          fully_scanned_in_this_snapshot=True)
 
+            assert_no_hidden_prefix_keys(connection, list(SOURCE_PREFIXES.values()))
+
     return dict(
         contract=CONTRACT,
         isolation='repeatable_read_read_only',
@@ -109,6 +112,7 @@ def scan_postgres_index_snapshot(pool, *, page_size=16,
         source_keysets=summaries,
         total_indexed_source_rows=total_keys,
         indexed_namespaces_fully_scanned_in_this_snapshot=True,
+        bounded_prefix_key_boundaries_verified=True,
         # This only proves the selected SQL index keysets at one instant.
         # Manifest data, original R2 records, and business settlement still
         # require independent verification and completeness reconciliation.
