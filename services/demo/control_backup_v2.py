@@ -32,6 +32,21 @@ PART_FORMAT='control-snapshot-part-v2'
 SELECT_FIELDS='id::text,idempotency_key,parameters,progress'
 SINGLETON_QUERY=f"""SELECT {SELECT_FIELDS} FROM research_job
     WHERE idempotency_key=ANY(%s::text[]) ORDER BY idempotency_key"""
+# The selected prefix windows end before prefix+'zzzz'. Unknown/legacy keys
+# beyond this sentinel must NOT let a truncated control backup claim to be
+# a complete recovery snapshot, even if all captured R2 chunks verify.
+UPPER_TAIL_SQL="""SELECT 1 AS present FROM research_job
+    WHERE idempotency_key >= %s AND idempotency_key LIKE %s LIMIT 1"""
+
+
+def assert_no_hidden_control_tail(connection):
+    """Fail closed inside the caller's existing READ ONLY database snapshot."""
+    for _, prefix, _ in PREFIX_SCOPES:
+        if connection.execute(
+                UPPER_TAIL_SQL, (prefix+'zzzz', prefix+'%')
+        ).fetchone() is not None:
+            raise ValueError('Control backup index upper boundary hides rows')
+
 SELECT_PREFIX=f"""SELECT {SELECT_FIELDS} FROM research_job
     WHERE idempotency_key>=%s AND idempotency_key<%s
     AND (%s::text IS NULL OR idempotency_key>%s)"""
@@ -89,6 +104,7 @@ def collect_snapshot(pool):
                     if len(page)<PAGE_SIZE:break
             singletons=connection.execute(SINGLETON_QUERY,(list(SINGLETONS),)).fetchall()
             for record in singletons:append(record)
+            assert_no_hidden_control_tail(connection)
     return records
 
 
@@ -160,6 +176,7 @@ def collect_snapshot_spooled(pool):
                 for record in connection.execute(
                         SINGLETON_QUERY,(list(SINGLETONS),)).fetchall():
                     add(record)
+                assert_no_hidden_control_tail(connection)
         if count==0:
             raise ValueError('No controls found; refusing empty recovery backup')
         flush();file.seek(0)
