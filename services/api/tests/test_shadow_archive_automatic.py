@@ -30,7 +30,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
         pool = MagicMock()
         conn = pool.connection.return_value.__enter__.return_value
 
-        def query(sql):
+        def query(sql, params=None):
             result = MagicMock()
             if sql == ROLE_QUERY:
                 result.fetchone.return_value = dict(
@@ -39,6 +39,10 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
                     can_update=False, can_truncate=truncate,
                     can_schema_create=schema_create, can_scoped_reclaim=True,
                     has_memberships=membership)
+            elif 'pg_current_wal_lsn()::text AS lsn' in sql:
+                result.fetchone.return_value = dict(lsn='0/1000000')
+            elif 'pg_wal_lsn_diff' in sql:
+                result.fetchone.return_value = dict(db_bytes=size, wal_bytes=0)
             else:
                 result.fetchone.return_value = dict(bytes=size)
             return result
@@ -150,6 +154,23 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
                    'services.demo.shadow_archive_automatic.archive_one',
                    return_value=dict(archived_rows=1, deleted_rows=1, verified=False)), self.assertRaises(RuntimeError):
             archive_cycle(pool, MagicMock(), limits)
+
+    def test_budget_stop_never_starts_another_cycle(self):
+        pool = self.pool()
+        objects = MagicMock()
+        stop = Event()
+        with patch('services.demo.shadow_archive_automatic.ConnectionPool') as constructor, \
+             patch('services.demo.shadow_archive_automatic.verify_scoped_role'), \
+             patch('services.demo.shadow_archive_automatic.verify_archive_index'), \
+             patch('services.demo.shadow_archive_automatic.object_store', return_value=objects), \
+             patch('services.demo.shadow_archive_automatic.archive_cycle', return_value=dict(
+                 stop_reason='wal_budget_reached')) as cycle, \
+             patch('builtins.print'):
+            constructor.return_value.__enter__.return_value = pool
+            with self.assertRaisesRegex(RuntimeError, 'operator review required'):
+                run(stop, self.env())
+        cycle.assert_called_once()
+        objects.client.close.assert_called_once()
 
     def test_stop_fence_prevents_work_and_unauthorized_start_never_connects(self):
         limits = configuration(self.env())
