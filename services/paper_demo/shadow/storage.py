@@ -1,5 +1,5 @@
 """Atomic hosted wallet/checkpoint and audit records under the existing trading fence."""
-import asyncio,json,time,tempfile
+import asyncio,json,os,time,tempfile
 from copy import deepcopy
 from collections import Counter
 from pathlib import Path
@@ -12,9 +12,9 @@ from .audit_bulk import persist_audit_rows
 from .diagnostic_batches import compact_diagnostic_rows, BATCH_PREFIX
 
 KEY='demo/shadow/checkpoint'
-# An unchanged checkpoint is already durable. Keep a periodic full UPSERT as a
-# recovery boundary even when audit-only batches don't change paper state.
-CHECKPOINT_REWRITE_SECONDS=30
+# Byte-identical state is already durably committed. Elapsed time does not
+# invalidate it. Every new process/changed state still writes a checkpoint;
+# standalone startup/shutdown checkpoints remain explicit recovery boundaries.
 
 def checkpoint_signature(payload):
     if not isinstance(payload,dict) or not isinstance(payload.get('data'),str):return None
@@ -114,8 +114,7 @@ class HostedAudit:
         checkpoint=getattr(batch[0][2],'obj',{}) if batch else {}
         signature=checkpoint_signature(checkpoint)
         unchanged=(signature is not None and
-            signature==getattr(self,'committed_checkpoint_signature',None) and
-            started-getattr(self,'committed_checkpoint_at',0)<CHECKPOINT_REWRITE_SECONDS)
+            signature==getattr(self,'committed_checkpoint_signature',None))
         rows=batch[1:] if unchanged else batch
         with self.store.pool.connection() as c:
             acquired=time.monotonic()
@@ -137,7 +136,6 @@ class HostedAudit:
         # after a failed transaction must rewrite the checkpoint as needed.
         if not unchanged:
             self.committed_checkpoint_signature=signature
-            self.committed_checkpoint_at=finished
         self.commits=getattr(self,'commits',0)+1
         self.rows_written=getattr(self,'rows_written',0)+len(rows)+len(commands)
         profile=getattr(self,'durability_profile',None)
@@ -222,7 +220,6 @@ class HostedAudit:
         # Standalone/shutdown checkpoints also become the last durable state.
         # A failure above must leave the old signature unchanged.
         self.committed_checkpoint_signature=checkpoint_signature(data)
-        self.committed_checkpoint_at=time.monotonic()
         self.last_snapshot=time.monotonic()
     async def checkpoint_async(self):
         self.freeze_discovery()
@@ -233,8 +230,39 @@ class HostedAudit:
         # This is a derived view, separate from atomic wallet/audit persistence.
         # Reuse the lossless codec instead of asking PostgreSQL to parse and
         # rewrite megabytes of repeated research counters every five seconds.
-        started=time.monotonic();payload=pack_checkpoint(data,binary=True)
-        prepared=time.monotonic();self.store.put('shadow/status',payload);finished=time.monotonic()
+        started=time.monotonic();sections={}
+        if os.environ.get('MT_SHADOW_SPLIT_STATUS_ENABLED','false')=='true':
+            from .status_sections import prepare
+            payload,sections=prepare(data)
+        else:payload=pack_checkpoint(data,binary=True)
+        prepared=time.monotonic()
+        section_writes=0;section_bytes=0;avoided=0
+        if sections:
+            with self.store.pool.connection() as c:
+                with c.transaction():
+                    # Serialize section publishers across worker overlap at
+                    # deploy. Check live digests, not a process-local cache
+                    # that another publisher could have invalidated.
+                    c.execute('SELECT pg_advisory_xact_lock(723741950)')
+                    current=c.execute("SELECT idempotency_key,parameters->>'sha256' AS sha256 FROM research_job WHERE idempotency_key=ANY(%s::text[])",
+                                      (['demo/shadow/status-section/'+s for s in sections],)).fetchall()
+                    committed={r['idempotency_key']:r['sha256'] for r in current}
+                    for slot,section in sections.items():
+                        key='demo/shadow/status-section/'+slot
+                        size=len(section['payload'].get('data',''))
+                        if committed.get(key)==section['sha256']:
+                            avoided+=size;continue
+                        # Stable slots, no immutable row per heartbeat/version.
+                        # PostgreSQL digest comparison also suppresses a rewrite
+                        # on worker restart; financial checkpoint is untouched.
+                        c.execute(UPSERT+" WHERE research_job.parameters->>'sha256' IS DISTINCT FROM excluded.parameters->>'sha256'",
+                                  entry(key,
+                                        dict(sha256=section['sha256']),section['payload']))
+                        section_writes+=1;section_bytes+=size
+                    put(c,'demo/shadow/status',{},payload)
+        else:
+            self.store.put('shadow/status',payload)
+        finished=time.monotonic()
         if time.monotonic()>=getattr(self,'status_log_at',0):
             # One startup reference gives a same-document wire-size comparison;
             # do not reserialize the large JSON view on every publication.
@@ -243,5 +271,7 @@ class HostedAudit:
             print(json.dumps(dict(event='shadow_status_cost',encoding=payload.get('checkpoint_encoding','json'),
                 decoded_bytes=payload.get('bytes'),stored_bytes=len(payload.get('data','')),
                 reference_json_bytes=reference,prepare_ms=(prepared-started)*1000,write_ms=(finished-prepared)*1000,
+                section_upserts=section_writes,section_transport_bytes=section_bytes,
+                unchanged_section_bytes_avoided=avoided,
                 real_orders_enabled=False)),flush=True)
     def close(self):pass
