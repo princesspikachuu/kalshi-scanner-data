@@ -117,6 +117,37 @@ class ArchiveMaintenanceDatabaseFenceTests(unittest.TestCase):
             self.assertIsNotNone(owner.execute(
                 'SELECT id FROM research_job WHERE id=%s',(safe['id'],)).fetchone())
 
+    def test_online_retention_has_no_transaction_during_r2_and_rolls_back_racing_page(self):
+        import time
+        from psycopg_pool import ConnectionPool
+        from services.demo.shadow_diagnostic_retention import reclaim_page, PREFIX
+        from services.api.tests.test_shadow_diagnostic_retention import MemoryObjects
+        safe = self.create_record(PREFIX, {'event':'FAVORITE_STAT_DECISION'}, aged=True)
+        racing = self.create_record(PREFIX, {'event':'FAVORITE_ENTRY_DECISION'}, aged=True)
+        objects = MemoryObjects()
+        def race():
+            with psycopg.connect(URL, autocommit=True) as c:
+                active = c.execute("SELECT count(*) FROM pg_stat_activity WHERE usename=%s AND state='idle in transaction'", (ROLE,)).fetchone()[0]
+                self.assertEqual(active, 0, 'R2 I/O must not retain a maintenance transaction')
+                c.execute("UPDATE research_job SET progress=progress||'{\"changed_by_writer\":true}'::jsonb WHERE id=%s", (racing['id'],))
+        objects.on_read = race
+        with ConnectionPool(URL, min_size=1, max_size=1,
+                            kwargs=dict(user=ROLE,password=TEST_PASSWORD,row_factory=dict_row)) as pool:
+            with self.assertRaises(psycopg.Error):
+                reclaim_page(pool, objects, [safe, racing], PREFIX, time.time())
+            with psycopg.connect(URL) as owner:
+                self.assertEqual(owner.execute('SELECT count(*) FROM research_job WHERE id=ANY(%s::uuid[])',
+                                               ([safe['id'],racing['id']],)).fetchone()[0], 2)
+            objects.on_read = lambda: None
+            result = reclaim_page(pool, objects, [safe], PREFIX, time.time())
+            self.assertEqual(result['deleted_rows'], 1)
+            self.assertGreater(result['source_json_bytes'], 0)
+        # Clean up the manifest created by this test; rejected transaction
+        # inserted no manifest at all.
+        with psycopg.connect(URL,autocommit=True) as owner:
+            ids=owner.execute("SELECT id FROM research_job WHERE parameters->>'kind'='shadow_event_r2_manifest' AND progress->'ids' @> %s::jsonb", (Jsonb([safe['id']]),)).fetchall()
+            self.created_manifest_ids.extend(row[0] for row in ids)
+
     def create_record(self,prefix,progress,*,aged):
         ident=uuid4()
         with psycopg.connect(URL,autocommit=True,row_factory=dict_row) as c:
