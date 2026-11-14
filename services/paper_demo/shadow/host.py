@@ -1,0 +1,686 @@
+"""One fenced, durable 28-market paper executor hosted by the existing worker."""
+import asyncio,json,time,logging,math
+from types import SimpleNamespace
+from decimal import Decimal as D
+from services.paper_demo.exchange import credentials,ProductionData,Fees
+from services.paper_demo.read_budget import PRODUCTION_READS
+from services.paper_demo.telemetry import REQUESTS,ProcessMetrics,scoped
+from services.trading.mode import read_mode,write_mode,LOCK as MODE_LOCK
+from .core import Engine,StrategyFleet,FeePolicy
+from .runner import ForwardRun,ProductionData as PublicData
+from .storage import HostedAudit,put
+from .state import restore
+from .accounting import snapshot as money_snapshot
+from .folders import initialize_folders
+from .experiments import ExperimentSuite
+from .set_discovery import discover_sets
+from .weather import initialize_weather,discover_weather
+from .history_sampling import MinuteHistory
+from .sports import initialize_sports,discover_sports
+from .scope import initialize_scope,initialize_restored_favorites
+from .sequential_comparison import initialize_comparison,BOT_LIMIT
+from .hourly import discover_hourly
+from .scalper_install import initialize_scalper,initialize_scalper_upgrade,apply_requested_volatility_pause
+from .scalper import SCALPER_FOLDERS
+from .market_maker import MM_FOLDERS,quote_diagnostics
+from .market_maker import initialize_market_maker,discover_maker
+from .maker_quote_policy import initialize_quote_policy
+from .favorite_statistics_install import initialize_statistics_favorites
+from .favorite_collection_quality import collection_quality
+
+LOG=logging.getLogger('shadow-host')
+
+def book_conflation_interval(experiments):
+    """Use the fastest book feed only while a latency-sensitive scalper is enabled."""
+    for folder in SCALPER_FOLDERS:
+        row=getattr(experiments,'portfolios',{}).get(folder)
+        if row is not None and any(getattr(bot,'enabled',False) for bot in row[1].bots.values()):
+            return 100
+    # Kalshi accepts only 0, 100, or 1000 milliseconds. An unsupported
+    # 250ms interval caused code=29 rejections of the initial book subscription,
+    # reconnect loops, and missing feed coverage. Preserve the faster 100ms
+    # path whenever a scalper is enabled; Favorites/Maker tolerate 1000ms.
+    # Public trade prints remain on a separate real-time subscription.
+    return 1000
+
+class NoCapture:
+    def write(self,data):pass
+    def flush(self):pass
+    def close(self):pass
+
+PROCESSING_YIELD_SECONDS=.080
+PROCESSING_YIELD_INPUTS=256
+PROCESSING_COALESCE_SECONDS=.005
+PROCESSING_COALESCE_QUEUE=8
+
+def processing_batch_budget(backlog):
+    """Amortize durable checkpoints without monopolizing the event loop."""
+    # The database checkpoint is much more expensive than one simulation input.
+    # Under sustained flow, keep one atomic audit/checkpoint batch open longer,
+    # but yield between short simulation slices so socket readers and pongs keep
+    # receiving data. The state mutex remains held until the durable commit.
+    # At the queue ceiling, database checkpoint overhead consumes much of
+    # the processing window. Amortize one extra bounded simulation slice while
+    # keeping every 256-input / 80ms cooperative socket yield unchanged.
+    # Never hold this longer budget for healthy or moderately busy queues.
+    if backlog>8000:return 4096,.900
+    if backlog>2000:return 4096,.640
+    if backlog>128:return 512,.240
+    return 256,.040
+
+def book_ingest_age_bucket(sending_ts_ms,received_at):
+    """Classify sampled exchange-to-WebSocket receipt age, before queue wait."""
+    if sending_ts_ms is None:return 'missing_timestamp'
+    try:
+        age=float(received_at)-float(sending_ts_ms)/1000
+    except (TypeError,ValueError,OverflowError):
+        return 'invalid_timestamp'
+    if not math.isfinite(age) or age<-.5:return 'invalid_or_future_timestamp'
+    if age<1:return 'under_1s'
+    if age<3:return '1_to_3s'
+    if age<10:return '3_to_10s'
+    return 'over_10s'
+
+
+class HostedRun(ForwardRun):
+    # Kalshi's 100 ms server-side conflation preserves exact net L2 changes and
+    # contiguous subscription sequence while collapsing repeated price-level churn.
+    # Public trades remain on their separate real-time channel.
+    book_update_interval_ms=100
+    def __init__(self,store,guard,stop,signer):
+        self.store,self.guard,self.outer_stop=store,guard,stop
+        self.audit=HostedAudit(store,guard)
+        initialize_folders(store,guard)
+        initialize_weather(store,guard)
+        initialize_sports(store,guard)
+        initialize_scope(store,guard)
+        initialize_restored_favorites(store,guard)
+        initialize_comparison(store,guard)
+        initialize_statistics_favorites(store,guard)
+        initialize_scalper(store,guard)
+        initialize_scalper_upgrade(store,guard)
+        apply_requested_volatility_pause(store,guard)
+        initialize_market_maker(store,guard)
+        initialize_quote_policy(store,guard)
+        all_rows=store.rows('shadow/bot/',BOT_LIMIT)
+        rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
+        self.profiles=[r['parameters'] for r in rows]
+        self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
+        self.engine.wall_clock=time.time
+        self.model_worker_latency=True
+        self.allow_rest_settlement_recovery=True  # Approved fallback for missed WS settlement notifications.
+        self.settlement_checks={}
+        self.strategy=StrategyFleet(self.engine,self.profiles)
+        self.audit.engine,self.audit.fleet=self.engine,self.strategy
+        prior=store.get('shadow/checkpoint')
+        self.prior_halts=set()
+        if prior:
+            self.prior_halts={t for b in prior['progress'].get('fleet',{}).values() for t in b.get('halted',[])}
+        if prior:restore(self.engine,self.strategy,prior['progress'])
+        self.api=PublicData(signer);self.signer=signer
+        self.verified_data=ProductionData(signer);self.verified_fees=Fees(self.verified_data)
+        self.queue=asyncio.Queue(maxsize=20000);self.done=asyncio.Event()
+        self.selected={ticker.split('-')[0]:ticker for ticker,m in self.engine.markets.items() if not m.get('paid')}
+        self.raw=NoCapture();self.config={};self.refill_offset=0
+        self.args=SimpleNamespace(output=str(self.audit.path))
+        self.revisions={p['id']:p['revision'] for p in self.profiles}
+        self.fee_slots=asyncio.Semaphore(4);self.fee_locks={}
+        self.status={};self.data_versions={};self.health_log_at=0
+        self.suspend_idle_feeds=True
+        self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        self.book_update_interval_ms=book_conflation_interval(self.experiments)
+        self.experiments.share_external_markets()
+        self.experiments.share_legacy_markets()
+        self.audit.experiments=self.experiments
+        self.experiments.extra.update({t:t for t in self.experiments.feed_markets()})
+        self.experiments.extra.update({t:t for t,m in self.experiments.portfolios['complete_set'][0].markets.items() if not m.get('paid')})
+        # Surface backup/archive failures soon after recovery, then use the
+        # normal five-minute cadence without adding Kalshi REST requests.
+        self.publish_at=0;self.maintenance_at=time.time()+60
+        for p in self.profiles:
+            self.strategy.bots[p['series']].enabled=next(r['progress'].get('desired')=='running' for r in rows if r['parameters']['id']==p['id'])
+        # Honor the migration immediately, including restored resting entries.
+        for order in self.engine.orders.values():
+            owner=self.strategy.owner(order.ticker)
+            if owner and not owner.enabled and order.maker:self.engine.cancel(order.id)
+        self.audit.checkpoint()
+
+    def spot_required(self):
+        return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
+            or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
+
+    def legacy_ticker_needed(self,ticker):
+        if ticker not in self.engine.markets or self.engine.markets[ticker].get('paid'):return False
+        if any(l.ticker==ticker for l in self.engine.wallet.lots):return True
+        if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.engine.orders.values()):return True
+        owner=self.strategy.owner(ticker)
+        return bool(owner and owner.enabled)
+
+    def legacy_input_needed(self,source,payload):
+        if getattr(self,'suspend_idle_feeds',False) is not True:return True
+        needed=self.spot_required()
+        if needed and getattr(self,'legacy_feed_suspended',False):
+            self.engine.sequences.clear();self.engine.book_feed_at.clear()
+            for ticker in self.engine.books:
+                if ticker not in self.engine.settled:self.engine.data_gap(ticker,'legacy resumed; fresh snapshot required')
+            self.legacy_feed_suspended=False
+        if not needed and (source=='book_heartbeat' or source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade')):
+            self.legacy_feed_suspended=True
+            self.legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0)+1
+            return False
+        if source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta','trade'):
+            ticker=payload.get('msg',{}).get('market_ticker')
+            if ticker in self.engine.markets and not self.legacy_ticker_needed(ticker):
+                sid,seq=payload.get('sid'),payload.get('seq')
+                if sid is None or seq is None:return True
+                previous=self.engine.sequences.get(sid)
+                if payload.get('type')!='orderbook_snapshot' and previous is not None:
+                    if seq<=previous:return False
+                    if seq!=previous+1:return True
+                self.engine.sequences[sid]=seq
+                self.engine.books[ticker].valid=False
+                if payload.get('type') in ('orderbook_snapshot','orderbook_delta'):self.engine.book_feed_at[sid]=time.time()
+                self.legacy_paused_inputs_skipped=getattr(self,'legacy_paused_inputs_skipped',0)+1
+                return False
+        return True
+
+    def subscription_books(self):
+        books=(dict(self.engine.books) if getattr(self,'suspend_idle_feeds',False) is not True else
+            {t:b for t,b in self.engine.books.items() if self.legacy_ticker_needed(t)})
+        if hasattr(self,'experiments'):
+            for e,f,_ in self.experiments.portfolios.values():
+                if getattr(self,'suspend_idle_feeds',False) is True and self.experiments.idle_feed(e,f):continue
+                for ticker,book in e.books.items():
+                    if (getattr(self,'suspend_idle_feeds',False) is True and
+                            not self.experiments.ticker_feed_needed(e,f,ticker)):continue
+                    # A healthy copy must not hide another portfolio's need for
+                    # a replacement snapshot on the shared subscription.
+                    if ticker not in books or not book.valid:books[ticker]=book
+        return books
+
+    async def settlement_observed(self,ticker):
+        if ticker in self.engine.settled:return True
+        if not self.allow_rest_settlement_recovery:return False
+        market=self.engine.markets[ticker];now=time.time()
+        if now<market['close'] or now-self.settlement_checks.get(ticker,0)<15:return False
+        self.settlement_checks[ticker]=now
+        raw=(await self.api.fetch('/markets/'+ticker))['market']
+        if raw.get('ticker')!=ticker or raw.get('status') not in ('finalized','settled') or raw.get('result') not in ('yes','no'):
+            return False
+        await self.put('rest_settlement_confirmed',dict(ticker=ticker,status=raw['status'],result=raw['result']))
+        return False  # Only the serialized, audited consumer may release the barrier.
+
+    def resnapshot_allowed(self,ticker):
+        try:self.verified_fees.schedule(ticker,time.time());return True
+        except Exception:return False
+
+    async def market_metadata(self,market,series):
+        # Fees.load already verifies series metadata; do not request it twice.
+        fee=await self.fee_policy(market,{})
+        kind,m=self.verified_fees.schedule(market['ticker'],time.time())
+        return dict(fee_type=kind,fee_multiplier=m),fee
+
+    async def fee_policy(self,market,metadata):
+        ticker=market['ticker']
+        async with self.fee_locks.setdefault(ticker,asyncio.Lock()):
+            async with self.fee_slots:
+                # A cold cache is restored before any book/clock input is consumed.
+                await asyncio.to_thread(self.verified_fees.load,ticker,market,time.time())
+            kind,multiplier=self.verified_fees.schedule(ticker,time.time())
+            return FeePolicy(D(str(multiplier)),D(str(multiplier)) if kind=='quadratic_with_maker_fees' else D(0))
+
+    async def refresh_fee(self,ticker):
+        try:
+            # Fee resolution needs the event/series identifiers already saved in
+            # the market checkpoint; another /markets request only adds latency.
+            engines=[self.engine]+([v[0] for v in self.experiments.portfolios.values()] if hasattr(self,'experiments') else [])
+            await self.fee_policy(dict(next(e.markets[ticker] for e in engines if ticker in e.markets),ticker=ticker),{})
+            return True
+        except Exception as exc:
+            await self.metadata_unavailable('fee_refresh',exc,ticker=ticker,series=ticker.split('-')[0])
+            return False
+
+    async def fee_maintenance(self):
+        # Independent of the once-per-second UI/control loop. Four bounded
+        # verifiers share the data adapter's global request pacing/cooldown.
+        while not self.done.is_set():
+            remaining=PRODUCTION_READS.remaining()
+            if remaining:
+                await asyncio.sleep(min(5,remaining));continue
+            now=time.time()
+            due=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and
+                 t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
+            if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
+            await asyncio.sleep(1)
+
+    async def clock(self):
+        due=time.monotonic()
+        while not self.done.is_set():
+            self.loop_lag_max=max(getattr(self,'loop_lag_max',0),max(0,time.monotonic()-due))
+            await self.put('clock',{})
+            due=time.monotonic()+.1
+            await asyncio.sleep(.1)
+
+    async def put(self,source,payload):
+        if not hasattr(self,'input_counts'):self.input_counts={}
+        kind=source+':'+str(payload.get('type','')) if source=='kalshi' else source
+        self.input_counts[kind]=self.input_counts.get(kind,0)+1
+        if (source=='kalshi' and payload.get('type') in ('orderbook_snapshot','orderbook_delta')
+                and self.input_counts[kind]%32==0):
+            # This is the WS-reader age, distinct from time spent in our
+            # bounded queue. Sampling avoids per-delta wall-clock overhead.
+            bucket=book_ingest_age_bucket(payload.get('sending_ts_ms'),time.time())
+            samples=getattr(self,'book_ingest_age_samples',None)
+            if samples is None:samples=self.book_ingest_age_samples={}
+            samples[bucket]=samples.get(bucket,0)+1
+        if (source=='kalshi' and payload.get('type')=='market_lifecycle_v2'
+                and payload.get('seq') is None):
+            # Lifecycle is an exchange-wide stream. Ignore unsequenced notices
+            # for markets no portfolio owns or watches before they enter the
+            # durable trading queue. Sequenced frames always remain intact.
+            ticker=payload.get('msg',{}).get('market_ticker')
+            engines=[self.engine]+([v[0] for v in self.experiments.portfolios.values()] if getattr(self,'experiments',None) else [])
+            if isinstance(ticker,str) and ticker and not any(ticker in e.markets for e in engines):
+                self.lifecycle_dropped=getattr(self,'lifecycle_dropped',0)+1
+                now=time.monotonic()
+                if now>=getattr(self,'lifecycle_drop_log_at',0):
+                    self.lifecycle_drop_log_at=now+30
+                    print(json.dumps(dict(event='shadow_transport_filter',unrelated_lifecycle_dropped=self.lifecycle_dropped,
+                        real_orders_enabled=False)),flush=True)
+                return
+        if source=='kalshi' and payload.get('type')=='orderbook_snapshot' and not getattr(self,'snapshot_schema_logged',False):
+            self.snapshot_schema_logged=True;msg=payload.get('msg',{})
+            print(json.dumps(dict(event='shadow_book_schema',yes_fp_levels=len(msg.get('yes_dollars_fp',[])),
+                no_fp_levels=len(msg.get('no_dollars_fp',[])),has_yes_dollars='yes_dollars' in msg,
+                has_no_dollars='no_dollars' in msg,has_legacy_yes='yes' in msg)),flush=True)
+        if source=='market':
+            series=payload['market']['ticker'].split('-')[0]
+            p=next(p for p in self.profiles if p['series']==series)
+            payload['market'].update(bot_revision=p['revision'],strategy_version='convexity-recovery-v2-'+str(p['revision']),
+                partial_profit_price='.40')
+        await super().put(source,payload)
+
+    def prepare_fees(self,source,payload,now):
+        # Resolve policies in receipt order, inside the same audit transaction as
+        # simulated execution. In particular a replacement snapshot must never
+        # make a fee-blocked book tradable again.
+        blocked=set()
+        targets={self.engine.orders[item[3]].ticker for item in self.engine.pending if item[0]<=now}
+        if source in ('clock','refill'):targets.update(self.engine.books)
+        elif source=='kalshi':targets.add(payload.get('msg',{}).get('market_ticker'))
+        for ticker in targets:
+            if ticker not in self.engine.books:continue
+            if ticker in self.engine.settled:continue
+            try:
+                kind,m=self.verified_fees.schedule(ticker,now)
+                self.engine.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else D(0))
+            except Exception:
+                blocked.add(ticker)
+                if self.engine.books[ticker].valid:
+                    self.engine.data_gap(ticker,'current fee schedule unverified')
+        if source=='kalshi' and payload.get('msg',{}).get('market_ticker') in blocked and payload.get('type') in (
+                'orderbook_snapshot','orderbook_delta','trade'):
+            # Consume subscription sequence without applying unverified inputs.
+            # The invalid book must receive a fresh snapshot after fees recover.
+            if payload.get('type')=='orderbook_snapshot':
+                self.engine.books[payload['msg']['market_ticker']].sid=payload.get('sid')
+            payload=dict(payload,type='fee_blocked')
+        return payload
+
+    def pipeline_sample(self,count,simulation_ms,commit_ms,lag):
+        if not hasattr(self,'pipeline_totals'):self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
+        totals=self.pipeline_totals
+        totals['inputs']+=count;totals['batches']+=1
+        totals['simulation_ms']+=simulation_ms;totals['commit_ms']+=commit_ms
+        totals['max_queue_lag_seconds']=max(totals['max_queue_lag_seconds'],lag)
+        now=time.monotonic()
+        if now<getattr(self,'pipeline_log_at',0):return
+        self.pipeline_log_at=now+30
+        if not hasattr(self,'process_metrics'):self.process_metrics=ProcessMetrics()
+        experiments=getattr(self,'experiments',None)
+        strategies={}
+        if isinstance(experiments,ExperimentSuite):
+            for folder,(engine,fleet,_) in experiments.portfolios.items():
+                strategies[folder]=dict(getattr(experiments,'processing_costs',{}).get(folder,{}),
+                    markets=len(engine.markets),fresh_books=sum(engine.book_fresh(t) for t in engine.books),
+                    active_orders=sum(o.status in ('pending','resting') for o in engine.orders.values()),
+                    position_lots=len(engine.wallet.lots),orders_generated_total=engine.serial,
+                    coalesced_inputs_total=getattr(engine,'coalesced_inputs',0),
+                    unrelated_inputs_skipped_total=getattr(engine,'unrelated_inputs_skipped',0),
+                    unrelated_lifecycle_skipped_total=getattr(engine,'unrelated_lifecycle_skipped',0),
+                    observations_total=sum(getattr(b,'research',{}).get('totals',{}).get('opportunities',0) for b in fleet.bots.values()),
+                    round_trips_total=sum(getattr(b,'research',{}).get('totals',{}).get('completed',0) for b in fleet.bots.values()))
+        print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
+            process=self.process_metrics.sample(),rest=REQUESTS.drain(),
+            strategy_processing=strategies,
+            audit_commits_total=getattr(self.audit,'commits',0) if isinstance(self.audit,HostedAudit) else None,
+            audit_rows_written_total=getattr(self.audit,'rows_written',0) if isinstance(self.audit,HostedAudit) else None,
+            event_loop_lag_max_seconds=getattr(self,'loop_lag_max',0),
+            last_snapshot_ms=getattr(self.audit,'snapshot_ms',0) if isinstance(self.audit,HostedAudit) else None,
+            last_database_ms=getattr(self.audit,'write_ms',0) if isinstance(self.audit,HostedAudit) else None,
+            last_control_ms=getattr(self,'last_control_ms',None),legacy_inputs_skipped=getattr(self,'legacy_inputs_skipped',0),
+            idle_strategy_clocks_skipped=getattr(experiments,'idle_clock_skipped',0) if isinstance(experiments,ExperimentSuite) else 0,
+            input_types=getattr(self,'input_counts',{}),book_update_interval_ms=getattr(self,'book_update_interval_ms',0),
+            real_orders_enabled=False)),flush=True)
+        self.pipeline_totals=dict(inputs=0,batches=0,simulation_ms=0.,commit_ms=0.,max_queue_lag_seconds=0.)
+        self.input_counts={};self.loop_lag_max=0
+        if isinstance(experiments,ExperimentSuite):
+            experiments.processing_costs={}
+            experiments.idle_clock_skipped=0
+
+    def state_mutex(self):
+        if not hasattr(self,'_state_mutex'):self._state_mutex=asyncio.Lock()
+        return self._state_mutex
+
+    async def flush_audit(self):
+        if isinstance(self.audit,HostedAudit):await self.audit.flush_async()
+        else:self.audit.flush()
+
+    async def consume(self):
+        last=self.engine.now
+        while not self.done.is_set():
+            item=await self.queue.get()
+            async with self.state_mutex():
+                self.audit.begin()
+                # When the queue is nearly empty, give imminent feed frames a
+                # few milliseconds to join this same durable checkpoint. Hold
+                # the state fence so controls cannot overtake an already-received
+                # trading input; producers can still enqueue during the yield.
+                if self.queue.qsize()<PROCESSING_COALESCE_QUEUE and not self.done.is_set():
+                    await asyncio.sleep(PROCESSING_COALESCE_SECONDS)
+                completed=0;recovered=[];started=time.monotonic();slice_started=started;max_lag=0.
+                backlog=self.queue.qsize()
+                # Amortize full-state checkpoint/database cost during bursts.
+                # Every input remains ordered and inside one durable transaction.
+                # Short cooperative yields keep socket ingestion responsive while
+                # the state mutex prevents a second wallet mutation from racing it.
+                max_inputs,max_simulation=processing_batch_budget(backlog)
+                try:
+                    while True:
+                        source,payload,received=item
+                        max_lag=max(max_lag,max(0,time.time()-received))
+                        now=max(received,last)
+                        if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
+                        last=now
+                        try:
+                            legacy_input=self.legacy_input_needed(source,payload)
+                            if legacy_input:payload=self.prepare_fees(source,payload,now)
+                            if source=='rest_settlement_confirmed':
+                                if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
+                                ticker=payload['ticker']
+                                if ticker not in self.engine.markets or now<self.engine.markets[ticker]['close'] or payload.get('status') not in ('finalized','settled') or payload.get('result') not in ('yes','no'):
+                                    raise ValueError('REST settlement confirmation invalid')
+                                self.engine.advance(now)
+                                if ticker not in self.engine.settled:
+                                    self.engine.markets[ticker]['settlement_confirmation']='production_rest'
+                                    self.engine.markets[ticker]['yes_payout_confirmed']='1' if payload['result']=='yes' else '0'
+                                    self.engine.settled.add(ticker)
+                                    self.engine.cancel_buys(ticker)
+                                    self.engine.log('SETTLEMENT_RECOVERED',ticker=ticker,reason='production REST finalized result; WebSocket event missed')
+                                    recovered.append(ticker)
+                            elif legacy_input and source not in ('set_markets','weather_market','sports_market','hourly_market','sports_status','experiment_settlement'):
+                                try:self.engine.handle(source,payload,now)
+                                except ValueError as exc:self.reject_input(source,payload,exc)
+                            if hasattr(self,'experiments'):self.experiments.handle(source,payload,now)
+                        except ValueError as exc:
+                            self.reject_input(source,payload,exc)
+                        completed+=1
+                        # Preserve every event and its cash value, but avoid a DB
+                        # round trip/checkpoint for each partial fill in a burst.
+                        now_mono=time.monotonic()
+                        # If a simulation slice has occupied the loop long enough,
+                        # let socket readers/pongs run before a potentially slow
+                        # durable commit as well as between slices.
+                        if completed%PROCESSING_YIELD_INPUTS==0 or now_mono-slice_started>=PROCESSING_YIELD_SECONDS:
+                            await asyncio.sleep(0);slice_started=time.monotonic()
+                        if self.done.is_set() or self.queue.empty() or completed>=max_inputs or now_mono-started>=max_simulation:
+                            break
+                        item=self.queue.get_nowait()
+                    simulated=time.monotonic()
+                    await self.flush_audit()
+                    committed=time.monotonic()
+                    self.pipeline_sample(completed,(simulated-started)*1000,(committed-simulated)*1000,max_lag)
+                    if hasattr(self,'experiments'):
+                        self.experiments.monitoring.observe(time.time(),self.queue.qsize(),max_lag,
+                            (time.monotonic()-started)*1000/max(1,completed),PRODUCTION_READS.remaining(),input_count=completed)
+                except BaseException:
+                    self.audit.abort();raise
+                for ticker in recovered:
+                    print(json.dumps(dict(event='shadow_settlement_recovered',ticker=ticker,
+                                          confirmation='production_rest',real_orders_enabled=False)),flush=True)
+                for _ in range(completed):self.queue.task_done()
+            # Give controls a turn after the state fence is released too.
+            await asyncio.sleep(0)
+
+    def pending_commands(self):
+        with self.store.pool.connection() as c:
+            return c.execute("SELECT idempotency_key,parameters,progress FROM research_job WHERE idempotency_key>='demo/shadow/command/' AND idempotency_key<'demo/shadow/command/zzzz' AND progress->>'done' IS DISTINCT FROM 'true' ORDER BY created_at LIMIT 100").fetchall()
+
+    async def control(self):
+        history=MinuteHistory()
+        while not self.done.is_set():
+            if self.outer_stop.is_set():self.done.set();return
+            # Read-only configuration fetches may overlap the execution commit.
+            # Command consumption remains inside the state lock to prevent a
+            # prefetched refill from being applied twice across that commit.
+            mode_row,all_rows=await asyncio.gather(
+                self.audit.durable_io(read_mode,self.store.pool),
+                self.audit.durable_io(self.store.rows,'shadow/bot/',BOT_LIMIT))
+            mode=mode_row.get('mode','demo')
+            history_sample=None
+            async with self.state_mutex():
+                control_started=time.monotonic()
+                await self.audit.durable_io(self.guard)
+                self.experiments.control(all_rows,mode)
+                self.experiments.maintain()
+                self.book_update_interval_ms=book_conflation_interval(self.experiments)
+                rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
+                for row in rows:
+                    p=row['parameters'];bot=self.strategy.bots[p['series']]
+                    enabled=row['progress'].get('desired')=='running' and mode=='demo'
+                    if not enabled and bot.enabled:
+                        for ticker in self.engine.markets:
+                            if not ticker.startswith(p['series']+'-'):continue
+                            self.engine.cancel_buys(ticker)
+                            exposed=(any(l.ticker==ticker for l in self.engine.wallet.lots) or
+                                any(o.ticker==ticker and o.status in ('pending','resting') for o in self.engine.orders.values()))
+                            if not exposed:self.engine.books[ticker].valid=False
+                    bot.enabled=enabled
+                    if self.revisions.get(p['id']) != p['revision']:
+                        bot.contracts=D(p['contracts'])
+                        for ticker in self.engine.markets:
+                            if ticker.startswith(p['series']+'-') and ticker not in self.engine.settled:
+                                self.strategy.halted.add(ticker);self.engine.cancel_buys(ticker)
+                        self.revisions[p['id']]=p['revision']
+                    self.profiles=[p if old['id']==p['id'] else old for old in self.profiles]
+                commands=await self.audit.durable_io(self.pending_commands)
+                for row in commands:
+                    command=row['parameters']
+                    self.audit.command_key=row['idempotency_key']
+                    if command.get('action')=='reset':
+                        self.reset_folder(command['folder_id'])
+                    else:self.engine.refill(D(command['amount_cents'])/100)
+                    self.audit.command_key=None
+                now=time.time()
+                active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
+                books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
+                fees_ready=0
+                for ticker in active:
+                    try:self.verified_fees.schedule(ticker,now);fees_ready+=1
+                    except Exception:pass
+                legacy_needed=self.spot_required()
+                strategy_books=sum(e.book_fresh(t) for e,f,ps in self.experiments.portfolios.values()
+                    for t,m in e.markets.items() if m['close']>now and (f.owner(t) and f.owner(t).enabled or any(l.ticker==t for l in e.wallet.lots)))
+                state='ready' if (books and fees_ready==len(active) and self.engine.spot.ready(now) if legacy_needed else strategy_books>0) else 'waiting'
+                if time.monotonic()>=self.health_log_at:
+                    self.health_log_at=time.monotonic()+30
+                    print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
+                    print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                    collector=self.experiments.portfolios.get('favorites')
+                    if collector:
+                        quality=collection_quality(collector[1].bots.values(),now)
+                        print(json.dumps(dict(event='favorites_collection_quality',
+                            **quality,real_orders_enabled=False)),flush=True)
+                    for folder,(se,sf,_) in self.experiments.portfolios.items():
+                        if folder not in (*SCALPER_FOLDERS,*MM_FOLDERS):continue
+                        totals=[b.research['totals'] for b in sf.bots.values()]
+                        print(json.dumps(dict(event='market_maker_health' if folder in MM_FOLDERS else 'volatility_scalper_health',folder=folder,
+                            monitored=sum(m['close']>now and not m.get('entry_parked') for m in se.markets.values()),
+                            fresh_books=sum(se.book_fresh(t) for t,m in se.markets.items() if m['close']>now),
+                            orders=sum(o.status in ('pending','resting') for o in se.orders.values()),
+                            positions=len(se.wallet.lots),cash=str(se.wallet.cash),
+                            observations=sum(v['opportunities'] for v in totals),submitted=sum(v['submitted'] for v in totals),
+                            entry_fills=sum(v['entry_fills'] for v in totals),completed=sum(v['completed'] for v in totals),
+                            carryovers=sum(v['settlement_carryovers'] for v in totals),
+                            reasons=sorted({b.last_reason for b in sf.bots.values() if b.series in {t.split('-')[0] for t in se.markets} or folder in MM_FOLDERS and any(m.get('bot_id')==b.profile['id'] for m in se.markets.values())}),
+                            quotes=quote_diagnostics(se,now) if folder in MM_FOLDERS else [],
+                            real_orders_enabled=False)),flush=True)
+                    print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
+                        valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
+                    legacy_spot_required=legacy_needed,active_strategy_books=strategy_books,
+                        mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
+                        two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
+                        halted_markets=sum(t in self.strategy.halted for t in active),
+                        prior_halted_markets=sum(t in self.prior_halts for t in active),
+                        spike_cooldown_seconds=max(0,self.engine.safety_until-now),
+                        phase_counts={str(phase):sum(b.phases.get(t)==phase for t in active for b in [self.strategy.owner(t)] if b) for phase in (1,2,3)},
+                        awaiting_settlement=sum(1 for t in self.selected.values() if t in self.engine.markets and
+                            self.engine.markets[t]['close']<=now and t not in self.engine.settled),
+                        spot_ready=self.engine.spot.ready(now),input_backlog=self.queue.qsize(),
+                        input_rejections=getattr(self,'input_rejections',0),
+                        input_rejection_reasons=dict(getattr(self,'input_rejection_reasons',{})),
+                        sampled_book_ingest_age=dict(getattr(self,'book_ingest_age_samples',{})),
+                        unrelated_lifecycle_dropped=getattr(self,'lifecycle_dropped',0),
+                        valid_cycles=sum(self.engine.wallet.stat(t).valid for t in active),
+                        resting_orders=sum(o.status=='resting' for o in self.engine.orders.values()),
+                        pending_orders=sum(o.status=='pending' for o in self.engine.orders.values()),
+                        open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
+                        real_orders_enabled=False)),flush=True)
+                    self.book_ingest_age_samples={}
+                if time.monotonic()>=self.publish_at:
+                    self.publish_at=time.monotonic()+5
+                    money=money_snapshot(self.engine,self.profiles,time.time())
+                    portfolio=money['portfolio']
+                    orders=money.pop('orders');positions=money.pop('positions')
+                    if time.monotonic()>=getattr(self,'accounting_log_at',0):
+                        self.accounting_log_at=time.monotonic()+30
+                        print(json.dumps(dict(event='shadow_accounting_snapshot',**portfolio,
+                                              real_orders_enabled=False)),flush=True)
+                    await self.audit.durable_io(self.store.put,'health',dict(state=state,message='Production shadow feed verified · virtual funds only' if state=='ready' else 'Waiting for active markets and verified production feeds',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
+                    experiment_snapshot=self.experiments.snapshot(time.time())
+                    if history.due(now):
+                        accounts=dict(convexity=money,**{f:v['accounting'] for f,v in experiment_snapshot.items()})
+                        history_sample=history.freeze(accounts,experiment_snapshot,now,positions)
+                    await self.audit.durable_io(self.audit.publish_status,dict(at=time.time(),selected=self.selected,
+                        equity=portfolio['equity'],accounting=money,
+                        virtual_cash=portfolio['cash'],available_cash=portfolio['available_cash'],
+                        open_contracts=str(sum((l.quantity for l in self.engine.wallet.lots),D(0))),
+                        market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
+                            book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
+                        orders=orders,positions=positions,experiments=experiment_snapshot,monitoring=self.experiments.monitoring_snapshot(now)))
+                # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
+                # execution state in the hot checkpoint; never rewrite years of history.
+                self.engine.prune_terminal_orders()
+                active=set(self.selected.values())
+                pending_ids={item[3] for item in self.engine.pending}
+                retired=[t for t,m in self.engine.markets.items() if m.get('paid') and t not in active and
+                         not any(o.ticker==t and o.id in pending_ids for o in self.engine.orders.values())]
+                for ticker in retired:
+                    self.engine.markets.pop(ticker,None);self.engine.books.pop(ticker,None)
+                    self.verified_fees.cache.pop(ticker,None);self.fee_locks.pop(ticker,None)
+                    self.settlement_checks.pop(ticker,None);self.engine.gap_reasons.pop(ticker,None)
+                    self.engine.fees.pop(ticker,None);self.engine.wallet.stats.pop(ticker,None)
+                    self.engine.closed_reports.discard(ticker);self.engine.settled.discard(ticker)
+                    self.strategy.halted.discard(ticker)
+                    self.engine.orders={k:o for k,o in self.engine.orders.items() if o.ticker!=ticker}
+                    for bot in self.strategy.bots.values():
+                        bot.phases.pop(ticker,None);bot.emergency.pop(ticker,None);bot.last_exit.pop(ticker,None)
+                        bot.safety_retries={k for k in bot.safety_retries if k[0]!=ticker}
+                        bot.entered={k for k in bot.entered if k[0]!=ticker};bot.locked={k for k in bot.locked if k[0]!=ticker}
+                if retired:
+                    self.rejection_logs={k:v for k,v in getattr(self,'rejection_logs',{}).items() if k[1] not in retired}
+                    self.metadata_logs={k:v for k,v in getattr(self,'metadata_logs',{}).items() if k[1] not in retired}
+                    await self.audit.checkpoint_async()
+                if mode=='draining_demo' and not self.engine.wallet.lots and not any(e.wallet.lots for e,f,p in self.experiments.portfolios.values()) and not any(o.status in ('pending','resting') for o in self.engine.orders.values()):
+                    with self.store.pool.connection() as c:
+                        c.execute('SELECT pg_advisory_xact_lock(%s)',(MODE_LOCK,))
+                        current=c.execute("SELECT progress FROM research_job WHERE idempotency_key='trading/mode'").fetchone()
+                        if current and current['progress'].get('mode')=='draining_demo':
+                            write_mode(c,dict(current['progress'],mode='live',demo_drained_at=time.time()))
+                    self.done.set();return
+                self.last_control_ms=(time.monotonic()-control_started)*1000
+            # The frozen reporting sample never reads or mutates live wallet
+            # state. Slow history queries must not hold the execution mutex.
+            if history_sample is not None:
+                await history.write(self.audit,self.store,history_sample)
+            if time.time()>=self.maintenance_at:
+                from services.demo.maintenance import maintenance
+                import os
+                self.maintenance_at=time.time()+300
+                await self.audit.durable_io(maintenance,self.store,os.environ,self.outer_stop)
+            await asyncio.sleep(1)
+
+    def reset_folder(self,folder):
+        from uuid import uuid4
+        from .storage import entry
+        from .core import Wallet
+        row=self.store.get('shadow/folder/'+folder)
+        if not row:raise ValueError('Unknown bot folder')
+        archive=self.audit.snapshot() if folder=='convexity' else json.loads(json.dumps(self.experiments.state()[folder],default=str))
+        if folder=='convexity':archive.pop('experiments',None)
+        self.audit.extra_writes=[entry('demo/shadow/session/'+folder+'/'+row['progress']['session'],
+            dict(folder_id=folder,ended_at=time.time()),archive)]
+        state=dict(row['progress'],session=str(uuid4()),reset_at=time.time())
+        self.audit.extra_writes.append(entry('demo/shadow/folder/'+folder,row['parameters'],state))
+        self.audit.begin()
+        if folder=='convexity':
+            self.engine.wallet=Wallet(D(1000));self.engine.orders={};self.engine.pending=[]
+            self.strategy.halted.update(t for t,m in self.engine.markets.items() if not m.get('paid'))
+            self.engine.log('SESSION_RESET',reason='Fresh $1,000 paper session; previous results archived')
+        else:self.experiments.reset(folder)
+        self.audit.flush()
+
+    async def run(self):
+        # No restored book input may run against an empty fee cache.
+        restored=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and t not in self.engine.settled]
+        if restored:
+            results=await asyncio.gather(*(self.refresh_fee(t) for t in restored))
+            print(json.dumps(dict(event='shadow_fee_warmup',markets=len(restored),verified=sum(results),
+                                  real_orders_enabled=False)),flush=True)
+        # Called from the trading thread; the process signal handler owns stop.
+        from .loop_monitor import LoopMonitor
+        self.loop_monitor=LoopMonitor();self.loop_monitor.start()
+        coroutines=[self.loop_monitor.heartbeat(),scoped('discovery',self.discover()),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),scoped('fees',self.fee_maintenance())]
+        if hasattr(self,'experiments'):coroutines.extend([scoped('complete_set',discover_sets(self)),scoped('weather',discover_weather(self)),scoped('sports',discover_sports(self)),scoped('hourly',discover_hourly(self)),scoped('market_maker',discover_maker(self))])
+        workers=[asyncio.create_task(c) for c in coroutines]
+        waiter=asyncio.create_task(self.done.wait())
+        clean_stop=False
+        try:
+            completed,_=await asyncio.wait([*workers,waiter],return_when=asyncio.FIRST_COMPLETED)
+            for task in completed:
+                if task is not waiter:task.result()
+            clean_stop=self.done.is_set()
+        finally:
+            self.done.set()
+            self.loop_monitor.stop()
+            for task in workers+[waiter]:task.cancel()
+            await asyncio.gather(*workers,waiter,return_exceptions=True)
+            # A failed commit must not be followed by an un-audited checkpoint
+            # of mutated memory (particularly a refill awaiting its done marker).
+            if clean_stop:self.audit.checkpoint()
+            self.verified_data.close();self.audit.close()
+
+
+def run(stop,store,guard,env):
+    maintenance_at=0
+    while not stop.is_set():
+        guard()
+        signer=credentials(store,env)
+        if signer:
+            asyncio.run(HostedRun(store,guard,stop,signer).run());return
+        store.put('health',dict(state='connection_required',message='28 shadow bots ready. Connect a production Read key for market data; no real orders are enabled.',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
+        print(json.dumps(dict(event='shadow_connection_required',bots=28,real_orders_enabled=False)),flush=True)
+        if time.time()>=maintenance_at:
+            from services.demo.maintenance import maintenance
+            maintenance(store,env,stop);maintenance_at=time.time()+300
+        stop.wait(30)

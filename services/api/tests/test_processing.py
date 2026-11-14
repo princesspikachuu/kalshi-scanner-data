@@ -1,0 +1,405 @@
+"""Actual PostgreSQL handoffs, concurrent collection, cancellation and restart."""
+import os
+import time
+import unittest
+from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest.mock import patch
+from psycopg.types.json import Jsonb
+import test_campaigns as fixtures
+from services.research.campaigns import CampaignWorker
+from services.research.processing import ProcessingWorker
+from services.research.queue import LeaseLost
+from services.research.datasets import prepare_dataset
+
+
+@unittest.skipUnless(os.environ.get('POCKET_TEST_DATABASE_URL'),'Requires disposable pocket_test PostgreSQL')
+class ProcessingPostgresTests(unittest.TestCase):
+    setUpClass=classmethod(fixtures.CampaignPostgresTests.setUpClass.__func__)
+    tearDownClass=classmethod(fixtures.CampaignPostgresTests.tearDownClass.__func__)
+    make_worker=fixtures.CampaignPostgresTests.make_worker
+    available=fixtures.CampaignPostgresTests.available
+    create=fixtures.CampaignPostgresTests.create
+
+    def setUp(self):
+        fixtures.CampaignPostgresTests.setUp(self)
+        self.worker.role='collector'
+        self.processor=ProcessingWorker(self.db.pool,self.archives)
+
+    def trade_calls(self):
+        with self.db.pool.connection() as c:
+            return c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE parameters->'scope'->>'resource'='trades'
+                AND (status IN ('running','succeeded') OR progress ? 'completed_pages')""").fetchone()['n']
+
+    def queued(self,kind='prices'):
+        with self.db.pool.connection() as c:
+            return c.execute("""SELECT * FROM research_job WHERE parameters->>'collector'='campaign-assembly-v1'
+                AND parameters->>'kind'=%s ORDER BY created_at,id""",(kind,)).fetchall()
+
+    def collect_until(self,predicate,limit=180):
+        with patch('services.research.campaigns.prepare_dataset',side_effect=AssertionError('collector expanded evidence')), \
+             patch('services.research.reports.ReportStore.publish_campaign',side_effect=AssertionError('collector built report')):
+            for _ in range(limit):
+                if predicate():return
+                self.available();self.worker.run_once(deadline=time.monotonic()+30)
+        self.fail('Collector failed to make durable handoff')
+
+    def finish(self,identifier,limit=450):
+        for _ in range(limit):
+            self.available()
+            self.worker.run_once(deadline=time.monotonic()+30)
+            self.processor.run_once(deadline=time.monotonic()+30)
+            state=self.store.get(identifier)
+            if state['status']=='succeeded':return state
+            self.assertNotEqual(state['status'],'failed',state)
+        self.fail('Split did not finish bounded fixture')
+
+    def test_collection_advances_while_processing_is_blocked_and_merges_latest_progress(self):
+        identifier=self.create(start='2026-10-25',end='2026-10-27')
+        self.collect_until(lambda:len(self.queued())==1)
+        job=self.processor._claim_assembly();entered=Event();release=Event()
+        def blocked(*args,**kwargs):
+            entered.set()
+            if not release.wait(10):raise AssertionError('processing release timed out')
+            return prepare_dataset(*args,**kwargs)
+        with patch('services.research.processing.prepare_dataset',side_effect=blocked),ThreadPoolExecutor(max_workers=1) as executor:
+            future=executor.submit(self.processor._publish,job)
+            try:
+                self.assertTrue(entered.wait(5))
+                # No processor completion is required to start the next date.
+                self.collect_until(lambda:len(self.queued())>=2)
+                self.assertEqual(self.queue.get(job['id'])['status'],'running')
+                with self.db.pool.connection() as c:
+                    parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(identifier,)).fetchone()['job_id']
+                    c.execute('UPDATE research_job SET progress=progress||%s WHERE id=%s',(Jsonb({'concurrent_collector_marker':True}),parent))
+            finally:release.set()
+            future.result(timeout=10)
+        self.assertTrue(self.queue.get(parent)['progress']['concurrent_collector_marker'])
+        self.assertEqual(len(self.queue.get(parent)['progress']['candle_previews']),1)
+        state=self.finish(identifier)
+        self.assertEqual(state['completed_sections'],3)
+        self.assertEqual(state['reported_sections'],3)
+
+    def test_pause_resume_cancels_assembly_without_losing_saved_pages(self):
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued()))
+        job=self.processor._claim_assembly()
+        pages=self.store.get(identifier)['saved_pages']
+        self.assertTrue(self.store.control(identifier,'pause'))
+        self.assertEqual(self.queue.get(job['id'])['status'],'cancelled')
+        with self.assertRaises(LeaseLost):self.processor._publish(job)
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_dataset').fetchone()['n'],0)
+        self.assertTrue(self.store.control(identifier,'resume'))
+        self.assertEqual(self.queue.get(job['id'])['status'],'queued')
+        self.assertEqual(self.store.get(identifier)['saved_pages'],pages)
+        self.processor=ProcessingWorker(self.db.pool,self.archives)
+        self.assertEqual(self.finish(identifier)['completed_sections'],1)
+
+    def test_expired_processor_cannot_publish_over_replacement(self):
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued()))
+        stale=self.processor._claim_assembly()
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(stale['id'],))
+        replacement=self.processor._claim_assembly()
+        self.assertEqual(stale['id'],replacement['id'])
+        self.assertNotEqual(stale['lease_token'],replacement['lease_token'])
+        with self.assertRaises(LeaseLost):self.processor._publish(stale)
+        self.processor._publish(replacement)
+        self.assertEqual(self.queue.get(stale['id'])['status'],'succeeded')
+        self.assertEqual(self.finish(identifier)['completed_sections'],1)
+
+    def test_failed_handoff_is_visible_and_resume_reuses_it(self):
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued()))
+        job=self.processor._claim_assembly()
+        self.queue.fail(job['id'],job['lease_token'],'campaign_assembly_blocked',retry=False)
+        self.collect_until(lambda:self.store.get(identifier)['status']=='failed')
+        self.store.control(identifier,'resume')
+        self.assertEqual(len(self.queued()),1)
+        self.assertEqual(self.finish(identifier)['completed_sections'],1)
+
+    def test_sample_handoff_does_not_block_full_candle_collection(self):
+        from services.research.inventory import ProviderPage
+        markets=[dict(ticker=f'KXBTC15M-SAMPLE-{i:03d}',event_ticker=f'EV-{i:03d}',series_ticker='KXBTC15M',
+            close_time='2026-10-25T12:00:00Z',result='yes') for i in range(300)]
+        self.inventory.fetch=lambda scope,cursor,timeout:ProviderPage(dict(markets=markets,cursor=''))
+        self.worker.parallelism=12
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('sample')),limit=180)
+        self.collect_until(lambda:bool(self.queued('prices')),limit=350)
+        self.assertEqual(self.queued('sample')[0]['status'],'queued')
+        chosen=self.processor._claim_assembly()
+        self.assertEqual(chosen['parameters']['kind'],'prices')
+        self.processor._publish(chosen)
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()
+        self.assertEqual(len(parent['progress']['candle_previews']),1)
+        self.assertEqual(len(parent['progress']['sample_tickers']['2026-10-25']),100)
+
+    def test_empty_day_passes_price_lane_before_enrichment(self):
+        self.inventory.empty=True
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        self.assertEqual(self.evidence.calls,[])
+        state=self.finish(identifier)
+        self.assertEqual(state['completed_sections'],1)
+        self.assertEqual(state['reported_sections'],1)
+
+    def test_oldest_request_holds_both_roles_through_waits_and_releases_on_pause(self):
+        first=self.create(key='fifo-first',end='2026-10-25')
+        newer=self.create(key='fifo-newer',end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        oldest_job=self.queued('prices')[0]
+        newer_job=self.queue.enqueue('btc',dict(collector='campaign-assembly-v1',campaign_id=str(newer),
+            day='2026-10-25',kind='prices',tickers=[]),f'assembly/{newer}/2026-10-25/prices')
+        claimed=self.processor._claim_assembly()
+        self.assertEqual(claimed['id'],oldest_job['id'])
+        self.queue.yield_job(claimed['id'],claimed['lease_token'],60)
+        self.assertIsNone(self.processor._claim_assembly())
+        parent=self.worker._claim_parent()
+        self.assertEqual(parent['parameters']['campaign_id'],str(first))
+        self.queue.yield_job(parent['id'],parent['lease_token'],60)
+        self.assertIsNone(self.worker._claim_parent())
+        self.store.control(first,'pause')
+        next_parent=self.worker._claim_parent()
+        self.assertEqual(next_parent['parameters']['campaign_id'],str(newer))
+        self.queue.yield_job(next_parent['id'],next_parent['lease_token'])
+        self.assertEqual(self.processor._claim_assembly()['id'],newer_job['id'])
+
+    def test_child_lease_loss_releases_parent_without_advancing_to_newer_request(self):
+        first=self.create(key='child-lease-first',end='2026-10-25')
+        newer=self.create(key='child-lease-newer',end='2026-10-26')
+        with patch.object(self.worker,'step',side_effect=LeaseLost('Child lease replaced')):
+            with self.assertRaises(LeaseLost):
+                self.worker.run_once(deadline=time.monotonic()+30)
+        self.assertEqual(self.store.get(first)['status'],'queued')
+        self.available()
+        parent=self.worker._claim_parent()
+        self.assertEqual(parent['parameters']['campaign_id'],str(first))
+        self.assertEqual(parent['attempts'],1)
+        self.assertEqual(self.store.get(newer)['saved_pages'],0)
+        self.queue.yield_job(parent['id'],parent['lease_token'])
+
+    def test_planning_batches_commit_and_recover_without_marking_partial_plan_complete(self):
+        identifier=self.create(key='bounded-plan',end='2026-10-25')
+        parent=self.worker._claim_parent()
+        with self.db.pool.connection() as c:
+            campaign=c.execute('SELECT * FROM research_campaign WHERE id=%s',(identifier,)).fetchone()
+            day=c.execute('SELECT * FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()
+        scopes=[SimpleNamespace(key=f'bounded-scope-{i}',parameters=lambda i=i:dict(collector='planner-fixture',item=i)) for i in range(150)]
+        original=self.worker._insert_job_batch;batch_sizes=[]
+        def interrupted(*args):
+            batch_sizes.append(len(args[3]))
+            if len(batch_sizes)==2:raise RuntimeError('Simulated database interruption')
+            return original(*args)
+        with patch.object(self.worker,'_insert_job_batch',side_effect=interrupted):
+            with self.assertRaises(RuntimeError):self.worker._jobs(campaign,day,'evidence',scopes,parent)
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchone()['n'],64)
+            self.assertFalse(c.execute('SELECT evidence_planned FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()['evidence_planned'])
+        with patch.object(self.worker,'_insert_job_batch',wraps=original) as saved:
+            self.worker._jobs(campaign,day,'evidence',scopes,parent)
+            self.assertEqual([len(call.args[3]) for call in saved.call_args_list],[64,64,22])
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute('SELECT count(*) AS n FROM research_campaign_work WHERE campaign_id=%s',(identifier,)).fetchone()['n'],150)
+            self.assertTrue(c.execute('SELECT evidence_planned FROM research_campaign_day WHERE campaign_id=%s',(identifier,)).fetchone()['evidence_planned'])
+        self.queue.yield_job(parent['id'],parent['lease_token'])
+
+    def test_expired_coordinator_does_not_exhaust_oldest_request(self):
+        first=self.create(key='expired-oldest',end='2026-10-25')
+        newer=self.create(key='waiting-newer',end='2026-10-26')
+        parent=self.worker._claim_parent()
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET attempts=max_attempts,lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(parent['id'],))
+        # Even another role's claim must not terminally fail the coordinator.
+        self.queue.claim(collector='campaign-preview-v1')
+        self.assertEqual(self.store.get(first)['status'],'queued')
+        reclaimed=self.worker._claim_parent()
+        self.assertEqual(reclaimed['id'],parent['id'])
+        self.assertNotEqual(reclaimed['lease_token'],parent['lease_token'])
+        with self.assertRaises(LeaseLost):self.queue.yield_job(parent['id'],parent['lease_token'])
+        self.queue.yield_job(reclaimed['id'],reclaimed['lease_token'])
+        with self.db.pool.connection() as c:
+            c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted' WHERE id=%s",(parent['id'],))
+        self.queue.enqueue('btc',dict(collector='campaign-assembly-v1',campaign_id=str(newer),
+            day='2026-10-26',kind='prices',tickers=[]),f'assembly/{newer}/2026-10-26/prices')
+        self.assertEqual(str(self.worker.oldest_request()['id']),first)
+        self.assertIsNone(self.worker._claim_parent())
+        self.assertIsNone(self.processor._claim_assembly())
+        self.store.control(first,'remove')
+        self.assertEqual(str(self.worker.oldest_request()['id']),newer)
+
+    def test_all_eight_price_days_publish_before_any_trade_download(self):
+        identifier=self.create(key='price-first-window',start='2026-10-20',end='2026-10-27')
+        self.worker.preview_limit=300
+        for _ in range(600):
+            self.available();self.worker.run_once(deadline=time.monotonic()+30)
+            self.processor.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+            if len(progress.get('candle_previews',{}))==8:break
+            self.assertFalse(self.trade_calls())
+            self.assertEqual(self.store.get(identifier)['completed_sections'],0)
+        else:self.fail('Price pass did not advance past seven dates')
+        self.assertFalse(self.trade_calls())
+        self.assertEqual(self.finish(identifier)['completed_sections'],8)
+
+    def test_recovery_publishes_saved_campaign_data_after_old_category_job_failed(self):
+        from services.research.progressive import ProgressiveReports
+        identifier=self.create(key='category-recovery',end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        self.processor._publish(self.processor._claim_assembly())
+        self.assertTrue(ProgressiveReports(self.db.pool).run_once(campaign_id=identifier))
+        with self.db.pool.connection() as c:
+            old=c.execute("UPDATE research_job SET status='failed',error_code='attempts_exhausted' WHERE parameters->>'collector'='category-report-v1' RETURNING id").fetchone()['id']
+        replacement=ProcessingWorker(self.db.pool,self.archives)
+        # While collection is active, a failed category report must not
+        # interrupt evidence assembly.
+        with patch('services.research.processing.CategoryReports.run_once',
+                   side_effect=AssertionError('category report must wait for idle')):
+            replacement.run_once(deadline=time.monotonic()+30)
+        self.assertEqual(self.finish(identifier)['status'],'succeeded')
+        for _ in range(100):
+            replacement.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                row=c.execute("SELECT id FROM research_result WHERE stream_key='category-btc'").fetchone()
+            if row:break
+        else:self.fail('Idle category recovery failed to publish stored collection')
+        self.assertEqual(self.queue.get(old)['status'],'failed')
+
+    def test_whole_queue_prices_precede_oldest_enrichment_and_new_arrivals_preempt(self):
+        first=self.create(key='first-prices',end='2026-10-25')
+        newer=self.create(key='next-prices',end='2026-10-26')
+        def price_count(identifier):
+            with self.db.pool.connection() as c:
+                return len(c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress'].get('candle_previews',{}))
+        def drive_prices(identifier,count):
+            for _ in range(350):
+                if price_count(identifier)==count:return
+                self.available();self.worker.run_once(deadline=time.monotonic()+30)
+                self.processor.run_once(deadline=time.monotonic()+30)
+                self.assertFalse(self.trade_calls())
+            self.fail('Queue price pass stalled')
+        drive_prices(first,1)
+        self.assertEqual(self.store.get(newer)['saved_pages'],0)
+        self.assertEqual(str(self.worker.oldest_request()['id']),newer)
+        # A price wait cannot open an enrichment lane.
+        parent=self.worker._claim_parent();self.queue.yield_job(parent['id'],parent['lease_token'],60)
+        self.assertIsNone(self.worker._claim_parent())
+        drive_prices(newer,2)
+        self.assertEqual(self.store.get(first)['completed_sections'],0)
+        self.assertEqual(str(self.worker.oldest_request()['id']),first)
+        arrival=self.create(key='late-arrival',end='2026-10-25')
+        self.assertEqual(str(self.worker.oldest_request()['id']),arrival)
+        drive_prices(arrival,1)
+        self.assertEqual(str(self.worker.oldest_request()['id']),first)
+        self.assertEqual(self.finish(first)['status'],'succeeded')
+        self.assertGreater(self.store.get(newer)['saved_pages'],0)
+        self.assertEqual(self.store.get(newer)['completed_sections'],0)
+        self.assertEqual(self.finish(newer)['status'],'succeeded')
+        self.assertEqual(self.finish(arrival)['status'],'succeeded')
+
+    def test_three_hundred_market_preview_publishes_with_explicit_limit(self):
+        from services.research.inventory import ProviderPage
+        from services.research.sample_reports import SampleReports
+        markets=[dict(ticker=f'KXBTC15M-FAST-{i:03d}',event_ticker=f'EV-{i:03d}',series_ticker='KXBTC15M',
+            close_time='2026-10-25T12:00:00Z',result='yes') for i in range(450)]
+        self.inventory.fetch=lambda scope,cursor,timeout:ProviderPage(dict(markets=markets,cursor=''))
+        self.worker.preview_limit=300;self.worker.parallelism=12
+        identifier=self.create(end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('sample')),limit=450)
+        job=self.processor._claim_assembly()
+        self.assertEqual(len(job['parameters']['tickers']),300)
+        self.processor._publish(job)
+        self.assertTrue(SampleReports(self.db.pool).run_once(campaign_id=identifier))
+        state=self.store.get(identifier)
+        self.assertEqual(state['completed_sections'],0)
+        self.assertEqual(state['sample_reported_sections'],1)
+        with self.db.pool.connection() as c:
+            report=c.execute('SELECT report FROM research_result WHERE id=%s',(state['sample_result_id'],)).fetchone()['report']
+        self.assertTrue(report['publication']['sampled_preview'])
+        self.assertEqual(report['publication']['sample_limit'],300)
+        self.assertEqual(report['historical']['candidate_count'],300)
+
+    def test_ready_price_day_precedes_all_report_rebuilds(self):
+        identifier=self.create(key='assembly-before-reports',end='2026-10-25')
+        self.collect_until(lambda:bool(self.queued('prices')))
+        with patch('services.research.processing.ProgressiveReports.run_once',side_effect=AssertionError('report delayed completed day')), \
+             patch('services.research.processing.CategoryReports.run_once',side_effect=AssertionError('category delayed completed day')):
+            self.assertTrue(self.processor.run_once(deadline=time.monotonic()+30))
+        with self.db.pool.connection() as c:
+            progress=c.execute('SELECT j.progress FROM research_campaign r JOIN research_job j ON j.id=r.job_id WHERE r.id=%s',(identifier,)).fetchone()['progress']
+        self.assertEqual(len(progress['candle_previews']),1)
+
+    def test_preexisting_complete_queued_collection_reconciles_before_new_work(self):
+        # Reproduce the staging state: every day and the report are saved,
+        # but the old parent is still queued while a new price pass competes.
+        old=self.create(key='legacy-complete',end='2026-10-25')
+        self.assertEqual(self.finish(old)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(old,)).fetchone()['job_id']
+            c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,
+                available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
+                WHERE id=%s""",(parent,))
+        newer=self.create(key='new-incomplete',start='2026-10-26',end='2026-10-26')
+        claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['id'],parent)
+        self.worker.step(claimed,deadline=time.monotonic()+30)
+        self.assertEqual(self.store.get(old)['status'],'succeeded')
+        self.assertEqual(self.store.get(old)['completed_sections'],self.store.get(old)['total_sections'])
+        self.assertEqual(self.store.count('all','unfinished'),1)
+        self.assertEqual(self.store.count('all','finished'),1)
+        self.assertEqual(self.store.get(newer)['status'],'queued')
+
+    def test_reconcile_completed_parent_does_not_wait_for_background_report(self):
+        from services.research.campaigns import CampaignStore
+        self.store=CampaignStore(self.db.pool,collection_limit=300)
+        old=self.create(key='legacy-cohort',end='2026-10-25')
+        self.assertEqual(self.finish(old)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            parent=c.execute('SELECT job_id FROM research_campaign WHERE id=%s',(old,)).fetchone()['job_id']
+            c.execute("""UPDATE research_job SET status='queued',finished_at=NULL,
+                available_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL
+                WHERE id=%s""",(parent,))
+        # Its final report is background work, not a collection dependency.
+        claimed=self.worker._claim_parent()
+        self.assertEqual(claimed['id'],parent)
+        self.worker.step(claimed,deadline=time.monotonic()+30)
+        self.assertEqual(self.store.get(old)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            self.assertEqual(c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE parameters->>'collector'='campaign-assembly-v1'
+                AND parameters->>'kind'='final'
+                AND parameters->>'campaign_id'=%s
+                AND status IN ('queued','running')""",(str(old),)).fetchone()['n'],1)
+
+    def test_new_collection_finishes_without_waiting_for_full_history_analysis(self):
+        from services.research.campaigns import CampaignStore
+        self.store=CampaignStore(self.db.pool,collection_limit=300)
+        first=self.create(key='new-collection-first',end='2026-10-25')
+        self.create(key='new-collection-next',start='2026-10-26',end='2026-10-26')
+        with patch('services.research.processing.CategoryReports.run_once',side_effect=AssertionError('history competed with collection')):
+            self.assertEqual(self.finish(first)['status'],'succeeded')
+        with self.db.pool.connection() as c:
+            self.assertIsNone(c.execute('SELECT result_id FROM research_campaign_result WHERE campaign_id=%s',(first,)).fetchone())
+            self.assertEqual(c.execute("""SELECT count(*) AS n FROM research_job
+                WHERE parameters->>'collector'='campaign-assembly-v1'
+                AND parameters->>'kind'='final'
+                AND parameters->>'campaign_id'=%s AND status='queued'""",(str(first),)).fetchone()['n'],1)
+        # A second queued collection prevents full-history analysis.
+        with patch('services.research.processing.CategoryReports.run_once',
+                   side_effect=AssertionError('analysis ran while collecting')):
+            self.assertFalse(self.processor.run_once(deadline=time.monotonic()+30))
+        # Once primary collection is paused, the final report may run idle.
+        second=self.store.list('all',group='unfinished')[0]['id']
+        self.store.control(second,'pause')
+        for _ in range(50):
+            self.processor.run_once(deadline=time.monotonic()+30)
+            with self.db.pool.connection() as c:
+                ready=c.execute('SELECT result_id FROM research_campaign_result WHERE campaign_id=%s',(first,)).fetchone()
+            if ready:break
+        self.assertIsNotNone(ready,'Background final report did not complete after idle')

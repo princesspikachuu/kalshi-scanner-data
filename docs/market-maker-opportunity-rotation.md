@@ -1,0 +1,11 @@
+# Maker opportunity rotation
+
+Maker can replace its own inactive, unfilled monitoring probes with freshly verified, more actively traded candidates. It never evicts another strategy's market or a market with inventory or an exit order.
+
+A replacement requires at least six executed trades in the previous hour, a real trade within five minutes, verification within two minutes, and an execution score exceeding twice the old opportunity's activity-decayed score. The old probe must have been monitored for five minutes without a live trade in that interval. Scores rank opportunities; they are not expected P/L or calibrated fill probabilities.
+
+Replacement first requests normal simulated cancellation. Capital stays reserved until cancellation acknowledgment. A partial fill during cancellation aborts replacement and keeps inventory monitored. Pending intentions persist in the normal atomic checkpoint. Only after all orders terminate does the old market park and a two-minute replacement credit become available. That credit bypasses the reserve for expansion, not actual subscription, entry, Maker, or health limits. Another strategy consuming the freed slot prevents admission.
+
+Existing candidate metadata can receive one read-only verification per minute during measured moderate processing pressure: fresh telemetry, backlog at most 10,000, p95 event lag below five seconds, p95 processing below 20 ms, and no provider cooldown. This uses trade and book reads plus any necessary fee metadata through the existing shared rate limiter. It skips event/series discovery and incentive requests. It does not admit markets, cancel orders, or reserve funds while admission is paused. Hard overload and stale telemetry still halt screening. Thus actual read traffic can increase from fully paused discovery, but is bounded and does not add streams or raise global request limits.
+
+Audit records distinguish replacement requests and acknowledged releases. Monitoring reports pending and completed reallocations. Regression tests cover cancellation races, reservations, restart recovery, shared-market protection, capacity races, screening cadence, and overload gates. These changes cannot guarantee demand, executions, or profitability; fills still require executable real market activity under the existing queue model.
