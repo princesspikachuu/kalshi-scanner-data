@@ -39,8 +39,10 @@ SAFE_EVENT_KINDS = (
     'SCALPER_OBSERVATION_BATCH',
 )
 
-# The unique research_job idempotency-key index supports prefix ordering.
-# Created-at ordering can require a large sort over millions of rows.
+# Use the partial index research_job_shadow_archive_events_v2 for bounded
+# archival candidate pages. Its predicate contains the same six allowlisted
+# event kinds. Keep the literal filter in SQL (in addition to the parameterized
+# allowlist) so PostgreSQL can prove the partial-index predicate applies.
 # Preview is strictly read-only; only the executing operator takes row locks.
 CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
     parameters,progress,created_at,started_at,finished_at,lease_expires_at,
@@ -51,7 +53,11 @@ CANDIDATES = """SELECT id::text,idempotency_key,asset,status,
     AND idempotency_key>=%s AND idempotency_key<%s
     AND idempotency_key LIKE %s
     AND progress->>'event'=ANY(%s::text[])
-    ORDER BY idempotency_key LIMIT %s"""
+    AND progress->>'event' IN (
+        'FAVORITE_STAT_DECISION', 'FAVORITE_ENTRY_DECISION',
+        'FAVORITE_REPEAT_OPPORTUNITY', 'FAVORITE_ENTRY_COHORT',
+        'FAVORITE_TRIAL_QUALITY', 'SCALPER_OBSERVATION_BATCH')
+    ORDER BY created_at, id LIMIT %s"""
 LOCKED_CANDIDATES = CANDIDATES + ' FOR UPDATE SKIP LOCKED'
 SCOPED_RECLAIM_SQL = 'SELECT id FROM public.mt_reclaim_shadow_diagnostics(%s::uuid,%s::text,%s::jsonb,%s::jsonb)'
 
