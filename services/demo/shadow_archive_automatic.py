@@ -190,6 +190,14 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
         result['compressed_bytes'] += receipt.get('compressed_bytes', 0)
         if not receipt.get('archived_rows'):
             break
+    with pool.connection() as connection:
+        final = connection.execute(
+            """SELECT pg_database_size(current_database()) AS db_bytes,
+               pg_wal_lsn_diff(pg_current_wal_lsn(), %s::pg_lsn)
+               AS wal_bytes""", (initial_lsn,)).fetchone()
+    result['database_bytes_after'] = int(final['db_bytes'])
+    result['wal_bytes'] = int(final['wal_bytes'])
+    result['elapsed_seconds'] = round(time.monotonic() - started, 3)
     return result
 
 
