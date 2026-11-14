@@ -57,6 +57,34 @@ class ArchiveCycleBudgetTests(unittest.TestCase):
             result = automatic.archive_cycle(pool, object(), limits, **kwargs)
             return result, raw.call_count, packed.call_count
 
+    def test_valid_index_required_before_archival(self):
+        class IndexPool:
+            def __init__(self, row):
+                self.row = row
+
+            def connection(self):
+                parent = self
+
+                class Connection:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *args):
+                        return False
+
+                    def execute(self, statement):
+                        return SimpleNamespace(fetchone=lambda: parent.row)
+
+                return Connection()
+
+        for row in (None, {"indisvalid": False, "indisready": True},
+                    {"indisvalid": True, "indisready": False}):
+            with self.subTest(row=row):
+                with self.assertRaises(RuntimeError):
+                    automatic.verify_archive_index(IndexPool(row))
+        automatic.verify_archive_index(IndexPool(
+            {"indisvalid": True, "indisready": True}))
+
     def test_wal_guard_stops_before_any_archive(self):
         report, raw, packed = self._run([
             {"wal_bytes": 128 * 1024 ** 2, "db_bytes": 9_000_000_000},
