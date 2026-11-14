@@ -6,6 +6,15 @@ class DemoStore:
     namespace="demo"
     def __init__(self,pool):self.pool=pool
     def get(self,key):
+        if key=='shadow/status':
+            from services.paper_demo.shadow.status_sections import KEYS,ROOT,restore
+            # One statement snapshot covers main + fixed section slots. Never
+            # fetch referenced sections in a later transaction/publication.
+            with self.pool.connection() as c:
+                rows=c.execute('SELECT id::text,idempotency_key,parameters,progress,created_at,finished_at FROM research_job WHERE idempotency_key=ANY(%s::text[])',(list(KEYS),)).fetchall()
+            by_key={r['idempotency_key']:r for r in rows}
+            row=by_key.get(ROOT)
+            return dict(row,progress=restore(row['progress'],{k:r['progress'] for k,r in by_key.items()})) if row else None
         with self.pool.connection() as c:
             row=c.execute('SELECT id::text,parameters,progress,created_at,finished_at FROM research_job WHERE idempotency_key=%s',(self.namespace+'/'+key,)).fetchone()
         if row and key in ('shadow/checkpoint','shadow/status'):
