@@ -60,6 +60,9 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 API recovery hold live setting confirmed OFF (2026-11-13 PT)
+- Operator inspected `pocket-api-staging` Render Environment: `MT_API_RECOVERY_HOLD=false`. GitHub implementation `docs/audits/MT-019-api-write-quiescence.md` confirms setting it true requires a successful API redeploy, API startup then uses read-only pooled sessions, rejects non-health paths with 503, and skips live-bot initialization; sign-in/dashboard temporarily unavailable. Existing API predeploy runs `python -m services.api.manage migrate` (potential DB-write migration), so **do not toggle/deploy casually** before coordinated maintenance window, disk/WAL safety and separate archive credential. Setting false means writer quiescence unproven; maintain recovery hold on both workers. No deletion or API flag changes made.
+
 ### MT-019 live connection snapshot: API still connected (2026-11-13 PT)
 - Operator ran `pg_stat_activity` read-only grouping by username/state via restricted processing Render Shell: `('pocket_api_runtime', None, 1)` and `('pocket_research_runtime','active',1)`. The active research connection is likely the operator's own query; `None` for API state is insufficient privilege to see query state, **NOT proof API inactive**. `pocket_api_runtime` connection remains and API recovery hold/draindown NOT verified. API's predeploy on redeploy executes a migration; don't casually redeploy just to enable hold. Explicit coordinated hold and drain required before archive reclaim. No deletion occurred.
 
