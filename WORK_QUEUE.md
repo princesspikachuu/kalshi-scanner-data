@@ -60,6 +60,9 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 live connection snapshot: API still connected (2026-11-13 PT)
+- Operator ran `pg_stat_activity` read-only grouping by username/state via restricted processing Render Shell: `('pocket_api_runtime', None, 1)` and `('pocket_research_runtime','active',1)`. The active research connection is likely the operator's own query; `None` for API state is insufficient privilege to see query state, **NOT proof API inactive**. `pocket_api_runtime` connection remains and API recovery hold/draindown NOT verified. API's predeploy on redeploy executes a migration; don't casually redeploy just to enable hold. Explicit coordinated hold and drain required before archive reclaim. No deletion occurred.
+
 ### MT-019 owner WAL-directory permission also denied (2026-11-13 PT)
 - User privately connected as verified owner `pocket_staging` in Render Shell and performed read-only permission check for `pg_catalog.pg_ls_waldir()`. Result: **`Owner WAL inspection: permission required`**. Runtime and owner both unable to inspect live `pg_wal` bytes via SQL; do not try to bypass with broader SQL grants. WAL occupancy is **still unknown**, not zero; physical disk safe-to-reclaim gate remains open. Seek provider-side size/retention evidence or supported pg_stat views (cumulative counters are NOT WAL directory occupancy). Continue non-destructive dedicated role setup/API hold checks; **no cleanup deletion until safe**.
 
