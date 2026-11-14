@@ -43,7 +43,7 @@ class ShadowArchiveRecoveryTests(unittest.TestCase):
         self.assertIn("idempotency_key LIKE %s",CANDIDATES)
         self.assertIn("idempotency_key LIKE %s",DELETE_SQL)
         self.assertIn("created_at<to_timestamp(%s)",DELETE_SQL)
-        self.assertIn("ORDER BY idempotency_key LIMIT %s",CANDIDATES)
+        self.assertIn("ORDER BY created_at, id LIMIT %s",CANDIDATES)
         self.assertNotIn("FOR UPDATE",CANDIDATES)
         self.assertIn("FOR UPDATE SKIP LOCKED",LOCKED_CANDIDATES)
         self.assertIn("progress->>'event'=ANY",DELETE_SQL)

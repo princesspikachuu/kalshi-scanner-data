@@ -25,6 +25,7 @@ Status: **draft / not deployed**. Never enable archival with active writers.
 - The original capacity-percent guard remains. PostgreSQL logical bytes are not a substitute for Render physical disk usage.
 - Each cycle reports deleted row counts, compressed bytes, WAL delta, database size before/after, elapsed time, and a stop reason.
 - Safety configuration is rechecked before every batch. A changed flag or database credential fails closed.
+- Final reporting rechecks budgets after the last batch, so crossing a limit on that batch also halts the loop before the WAL baseline can reset. The configured capacity-percent guard is checked between batches as well.
 - Resource budget reached => one logged cycle report, then an operator-review-required error rather than continuous unattended retries.
 - Crash during archive upload may leave an already-verified R2 object without a manifest; existing R2 digest keys are content-addressed. The SQL fence either commits an exact-row reclaim plus manifest or rolls back. Verify before resuming.
 
@@ -32,7 +33,7 @@ Status: **draft / not deployed**. Never enable archival with active writers.
 
 Focused tests:
 ```
-python -m unittest tests.test_shadow_archive_candidate_query tests.test_shadow_archive_automatic_limits
+python -m unittest services.api.tests.test_shadow_archive_candidate_query services.api.tests.test_shadow_archive_automatic_limits services.api.tests.test_shadow_archive_automatic services.api.tests.test_shadow_archive_recovery
 ```
 
 These tests use no hosted DB or R2. Test imports require the app's Python dependencies. Staging timing data from earlier operator trials: indexed candidate query fetched 100 rows in 0.044 s; 100 verified archived/deleted in 0.931 s; a guarded 19,500-row run stopped normally at its WAL budget.
@@ -48,3 +49,11 @@ These tests use no hosted DB or R2. Test imports require the app's Python depend
 
 - A continuously operating collector-safe archival path must be designed, reviewed and tested separately before removing any writer-stopped requirement.
 - Add a Render physical disk-pressure alert, archiving lag metrics, and sustained-growth measurements; a single logical DB size sample cannot prove sufficient physical headroom.
+
+## Continuation checkpoint (2026-11-14)
+
+- PR #228 remains the implementation branch; no hosted archival or deployment was performed during this verification.
+- Reproduced the earlier revision's test failures: stale SQL ordering expectation, legacy connection mocks missing WAL readings, and new budget fixtures missing the final reporting read.
+- Moved both new regression modules into `services/api/tests` so the existing full CI discovers them.
+- Fixed the final-batch budget loophole and added regressions for WAL/growth/time crossing on the final batch, mid-cycle stopping, revoked safety flags, and no retry after a budget stop.
+- Next gate: full GitHub CI with disposable PostgreSQL on the updated head. After it passes, staging rollout still requires the stopped-writer, scoped-role, valid-index and physical-headroom prerequisites above.

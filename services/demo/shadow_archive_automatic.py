@@ -139,23 +139,30 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
         initial_lsn = connection.execute(
             'SELECT pg_current_wal_lsn()::text AS lsn').fetchone()['lsn']
 
+    def budget_reason(reading, elapsed):
+        if elapsed >= 600:
+            return 'time_budget_reached'
+        if reading['wal_bytes'] >= 128 * 1024 ** 2:
+            return 'wal_budget_reached'
+        if (reading['db_bytes'] >= 12_000_000_000
+                or reading['db_bytes'] > limits.capacity_gb * 1_000_000_000 * 0.80
+                or reading['db_bytes'] > before + 256 * 1024 ** 2):
+            return 'database_growth_guard_reached'
+        return None
+
     def check_budget():
         # Bounds are checked between atomic, R2-verified batches. A batch may
         # exceed a limit slightly; never interrupt an in-flight SQL fence.
         safety_check()
-        if time.monotonic() - started >= 600:
+        elapsed = time.monotonic() - started
+        if elapsed >= 600:
             return 'time_budget_reached'
         with pool.connection() as connection:
             reading = connection.execute(
                 """SELECT pg_database_size(current_database()) AS db_bytes,
                    pg_wal_lsn_diff(pg_current_wal_lsn(), %s::pg_lsn)
                    AS wal_bytes""", (initial_lsn,)).fetchone()
-        if reading['wal_bytes'] >= 128 * 1024 ** 2:
-            return 'wal_budget_reached'
-        if reading['db_bytes'] >= 12_000_000_000 or (
-                reading['db_bytes'] > before + 256 * 1024 ** 2):
-            return 'database_growth_guard_reached'
-        return None
+        return budget_reason(reading, elapsed)
     # Logical DB size is not physical volume usage; this is a conservative
     # additional gate, not a substitute for Render's physical disk metrics.
     if before > limits.capacity_gb * 1_000_000_000 * 0.80:
@@ -210,7 +217,12 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
                AS wal_bytes""", (initial_lsn,)).fetchone()
     result['database_bytes_after'] = int(final['db_bytes'])
     result['wal_bytes'] = int(final['wal_bytes'])
-    result['elapsed_seconds'] = round(time.monotonic() - started, 3)
+    elapsed = time.monotonic() - started
+    # The last allowed batch can cross a budget too. Report it before run()
+    # can reset the WAL baseline and start another cycle.
+    if result['stop_reason'] is None:
+        result['stop_reason'] = budget_reason(final, elapsed)
+    result['elapsed_seconds'] = round(elapsed, 3)
     return result
 
 
