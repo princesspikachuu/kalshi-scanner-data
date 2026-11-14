@@ -73,13 +73,15 @@ class AsyncDurability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit.durability_profile['checkpoint_unchanged_skips'],1)
         self.assertGreater(audit.durability_profile['checkpoint_bytes_avoided'],0)
         self.assertEqual(audit.rows_written,3)
-        # Force periodic durability rewrite without sleeping 30 seconds.
-        audit.committed_checkpoint_at=-1e9
+        # Time alone cannot require rewriting already committed identical state.
+        # Audit-only commits still persist every original event after long idle.
         before=cursor.executemany.call_count
-        with patch('builtins.print'):audit.write(events())
-        self.assertEqual(cursor.executemany.call_count-before,2)
-        self.assertEqual([call.args[1][0][3] for call in cursor.executemany.call_args_list[before:]][0],KEY)
-        self.assertEqual(audit.durability_profile['checkpoint_upserts'],2)
+        with patch('builtins.print'),patch('time.monotonic',return_value=1e12):audit.write(events())
+        self.assertEqual(cursor.executemany.call_count-before,1)
+        self.assertTrue(all(row[3].startswith('demo/shadow/event/')
+                            for call in cursor.executemany.call_args_list[before:] for row in call.args[1]))
+        self.assertEqual(audit.durability_profile['checkpoint_upserts'],1)
+        self.assertEqual(audit.durability_profile['checkpoint_unchanged_skips'],2)
 
     async def test_changed_checkpoint_and_failed_commit_never_skip_persistence(self):
         from unittest.mock import MagicMock,patch
