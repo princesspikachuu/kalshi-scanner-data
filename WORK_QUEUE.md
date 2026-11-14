@@ -60,6 +60,9 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 owner WAL-directory permission also denied (2026-11-13 PT)
+- User privately connected as verified owner `pocket_staging` in Render Shell and performed read-only permission check for `pg_catalog.pg_ls_waldir()`. Result: **`Owner WAL inspection: permission required`**. Runtime and owner both unable to inspect live `pg_wal` bytes via SQL; do not try to bypass with broader SQL grants. WAL occupancy is **still unknown**, not zero; physical disk safe-to-reclaim gate remains open. Seek provider-side size/retention evidence or supported pg_stat views (cumulative counters are NOT WAL directory occupancy). Continue non-destructive dedicated role setup/API hold checks; **no cleanup deletion until safe**.
+
 ### MT-019 WAL directory privileges unavailable to runtime account (2026-11-13 PT)
 - Authorized read-only Render processing Shell checked `pg_catalog.pg_ls_waldir()`: reported **`WAL directory inspection: permission required`** for current `pocket_research_runtime` user. No WAL byte value was obtained. Do not interpret access denial as absence of WAL, or grant runtime account server-file access merely to inspect. No SQL writes were made. Next prefer provider-managed metric or owner-only read-only privilege check; render disk usage screenshot is percent of 15 GB, not WAL headroom. No bulk archive/deletion before WAL/physical safety gate.
 
