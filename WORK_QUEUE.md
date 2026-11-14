@@ -60,6 +60,9 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 active storage-reduction implementation — 2026-11-13 PT
+- User explicitly authorized implementation after the storage assessment. ChatGPT / storage-reduction is implementing bounded online diagnostic retention and reducing repeated derived-status writes on a separate branch. Existing operator recovery work retains ownership of live maintenance. No production deletion, API hold change, worker restart or collection/trading resumption is authorized by this checkpoint. Verify exact-head tests and report actual versus projected savings separately.
+
 ### MT-019 API recovery hold live setting confirmed OFF (2026-11-13 PT)
 - Operator inspected `pocket-api-staging` Render Environment: `MT_API_RECOVERY_HOLD=false`. GitHub implementation `docs/audits/MT-019-api-write-quiescence.md` confirms setting it true requires a successful API redeploy, API startup then uses read-only pooled sessions, rejects non-health paths with 503, and skips live-bot initialization; sign-in/dashboard temporarily unavailable. Existing API predeploy runs `python -m services.api.manage migrate` (potential DB-write migration), so **do not toggle/deploy casually** before coordinated maintenance window, disk/WAL safety and separate archive credential. Setting false means writer quiescence unproven; maintain recovery hold on both workers. No deletion or API flag changes made.
 
