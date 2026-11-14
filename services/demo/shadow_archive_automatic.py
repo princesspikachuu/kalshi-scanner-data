@@ -115,6 +115,19 @@ def database_bytes(pool):
             'SELECT pg_database_size(current_database()) AS bytes').fetchone()['bytes'])
 
 
+def verify_archive_index(pool):
+    """Never begin archive cleanup without its verified selective index."""
+    with pool.connection() as connection:
+        index = connection.execute(
+            """SELECT indisvalid, indisready
+               FROM pg_index
+               WHERE indexrelid = to_regclass(
+                   'public.research_job_shadow_archive_events_v2')"""
+        ).fetchone()
+    if not index or index['indisvalid'] is not True or index['indisready'] is not True:
+        raise RuntimeError('Optimized shadow archive index is missing or invalid')
+
+
 def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
                   safety_check=lambda: None):
     """Bounded, fail-closed work. No financial rows or current-day data eligible."""
@@ -211,6 +224,7 @@ def run(stop, env=None):
                             timeout=6, kwargs=dict(row_factory=dict_row,
                             connect_timeout=5)) as pool:
             verify_scoped_role(pool)
+            verify_archive_index(pool)
             objects = object_store(env)
             while not stop.is_set():
                 # Flags may be changed while the process is running; fail closed
