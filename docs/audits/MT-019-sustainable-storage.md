@@ -80,6 +80,23 @@ restoration support. The current PostgreSQL/R2 manifests/readers are reused.
   in-memory: restart rescans from each prefix, without losing unarchived rows.
   Newly inserted random-UUID keys behind a cursor are visited next pass.
 
+## Empty-namespace boundary probe
+
+The online retention path verifies the `idempotency_key` column's effective
+collation before using a bounded high-key existence probe. For supported
+libc English or byte-order collations, the enclosing upper fence increments
+the last ASCII letter of the fixed allowlisted namespace. Incrementing the
+trailing slash to `0` would be incorrect under English punctuation ordering.
+Both the original lower high-key bound and exact `LIKE` namespace predicate
+remain: malformed high suffixes still block completion. Unknown or ICU
+collations fail closed and require a separately verified query plan.
+
+This avoids walking unrelated later namespaces when an empty packed namespace
+finishes its pass. Older offline audits retain their existing boundary checks.
+It adds no index, grants, hosted write, activation flag or writer restart.
+Do not merge/deploy during an active durably claimed backlog run: a deploy
+would stop that run, whose consumed ID deliberately cannot restart.
+
 ## What to measure
 
 Retention reports scanned/eligible/deleted row counts, original event counts,
