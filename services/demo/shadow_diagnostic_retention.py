@@ -87,7 +87,7 @@ def select_page(pool, prefix, after, *, now, age_hours=24, page_size=100):
                 list(SAFE_EVENT_KINDS))).fetchall() if keys else []
             complete = len(keys) < page_size
             if complete:
-                assert_no_hidden_prefix_keys(c, [prefix])
+                assert_no_hidden_prefix_keys(c, [prefix], bounded=True)
     return rows, (prefix if complete else keys[-1]), len(keys), complete
 
 
