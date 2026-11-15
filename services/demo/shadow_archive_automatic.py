@@ -6,6 +6,7 @@ No schedule is activated when this file is deployed.
 """
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ class Limits:
     raw_batches: int
     packed_batch_size: int
     packed_batches: int
+    run_id: str = ""
 
 
 def configuration(env):
@@ -62,18 +64,23 @@ def configuration(env):
             raise ValueError('Out-of-range archival setting: '+key)
         return value
 
+    run_id = env.get('MT_ARCHIVE_RUN_ID', '')
+    if not isinstance(run_id, str) or not re.fullmatch(r'[0-9a-f]{32}', run_id):
+        raise ValueError('A fresh 32-character lowercase hex MT_ARCHIVE_RUN_ID is required')
+
     return Limits(
         url,
         number('DATABASE_CAPACITY_GB', 0, 1, 16000),
         number('MT_ARCHIVE_INTERVAL_SECONDS', 60, 60, 3600),
         number('MT_ARCHIVE_RAW_BATCH_SIZE', 50, 1, 100),
-        number('MT_ARCHIVE_RAW_BATCHES', 3, 1, 8),
+        number('MT_ARCHIVE_RAW_BATCHES', 3, 1, 250),
         number('MT_ARCHIVE_PACKED_BATCH_SIZE', 2, 1, 8),
-        number('MT_ARCHIVE_PACKED_BATCHES', 2, 1, 8),
+        number('MT_ARCHIVE_PACKED_BATCHES', 2, 0, 8),
+        run_id,
     )
 
 
-ROLE_QUERY = """SELECT current_user AS principal,
+ROLE_QUERY = """SELECT current_user AS principal, current_database() AS database,
     (SELECT tableowner FROM pg_tables
       WHERE schemaname='public' AND tablename='research_job') AS owner,
     (SELECT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication
@@ -97,6 +104,7 @@ def verify_scoped_role(pool):
     with pool.connection() as connection:
         row = connection.execute(ROLE_QUERY).fetchone()
     if (not row or row['principal'] != 'pocket_archive_maintenance'
+            or row['database'] != 'pocket_staging'
             or row['owner'] is None or row['principal'] == row['owner']
             or row['elevated'] is not False
             or row['has_memberships'] is not False
@@ -128,16 +136,64 @@ def verify_archive_index(pool):
         raise RuntimeError('Optimized shadow archive index is missing or invalid')
 
 
-def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
-                  safety_check=lambda: None):
-    """Bounded, fail-closed work. No financial rows or current-day data eligible."""
-    current = time.time() if now is None else now
-    safety_check()
+@dataclass(frozen=True)
+class RunBudget:
+    database_bytes: int
+    started: float
+    initial_lsn: str
+
+
+def start_run_budget(pool):
     before = database_bytes(pool)
     started = time.monotonic()
     with pool.connection() as connection:
         initial_lsn = connection.execute(
             'SELECT pg_current_wal_lsn()::text AS lsn').fetchone()['lsn']
+    return RunBudget(before, started, initial_lsn)
+
+
+def claim_run(objects, run_id):
+    """Consume a run ID once, before any SQL deletion; never remove its marker.
+
+    A crash after PUT but before read-back intentionally consumes the ID too.
+    A restart or a second worker must not reset an already-used WAL budget.
+    """
+    if not isinstance(run_id, str) or not re.fullmatch(r'[0-9a-f]{32}', run_id):
+        raise ValueError('Invalid archive run ID')
+    payload = json.dumps(dict(format='shadow-recovery-run-v1', run_id=run_id),
+                         sort_keys=True, separators=(',', ':')).encode()
+    key = 'demo/recovery-runs/' + run_id + '.json'
+    objects.client.put_object(Bucket=objects.bucket, Key=key, Body=payload,
+                              ContentType='application/json', IfNoneMatch='*')
+    response = objects.client.get_object(Bucket=objects.bucket, Key=key)
+    stream = response['Body']
+    try:
+        if (response['ContentLength'] != len(payload)
+                or stream.read(len(payload) + 1) != payload):
+            raise RuntimeError('Archive run claim verification failed')
+    finally:
+        stream.close()
+
+
+def park_until_stopped(stop):
+    """Keep the held worker idle instead of triggering a platform crash loop."""
+    while not stop.is_set():
+        stop.wait(30)
+
+
+def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
+                  safety_check=lambda: None, budget=None):
+    """Bounded, fail-closed work. No financial rows or current-day data eligible."""
+    current = time.time() if now is None else now
+    safety_check()
+    before = database_bytes(pool)
+    if budget is None:
+        started = time.monotonic()
+        with pool.connection() as connection:
+            initial_lsn = connection.execute(
+                'SELECT pg_current_wal_lsn()::text AS lsn').fetchone()['lsn']
+        budget = RunBudget(before, started, initial_lsn)
+    started, initial_lsn = budget.started, budget.initial_lsn
 
     def budget_reason(reading, elapsed):
         if elapsed >= 600:
@@ -146,7 +202,7 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
             return 'wal_budget_reached'
         if (reading['db_bytes'] >= 12_000_000_000
                 or reading['db_bytes'] > limits.capacity_gb * 1_000_000_000 * 0.80
-                or reading['db_bytes'] > before + 256 * 1024 ** 2):
+                or reading['db_bytes'] > budget.database_bytes + 256 * 1024 ** 2):
             return 'database_growth_guard_reached'
         return None
 
@@ -227,7 +283,7 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
 
 
 def run(stop, env=None):
-    """Run only on the paused research collector; halt permanently on failure."""
+    """Run one durably claimed recovery session, then park until shutdown."""
     env = os.environ if env is None else env
     limits = configuration(env)
     objects = None
@@ -238,6 +294,10 @@ def run(stop, env=None):
             verify_scoped_role(pool)
             verify_archive_index(pool)
             objects = object_store(env)
+            if stop.is_set():
+                return
+            claim_run(objects, limits.run_id)
+            budget = start_run_budget(pool)
             while not stop.is_set():
                 # Flags may be changed while the process is running; fail closed
                 # before each atomic archival batch, not just at startup.
@@ -248,10 +308,16 @@ def run(stop, env=None):
 
                 report = archive_cycle(pool, objects, limits,
                                        stopped=stop.is_set,
-                                       safety_check=safety_check)
+                                       safety_check=safety_check, budget=budget)
                 print(json.dumps(report, sort_keys=True), flush=True)
                 if report['stop_reason'] not in (None, 'shutdown_requested'):
                     raise RuntimeError('Archive safety budget reached; operator review required')
+                if report['stop_reason'] == 'shutdown_requested':
+                    break
+                if report['raw_rows'] == 0 and report['packed_rows'] == 0:
+                    print(json.dumps(dict(event='recovery_archival_complete',
+                                          action='operator_review_required')), flush=True)
+                    break
                 stop.wait(limits.interval_seconds)
     except Exception as error:
         # Never print PostgreSQL URLs, provider responses or secret-bearing errors.
@@ -259,7 +325,16 @@ def run(stop, env=None):
                               error_type=type(error).__name__,
                               action='operator_review_required')),
               file=sys.stderr, flush=True)
-        raise
     finally:
         if objects is not None:
-            objects.client.close()
+            try:
+                objects.client.close()
+            except Exception as error:
+                print(json.dumps(dict(event='recovery_archival_close_failed',
+                                      error_type=type(error).__name__,
+                                      action='operator_review_required')),
+                      file=sys.stderr, flush=True)
+
+    # A budget stop, exhausted backlog, failed claim or failed verification
+    # stays stopped. A fresh reviewed run ID is required after a restart.
+    park_until_stopped(stop)

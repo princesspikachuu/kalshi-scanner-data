@@ -12,6 +12,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
     def env(self):
         return dict(
             MT_ARCHIVE_RECOVERY_LOOP='true',
+            MT_ARCHIVE_RUN_ID='a'*32,
             MT_ARCHIVE_WRITERS_STOPPED='true',
             MT_ARCHIVE_API_DRAIN_ACKNOWLEDGED='true',
             MT_ARCHIVE_PHYSICAL_HEADROOM_ACKNOWLEDGED='true',
@@ -26,7 +27,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             RECOVERY_DATABASE_URL='postgresql://archive:placeholder@localhost/db',
         )
 
-    def pool(self, *, size=9_000_000_000, principal='pocket_archive_maintenance', owner='owner', elevated=False, truncate=False, schema_create=False, membership=False):
+    def pool(self, *, size=9_000_000_000, principal='pocket_archive_maintenance', owner='owner', elevated=False, truncate=False, schema_create=False, membership=False, database='pocket_staging'):
         pool = MagicMock()
         conn = pool.connection.return_value.__enter__.return_value
 
@@ -34,7 +35,7 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
             result = MagicMock()
             if sql == ROLE_QUERY:
                 result.fetchone.return_value = dict(
-                    principal=principal, owner=owner, elevated=elevated,
+                    principal=principal, database=database, owner=owner, elevated=elevated,
                     can_select=True, can_insert=False, can_delete=False,
                     can_update=False, can_truncate=truncate,
                     can_schema_create=schema_create, can_scoped_reclaim=True,
@@ -102,7 +103,8 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
                      self.pool(truncate=True),
                      self.pool(schema_create=True),
                      self.pool(membership=True),
-                     self.pool(principal='different-scoped-role')):
+                     self.pool(principal='different-scoped-role'),
+                     self.pool(database='wrong_database')):
             with self.assertRaises(ValueError):
                 verify_scoped_role(pool)
         good = self.pool()
@@ -163,12 +165,14 @@ class RecoveryArchiveAutomaticTests(unittest.TestCase):
              patch('services.demo.shadow_archive_automatic.verify_scoped_role'), \
              patch('services.demo.shadow_archive_automatic.verify_archive_index'), \
              patch('services.demo.shadow_archive_automatic.object_store', return_value=objects), \
+             patch('services.demo.shadow_archive_automatic.claim_run'), \
+             patch('services.demo.shadow_archive_automatic.park_until_stopped') as park, \
              patch('services.demo.shadow_archive_automatic.archive_cycle', return_value=dict(
                  stop_reason='wal_budget_reached')) as cycle, \
              patch('builtins.print'):
             constructor.return_value.__enter__.return_value = pool
-            with self.assertRaisesRegex(RuntimeError, 'operator review required'):
-                run(stop, self.env())
+            run(stop, self.env())
+        park.assert_called_once_with(stop)
         cycle.assert_called_once()
         objects.client.close.assert_called_once()
 
