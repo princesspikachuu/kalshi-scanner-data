@@ -29,6 +29,10 @@ class Limits:
     packed_batch_size: int
     packed_batches: int
     run_id: str = ""
+    max_wal_bytes: int = 128 * 1024 ** 2
+    max_seconds: int = 600
+    physical_used_bytes: int = 0
+    physical_measured_at: int = 0
 
 
 def configuration(env):
@@ -77,7 +81,31 @@ def configuration(env):
         number('MT_ARCHIVE_PACKED_BATCH_SIZE', 2, 1, 8),
         number('MT_ARCHIVE_PACKED_BATCHES', 2, 0, 8),
         run_id,
+        number('MT_ARCHIVE_MAX_WAL_MIB', 128, 1, 2048) * 1024 ** 2,
+        number('MT_ARCHIVE_MAX_SECONDS', 600, 1, 7200),
+        number('MT_ARCHIVE_PHYSICAL_USED_BYTES', 0, 0, 16_000_000_000_000),
+        number('MT_ARCHIVE_PHYSICAL_MEASURED_AT', 0, 0, 9_999_999_999),
     )
+
+
+def verify_physical_budget(limits, *, now=None):
+    """Require recent provider disk evidence before a larger backlog session.
+
+    Count the entire WAL budget as retained, plus the full logical growth
+    allowance and a 64 MiB final-batch reserve. Never infer physical free
+    space from pg_database_size. The estimate is deliberately conservative;
+    it is not a live provider sensor and does not automatically rearm runs.
+    """
+    if limits.max_wal_bytes <= 128 * 1024 ** 2 and limits.max_seconds <= 600:
+        return
+    current = time.time() if now is None else now
+    if (limits.physical_used_bytes <= 0
+            or not 0 <= current - limits.physical_measured_at <= 900):
+        raise ValueError('Larger backlog run requires recent provider physical disk evidence')
+    projected = (limits.physical_used_bytes + limits.max_wal_bytes
+                 + (256 + 64) * 1024 ** 2)
+    if projected > limits.capacity_gb * 1_000_000_000 * 0.80:
+        raise ValueError('Backlog WAL and growth budgets exceed physical headroom reserve')
 
 
 ROLE_QUERY = """SELECT current_user AS principal, current_database() AS database,
@@ -196,9 +224,9 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
     started, initial_lsn = budget.started, budget.initial_lsn
 
     def budget_reason(reading, elapsed):
-        if elapsed >= 600:
+        if elapsed >= limits.max_seconds:
             return 'time_budget_reached'
-        if reading['wal_bytes'] >= 128 * 1024 ** 2:
+        if reading['wal_bytes'] >= limits.max_wal_bytes:
             return 'wal_budget_reached'
         if (reading['db_bytes'] >= 12_000_000_000
                 or reading['db_bytes'] > limits.capacity_gb * 1_000_000_000 * 0.80
@@ -211,7 +239,7 @@ def archive_cycle(pool, objects, limits, *, now=None, stopped=lambda: False,
         # exceed a limit slightly; never interrupt an in-flight SQL fence.
         safety_check()
         elapsed = time.monotonic() - started
-        if elapsed >= 600:
+        if elapsed >= limits.max_seconds:
             return 'time_budget_reached'
         with pool.connection() as connection:
             reading = connection.execute(
@@ -288,6 +316,10 @@ def run(stop, env=None):
     limits = configuration(env)
     objects = None
     try:
+        # Validate freshness once, before claiming the ID. During the run the
+        # immutable cumulative budget reserves all potential retained WAL;
+        # rechecking timestamp age per batch would interrupt a valid long run.
+        verify_physical_budget(limits)
         with ConnectionPool(limits.database_url, min_size=1, max_size=1, open=True,
                             timeout=6, kwargs=dict(row_factory=dict_row,
                             connect_timeout=5)) as pool:
@@ -298,6 +330,9 @@ def run(stop, env=None):
                 return
             claim_run(objects, limits.run_id)
             budget = start_run_budget(pool)
+            print(json.dumps(dict(event='recovery_archival_started',
+                                  max_wal_bytes=limits.max_wal_bytes,
+                                  max_seconds=limits.max_seconds), sort_keys=True), flush=True)
             while not stop.is_set():
                 # Flags may be changed while the process is running; fail closed
                 # before each atomic archival batch, not just at startup.
