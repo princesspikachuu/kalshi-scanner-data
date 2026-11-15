@@ -21,7 +21,7 @@ The indexed query and cycle guards were delivered in PR #228. The run marker and
 
 ## Resource and failure behavior
 
-- Each recovery **run**, including all cycles and their waits, shares a 600-second elapsed budget, 128 MiB cumulative WAL delta budget, and 256 MiB cumulative logical growth limit. The logical ceiling remains 12 billion bytes. Budgets are checked between verified atomic batches; the last batch may overshoot by one batch.
+- Each recovery **run**, including all cycles and their waits, defaults to a 600-second elapsed budget, 128 MiB cumulative WAL delta budget, and 256 MiB cumulative logical growth limit. The logical ceiling remains 12 billion bytes. Budgets are checked between verified atomic batches; the last batch may overshoot by one batch.
 - The original capacity-percent guard remains. PostgreSQL logical bytes are not a substitute for Render physical disk usage.
 - Each cycle reports its deleted row counts, compressed bytes and database size before/after. Its WAL delta and elapsed time are cumulative for the run, with a stop reason.
 - Safety configuration is rechecked before every batch. A changed flag or database credential fails closed.
@@ -70,6 +70,39 @@ physical-headroom checks; logical bytes alone do not establish retained WAL.
 This is bounded recovery automation, not a continuously operating retention
 service. Do not resume trading or collectors with it running. Automatic rearming
 or writer-safe continuous archiving is separate follow-on work.
+
+## Larger backlog sessions
+
+`MT_ARCHIVE_MAX_WAL_MIB` accepts 1–2048 (default 128), and
+`MT_ARCHIVE_MAX_SECONDS` accepts 1–7200 (default 600). Increasing either above
+its default requires a recent provider physical disk reading: set
+`MT_ARCHIVE_PHYSICAL_USED_BYTES` to a conservative upper bound of observed
+used bytes, and `MT_ARCHIVE_PHYSICAL_MEASURED_AT` to the observation's Unix
+timestamp. At startup the observation must be no older than 900 seconds and
+cannot be in the future. Use the latest provider reading, never logical SQL
+size, and refresh after CI/deployment delays if necessary.
+
+Before opening a database connection or consuming a run ID, require:
+
+```
+observed physical used bytes + entire run WAL budget
+  + 256 MiB logical growth allowance + 64 MiB atomic-batch reserve
+  <= 80% of provisioned disk bytes
+```
+
+This conservatively assumes **all** generated WAL remains retained. The same
+original WAL/size/time baseline applies across every cycle; no automatic
+baseline reset, marker rotation or retry is added. The provider reading is a
+startup admission check, not a live disk sensor. Keep external provider
+monitoring in place and do not run concurrent maintenance. A new invocation
+still requires fresh evidence and a fresh reviewed run ID. Packed diagnostics
+can remain disabled while the six-kind raw backlog drains.
+
+After raw recovery reports no eligible rows, measure packed diagnostics and
+other protected namespaces separately. Do not equate raw-backlog completion
+with all historical data reconciled or permission to restart writers. The
+existing `shadow_diagnostic_retention` path remains disabled until its
+read-path/headroom checks and supervised acceptance are complete.
 
 ## Validation
 
