@@ -60,6 +60,13 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 current restart preparation — 2026-11-16 UTC
+
+- Active worker: Codex storage continuation, continuing the existing MT-019 assignment. Previous dated checkpoints below are historical and must not override this checkpoint.
+- Backlog archival and full original readback verification are complete. PRs #230–#232 are merged; the independently scoped API archive reader is verified, and the existing held worker now runs bounded continuous diagnostic retention. Keep the working archive-only configuration intact while preparing restart.
+- Trading and collection remain held. Current work: refresh verified multipart control backup, inspect checkpoint/account recovery without mutation, establish recurring backup cadence and a worker placement that preserves archiving alongside paper execution, then run restart acceptance. Preserve intentional strategy pauses.
+- Remaining acceptance includes credential-rotation evidence, financial reconciliation and sustainable physical storage monitoring. Do not treat diagnostic archive completion as financial or whole-history reconciliation. No new billing or infrastructure expansion is authorized by this checkpoint.
+
 ### MT-019 storage reduction merged and deployed in recovery hold — 2026-11-13 PT
 - User continued the reviewed rollout and explicitly selected Render **My Workspace**, `tea-dbfv1fl9el5s73bcuefg`; reuse this confirmed workspace ID for subsequent calls.
 - [PR #227](https://github.com/princesspikachuu/kalshi-scanner-data/pull/227) squash merged as `be54b6f2bcb4bf0bcadf7a930c9f9e247679383b`. Exact PR CI 43543538523 and both merged-commit runs **43544829630 (push), 43544834865 (PR)** SUCCESS. Full PostgreSQL suite: all 1,726 tests passed. Bounded online diagnostic retention and optional four-slot status remain default OFF; unchanged checkpoint rewrites removed.
