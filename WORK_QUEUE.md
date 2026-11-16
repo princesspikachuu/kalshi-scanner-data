@@ -60,6 +60,10 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 continuation: archive placement and held backup cadence — 2026-11-16 UTC
+
+Codex storage continuation retains the existing MT-019 claim. Owner completed the private connection setup. Current independent work: verify restricted authority, move the existing archive-only role under the shared lease, and implement an explicit default-OFF backup-only held worker so recurring control snapshots can run before paper trading resumes. Preserve all financial state, recovery holds and existing service capacity. No trading/collection restart is included.
+
 ### MT-019 next private configuration handoff — 2026-11-16 UTC
 
 The proposed existing separate archive worker was checked without exposing credentials. Its private maintenance connection is absent from both saved configuration and the running environment. Owner must copy the existing restricted maintenance URL privately into that worker, saving without deployment; do not paste secrets into chat or GitHub. Keep the currently working archiver and all trading/collection holds intact. After private setup, validate scoped authority, deploy current code with holds, transfer the exclusive archive lease, then address recurring backup and financial/restart acceptance. No service transfer or strategy restart has occurred.
