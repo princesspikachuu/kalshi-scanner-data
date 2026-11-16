@@ -60,6 +60,13 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 backup timeout fixed and restart preparation verified — 2026-11-16 UTC
+
+- PR #233 merged as `32b01b1fa00b337c1310278e272f39e534e38b4b`, full PostgreSQL CI passes all 1,773 tests, and the held processing deployment is live. Control backup upper-tail probes now have a collation-verified enclosing upper bound, preserving hidden-key rejection without scanning unrelated history. Files: `services/demo/control_backup_v2.py`, backup tests, `docs/audits/MT-019-control-backup-bounded-probe.md`.
+- A fresh multipart control snapshot completed with full R2 readback and durable backup-health/catalog verification. Automatic retention resumed after exclusive lease handoff on the replacement worker; trading and collection remain paused.
+- Checkpoint transport/hash/schema and basic open-lot checks passed. A comparison against only hot per-market statistics is NOT full cash reconciliation: settled-market statistics are deliberately pruned by the host. Preserve the checkpoint and use historical financial evidence for reconciliation; do not reset balances to force an equality.
+- Next: place archiving on an existing separate worker before restoring paper execution; verify recurring multipart backup cadence; complete historical financial/settlement acceptance and credential-rotation evidence; staged restart with physical growth monitoring and intentional strategy pauses preserved. MT-019 remains IN PROGRESS.
+
 ### MT-019 current restart preparation — 2026-11-16 UTC
 
 - Active worker: Codex storage continuation, continuing the existing MT-019 assignment. Previous dated checkpoints below are historical and must not override this checkpoint.
