@@ -755,6 +755,17 @@ class Engine:
         write_dashboard(self.audit.path)
         return report
 
+    def complete_settlement(self, ticker: str, yes_payout: D):
+        """Book a confirmed payout without advancing queued order actions."""
+        if ticker not in self.settled:
+            raise ValueError('settlement requires prior explicit WS settled event')
+        if not self.markets[ticker].get('paid'):
+            self.wallet.settle(ticker, yes_payout)
+            self.trade_ids = {ident for ident in self.trade_ids if ident[0] != ticker}
+            self.markets[ticker]['paid'] = True
+            self.log('SETTLED', ticker=ticker, price=str(yes_payout))
+            self.report(ticker, final=True)
+
     def handle(self, source: str, payload: dict, now: float):
         # Execute due actions against the last causally observed book BEFORE a newer event.
         changed={self.orders[item[3]].ticker for item in self.pending if item[0]<=now}
@@ -793,15 +804,7 @@ class Engine:
                 if ticker not in self.settled:
                     self.data_gap(ticker, payload['reason'])
         elif source == 'settlement':
-            ticker = payload['ticker']
-            if ticker not in self.settled:
-                raise ValueError('settlement requires prior explicit WS settled event')
-            if not self.markets[ticker].get('paid'):
-                self.wallet.settle(ticker, D(payload['yes_payout']))
-                self.trade_ids = {ident for ident in self.trade_ids if ident[0] != ticker}
-                self.markets[ticker]['paid'] = True
-                self.log('SETTLED', ticker=ticker, price=payload['yes_payout'])
-                self.report(ticker, final=True)
+            self.complete_settlement(payload['ticker'], D(payload['yes_payout']))
         elif source == 'kalshi':
             kind, msg = payload.get('type'), payload.get('msg', {})
             ticker = msg.get('market_ticker')
