@@ -60,6 +60,10 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 complete bot catalog loading — 2026-11-16 UTC
+
+Codex storage continuation retains ownership. Source review found fixed-size bot reads in worker startup, control refresh and the workspace API without a completeness check. Replace silent truncation with one bounded complete-catalog reader and explicit overflow handling; preserve every saved control and intentional pause. Add regression coverage above the old source limit before restart acceptance. Operational state remains tracked privately.
+
 ### MT-019 held paper payout processing — 2026-11-16 UTC
 
 Codex storage continuation retains ownership. Implementation: PR #236 merged as `d6012598d1f81a73b209b4fc4ebaaf4fc02544fe`, reviewed head `68914268beb2b9c2ab6f99b3cfaae9335893da16`. Hosted PostgreSQL CI `43966469061` passes all 1,804 tests, including rollback, checkpoint conflict, advisory-fence exclusion, idempotence and final-report conflict cases. Files: `services/demo/held_paper_settlement.py`, its tests, shared payout-only method in `services/paper_demo/shadow/core.py`, and `docs/audits/MT-019-held-paper-settlements.md`. The library has no automatic startup registration. Merge is not evidence of operational execution, deployment or restart. Operational evidence belongs in the existing private archive; consult it before continuing. Keep private financial records, settlement status, storage measurements and archive references out of this public implementation checkpoint.
