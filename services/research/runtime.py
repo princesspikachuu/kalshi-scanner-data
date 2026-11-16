@@ -97,6 +97,9 @@ def run(settings,stop):
     # Reject overlapping one-shot recovery I/O *before* any R2 or SQL access.
     from .recovery_one_shot_guard import check_recovery_jobs_exclusive
     check_recovery_jobs_exclusive(os.environ)
+    if os.environ.get('MT_CONTROL_BACKUP_HELD_WORKER') == 'true':
+        from services.demo.held_control_backup import run_held_worker
+        return run_held_worker(stop,os.environ)
     if os.environ.get('MT_DIAGNOSTIC_RETENTION_HELD_WORKER') == 'true':
         from services.demo.shadow_diagnostic_retention import run_held_worker
         return run_held_worker(stop,os.environ)
