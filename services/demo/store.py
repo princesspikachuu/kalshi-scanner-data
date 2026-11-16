@@ -29,6 +29,16 @@ class DemoStore:
                 parameters=CASE WHEN %s THEN excluded.parameters ELSE research_job.parameters END,
                 finished_at=clock_timestamp() RETURNING id::text""",
                 (uuid4(),Jsonb(parameters or {}),Jsonb(data),self.namespace+'/'+key,parameters is not None)).fetchone()['id']
+    def bot_catalog(self,limit):
+        # Match the prefix index order. UUID ordering can make PostgreSQL walk
+        # the whole job primary key looking for a sparse control namespace.
+        prefix=self.namespace+'/shadow/bot/'
+        with self.pool.connection() as c:
+            return c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at,finished_at
+                FROM research_job WHERE idempotency_key >= %s AND idempotency_key < %s
+                AND starts_with(idempotency_key,%s) ORDER BY idempotency_key LIMIT %s""",
+                (prefix,prefix+'zzzz',prefix,limit)).fetchall()
+
     def rows(self,prefix,limit=100,before=None):
         with self.pool.connection() as c:
             return c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at,finished_at

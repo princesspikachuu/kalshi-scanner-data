@@ -18,7 +18,8 @@ from .weather import initialize_weather,discover_weather
 from .history_sampling import MinuteHistory
 from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope,initialize_restored_favorites
-from .sequential_comparison import initialize_comparison,BOT_LIMIT
+from .sequential_comparison import initialize_comparison
+from .bot_catalog import load_bots
 from .hourly import discover_hourly
 from .scalper_install import initialize_scalper,initialize_scalper_upgrade,apply_requested_volatility_pause
 from .scalper import SCALPER_FOLDERS
@@ -102,7 +103,7 @@ class HostedRun(ForwardRun):
         apply_requested_volatility_pause(store,guard)
         initialize_market_maker(store,guard)
         initialize_quote_policy(store,guard)
-        all_rows=store.rows('shadow/bot/',BOT_LIMIT)
+        all_rows=load_bots(store)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
@@ -465,7 +466,7 @@ class HostedRun(ForwardRun):
             # prefetched refill from being applied twice across that commit.
             mode_row,all_rows=await asyncio.gather(
                 self.audit.durable_io(read_mode,self.store.pool),
-                self.audit.durable_io(self.store.rows,'shadow/bot/',BOT_LIMIT))
+                self.audit.durable_io(load_bots,self.store))
             mode=mode_row.get('mode','demo')
             history_sample=None
             async with self.state_mutex():

@@ -12,7 +12,8 @@ from services.paper_demo.shadow.performance import folder_performance
 from services.paper_demo.shadow.bot_performance import bot_performance
 from services.trading.mode import require_demo,ModeConflict
 
-from services.paper_demo.shadow.sequential_comparison import BOT_LIMIT,SEQUENTIAL_FOLDERS
+from services.paper_demo.shadow.sequential_comparison import SEQUENTIAL_FOLDERS
+from services.paper_demo.shadow.bot_catalog import load_bots,BotCatalogCapacityError
 from services.paper_demo.shadow.scalper import SCALPER_FOLDERS
 from services.paper_demo.shadow.market_maker import MM_FOLDERS,CATEGORIES
 
@@ -266,7 +267,9 @@ def install_shadow(app,auth,mutate,pool):
         current=money.get('current_cycles',{}) if money else {}
         snapshot_at=money['at'] if money else status.get('at',time.time())
         from psycopg.types.json import Jsonb
-        all_profiles=store.rows('shadow/bot/',BOT_LIMIT)
+        try:all_profiles=load_bots(store)
+        except BotCatalogCapacityError:
+            raise HTTPException(503,'Bot catalog is temporarily unavailable') from None
         for row in all_profiles:
             p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
         all_profiles.sort(key=lambda r:r['parameters']['name'])
