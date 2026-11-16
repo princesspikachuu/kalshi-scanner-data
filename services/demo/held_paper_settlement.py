@@ -257,10 +257,13 @@ def commit_plan(connection, objects, plan, expected, reference, *, env):
                            (Jsonb(plan['proposed']), current[0]))
         insert = """INSERT INTO research_job(id,asset,parameters,progress,idempotency_key,status,finished_at)
                     VALUES(%s,'crypto',%s,%s,%s,'succeeded',clock_timestamp())"""
+        event_keys, report_keys = [], []
         for event in plan['events']:
             params = dict(kind='EXPERIMENT' if event.get('folder_id') else event['event'],
                           ticker=event.get('ticker'), time=event['time'])
-            connection.execute(insert, (uuid4(), Jsonb(params), Jsonb(event), 'demo/shadow/event/' + str(uuid4())))
+            event_key = 'demo/shadow/event/' + str(uuid4())
+            connection.execute(insert, (uuid4(), Jsonb(params), Jsonb(event), event_key))
+            event_keys.append(event_key)
             if event['event'] == 'CYCLE_REPORT':
                 report = json.loads(event['details']);report['at'] = event['time']
                 folder = event.get('folder_id')
@@ -273,8 +276,10 @@ def commit_plan(connection, objects, plan, expected, reference, *, env):
                                              (uuid4(), Jsonb(report_parameters), Jsonb(report), report_key))
                 if written.rowcount != 1:
                     raise ValueError('existing_final_report_conflict')
+                report_keys.append(report_key)
         receipt = dict(format='held-paper-settlement-committed-v1', source_sha256=plan['source_sha256'],
                        proposed_sha256=plan['proposed_sha256'], evidence_reference=reference,
-                       affected=plan['affected'], at=plan['at'])
+                       affected=plan['affected'], at=plan['at'],
+                       event_keys=event_keys, report_keys=report_keys)
         connection.execute(insert, (uuid4(), Jsonb({}), Jsonb(receipt), key))
     return dict(already_applied=False, operation_key=key)

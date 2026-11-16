@@ -177,6 +177,9 @@ class HeldSettlementPostgresTests(unittest.TestCase):
     def test_checkpoint_financial_audits_reports_and_receipt_commit_once(self):
         result=self.apply();self.assertFalse(result['already_applied'])
         self.assertEqual(self.saved(),self.plan['proposed'])
+        receipt=self.connection.execute('SELECT progress FROM research_job WHERE idempotency_key=%s',(result['operation_key'],)).fetchone()[0]
+        self.assertEqual(len(receipt['event_keys']),len(self.plan['events']))
+        self.assertEqual(len(receipt['report_keys']),2)
         count=self.connection.execute('SELECT count(*) FROM research_job').fetchone()[0]
         self.assertTrue(self.apply()['already_applied'])
         self.assertEqual(count,self.connection.execute('SELECT count(*) FROM research_job').fetchone()[0])
