@@ -62,7 +62,7 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 ### MT-019 held paper payout processing — 2026-11-16 UTC
 
-Codex storage continuation retains ownership. User requested continuation after reconciliation. Build and verify a bounded settlement-only recovery path with original-checkpoint comparison, a durable before-image, normal wallet settlement math and atomic payout/audit/report persistence. Do not advance queued order actions, initialize new bots, alter strategy pauses, reset balances, or release trading/collection/API holds. Refresh storage acceptance after confirmed payouts. This claim precedes implementation.
+Codex storage continuation retains ownership. Implementation: PR #236 merged as `d6012598d1f81a73b209b4fc4ebaaf4fc02544fe`, reviewed head `68914268beb2b9c2ab6f99b3cfaae9335893da16`. Hosted PostgreSQL CI `43966469061` passes all 1,804 tests, including rollback, checkpoint conflict, advisory-fence exclusion, idempotence and final-report conflict cases. Files: `services/demo/held_paper_settlement.py`, its tests, shared payout-only method in `services/paper_demo/shadow/core.py`, and `docs/audits/MT-019-held-paper-settlements.md`. The library has no automatic startup registration. Merge is not evidence of operational execution, deployment or restart. Operational evidence belongs in the existing private archive; consult it before continuing. Keep private financial records, settlement status, storage measurements and archive references out of this public implementation checkpoint.
 
 ### MT-019 current-session financial reconciliation — 2026-11-16 UTC
 
