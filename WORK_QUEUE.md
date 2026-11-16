@@ -60,6 +60,10 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 current-session financial reconciliation — 2026-11-16 UTC
+
+Codex storage continuation retains MT-019 ownership. User requested cash, fill, fee and settlement reconciliation. Work begins with non-mutating source enumeration and deterministic comparison against the saved checkpoint; trading/collection holds and both maintenance workers remain unchanged. Do not reset cash or apply settlement repairs merely to make summaries agree. The earlier credential note is not evidence that the deliberately altered example URL exposed a real password; no credential changes are requested by this continuation.
+
 ### MT-019 separate archive worker and recurring held backups live — 2026-11-16 UTC
 
 - Private maintenance connection was verified against the intended database and restricted non-owner role. Diagnostic archiving moved to the existing separate research worker, using the same exclusive advisory lease and bounded verified-retention path. Clean cycles and exactly one archive lease were observed after handoff. The unused maintenance connection was removed from the processing service; no new service, instance, plan or grant was added.
