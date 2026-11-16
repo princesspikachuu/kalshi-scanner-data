@@ -62,7 +62,7 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 ### MT-019 complete bot catalog loading — 2026-11-16 UTC
 
-Codex storage continuation retains ownership. Source review found fixed-size bot reads in worker startup, control refresh and the workspace API without a completeness check. Replace silent truncation with one bounded complete-catalog reader and explicit overflow handling; preserve every saved control and intentional pause. Add regression coverage above the old source limit before restart acceptance. Operational state remains tracked privately.
+Codex storage continuation retains ownership. Preventive catalog-completeness implementation: PR #237 merged as `2b5e5e0e1b47fbc104c15300cc78b896bcdd71c3`, reviewed head `5aa7a9e2f1b8861cf02fcb6ec09444fbcaa16418`. Hosted PostgreSQL CI `43969713474` passes all 1,809 tests, including a synthetic namespace above the old fixed limit. Startup, control refresh and workspace API now share a 4,096-control reader plus overflow sentinel. The SQL uses both range bounds AND exact starts_with matching, follows the namespace index, and preserves former UUID consumer order locally. Paused/retired controls are retained; source/overflow failures never become partial successes. Files: `services/paper_demo/shadow/bot_catalog.py`, DemoStore reader, worker/API integration, tests and `docs/audits/MT-019-complete-bot-catalog.md`. Do not infer a live catalog overflow from a range-only query: exact-prefix matching is required for every operational inspection. No operational counts, financial results, private archive references or rollout status are published here; consult the private evidence before continuing.
 
 ### MT-019 held paper payout processing — 2026-11-16 UTC
 
