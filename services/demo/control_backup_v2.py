@@ -17,6 +17,9 @@ from psycopg_pool import ConnectionPool
 from services.demo.control_backup_capacity_audit import PREFIX_SCOPES, SINGLETONS
 from services.demo.maintenance import object_store, put_verified, read_verified
 from services.demo.store import DemoStore
+from services.demo.shadow_prefix_boundary_guard import (
+    _bounded_collation, BOUNDED_ABOVE_UPPER_SQL,
+)
 
 PAGE_SIZE=200
 MAX_ROWS=50000
@@ -35,15 +38,20 @@ SINGLETON_QUERY=f"""SELECT {SELECT_FIELDS} FROM research_job
 # The selected prefix windows end before prefix+'zzzz'. Unknown/legacy keys
 # beyond this sentinel must NOT let a truncated control backup claim to be
 # a complete recovery snapshot, even if all captured R2 chunks verify.
-UPPER_TAIL_SQL="""SELECT 1 AS present FROM research_job
-    WHERE idempotency_key >= %s AND idempotency_key LIKE %s LIMIT 1"""
+UPPER_TAIL_SQL=BOUNDED_ABOVE_UPPER_SQL
 
 
 def assert_no_hidden_control_tail(connection):
     """Fail closed inside the caller's existing READ ONLY database snapshot."""
+    _bounded_collation(connection)
     for _, prefix, _ in PREFIX_SCOPES:
+        # Bound the probe to an enclosing word range. An unbounded LIKE scan
+        # walks later event namespaces when no hidden control key exists.
+        # Slash-to-'0' is unsafe under English punctuation ordering; use the
+        # same verified letter successor as diagnostic retention instead.
+        upper=prefix[:-2]+chr(ord(prefix[-2])+1)
         if connection.execute(
-                UPPER_TAIL_SQL, (prefix+'zzzz', prefix+'%')
+                UPPER_TAIL_SQL, (prefix+'zzzz', upper, prefix+'%')
         ).fetchone() is not None:
             raise ValueError('Control backup index upper boundary hides rows')
 

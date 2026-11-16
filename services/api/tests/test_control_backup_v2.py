@@ -6,6 +6,8 @@ from threading import Event
 from types import SimpleNamespace
 from unittest.mock import MagicMock,patch
 
+from services.demo.shadow_prefix_boundary_guard import KEY_COLLATION_SQL
+
 from services.demo.control_backup_v2 import (
     FORMAT,PART_FORMAT,MAX_CHUNK_ROWS,MAX_ROWS,MAX_CHUNK_BYTES,
     canonical,select_prefix_query,collect_snapshot,collect_snapshot_spooled,
@@ -42,6 +44,9 @@ class VerifiedControlBackupTests(unittest.TestCase):
         def execute(sql,args=None):
             requested.append(sql)
             cur=MagicMock()
+            if sql == KEY_COLLATION_SQL:
+                cur.fetchone.return_value={'provider':'c','locale':'en_US.UTF-8'}
+                return cur
             if sql == UPPER_TAIL_SQL:
                 cur.fetchone.return_value=None
                 return cur
@@ -73,20 +78,25 @@ class VerifiedControlBackupTests(unittest.TestCase):
         missing=MagicMock()
         missing.fetchone.return_value=None
         connection.execute.return_value=missing
+        connection.execute.side_effect=lambda sql,args=None: (
+            SimpleNamespace(fetchone=lambda:{'provider':'c','locale':'en_US.UTF-8'})
+            if sql==KEY_COLLATION_SQL else missing)
         self.assertIsNone(assert_no_hidden_control_tail(connection))
-        self.assertEqual(connection.execute.call_count,len(PREFIX_SCOPES))
+        self.assertEqual(connection.execute.call_count,len(PREFIX_SCOPES)+1)
         self.assertTrue(all(call.args[0]==UPPER_TAIL_SQL
-                            for call in connection.execute.call_args_list))
-        self.assertEqual(connection.execute.call_args_list[0].args[1],
-                         (PREFIX_SCOPES[0][1]+'zzzz',PREFIX_SCOPES[0][1]+'%'))
+                            for call in connection.execute.call_args_list[1:]))
+        self.assertEqual(connection.execute.call_args_list[1].args[1],
+                         (PREFIX_SCOPES[0][1]+'zzzz','demo/bou',PREFIX_SCOPES[0][1]+'%'))
 
         present=MagicMock()
         present.fetchone.return_value={'present':1}
         connection=MagicMock()
-        connection.execute.return_value=present
+        connection.execute.side_effect=lambda sql,args=None: (
+            SimpleNamespace(fetchone=lambda:{'provider':'c','locale':'en_US.UTF-8'})
+            if sql==KEY_COLLATION_SQL else present)
         with self.assertRaisesRegex(ValueError,'upper boundary'):
             assert_no_hidden_control_tail(connection)
-        self.assertEqual(connection.execute.call_count,1)
+        self.assertEqual(connection.execute.call_count,2)
 
     def test_hidden_key_aborts_spool_and_closes_file(self):
         fake=BytesIO()
@@ -94,6 +104,9 @@ class VerifiedControlBackupTests(unittest.TestCase):
         connection=pool.connection.return_value.__enter__.return_value
         def execute(sql,args=None):
             cur=MagicMock()
+            if sql == KEY_COLLATION_SQL:
+                cur.fetchone.return_value={'provider':'c','locale':'en_US.UTF-8'}
+                return cur
             if sql == UPPER_TAIL_SQL:
                 cur.fetchone.return_value={'present':1}
             elif 'FROM research_job' in sql:
@@ -106,6 +119,14 @@ class VerifiedControlBackupTests(unittest.TestCase):
                 collect_snapshot_spooled(pool)
         self.assertTrue(fake.closed)
         connection.transaction.assert_called_once()
+
+    def test_unknown_collation_refuses_backup_boundary_probe(self):
+        connection=MagicMock()
+        connection.execute.return_value.fetchone.return_value={
+            'provider':'i','locale':'en-US'}
+        with self.assertRaisesRegex(ValueError,'Unverified collation'):
+            assert_no_hidden_control_tail(connection)
+        self.assertEqual(connection.execute.call_count,1)
 
     def test_corrupt_control_record_fails_closed(self):
         for invalid in (dict(self.record(),parameters=[]),
@@ -162,6 +183,9 @@ class VerifiedControlBackupTests(unittest.TestCase):
         c=pool.connection.return_value.__enter__.return_value
         def execute(sql,args=None):
             result=MagicMock()
+            if sql == KEY_COLLATION_SQL:
+                result.fetchone.return_value={'provider':'c','locale':'en_US.UTF-8'}
+                return result
             if sql == UPPER_TAIL_SQL:
                 result.fetchone.return_value=None
                 return result
