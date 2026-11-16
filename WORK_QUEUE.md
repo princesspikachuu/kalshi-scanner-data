@@ -53,7 +53,7 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 # PRIORITY 0 — URGENT DATABASE OUTAGE & RUNAWAY STORAGE
 
 ## MT-019 — Recover automatically suspended Render Postgres and stop uncontrolled paper-history growth
-**Status:** IN PROGRESS — P0/U0, remains blocked on external operator evidence  
+**Status:** IN PROGRESS — P0/U0, financial reconciliation complete; settlement/restart acceptance pending  
 **Worker:** ChatGPT / storage-outage investigation  
 **Claimed:** 2026-11-10 17:30 UTC  
 **Priority:** Before MT-011 throughput verification or any resumed trading
@@ -62,7 +62,15 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 ### MT-019 current-session financial reconciliation — 2026-11-16 UTC
 
-Codex storage continuation retains MT-019 ownership. User requested cash, fill, fee and settlement reconciliation. Work begins with non-mutating source enumeration and deterministic comparison against the saved checkpoint; trading/collection holds and both maintenance workers remain unchanged. Do not reset cash or apply settlement repairs merely to make summaries agree. The earlier credential note is not evidence that the deliberately altered example URL exposed a real password; no credential changes are requested by this continuation.
+Codex storage continuation retains MT-019 ownership. The requested read-only cash/fee/settlement reconciliation is COMPLETE for the captured current paper sessions. No financial state changed.
+
+- A bounded keyset scan captured original financial events and controls from one repeatable-read, read-only PostgreSQL snapshot. Cash links were replayed independently from configured initial funding, including partial exits, fees, collateral netting and recorded settlements. Every captured wallet's cash, deposits and aggregate remaining market/side quantities matched. Recorded fill fee totals also matched independently retained active plus retired report totals; the root portfolio requires its retained final reports rather than pruned hot statistics.
+- Every captured settlement marker agreed with authoritative finalized/settled venue outcomes. Pending closed-market payouts and remaining entry-fee realization passed a preview using independent copies of the existing wallet model. Those payouts have NOT been booked. Preserve the source checkpoint and use the existing serialized, audited settlement recovery path; do not manually reset cash.
+- Original financial source rows, public venue originals, original checkpoint, replay results and the preview were saved to the existing private R2 archive as fully readback-verified multipart evidence. A separate root catalog and receipt were subsequently reread and verified. A fresh read-only SQL comparison confirmed the checkpoint remained unchanged. Private balances, market lists and archive references are deliberately excluded from this public queue.
+- Reusable pure checker and regression tests: PR #235, head `e655fc839cbfb5a200f22d95f3975e4b94f875fa`, branch `feat/mt019-financial-reconciliation`; files `services/demo/shadow_cash_reconciliation.py`, its tests, and `docs/audits/MT-019-paper-cash-reconciliation.md`. Local suite passes 1,795 tests (299 PostgreSQL checks skipped locally). Hosted PostgreSQL CI is pending at this checkpoint; do not call it passed or merge before its result is verified.
+- Next: confirmed payout processing under an audited checkpoint fence; refreshed physical growth/WAL acceptance and staged restart preserving intentional strategy pauses. Disable held-backup-only mode before paper execution while retaining ordinary multipart backups; never restore the maintenance connection to the paper executor. Both held maintenance roles remain configured, collection/trading and API holds remain in place.
+- Scope: recorded cash, fees, aggregate quantities and venue outcomes for captured current sessions. This does not certify exact historical lot-cost attribution, historical fee schedules, all-time cold history, strategy profitability, or restart readiness. No training acceptance or live trading is authorized.
+- The deliberately altered example URL is not evidence of a real credential exposure. Do not repeat a rotation gate based solely on that example; establish concrete exposure evidence before reopening that issue.
 
 ### MT-019 separate archive worker and recurring held backups live — 2026-11-16 UTC
 
