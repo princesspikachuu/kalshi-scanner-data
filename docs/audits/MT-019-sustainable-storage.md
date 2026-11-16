@@ -43,8 +43,10 @@ restoration support. The current PostgreSQL/R2 manifests/readers are reused.
 
 - Keep current live recovery holds/flags until the recorded physical/WAL,
   credentials and account-recovery requirements are resolved. This new path
-  cannot execute unless `MT_STORAGE_RECOVERY_HOLD=false`; use the existing
-  stopped-writer recovery tools for held backlog reclamation.
+  CLI online path requires `MT_STORAGE_RECOVERY_HOLD=false`. The explicit
+  archive-only held-collector route below preserves the hold and starts no
+  trading/collection work. Use the existing stopped-writer recovery tools for
+  held backlog reclamation before activating ongoing retention.
 - Deploy the status reader to **all API/readers first**, with split writing
   OFF. The currently manual API deployment has a migration predeploy; coordinate
   it under the existing recovery procedure. Old API readers cannot interpret
@@ -79,6 +81,42 @@ restoration support. The current PostgreSQL/R2 manifests/readers are reused.
   copies can remain safely unreferenced; inspect before restart. Cursors are
   in-memory: restart rescans from each prefix, without losing unarchived rows.
   Newly inserted random-UUID keys behind a cursor are visited next pass.
+
+## Archive-only route on the existing held collector
+
+After backlog verification and API cold-reader acceptance, a disabled collector
+can serve as an isolated retention worker without changing its start command,
+adding a service, or releasing the API/collector recovery holds. Set
+`MT_DIAGNOSTIC_RETENTION_HELD_WORKER=true` together with the three explicit
+retention readiness flags above. This route additionally requires all of:
+
+- `MT_STORAGE_RECOVERY_HOLD=true`, `WORKER_ROLE=collector`,
+  `COLLECTION_ENABLED=false`, `RUNTIME_DB_PROFILE=research`.
+- `STAGING_ACCEPTANCE=off`, `STAGING_OPERATOR_ACTION=off`.
+- Recovery archival, every recovery one-shot and recurring control backup off.
+- The existing private scoped maintenance credential and R2 archive writer.
+
+The research entry point dispatches directly to maintenance before any normal
+worker or audit actions. The paper executor never starts. The existing scoped
+SQL role is reverified, and the 24-hour minimum, allowlists, complete R2
+readback, exact-row reclaim and logical capacity guard remain in force.
+
+A separate autocommit connection holds one database session advisory lease.
+A replacement waits for the previous process to exit before doing archive
+work. The runner rechecks configuration and lease connectivity before each
+page and after R2 verification, immediately before the SQL transaction. No SQL
+transaction stays open across R2 I/O. Each cycle examines at most ten 100-key
+raw pages and ten two-key packed pages, followed by a 60-second wait.
+
+Errors close clients and park the process with a sanitized review-required
+event; they do not exit into a platform crash-retry loop. An explicit deploy or
+restart revalidates readiness and rescans from the start. Cursors are not a
+claim of complete historical coverage. Provider disk monitoring remains
+separate from logical SQL size; the headroom flag is an operator assertion.
+
+Disable `MT_DIAGNOSTIC_RETENTION_HELD_WORKER` and
+`MT_DIAGNOSTIC_RETENTION_ENABLED` before returning this service to other work.
+Keep its recovery hold while doing so. No startup hook is enabled by default.
 
 ## Empty-namespace boundary probe
 
