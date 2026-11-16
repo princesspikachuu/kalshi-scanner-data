@@ -233,6 +233,7 @@ def commit_plan(connection, objects, plan, expected, reference, *, env):
     rebuilt = build_plan(expected, plan['outcomes'], now=plan['at'])
     if rebuilt != plan:
         raise ValueError('settlement_plan_rebuild_mismatch')
+    planned_state = unpack_checkpoint(plan['proposed'])
     if not connection.autocommit or connection.info.transaction_status != 0:
         raise ValueError('idle_autocommit_connection_required')
     key = PREFIX + digest(plan)
@@ -263,9 +264,13 @@ def commit_plan(connection, objects, plan, expected, reference, *, env):
             if event['event'] == 'CYCLE_REPORT':
                 report = json.loads(event['details']);report['at'] = event['time']
                 folder = event.get('folder_id')
+                report_parameters = {}
+                if not folder:
+                    report['bot_revision'] = planned_state['markets'][report['ticker']].get('bot_revision', 1)
+                    report_parameters = dict(time=event['time'], bot_id=report.get('bot_id'))
                 report_key = ('demo/experiment/report/' + folder + '/' if folder else 'demo/shadow/report/') + report['ticker']
                 written = connection.execute(insert + " ON CONFLICT(idempotency_key) DO UPDATE SET progress=excluded.progress,finished_at=clock_timestamp() WHERE research_job.progress->>'final' IS DISTINCT FROM 'true'",
-                                             (uuid4(), Jsonb({}), Jsonb(report), report_key))
+                                             (uuid4(), Jsonb(report_parameters), Jsonb(report), report_key))
                 if written.rowcount != 1:
                     raise ValueError('existing_final_report_conflict')
         receipt = dict(format='held-paper-settlement-committed-v1', source_sha256=plan['source_sha256'],
