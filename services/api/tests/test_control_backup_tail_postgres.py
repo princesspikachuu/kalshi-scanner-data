@@ -6,8 +6,9 @@ import unittest
 
 from services.api.tests import test_demo_postgres as fixture
 from services.demo.control_backup_v2 import (
-    collect_snapshot, collect_snapshot_spooled,
+    collect_snapshot, collect_snapshot_spooled, assert_no_hidden_control_tail,
 )
+from services.demo.control_backup_capacity_audit import PREFIX_SCOPES
 
 
 @unittest.skipUnless(fixture.URL, 'Disposable pocket_test PostgreSQL required')
@@ -49,6 +50,24 @@ class RealPostgresControlBackupTailTests(unittest.TestCase):
             self.assertGreater(staged['parts'],0)
         finally:
             staged['file'].close()
+
+    def test_every_control_prefix_keeps_high_suffix_inside_probe(self):
+        # A word successor must enclose all suffixes, even where English
+        # punctuation ordering differs from byte order (slash vs '0').
+        for _,prefix,_ in PREFIX_SCOPES:
+            for suffix in ('zzzz','zzzzzz-legacy','zzzz\u00e9'):
+                with self.subTest(prefix=prefix,suffix=suffix):
+                    key=prefix+suffix
+                    from services.demo.store import DemoStore
+                    writer=DemoStore(self.store.pool)
+                    writer.namespace=key.split('/',1)[0]
+                    writer.put(key.split('/',1)[1],dict(event='CONTROL'))
+                    with self.store.pool.connection() as c:
+                        try:
+                            with self.assertRaisesRegex(ValueError,'upper boundary'):
+                                assert_no_hidden_control_tail(c)
+                        finally:
+                            c.execute('DELETE FROM research_job WHERE idempotency_key=%s',(key,))
 
 
 if __name__=='__main__':
