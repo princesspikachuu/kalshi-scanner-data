@@ -19,6 +19,10 @@ ONE_SHOTS = (
 def check_recovery_jobs_exclusive(env):
     """Reject simultaneous recovery tasks, preserving ordinary idle startup."""
     active = tuple(name for name in ONE_SHOTS if env.get(name) == 'true')
+    if env.get('MT_DIAGNOSTIC_RETENTION_HELD_WORKER') == 'true' and (
+            active or env.get('MT_ARCHIVE_RECOVERY_LOOP') == 'true'
+            or env.get('MT_CONTROL_BACKUP_V2_ENABLED') == 'true'):
+        raise ValueError('Archive-only retention cannot overlap recovery or backup jobs')
     if len(active) > 1:
         raise ValueError('Only one MT-019 recovery one-shot may run per startup')
     if active and env.get('MT_ARCHIVE_RECOVERY_LOOP') == 'true':
