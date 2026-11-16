@@ -60,6 +60,10 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
+### MT-019 held paper payout processing — 2026-11-16 UTC
+
+Codex storage continuation retains ownership. User requested continuation after reconciliation. Build and verify a bounded settlement-only recovery path with original-checkpoint comparison, a durable before-image, normal wallet settlement math and atomic payout/audit/report persistence. Do not advance queued order actions, initialize new bots, alter strategy pauses, reset balances, or release trading/collection/API holds. Refresh storage acceptance after confirmed payouts. This claim precedes implementation.
+
 ### MT-019 current-session financial reconciliation — 2026-11-16 UTC
 
 Codex storage continuation retains MT-019 ownership. The requested read-only cash/fee/settlement reconciliation is COMPLETE for the captured current paper sessions. No financial state changed.
