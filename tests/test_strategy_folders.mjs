@@ -88,7 +88,7 @@ test('dashboard load renders the expanded workspace through the actual gateway c
  const {context,nodes}=setup(data);nodes.get('groups').innerHTML='';
  const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
  context.demoCall=async path=>{
-  const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response(JSON.stringify(path.startsWith('shadow/events')?{contract:'demo-v1',items:[]}:data),{headers:{'content-type':'application/json'}})});
+  const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response(JSON.stringify(path.startsWith('shadow/events')?{contract:'demo-v1',items:[]}:path.startsWith('shadow/research-folder/')?{contract:'demo-v1',bots:{}}:data),{headers:{'content-type':'application/json'}})});
   const body=await response.json();if(!response.ok)throw Error(body.detail);return body;
  };
  await vm.runInContext('load()',context);
@@ -227,6 +227,7 @@ test('summary pause targets only its folder without toggling it and reports pres
   calls.push({path,body});
   if(path==='shadow/bulk')return {saved:true};
   if(path.startsWith('shadow/workspace')){const next=fixture();next.installed=true;next.bots.find(b=>b.id==='sequential').desired='paused';return next}
+  if(path==='shadow/research-folder/favorites')return {bots:{}};
   return {items:[]};
  };
  let prevented=0,stopped=0;
@@ -387,7 +388,7 @@ test('a recovered workspace read clears its stale transport error without removi
  context.demoCall=async()=>{throw Error('Dashboard response was interrupted or changed in transit. Please use Reload data.')};
  await vm.runInContext('load()',context);assert.match(nodes.get('message').textContent,/interrupted/);
  const next={...fixture(),installed:true};
- context.demoCall=async path=>path.startsWith('shadow/workspace')?next:{items:[]};
+ context.demoCall=async path=>path.startsWith('shadow/workspace')?next:path==='shadow/research-folder/favorites'?{bots:{}}:{items:[]};
  await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'');
  vm.runInContext("note('Saved bot settings')",context);
  await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'Saved bot settings');
@@ -477,6 +478,24 @@ test('timed Favorites totals retain all observed price tiers without mixing 15m 
  assert.doesNotMatch(fifteen,/Purchased 4 · settled 4/);
  assert.match(hourly,/Purchased 4 · settled 4/);
  assert.doesNotMatch(hourly,/Purchased 7 · settled 7/);
+});
+
+test('Favorites grids report loaded timed-fill coverage per crypto timeframe',()=>{
+ const bot=(id,series,count)=>({id,name:id,series,experiment:{entry_timing:count?[{
+  price:'.80',horizon:'5–10m',clock:'market_close',market_type:'15m_price',
+  contracts:String(count),closed:'0',resolved:'0',winners:'0'
+ }]:[]}});
+ const html=favoriteCollectorOverviewMarkup([
+  bot('btc','KXBTC15M',4),bot('eth','KXETH15M',0),
+  bot('hour','KXBTCD',2)
+ ],new Set(),{loaded:true});
+ assert.match(html,/Timed entry-fill source: 1 of 2 market bots with observations · 4 purchased contracts/);
+ assert.match(html,/Timed entry-fill source: 1 of 1 market bots with observations · 2 purchased contracts/);
+ assert.doesNotMatch(html,/Combined tables may be incomplete/);
+ const unavailable=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',0)],new Set(),{error:'Research unavailable'});
+ assert.match(unavailable,/Favorites research could not load: Research unavailable/);
+ const loading=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',0)],new Set(),{loading:true});
+ assert.match(loading,/Detailed Favorites research is loading/);
 });
 
 test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{

@@ -35,7 +35,7 @@ export function favoriteResearchMarkup(bots,open=new Set()){
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
 /** Add a complementary 2D price x time view; keep every existing research table intact. */
-export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
+export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}){
  const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const PRICES=[70,75,80,85,90,95];
  // Keep 15-minute and hourly cohorts separate; each pools its currencies.
@@ -79,15 +79,19 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
   const rows=group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]);
+  const recorded=group.bots.filter(bot=>(bot.experiment?.entry_timing||[]).length);
+  const purchased=rows.reduce((n,row)=>n+(Number.isFinite(Number(row.contracts))?Number(row.contracts):0),0);
+  const sourceNote='<p class="small">Timed entry-fill source: '+recorded.length+' of '+group.bots.length+' market bots with observations · '+purchased+' purchased contracts.'+(recorded.length?'':' Other market statistics do not establish timed entry fills.')+'</p>';
   const key='favorites-collector-'+group.id;
   if(group.id==='sports'){
    return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+
-      group.bots.map(bot=>matrix(bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
+      sourceNote+group.bots.map(bot=>matrix(bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
   }
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+matrix(rows,group.label)+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+matrix(rows,group.label)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
  '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows the settled win rate, number settled, and realized P/L. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
+ (source.error?'<p class="small" role="alert">Favorites research could not load: '+e(source.error)+'. Showing compact snapshot data only.</p>':!source.loaded?'<p class="small">Detailed Favorites research '+(source.loading?'is loading.':'has not loaded.')+' Combined tables may be incomplete.</p>':'')+
  sections+'</section>';
 }
 

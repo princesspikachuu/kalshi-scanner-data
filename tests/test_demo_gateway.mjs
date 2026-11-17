@@ -44,6 +44,26 @@ test('full shadow research is available through an owner-authenticated GET route
  assert.equal((await response.json()).research.cells[0].maker_fills,7);
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research/test_bot',{method:'POST',headers:{origin:env.APP_ORIGIN}}),env,{fetcher})).status,405);
 });
+test('Favorites research folder is a restricted authenticated GET route with keyed bot results',async()=>{
+ const fetched=[];
+ const fetcher=async(url,options)=>{
+  fetched.push({url,method:options.method});
+  return Response.json({contract:'demo-v1',bots:{btc:{entry_timing:[{price:'.80',contracts:'2'}]}}});
+ };
+ for(const folder of ['favorites','favorites_statistics']){
+  const path='https://app.test/api/demo/shadow/research-folder/'+folder;
+  const response=await proxyAuth(new Request(path,{headers:{cookie:'session=test'}}),env,{fetcher});
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).bots.btc.entry_timing[0].contracts,'2');
+  assert.equal(fetched.at(-1).method,'GET');
+  assert.ok(fetched.at(-1).url.endsWith('/shadow/research-folder/'+folder));
+  assert.equal((await proxyAuth(new Request(path,{method:'POST',headers:{origin:env.APP_ORIGIN}}),env,{fetcher})).status,405);
+ }
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research-folder/invalid'),env,{fetcher})).status,404);
+ const invalid=async()=>Response.json({contract:'demo-v1',bots:{btc:{unknown:[1]}}});
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research-folder/favorites'),env,{fetcher:invalid})).status,502);
+ assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{fetcher})).status,502);
+});
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
 test('validated Demo JSON is forwarded byte-for-byte without redundant stringification',async()=>{
  const body=' { "contract":"demo-v1", "environment":"demo", "bots":[] } ';

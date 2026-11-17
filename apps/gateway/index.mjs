@@ -83,7 +83,25 @@ function collectionBody(data){
  }
  return data;
 }
-function demoBody(data,path){const maxBots=path==='/api/demo/shadow/workspace'?800:100;if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||(data.items&&(!Array.isArray(data.items)||data.items.length>500))||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>maxBots)))throw Error('Invalid demo contract');return data;}
+function demoBody(data,path){
+ const researchFolder=/^\/api\/demo\/shadow\/research-folder\/(?:favorites|favorites_statistics)$/.test(path);
+ if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||
+    (data.items&&(!Array.isArray(data.items)||data.items.length>500)))throw Error('Invalid demo contract');
+ if(researchFolder){
+  // Research-folder uses a bot-id keyed map; the ordinary workspace uses an
+  // array. Only accept the map on these two explicitly allowlisted GET routes.
+  if(!data.bots||typeof data.bots!=='object'||Array.isArray(data.bots)||
+     Object.keys(data.bots).length>800||
+     Object.entries(data.bots).some(([id,info])=>
+       !/^[a-z0-9_]{1,40}$/.test(id)||!info||typeof info!=='object'||Array.isArray(info)||
+       Object.entries(info).some(([key,value])=>
+         !['entry_timing','calibration'].includes(key)||!Array.isArray(value))))throw Error('Invalid demo contract');
+ }else{
+  const maxBots=path==='/api/demo/shadow/workspace'?800:100;
+  if(data.bots&&(!Array.isArray(data.bots)||data.bots.length>maxBots))throw Error('Invalid demo contract');
+ }
+ return data;
+}
 function liveBotsBody(data){if(data.contract!=='live-bots-v2'||data.environment!=='live'||typeof data.execution_enabled!=='boolean'||(data.execution_enabled&&data.worker_mode?.mode!=='live')||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100||data.bots.some(b=>!['paused','running'].includes(b.desired)))))throw Error('Invalid live workspace');return data;}
 function paperBody(data){if(data.contract!=='paper-v1'||data.live_trading_enabled!==false)throw Error('invalid paper workspace');if(data.runs&&(!Array.isArray(data.runs)||data.runs.length>20))throw Error('invalid paper runs');return data;}
 function responseCookies(headers){
@@ -97,7 +115,7 @@ function responseCookies(headers){
 }
 export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  const url=new URL(request.url);
- const demo=/^\/api\/demo\/(?:shadow\/(?:workspace|events|research\/[a-z0-9_]{1,40}|sessions(?:\/[a-f0-9-]{36})?|funds|bulk|folders\/(?:convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive)\/reset|bots\/[a-z0-9_]{1,40})|workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
+ const demo=/^\/api\/demo\/(?:shadow\/(?:workspace|events|research-folder\/(?:favorites|favorites_statistics)|research\/[a-z0-9_]{1,40}|sessions(?:\/[a-f0-9-]{36})?|funds|bulk|folders\/(?:convexity|complete_set|sequential|sequential_flexible|sequential_adaptive|favorites|volatility_scalper|scalper_fixed|scalper_grid|scalper_momentum|scalper_dislocation|market_maker|maker_competitive)\/reset|bots\/[a-z0-9_]{1,40})|workspace|activity|orders|chart|research|performance|legacy|virtual-funds|bots|bulk|policy|connection|paper-connection|refresh|reset(?:\/undo)?|restore\/[a-f0-9-]{36}|bots\/[a-f0-9-]{36}\/(?:control|configure))$/.test(url.pathname);
  const liveBots=/^\/api\/live\/(?:workspace|budget|connection|onboarding|preflight|pilot|pause|return-demo|bots\/[a-f0-9-]{36}\/sizing)$/.test(url.pathname);
  const research=/^\/api\/research\/(?:datasets|results(?:\/[1-9][0-9]{0,18}(?:\/(?:datasets|coverage))?)?)$/.test(url.pathname);
  const uuid='[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
@@ -116,7 +134,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   new RegExp('^/api/collection/refresh/'+category+'$').test(url.pathname);
  const campaignList=url.pathname==='/api/collection/campaigns'&&request.method==='GET';
  const shadowSession=/^\/api\/demo\/shadow\/sessions\/[a-f0-9-]{36}$/.test(url.pathname);
- const shadowResearch=/^\/api\/demo\/shadow\/research\/[a-z0-9_]{1,40}$/.test(url.pathname);
+ const shadowResearch=/^\/api\/demo\/shadow\/(?:research\/[a-z0-9_]{1,40}|research-folder\/(?:favorites|favorites_statistics))$/.test(url.pathname);
  const method=(shadowSession||shadowResearch)?'GET':liveBots?(url.pathname==='/api/live/workspace'?'GET':'POST'):demo?(['/api/demo/shadow/workspace','/api/demo/shadow/events','/api/demo/shadow/sessions','/api/demo/workspace','/api/demo/activity','/api/demo/orders','/api/demo/chart','/api/demo/research','/api/demo/performance','/api/demo/legacy'].includes(url.pathname)?'GET':'POST'):collection?((campaignGet||campaignList||workerStatus||analysisStatus)?'GET':url.pathname.includes('/refresh/')&&request.method==='GET'?'GET':'POST'):paper?((url.pathname.endsWith('/workspace')||paperDetail||liveDetail||liveEvents||(liveList&&request.method==='GET'))?'GET':'POST'):research?'GET':ROUTES.get(url.pathname);
  if(!method)return problem(404,'Not found');
  if(liveBots&&url.search)return problem(422,'Invalid filters');
