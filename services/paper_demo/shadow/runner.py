@@ -205,14 +205,20 @@ class ForwardRun:
         suite=getattr(self,'experiments',None)
         if suite is None:return legacy
         if suspend:
-            # A paused portfolio may still need the feed to manage its lots or
-            # resting orders; feed_markets applies that same exposure check as
-            # subscription_books. Preserve all existing market/settlement state.
-            active={t for t,m in suite.feed_markets().items() if m['close']>now}
+            # Reuse the per-ticker book ownership rule, NOT feed_markets():
+            # 15-minute Favorites may share a selected legacy ticker without
+            # appearing in suite.extra or the weather/sports/Maker feed summary.
+            # Such a running or exposed portfolio must keep its subscription
+            # even when all original legacy bots are paused.
+            active={t for e,f,_ in suite.portfolios.values() for t,m in e.markets.items()
+                    if m['close']>now and not m.get('paid') and not m.get('entry_parked')
+                    and suite.ticker_feed_needed(e,f,t)}
+            wanted=set(suite.extra)|set(self.selected.values())
         else:
             active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
                     if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
-        return legacy | (set(suite.extra) & active)
+            wanted=set(suite.extra)
+        return legacy | (wanted & active)
 
     async def kalshi(self):
         delay = .25
