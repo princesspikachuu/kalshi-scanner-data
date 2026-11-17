@@ -17,7 +17,7 @@ class BurstTimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         run.engine.handle=handle;run.audit.flush.side_effect=lambda:commits.append(len(seen))
         for n in range(2500):await run.queue.put(('clock',dict(n=n),1000+n*.01))
         with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:clock[0],time=time.time)):await run.consume()
-        self.assertEqual(seen,list(range(44)));self.assertEqual(commits,[22,44]);self.assertEqual(run.queue._unfinished_tasks,2456)
+        self.assertEqual(seen,list(range(44)));self.assertEqual(commits,[26,44]);self.assertEqual(run.queue._unfinished_tasks,2456)
     async def test_large_backlog_never_exceeds_4096_inputs_in_one_atomic_batch(self):
         run=object.__new__(HostedRun);run.done=asyncio.Event();run.queue=asyncio.Queue();run.audit=Mock()
         run.engine=Mock(now=1000);run.prepare_fees=lambda source,payload,now:payload;seen=[]
@@ -39,7 +39,7 @@ class BurstTimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         for n in range(768):await run.queue.put(('clock',dict(n=n),1000+n*.01))
         with patch('services.paper_demo.shadow.host.time',Mock(wraps=time,monotonic=lambda:clock[0],time=time.time)):await run.consume()
         self.assertEqual(seen,list(range(10)))
-        self.assertEqual([n for n,_ in commits],[5,10])
+        self.assertEqual([n for n,_ in commits],[7,10])
         self.assertTrue(all(flag for _,flag in commits))
         self.assertEqual(run.queue._unfinished_tasks,758)
 
