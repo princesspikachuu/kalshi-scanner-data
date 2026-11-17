@@ -43,10 +43,33 @@ async def catalog(host,s,now,classify,groups):
         s['series_status']='catalogue '+query+' unavailable: '+str(getattr(exc,'code',type(exc).__name__))
     s['series_at']=min(queries.get(q,0) for q in catalog_queries(s))
 
-def finish(s,result,selected):
+def verified_hot_series(s,now):
+    """Reuse only fresh verified tape evidence, never a catalogue volume prior.
+
+    At most one existing discovery page per four passes revisits demonstrated
+    activity. The other targeted passes keep independent round-robin cursors.
+    """
+    ranked={}
+    for row in s.get('candidates',{}).values():
+        if not isinstance(row,dict):continue
+        series=row.get('event',{}).get('series_ticker')
+        inspected=row.get('inspected_at',0)
+        if not isinstance(series,str) or not series or not isinstance(inspected,(int,float)):
+            continue
+        if not 0<=now-inspected<=1800:continue
+        hour=row.get('trades_last_hour') or 0
+        touches=row.get('recent_quote_touch_count') or 0
+        if not isinstance(hour,(int,float)) or not isinstance(touches,(int,float)):continue
+        if hour<6 and touches<2:continue
+        ranked[series]=max(ranked.get(series,0),touches*2+hour)
+    return [series for series,_ in sorted(ranked.items(),key=lambda item:(-item[1],item[0]))[:8]]
+
+def finish(s,result,selected,priority=False):
     if selected:
         s.setdefault('series_cursors',{})[selected]=result.get('cursor','')
-        s['series_index']=s.get('series_index',0)+1
+        counter='priority_index' if priority else 'series_index'
+        s[counter]=s.get(counter,0)+1
+        if priority:s['priority_reads_total']=s.get('priority_reads_total',0)+1
     else:s['cursor']=result.get('cursor','')
     s['pages']=s.get('pages',0)+1;s['discovery_source']=selected or 'broad_events'
 
@@ -60,7 +83,7 @@ async def split_page(host,s):
     page=dict(events=[dict(pending['event'],markets=result.get('markets',[]))],milestones=pending['milestones'])
     pending['cursor']=result.get('cursor','')
     if not pending['cursor']:
-        finish(s,dict(cursor=pending['next_cursor']),pending['selected']);s.pop('split_event')
+        finish(s,dict(cursor=pending['next_cursor']),pending['selected'],pending.get('priority',False));s.pop('split_event')
         s['event_page_limit']=50  # A single huge event must not slow every later page.
     s['discovery_source']=(pending['selected'] or 'broad_events')+':market_page'
     return page
@@ -72,10 +95,18 @@ async def event_page(host,s,now,minimum,classify,groups):
         s['series_at']=0;s['series_status']='retrying category catalogues'
     football_due='Sports:Football' in catalog_queries(s) and now>=s.get('series_query_at',{}).get('Sports:Football',0)
     if pages and (now>=s.get('series_at',0) or football_due):await catalog(host,s,now,classify,groups)
-    pool=s.get('series_pool',[]);selected=None
+    pool=s.get('series_pool',[]);selected=None;priority=False
     params=dict(status='open',limit=s.get('event_page_limit',50),with_nested_markets='true',with_milestones='true',min_close_ts=int(now+minimum))
-    if pool and pages%4:
-        selected=pool[s.get('series_index',0)%len(pool)]
+    if pages%4:
+        # One quarter of requests remain broad; two quarters rotate across
+        # every catalogue series, and one favors recently executed activity.
+        hot=verified_hot_series(s,now) if pages%4==2 else []
+        if hot:
+            priority=True
+            selected=hot[s.get('priority_index',0)%len(hot)]
+        elif pool:
+            selected=pool[s.get('series_index',0)%len(pool)]
+    if selected:
         params.update(series_ticker=selected,cursor=s.get('series_cursors',{}).get(selected,''))
     else:params['cursor']=s['cursor']
     try:result=await read(host,s,'/events',params)
@@ -92,14 +123,14 @@ async def event_page(host,s,now,minimum,classify,groups):
         # then page its markets independently without skipping the event.
         headers=await read(host,s,'/events',dict(params,with_nested_markets='false'))
         if not headers.get('events'):
-            finish(s,headers,selected);return headers
+            finish(s,headers,selected,priority);return headers
         event=headers['events'][0]
         metadata={k:event[k] for k in ('event_ticker','series_ticker','category','title') if k in event}
         milestones=[{k:m[k] for k in ('start_date','related_event_tickers','primary_event_tickers') if k in m}
             for m in headers.get('milestones',[]) if event['event_ticker'] in m.get('related_event_tickers',[])+m.get('primary_event_tickers',[])][:20]
-        s['split_event']=dict(event=metadata,milestones=milestones,next_cursor=headers.get('cursor',''),selected=selected,cursor='',limit=50)
+        s['split_event']=dict(event=metadata,milestones=milestones,next_cursor=headers.get('cursor',''),selected=selected,priority=priority,cursor='',limit=50)
         return await split_page(host,s)
-    finish(s,result,selected)
+    finish(s,result,selected,priority)
     # A previously downsized page must not stay tiny forever. Increase by only
     # one event after twelve successful pages, preserving each cursor and the
     # existing 4 MiB response guard; a rejected probe halves immediately.
