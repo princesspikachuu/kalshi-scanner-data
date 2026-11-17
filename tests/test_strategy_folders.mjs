@@ -425,28 +425,33 @@ test('Favorites collector and statistics category tables respect persisted close
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');
  bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',price:'.80',contracts:'2',closed:'2',resolved:'2',winners:'2',cost:'1.6',net:'.4'}];
  const collectorClosed=favoriteCollectorOverviewMarkup([bot],new Set());
- assert.match(collectorClosed,/data-research="favorites-collector-crypto"/);
- assert.doesNotMatch(collectorClosed,/data-research="favorites-collector-crypto" open/);
- const collectorOpen=favoriteCollectorOverviewMarkup([bot],new Set(['favorites-collector-crypto']));
- assert.match(collectorOpen,/data-research="favorites-collector-crypto" open/);
+ assert.match(collectorClosed,/data-research="favorites-collector-crypto-15m"/);
+ assert.doesNotMatch(collectorClosed,/data-research="favorites-collector-crypto-15m" open/);
+ const collectorOpen=favoriteCollectorOverviewMarkup([bot],new Set(['favorites-collector-crypto-15m']));
+ assert.match(collectorOpen,/data-research="favorites-collector-crypto-15m" open/);
  const stats={min_samples:20,matrix:[{market_type:'weather_daily',price_buckets:['70-74'],time_buckets:['5–10m'],cells:[]}]};
  assert.doesNotMatch(favoriteStatisticsMatrixMarkup(stats,new Set()),/data-research="favorites-stat-weather_daily" open/);
  assert.match(favoriteStatisticsMatrixMarkup(stats,new Set(['favorites-stat-weather_daily'])),/data-research="favorites-stat-weather_daily" open/);
 });
 
-test('Favorites crypto rollup includes 15m, hourly, and retired history exactly once',()=>{
+test('Favorites category rollups preserve timed crypto cohorts, including retired history',()=>{
  const observation=(series,contracts,retired=false)=>({
   id:series,name:series,series,asset:series.endsWith('15M')?'15m':'hourly',retired,
   experiment:{entry_timing:[{series,market_type:'crypto',clock:'market_close',horizon:'5–10m',price:'.80',contracts:String(contracts),closed:String(contracts),resolved:String(contracts),winners:String(contracts),cost:String(contracts*.8),net:String(contracts*.2)}]}
  });
- const html=favoriteCollectorOverviewMarkup([
-  observation('KXBTC15M',2),observation('KXBTCH',3),observation('KXETH15M',4,true)
- ],new Set(['favorites-collector-crypto']));
- assert.match(html,/data-research="favorites-collector-crypto" open/);
- assert.doesNotMatch(html,/favorites-collector-crypto-15m/);
- assert.doesNotMatch(html,/favorites-collector-crypto-hourly/);
- assert.match(html,/Purchased 9 · settled 9/);
- assert.equal((html.match(/Purchased 9 · settled 9/g)||[]).length,1);
+ const bots=[observation('KXBTC15M',2),observation('KXBTCH',3),observation('KXETH15M',4,true)];
+ const html=favoriteCollectorOverviewMarkup(bots,new Set(['favorites-collector-crypto-15m']));
+ assert.match(html,/data-research="favorites-collector-crypto-15m" open/);
+ assert.match(html,/data-research="favorites-collector-crypto-hourly"/);
+ assert.match(html,/Crypto · 15 minutes/);
+ assert.match(html,/Crypto · 1 hour/);
+ assert.match(html,/Purchased 6 · settled 6/);
+ assert.match(html,/Purchased 3 · settled 3/);
+ assert.doesNotMatch(html,/Purchased 9 · settled 9/);
+ assert.equal((html.match(/Purchased 6 · settled 6/g)||[]).length,1);
+ const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',bots:bots.filter(b=>b.series.endsWith('15M'))});
+ assert.match(category,/Purchased<\/th>/);
+ assert.match(category,/>6<\/td>/);
 });
 
 test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
