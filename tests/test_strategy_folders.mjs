@@ -387,7 +387,7 @@ test('a recovered workspace read clears its stale transport error without removi
  context.demoCall=async()=>{throw Error('Dashboard response was interrupted or changed in transit. Please use Reload data.')};
  await vm.runInContext('load()',context);assert.match(nodes.get('message').textContent,/interrupted/);
  const next={...fixture(),installed:true};
- context.demoCall=async path=>path.startsWith('shadow/workspace')?next:{items:[]};
+ context.demoCall=async path=>path.startsWith('shadow/workspace')?next:path==='shadow/research-folder/favorites'?{bots:{}}:{items:[]};
  await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'');
  vm.runInContext("note('Saved bot settings')",context);
  await vm.runInContext('load()',context);assert.equal(nodes.get('message').textContent,'Saved bot settings');
