@@ -17,40 +17,41 @@ class FavoritesUnrelatedInputTests(unittest.TestCase):
                              yes_dollars_fp=[['.42','100']],
                              no_dollars_fp=[['.52','100']]))
 
-    def test_flat_favorites_and_statistical_favorites_skip_unrelated_frames(self):
+    def test_favorites_with_open_inventory_skip_unrelated_frames_but_advance_clock(self):
         s=self.suite()
+        stats=s.portfolios['favorites_statistics'][0]
+        stats.markets['HELD']=dict(ticker='HELD',close=10000)
+        stats.wallet.fill('HELD','yes','buy',D(1),D('.42'),D(0),1,'held')
         for n in (1,2,3):
             s.handle('kalshi',self.frame(n,kind='orderbook_snapshot' if n==1 else 'orderbook_delta'),200+n)
         for folder in ('favorites','favorites_statistics'):
-            engine=s.portfolios[folder][0]
-            self.assertEqual(engine.unrelated_inputs_skipped,3)
-            self.assertEqual(engine.sequences[101],3)
+            e=s.portfolios[folder][0]
+            self.assertEqual(e.unrelated_inputs_skipped,3)
+            self.assertEqual(e.sequences[101],3)
+            self.assertEqual(e.now,203)
             self.assertEqual(s.processing_costs.get(folder,{}).get('calls',0),0)
-            self.assertFalse(engine.orders)
-            self.assertFalse(engine.wallet.lots)
+        self.assertEqual(stats.wallet.inventory('HELD','yes'),1)
 
-    def test_gap_and_admitted_or_risk_bearing_frames_use_full_engine_path(self):
+    def test_gap_pending_actions_admitted_tickers_and_market_close_take_full_path(self):
         s=self.suite()
         s.handle('kalshi',self.frame(1,kind='orderbook_snapshot'),201)
         for folder in ('favorites','favorites_statistics'):
-            engine=s.portfolios[folder][0]
-            self.assertFalse(s.skip_unrelated_flat_maker(engine,'kalshi',self.frame(2,ticker='HELD')))
-            engine.pending.append((205,'buy','yes','missing'))
-            self.assertFalse(s.skip_unrelated_flat_maker(engine,'kalshi',self.frame(2)))
-            engine.pending.clear()
-            engine.markets['ADMITTED']=dict(ticker='ADMITTED')
-            self.assertFalse(s.skip_unrelated_flat_maker(engine,'kalshi',self.frame(2,ticker='ADMITTED')))
-            engine.markets.pop('ADMITTED')
-        # Missing stream sequence cannot be skipped as if it were contiguous.
-        for folder in ('favorites','favorites_statistics'):
-            engine=s.portfolios[folder][0]
-            self.assertFalse(s.skip_unrelated_flat_maker(engine,'kalshi',self.frame(3)))
-            self.assertEqual(engine.sequences[101],1)
+            e=s.portfolios[folder][0]
+            e.pending.append((202,'buy','yes','missing'))
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(2),202))
+            e.pending.clear()
+            e.markets['ADMITTED']=dict(ticker='ADMITTED',close=10000)
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(2,ticker='ADMITTED'),202))
+            e.markets['ADMITTED']['close']=202
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(2),202))
+            e.markets.pop('ADMITTED')
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(3),203))
+            self.assertEqual(e.sequences[101],1)
         s.handle('kalshi',self.frame(3),203)
         for folder in ('favorites','favorites_statistics'):
-            engine=s.portfolios[folder][0]
-            self.assertEqual(engine.sequences[101],3)
-            self.assertEqual(engine.unrelated_inputs_skipped,1)
+            e=s.portfolios[folder][0]
+            self.assertEqual(e.sequences[101],3)
+            self.assertEqual(e.unrelated_inputs_skipped,1)
             self.assertGreaterEqual(s.processing_costs[folder]['calls'],1)
 
 class MakerAdaptiveCapacityTests(unittest.TestCase):
