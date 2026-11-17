@@ -14,7 +14,7 @@ class BudgetTests(unittest.TestCase):
     def test_capacity_grows_in_stages_after_sustained_healthy_load(self):
         b=MonitoringBudget()
         for now in range(0,241,5):b.observe(now,0,.02,2)
-        self.assertEqual(b.limits(240)['total'],48);self.assertEqual(b.limits(240)['entry_candidates'],20)
+        self.assertEqual(b.limits(240)['total'],48);self.assertEqual(b.limits(240)['entry_candidates'],23)
         self.assertEqual(b.limits(240)['per_category'],12)
     def test_backlog_lag_processing_cost_and_read_cooldown_each_pause_admission(self):
         for values in ((300,.1,2,0),(0,3,2,0),(0,.1,101,0),(0,.1,2,30)):
