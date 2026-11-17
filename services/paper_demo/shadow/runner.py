@@ -204,21 +204,25 @@ class ForwardRun:
                 and (not suspend or self.legacy_ticker_needed(t))}
         suite=getattr(self,'experiments',None)
         if suite is None:return legacy
-        if suspend:
-            # Reuse the per-ticker book ownership rule, NOT feed_markets():
-            # 15-minute Favorites may share a selected legacy ticker without
-            # appearing in suite.extra or the weather/sports/Maker feed summary.
-            # Such a running or exposed portfolio must keep its subscription
-            # even when all original legacy bots are paused.
-            active={t for e,f,_ in suite.portfolios.values() for t,m in e.markets.items()
-                    if m['close']>now and not m.get('paid') and not m.get('entry_parked')
-                    and suite.ticker_feed_needed(e,f,t)}
-            wanted=set(suite.extra)|set(self.selected.values())
-        else:
-            active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
-                    if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
-            wanted=set(suite.extra)
-        return legacy | (wanted & active)
+        # Only selected legacy tickers and explicitly admitted external
+        # markets can have hot WebSocket subscriptions. Historical portfolios
+        # can contain thousands of settled/parked entries; do not walk every
+        # saved market on *each* public book or trade frame to intersect them
+        # with this small known subscription set.
+        wanted=set(suite.extra)
+        if suspend:wanted.update(self.selected.values())
+        active=set()
+        for ticker in wanted:
+            for e,f,_ in suite.portfolios.values():
+                m=e.markets.get(ticker)
+                if m is None or m['close']<=now or m.get('paid') or m.get('entry_parked'):
+                    continue
+                if not suspend or suite.ticker_feed_needed(e,f,ticker):
+                    active.add(ticker)
+                    break
+        # Includes running Favorites' selected 15m books and every exposed
+        # paused market; otherwise unchanged from the ownership-gated policy.
+        return legacy | active
 
     async def kalshi(self):
         delay = .25
