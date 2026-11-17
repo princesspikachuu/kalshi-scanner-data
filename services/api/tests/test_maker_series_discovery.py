@@ -69,7 +69,7 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         h=self.host();s=dict(cursor='BROAD',reads=0,pages=1,series_at=999999,
             series_pool=['COLD-A','COLD-B','COLD-C'],
             candidates={'HOT-A':dict(event=dict(series_ticker='HOT'),
-                inspected_at=200,trades_last_hour=12,recent_quote_touch_count=3)})
+                inspected_at=200,trades_last_hour=12,recent_quote_touch_count=3,reason='admitted_to_shared_monitoring')})
         selected=[]
         for step in range(8):
             await maker_event_page(h,s,230+step*30,86400)
@@ -90,13 +90,15 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         from services.paper_demo.shadow.maker_discovery import verified_hot_series
         s=dict(candidates={
             'stale':dict(event=dict(series_ticker='STALE'),inspected_at=100,
-                trades_last_hour=20),
+                trades_last_hour=20,reason='admitted_to_shared_monitoring'),
             'unverified':dict(event=dict(series_ticker='UNVERIFIED'),
-                trades_last_hour=30),
+                trades_last_hour=30,reason='admitted_to_shared_monitoring'),
             'poor':dict(event=dict(series_ticker='QUIET'),inspected_at=3900,
-                trades_last_hour=5,recent_quote_touch_count=1),
+                trades_last_hour=5,recent_quote_touch_count=1,reason='awaiting_shared_admission'),
+            'unstable':dict(event=dict(series_ticker='BAD'),inspected_at=3990,
+                trades_last_hour=30,recent_quote_touch_count=5,reason='recent_trade_prices_unstable'),
             'genuine':dict(event=dict(series_ticker='LIVE'),inspected_at=3990,
-                trades_last_hour=6)})
+                trades_last_hour=6,reason='awaiting_shared_admission')})
         self.assertEqual(verified_hot_series(s,4000),['LIVE'])
         h=self.host();s.update(cursor='BROAD',reads=0,pages=2,
             series_at=999999,series_pool=['NORMAL'])
@@ -110,7 +112,7 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         h=self.host();s=dict(cursor='broad-start',reads=0,pages=2,series_at=999999,
             series_pool=['COLD'],series_index=3,
             candidates={'active':dict(event=dict(series_ticker='HOT'),
-                inspected_at=200,trades_last_hour=7)})
+                inspected_at=200,trades_last_hour=7,reason='awaiting_shared_admission')})
         calls=[]
         def respond(method,path,params):
             calls.append((path,dict(params)))
@@ -137,7 +139,7 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         s=dict(cursor='broad',reads=0,pages=2,series_at=0,
             series_pool=['COLD'],series_cursors={'HOT':'saved-hot-page','OLD':'discard-me'},
             candidates={'recent':dict(event=dict(series_ticker='HOT'),
-                 inspected_at=300,trades_last_hour=7)})
+                 inspected_at=300,trades_last_hour=7,reason='awaiting_shared_admission')})
         await maker_event_page(h,s,330,86400)
         self.assertEqual(s['series_pool'],['COLD'])
         self.assertEqual(h.verified_data.call.call_args.args[2]['series_ticker'],'HOT')
