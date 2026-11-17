@@ -2,6 +2,8 @@
 import asyncio,json,math
 
 CATALOG_CATEGORIES=('Politics','Economics','Financials','Sports','Entertainment','Social')
+# Wider category-balanced discovery, with the existing single event page per pass.
+SERIES_PER_CATEGORY=16
 
 def catalog_queries(s):
     failed='Sports' in s.get('series_query_at',{}) and 'Sports' not in s.get('series_catalogs',{})
@@ -29,12 +31,12 @@ async def catalog(host,s,now,classify,groups):
             try:volume=float(row.get('volume_fp') or row.get('volume') or 0)
             except (TypeError,ValueError):continue
             if math.isfinite(volume) and volume>0:rows.append(dict(group=group,ticker=row['ticker'],volume=volume))
-        s.setdefault('series_catalogs',{})[query]=sorted(rows,key=lambda r:-r['volume'])[:12]
+        s.setdefault('series_catalogs',{})[query]=sorted(rows,key=lambda r:-r['volume'])[:SERIES_PER_CATEGORY]
         combined={key:{} for key in groups}
         for items in s['series_catalogs'].values():
             for r in items:combined[r['group']][r['ticker']]=r['volume']
-        ranked={key:sorted(rows,key=lambda t:-rows[t])[:12] for key,rows in combined.items()}
-        s['series_pool']=[ranked[key][i] for i in range(12) for key in groups if i<len(ranked[key])]
+        ranked={key:sorted(rows,key=lambda t:-rows[t])[:SERIES_PER_CATEGORY] for key,rows in combined.items()}
+        s['series_pool']=[ranked[key][i] for i in range(SERIES_PER_CATEGORY) for key in groups if i<len(ranked[key])]
         s['series_cursors']={t:c for t,c in s.get('series_cursors',{}).items() if t in s['series_pool']}
         s['series_status']='category volume priors; current trades verified separately'
     except Exception as exc:
