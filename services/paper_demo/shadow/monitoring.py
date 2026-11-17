@@ -3,10 +3,10 @@ from collections import deque
 
 def maker_entry_limit(stats):
     own=stats['categories'].get('market_maker',0)
-    # Leave two additional discovery slots available to other strategies.
+    # Permit up to ten baseline Maker candidates, but keep two discovery\n    # slots and the total subscription cap available to other strategies.
     other_entries=max(0,stats['entry_markets']-own)
     other_subscriptions=max(0,stats['subscribed_markets']-own)
-    return max(0,min(8+4*stats['level'],stats['entry_candidates']-other_entries-2,
+    return max(0,min(10+4*stats['level'],stats['entry_candidates']-other_entries-2,
         stats['total']-other_subscriptions-2))
 
 def category(m):
@@ -56,7 +56,7 @@ class MonitoringBudget:
     def limits(self,now):
         fresh=self.last_at is not None and 0<=now-self.last_at<=10
         level=self.level if fresh else 0
-        return dict(total=32+8*level,entry_candidates=12+4*level,per_category=4+4*level,
+        return dict(total=32+8*level,entry_candidates=15+4*level,per_category=4+4*level,
             admitting=fresh and not self.overloaded,telemetry_fresh=fresh,level=level,
             reason='Waiting for current load measurements' if not fresh else 'Discovery paused: processing lag or read cooldown' if self.overloaded else 'Measured capacity available',
             backlog=getattr(self,'backlog',0),estimated_queue_seconds=getattr(self,'queue_seconds',None),lag_p95_seconds=getattr(self,'lag_p95',None),
