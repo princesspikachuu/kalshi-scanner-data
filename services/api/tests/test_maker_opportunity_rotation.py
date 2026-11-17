@@ -37,6 +37,37 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         for folder in MM_FOLDERS:
             self.assertEqual(s.portfolios[folder][1].bots['MM_POLITICS'].research['totals']['canceled'],1)
         self.assertEqual(len(s.host.engine.markets),31)
+    def test_strong_quote_touch_evidence_allows_early_idle_slot_rotation(self):
+        s,p=self.setup()
+        # Old slot has been monitored for 150 seconds; no execution has
+        # reached its unfilled quotes. Without independently verified recent
+        # quote-touch evidence we still enforce the existing five-minute gate.
+        for folder in MM_FOLDERS:
+            s.portfolios[folder][0].markets['POL-X']['discovered_at']=850
+        self.assertFalse(s.can_replace_maker_market(p,1000))
+        p['market']['maker_ranking'].update(
+            recent_quote_touch_count=3,recent_tape_sample_count=5)
+        self.assertTrue(s.can_replace_maker_market(p,1000))
+        s.handle('maker_market',p,1000)
+        self.assertIn('POL-X',s.maker_allocation['pending'])
+        self.assertNotIn('POL-HOT',s.feed_markets())
+        # No slot or reservation is released until cancellations acknowledge.
+        maker_allocation.finalize(s,1000.05)
+        self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
+
+    def test_early_rotation_requires_both_reachable_flow_and_strong_improvement(self):
+        s,p=self.setup()
+        for folder in MM_FOLDERS:
+            s.portfolios[folder][0].markets['POL-X']['discovered_at']=850
+        p['market']['maker_ranking'].update(
+            recent_quote_touch_count=1,recent_tape_sample_count=5)
+        self.assertFalse(s.can_replace_maker_market(p,1000))
+        p['market']['maker_ranking'].update(
+            recent_quote_touch_count=3,recent_tape_sample_count=5,
+            execution_score=2)
+        self.assertFalse(s.can_replace_maker_market(p,1000))
+        self.assertFalse(s.maker_allocation['pending'])
+
     def test_partial_fill_during_cancellation_aborts_retirement_and_keeps_inventory(self):
         s,p=self.setup();s.handle('maker_market',p,1000)
         e=s.portfolios[MM_FOLDERS[0]][0];o=next(iter(e.orders.values()));e.advance(1000.05)
