@@ -69,6 +69,8 @@ def ranked_rows(state):
         score_basis='verified turnover estimate' if 'execution_score' in r else 'discovery prior',
         trades_24h=r.get('trades_24h'),trades_last_hour=r.get('trades_last_hour'),
         recent_flow_per_hour=r.get('recent_flow_per_hour'),
+        recent_quote_touch_count=r.get('recent_quote_touch_count'),
+        recent_tape_sample_count=r.get('recent_tape_sample_count'),
         expected_net_per_round=r.get('expected_net_per_round'),expected_hold_seconds=r.get('expected_hold_seconds'),
         reason=r.get('reason','awaiting trade-frequency verification'))
         for t,r in sorted(state.get('candidates',{}).items(),key=rank)[:20]]
