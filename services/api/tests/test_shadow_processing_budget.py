@@ -11,9 +11,10 @@ class BurstBatchBudgetTests(unittest.TestCase):
     def test_batch_budget_expands_only_under_backlog(self):
         self.assertEqual(processing_batch_budget(0),(256,.040))
         self.assertEqual(processing_batch_budget(128),(256,.040))
-        self.assertEqual(processing_batch_budget(129),(512,.240))
-        self.assertEqual(processing_batch_budget(2001),(4096,.640))
-        self.assertEqual(processing_batch_budget(8000),(4096,.640))
+        self.assertEqual(processing_batch_budget(129),(768,.320))
+        self.assertEqual(processing_batch_budget(2000),(768,.320))
+        self.assertEqual(processing_batch_budget(2001),(4096,.780))
+        self.assertEqual(processing_batch_budget(8000),(4096,.780))
         self.assertEqual(processing_batch_budget(8001),(4096,.900))
         self.assertEqual(processing_batch_budget(10001),(4096,.900))
         self.assertEqual(processing_batch_budget(20000),(4096,.900))
@@ -24,6 +25,13 @@ class BurstBatchBudgetTests(unittest.TestCase):
         # amount of processing before cooperative socket yields.
         self.assertLessEqual(processing_batch_budget(20000)[0],4096)
         self.assertLessEqual(processing_batch_budget(20000)[1],1.0)
+        # Cooperative socket/read responsiveness does not scale with batch size.
+        self.assertLessEqual(PROCESSING_YIELD_SECONDS,.080)
+        for backlog in (129,2000,2001,8000,8001):
+            count,seconds=processing_batch_budget(backlog)
+            self.assertLessEqual(count,4096)
+            self.assertLessEqual(seconds,.900)
+            self.assertGreaterEqual(seconds,4*PROCESSING_YIELD_SECONDS)
 
 
 class BookConflationTests(unittest.TestCase):
