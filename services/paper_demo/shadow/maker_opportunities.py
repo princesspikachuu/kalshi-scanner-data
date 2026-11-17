@@ -15,6 +15,23 @@ def turnover_score(prints,now,bids,profiles,fee,market):
     # A capped response is only a lower bound; never synthesize prints.
     six_rate=six/6;day_rate=len(times)/24
     flow=.60*hour+.30*six_rate+.10*day_rate
+    # Evidence of prints that *could* reach our resting buy quote is a
+    # stronger opportunity signal than aggregate print count alone. Unknown
+    # taker side / price stays neutral; never infer or synthesize executions.
+    touch_sample=[]
+    for print_row in prints:
+        if ts(print_row['created_time'])<now-900:
+            continue
+        taker=print_row.get('taker_side')
+        price=print_row.get('yes_price_dollars')
+        if taker not in ('yes','no') or price is None:
+            continue
+        try:
+            yes_price=D(str(price))
+        except (ValueError,ArithmeticError):
+            continue
+        if yes_price.is_finite() and D(0)<=yes_price<=D(1):
+            touch_sample.append((taker,yes_price))
     best=None
     for p in profiles:
         c=p.get('config',{});q=D(p['contracts'])
@@ -29,8 +46,14 @@ def turnover_score(prints,now,bids,profiles,fee,market):
             capital=buy*q+entry_fee
             trips_per_day=min(1440,24*flow/(2*max(1,float(q)/typical)))
             hold=86400/max(.001,trips_per_day)
-            score=float(net/capital)*trips_per_day
+            touch_count=sum(taker!=side and (yes_price if side=='yes' else D(1)-yes_price)<=buy
+                            for taker,yes_price in touch_sample)
+            # A bounded historical print crossing the proposed quote indicates
+            # plausible activity, not a guaranteed fill (queue is still causal).
+            hitability_factor=(.5+touch_count/len(touch_sample)) if touch_sample else 1.
+            score=float(net/capital)*trips_per_day*hitability_factor
             row=dict(execution_score=score,expected_net_per_round=str(net),expected_capital=str(capital),
+                recent_quote_touch_count=touch_count,recent_tape_sample_count=len(touch_sample),
                 expected_hold_seconds=hold,trades_last_hour=hour,trades_last_six_hours=six,
                 recent_flow_per_hour=flow,observed_trades=len(times),sample_capped=len(times)>=100,
                 ranking_basis='recency-weighted observed trade flow and fee-adjusted spread; uncalibrated ranking only',
@@ -46,6 +69,8 @@ def ranked_rows(state):
         score_basis='verified turnover estimate' if 'execution_score' in r else 'discovery prior',
         trades_24h=r.get('trades_24h'),trades_last_hour=r.get('trades_last_hour'),
         recent_flow_per_hour=r.get('recent_flow_per_hour'),
+        recent_quote_touch_count=r.get('recent_quote_touch_count'),
+        recent_tape_sample_count=r.get('recent_tape_sample_count'),
         expected_net_per_round=r.get('expected_net_per_round'),expected_hold_seconds=r.get('expected_hold_seconds'),
         reason=r.get('reason','awaiting trade-frequency verification'))
         for t,r in sorted(state.get('candidates',{}).items(),key=rank)[:20]]

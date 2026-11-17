@@ -115,6 +115,27 @@ class TurnoverRankingTests(unittest.TestCase):
         self.assertGreater(active['execution_score'],wide['execution_score'])
         self.assertLess(active['expected_hold_seconds'],wide['expected_hold_seconds'])
 
+    def test_side_aware_prints_rank_hitable_quotes_above_unreachable_quotes(self):
+        now=100000;p=list(profiles())[4];fee=FeePolicy(D(1),D(0))
+        # A taker NO print at 40c YES could have reached a YES buy at 41c;
+        # a taker YES print at the same price cannot fill that resting YES.
+        yes_hit=[dict(created_time=fixture.iso(now-60-i),count_fp='5',
+                      taker_side='no',yes_price_dollars='.40') for i in range(30)]
+        not_hit=[dict(row,taker_side='yes') for row in yes_hit]
+        bids=dict(yes=.40,no=.58)
+        hit=turnover_score(yes_hit,now,bids,[p],fee,{})
+        miss=turnover_score(not_hit,now,bids,[p],fee,{})
+        self.assertGreater(hit['execution_score'],miss['execution_score'])
+        self.assertGreater(hit['recent_quote_touch_count'],0)
+        self.assertEqual(miss['recent_quote_touch_count'],0)
+        ranked=ranked_rows(dict(candidates={'HIT':dict(hit,category='politics',score=1,
+            reason='awaiting_shared_admission')}))
+        self.assertEqual(ranked[0]['recent_quote_touch_count'],hit['recent_quote_touch_count'])
+        self.assertEqual(ranked[0]['recent_tape_sample_count'],hit['recent_tape_sample_count'])
+        # Missing side metadata must not invent a trade or reject old fixtures.
+        unknown=turnover_score([dict(row,taker_side=None) for row in yes_hit],now,bids,[p],fee,{})
+        self.assertEqual(unknown['recent_tape_sample_count'],0)
+
     def test_fees_affect_ranking_and_economically_negative_candidates_are_rejected(self):
         now=100000;p=dict(list(profiles())[4],contracts=1)
         free=turnover_score(self.prints(now,True),now,dict(yes=.40,no=.58),[p],FeePolicy(D(1),D(0)),{})
