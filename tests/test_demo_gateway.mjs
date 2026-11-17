@@ -686,6 +686,18 @@ test('interrupted response streams surface a retryable read error',async()=>{
  }
  assert.equal((await proxyAuth(new Request('https://app.test/api/demo/shadow/research-folder/other'),env,{fetcher})).status,404);
 });
+test('Favorites research map contract is isolated from list-shaped workspace contracts',async()=>{
+ const request=new Request('https://app.test/api/demo/shadow/research-folder/favorites');
+ const valid={contract:'demo-v1',bots:{btc:{entry_timing:[{price:'.80',contracts:'2'}]}}};
+ const fetcher=async()=>Response.json(valid);
+ assert.equal((await proxyAuth(request,env,{fetcher})).status,200);
+ const malformed=async()=>Response.json({contract:'demo-v1',bots:{btc:{unknown:[1]}}});
+ assert.equal((await proxyAuth(request,env,{fetcher:malformed})).status,502);
+ const invalidWorkspace=await proxyAuth(new Request('https://app.test/api/demo/shadow/workspace'),env,{
+  fetcher:async()=>Response.json(valid)
+ });
+ assert.equal(invalidWorkspace.status,502);
+});
 const options=()=>({fetcher:async(url,opts)=>{assert.equal(opts.headers.get('x-pocket-proxy'),env.API_PROXY_SECRET);return new Response(JSON.stringify({contract:'demo-v1',environment:'demo',bots:[],items:[]}),{headers:{'content-type':'application/json'}})}});
 test('validated Demo JSON is forwarded byte-for-byte without redundant stringification',async()=>{
  const body=' { "contract":"demo-v1", "environment":"demo", "bots":[] } ';
