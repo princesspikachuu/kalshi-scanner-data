@@ -83,7 +83,25 @@ function collectionBody(data){
  }
  return data;
 }
-function demoBody(data,path){const maxBots=path==='/api/demo/shadow/workspace'?800:100;if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||(data.items&&(!Array.isArray(data.items)||data.items.length>500))||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>maxBots)))throw Error('Invalid demo contract');return data;}
+function demoBody(data,path){
+ const researchFolder=/^\/api\/demo\/shadow\/research-folder\/(?:favorites|favorites_statistics)$/.test(path);
+ if(data.contract!=='demo-v1'||(data.environment&&data.environment!=='demo')||
+    (data.items&&(!Array.isArray(data.items)||data.items.length>500)))throw Error('Invalid demo contract');
+ if(researchFolder){
+  // Research-folder uses a bot-id keyed map; the ordinary workspace uses an
+  // array. Only accept the map on these two explicitly allowlisted GET routes.
+  if(!data.bots||typeof data.bots!=='object'||Array.isArray(data.bots)||
+     Object.keys(data.bots).length>800||
+     Object.entries(data.bots).some(([id,info])=>
+       !/^[a-z0-9_]{1,40}$/.test(id)||!info||typeof info!=='object'||Array.isArray(info)||
+       Object.entries(info).some(([key,value])=>
+         !['entry_timing','calibration'].includes(key)||!Array.isArray(value))))throw Error('Invalid demo contract');
+ }else{
+  const maxBots=path==='/api/demo/shadow/workspace'?800:100;
+  if(data.bots&&(!Array.isArray(data.bots)||data.bots.length>maxBots))throw Error('Invalid demo contract');
+ }
+ return data;
+}
 function liveBotsBody(data){if(data.contract!=='live-bots-v2'||data.environment!=='live'||typeof data.execution_enabled!=='boolean'||(data.execution_enabled&&data.worker_mode?.mode!=='live')||(data.bots&&(!Array.isArray(data.bots)||data.bots.length>100||data.bots.some(b=>!['paused','running'].includes(b.desired)))))throw Error('Invalid live workspace');return data;}
 function paperBody(data){if(data.contract!=='paper-v1'||data.live_trading_enabled!==false)throw Error('invalid paper workspace');if(data.runs&&(!Array.isArray(data.runs)||data.runs.length>20))throw Error('invalid paper runs');return data;}
 function responseCookies(headers){
