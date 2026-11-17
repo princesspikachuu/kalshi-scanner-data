@@ -30,7 +30,7 @@ def turnover_score(prints,now,bids,profiles,fee,market):
             yes_price=D(str(price))
         except (ValueError,ArithmeticError):
             continue
-        if D(0)<=yes_price<=D(1):
+        if yes_price.is_finite() and D(0)<=yes_price<=D(1):
             touch_sample.append((taker,yes_price))
     best=None
     for p in profiles:
