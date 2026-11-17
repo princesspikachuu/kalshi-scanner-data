@@ -288,11 +288,8 @@ class ExperimentSuite:
         return not e.wallet.lots and not any(o.status in ('pending','resting') for o in e.orders.values())
     @staticmethod
     def skip_unrelated_flat_maker(e,source,payload):
-        # Also usable for the two Favorites portfolios: the engine only records
-        # book and trade data for admitted e.markets. Unrelated subscription
-        # frames can advance a flat portfolio's shared sequence without running
-        # its expensive per-input engine.advance/strategy step. Preserve every
-        # relevant frame, live lot, open order, pending arrival and sequence gap.
+        # Preserve every relevant frame and active execution. Only a flat
+        # Maker portfolio with no delayed work may skip an unrelated frame.
         if source!='kalshi' or payload.get('type') not in ('orderbook_snapshot','orderbook_delta','trade'):return False
         if payload.get('msg',{}).get('market_ticker') in e.markets or e.pending or not ExperimentSuite.flat_portfolio(e):return False
         sid,seq=payload.get('sid'),payload.get('seq')
