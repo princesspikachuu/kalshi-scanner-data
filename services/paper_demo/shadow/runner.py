@@ -193,12 +193,25 @@ class ForwardRun:
     def resnapshot_allowed(self,ticker):return True
 
     def subscription_tickers(self,now):
+        # The hosted worker may retain dozens of disabled legacy instruments in
+        # self.selected for financial history and settlement. Its consumer
+        # already skips their input, but subscribing still consumes bandwidth,
+        # keeps obsolete books invalid, and starves active Maker discovery.
+        # Match the actual hot-book ownership policy (including open exposure).
+        suspend=getattr(self,'suspend_idle_feeds',False) is True
         legacy={t for t in self.selected.values() if t in self.engine.markets
-                and self.engine.markets[t]['close']>now and not self.engine.markets[t].get('paid')}
+                and self.engine.markets[t]['close']>now and not self.engine.markets[t].get('paid')
+                and (not suspend or self.legacy_ticker_needed(t))}
         suite=getattr(self,'experiments',None)
         if suite is None:return legacy
-        active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
-                if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
+        if suspend:
+            # A paused portfolio may still need the feed to manage its lots or
+            # resting orders; feed_markets applies that same exposure check as
+            # subscription_books. Preserve all existing market/settlement state.
+            active={t for t,m in suite.feed_markets().items() if m['close']>now}
+        else:
+            active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
+                    if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
         return legacy | (set(suite.extra) & active)
 
     async def kalshi(self):
