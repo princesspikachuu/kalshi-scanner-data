@@ -51,9 +51,13 @@ def verified_hot_series(s,now):
     activity. The other targeted passes keep independent round-robin cursors.
     """
     ranked={}
+    approved={'awaiting_shared_admission','admitted_to_shared_monitoring',
+              'verified_waiting_for_capacity','cached_admission_retry',
+              'maker_replacement_cancel_pending','reallocation_slot_ready'}
     for row in s.get('candidates',{}).values():
-        if not isinstance(row,dict):continue
-        series=row.get('event',{}).get('series_ticker')
+        if not isinstance(row,dict) or row.get('reason') not in approved:continue
+        event=row.get('event')
+        series=event.get('series_ticker') if isinstance(event,dict) else None
         inspected=row.get('inspected_at',0)
         if not isinstance(series,str) or not series or not isinstance(inspected,(int,float)):
             continue
