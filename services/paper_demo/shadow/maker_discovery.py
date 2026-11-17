@@ -81,6 +81,9 @@ async def event_page(host,s,now,minimum,classify,groups):
     try:result=await read(host,s,'/events',params)
     except Exception as exc:
         if getattr(exc,'code',None)!='paper_data_capacity':raise
+        # A failed oversize probe must never advance any event or series cursor.
+        # Start a fresh success window before cautiously trying larger pages.
+        s['event_page_successes']=0
         if params['limit']>1:
             s['event_page_limit']=max(1,params['limit']//2)
             print(json.dumps(dict(event='market_maker_page_resize',next_limit=s['event_page_limit'],cursor_preserved=True,real_orders_enabled=False)),flush=True)
@@ -97,4 +100,13 @@ async def event_page(host,s,now,minimum,classify,groups):
         s['split_event']=dict(event=metadata,milestones=milestones,next_cursor=headers.get('cursor',''),selected=selected,cursor='',limit=50)
         return await split_page(host,s)
     finish(s,result,selected)
+    # A previously downsized page must not stay tiny forever. Increase by only
+    # one event after twelve successful pages, preserving each cursor and the
+    # existing 4 MiB response guard; a rejected probe halves immediately.
+    if s.get('event_page_limit',50)<50:
+        successful=s.get('event_page_successes',0)+1
+        if successful>=12:
+            s['event_page_limit']+=1
+            s['event_page_successes']=0
+        else:s['event_page_successes']=successful
     return result
