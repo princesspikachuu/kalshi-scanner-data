@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import Mock
 from services.paper_demo.shadow.market_maker import maker_event_page,CATEGORIES
+from services.paper_demo.shadow.maker_discovery import SERIES_PER_CATEGORY
 
 class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
     def host(self,series=None):
@@ -50,9 +51,22 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s['discovery_source'],'broad_events')
         self.assertEqual(sum(c.args[1]=='/series' for c in h.verified_data.call.call_args_list),2)
         self.assertEqual(len(s['series_query_at']),2)
+    async def test_broader_catalog_includes_lower_ranked_series_without_extra_event_reads(self):
+        series=[dict(ticker='POL-'+str(i),category='Politics',title='Election',
+                     volume=1000-i) for i in range(32)]
+        h=self.host(series);s=dict(cursor='',reads=0,pages=1)
+        await maker_event_page(h,s,200,86400)
+        self.assertEqual(len(s['series_pool']),16)
+        self.assertEqual(s['series_pool'],['POL-'+str(i) for i in range(16)])
+        # Only a single bounded category catalogue and one event page.
+        self.assertEqual(sum(c.args[1]=='/events' for c in h.verified_data.call.call_args_list),1)
+        self.assertEqual(sum(c.args[1]=='/series' for c in h.verified_data.call.call_args_list),1)
+        # No extra subscriptions, admission, or orders from discovery alone.
+        h.put.assert_not_called()
+
     async def test_catalog_cache_is_bounded_and_never_creates_orders(self):
         h=self.host([dict(ticker=str(i),category='Politics',title='Election',volume=100+i) for i in range(200)]+[dict(ticker='NAN',category='Politics',volume='nan')])
         s=dict(cursor='',reads=0,pages=1,series_cursors={'old':'cursor'})
         await maker_event_page(h,s,200,86400)
-        self.assertEqual(len(s['series_pool']),12);self.assertNotIn('NAN',s['series_pool'])
+        self.assertEqual(len(s['series_pool']),SERIES_PER_CATEGORY);self.assertNotIn('NAN',s['series_pool'])
         self.assertNotIn('old',s['series_cursors']);h.put.assert_not_called()

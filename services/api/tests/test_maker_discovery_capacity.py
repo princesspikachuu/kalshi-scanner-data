@@ -39,6 +39,38 @@ class MakerCapacityTests(unittest.IsolatedAsyncioTestCase):
         await maker_event_page(h,s,230,86400)
         self.assertEqual(s['cursor'],'next');self.assertEqual(s['reads'],2)
         self.assertEqual([c.args[2]['limit'] for c in h.verified_data.call.call_args_list],[50,25])
+    async def test_successful_small_pages_recover_gradually_without_extra_reads(self):
+        h=Mock();s=self.state(event_page_limit=3)
+        limits=[]
+        def call(method,path,params):
+            limits.append(params['limit'])
+            if params['limit']>4:
+                from services.demo.exchange import ExchangeFailure
+                raise ExchangeFailure('paper_data_capacity')
+            return dict(events=[],cursor='next')
+        h.verified_data.call.side_effect=call
+        for i in range(12):
+            await maker_event_page(h,s,200+i*30,86400)
+        self.assertEqual(limits,[3]*12)
+        self.assertEqual(s['event_page_limit'],4)
+        self.assertEqual(s['event_page_successes'],0)
+        # Persisted cursors survive the probing interval and the page increase.
+        self.assertEqual(s['cursor'],'next')
+        await maker_event_page(h,s,600,86400)
+        self.assertEqual(limits[-1],4)
+        self.assertEqual(s['event_page_successes'],1)
+        self.assertEqual(s['reads'],13)
+        # Another sustained window tries five and fails closed at two.
+        for i in range(11):
+            await maker_event_page(h,s,650+i*30,86400)
+        self.assertEqual(s['event_page_limit'],5)
+        previous_pages=s['pages']
+        await maker_event_page(h,s,1000,86400)
+        self.assertEqual(s['event_page_limit'],2)
+        self.assertEqual(s['event_page_successes'],0)
+        self.assertEqual(s['pages'],previous_pages)
+        self.assertEqual(s['cursor'],'next')
+
     async def test_single_large_event_splits_market_pages_and_survives_restart(self):
         h=Mock();s=self.state(event_page_limit=1)
         def call(method,path,params):
