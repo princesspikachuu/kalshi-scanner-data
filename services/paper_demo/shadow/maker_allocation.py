@@ -17,7 +17,14 @@ def replacement(suite,market,now):
     if now<state['next_at'] or not suite.monitoring_snapshot(now)['admitting'] or not suite.candidate_allowed(market['ticker'],now):return None
     choices=[]
     for ticker,m in suite.feed_markets().items():
-        if not m.get('market_maker') or ticker==market['ticker'] or ticker in state['pending'] or now-m.get('discovered_at',now)<300:continue
+        if not m.get('market_maker') or ticker==market['ticker'] or ticker in state['pending']:continue
+        age=now-m.get('discovered_at',now)
+        # Faster reassignment is reserved for strongly verified replacements.
+        # Otherwise retain the established five-minute observation window.
+        fast_replacement=(ranking.get('recent_quote_touch_count',0)>=2
+                          and ranking.get('recent_tape_sample_count',0)>=2
+                          and score>=4*m.get('maker_ranking',{}).get('execution_score',0))
+        if age<(120 if fast_replacement else 300):continue
         if ticker in suite.host.engine.markets and suite.host.engine.markets[ticker]['close']>now:continue
         if protected(suite,ticker,now):continue
         # A shared market owned by another strategy is never reclaimed here.
@@ -42,7 +49,7 @@ def replacement(suite,market,now):
         last_exec=max((t[0] for t in trades if executable(t)),default=0) if active_buys else max((t[0] for t in trades),default=0)
         last=max(m.get('discovered_at',0),last_exec)
         old=m.get('maker_ranking',{}).get('execution_score',0)*(.5**min(20,max(0,now-last)/300))
-        if score>max(.001,old*2):choices.append((old,ticker))
+        if score>max(.001,old*(4 if age<300 else 2)):choices.append((old,ticker))
     return min(choices)[1] if choices else None
 
 def begin(suite,market,now):
