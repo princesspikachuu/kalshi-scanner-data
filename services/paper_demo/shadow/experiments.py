@@ -304,6 +304,33 @@ class ExperimentSuite:
         e.sequences[sid]=seq
         e.unrelated_inputs_skipped=getattr(e,'unrelated_inputs_skipped',0)+1
         return True
+    @staticmethod
+    def skip_unrelated_favorites(e,source,payload,now):
+        """Causally advance open Favorites positions without irrelevant strategy work.
+
+        An unrelated book/trade frame cannot alter a portfolio's own book,
+        inventory or order queue. Nevertheless its clock may expire orders,
+        release delayed arrivals or trigger market-close reporting. Defer to the
+        complete engine path at those boundaries and on subscription gaps.
+        """
+        if source!='kalshi' or payload.get('type') not in ('orderbook_snapshot','orderbook_delta','trade'):return False
+        ticker=payload.get('msg',{}).get('market_ticker')
+        if ticker in e.markets:return False
+        if e.pending and e.pending[0][0]<=now:return False
+        if any(m.get('close',float('inf'))<=now and t not in e.closed_reports for t,m in e.markets.items()):return False
+        sid,seq=payload.get('sid'),payload.get('seq')
+        if sid is None or seq is None:return False
+        prior=e.sequences.get(sid)
+        if payload['type']!='orderbook_snapshot' and prior is not None and seq>prior+1:
+            return False  # The complete engine invalidates books on a gap.
+        # Preserve exact clock and order-expiry advancement, even with open
+        # inventory or resting orders. No unrelated quote may produce a fill.
+        e.advance(now)
+        if payload['type']=='orderbook_snapshot' or prior is None or seq>prior:
+            e.sequences[sid]=seq
+        e.unrelated_inputs_skipped=getattr(e,'unrelated_inputs_skipped',0)+1
+        return True
+
     def coalesce_flat_input(self,e,source,payload,now):
         # Only the two newly introduced experiments use this path. The primary
         # scalper already verified this exact shared subscription frame.
@@ -496,7 +523,8 @@ class ExperimentSuite:
             elif folder in MM_FOLDERS and getattr(f,'_resource_paused',None) is not False:
                 for bot in f.bots.values():bot.resource_paused=False
                 f._resource_paused=False
-            if folder in (*MM_FOLDERS,'favorites','favorites_statistics') and self.skip_unrelated_flat_maker(e,source,payload):continue
+            if folder in MM_FOLDERS and self.skip_unrelated_flat_maker(e,source,payload):continue
+            if folder in ('favorites','favorites_statistics') and self.skip_unrelated_favorites(e,source,payload,now):continue
             if folder in ('scalper_fixed','scalper_grid','scalper_momentum','scalper_dislocation'):
                 if source=='clock':
                     pending=getattr(e,'coalesced_tickers',set())
