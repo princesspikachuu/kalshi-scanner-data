@@ -5,6 +5,55 @@ from services.paper_demo.shadow.monitoring import maker_entry_limit
 from services.paper_demo.shadow.market_maker import MM_FOLDERS
 from services.api.tests import test_maker_activity_lifecycle as lifecycle
 
+class FavoritesUnrelatedInputTests(unittest.TestCase):
+    def suite(self):
+        s,_=lifecycle.MakerActivityLifecycleTests().suite()
+        return s
+
+    def frame(self,seq,ticker='NOT-ADMITTED',kind='orderbook_delta'):
+        return dict(type=kind,sid=101,seq=seq,
+                    msg=dict(market_ticker=ticker,side='yes',
+                             price_dollars='.42',delta_fp='1',
+                             yes_dollars_fp=[['.42','100']],
+                             no_dollars_fp=[['.52','100']]))
+
+    def test_favorites_with_open_inventory_skip_unrelated_frames_but_advance_clock(self):
+        s=self.suite()
+        stats=s.portfolios['favorites_statistics'][0]
+        stats.markets['HELD']=dict(ticker='HELD',close=10000)
+        stats.wallet.fill('HELD','yes','buy',D(1),D('.42'),D(0),1,'held')
+        for n in (1,2,3):
+            s.handle('kalshi',self.frame(n,kind='orderbook_snapshot' if n==1 else 'orderbook_delta'),200+n)
+        for folder in ('favorites','favorites_statistics'):
+            e=s.portfolios[folder][0]
+            self.assertEqual(e.unrelated_inputs_skipped,3)
+            self.assertEqual(e.sequences[101],3)
+            self.assertEqual(e.now,203)
+            self.assertEqual(s.processing_costs.get(folder,{}).get('calls',0),0)
+        self.assertEqual(stats.wallet.inventory('HELD','yes'),1)
+
+    def test_gap_pending_actions_admitted_tickers_and_market_close_take_full_path(self):
+        s=self.suite()
+        s.handle('kalshi',self.frame(1,kind='orderbook_snapshot'),201)
+        for folder in ('favorites','favorites_statistics'):
+            e=s.portfolios[folder][0]
+            e.pending.append((202,'buy','yes','missing'))
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(2),202))
+            e.pending.clear()
+            e.markets['ADMITTED']=dict(ticker='ADMITTED',close=10000)
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(2,ticker='ADMITTED'),202))
+            e.markets['ADMITTED']['close']=202
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(2),202))
+            e.markets.pop('ADMITTED')
+            self.assertFalse(s.skip_unrelated_favorites(e,'kalshi',self.frame(3),203))
+            self.assertEqual(e.sequences[101],1)
+        s.handle('kalshi',self.frame(3),203)
+        for folder in ('favorites','favorites_statistics'):
+            e=s.portfolios[folder][0]
+            self.assertEqual(e.sequences[101],3)
+            self.assertEqual(e.unrelated_inputs_skipped,1)
+            self.assertGreaterEqual(s.processing_costs[folder]['calls'],1)
+
 class MakerAdaptiveCapacityTests(unittest.TestCase):
     def stats(self,level=0,own=0,other=0,subscribed=0):
         return dict(level=level,total=32+8*level,entry_candidates=15+4*level,

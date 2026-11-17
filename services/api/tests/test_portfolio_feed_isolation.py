@@ -1,5 +1,6 @@
 """Bad input in one virtual account cannot starve later accounts of feed data."""
 import asyncio,unittest
+from decimal import Decimal as D
 from unittest.mock import Mock
 from services.paper_demo.shadow.host import HostedRun
 from services.paper_demo.shadow.core import Engine,FeePolicy
@@ -12,10 +13,16 @@ class Isolation(unittest.TestCase):
         for folder,(e,f,ps) in suite.portfolios.items():
             e.handle=Mock(side_effect=lambda *args,folder=folder:seen.append(folder))
         first=next(iter(suite.portfolios));suite.portfolios[first][0].handle.side_effect=ValueError('stale book event')
+        # Favorites must still receive a frame for a market they actually own;
+        # unrelated flat stats and Maker feeds may safely skip full engine work.
+        favorite=suite.portfolios['favorites'][0]
+        favorite.markets['KXBTC15M-test']=dict(ticker='KXBTC15M-test',close=2000)
+        favorite.wallet.fill('KXBTC15M-test','yes','buy',D(1),D('.4'),D(0),1,'existing-risk')
         with self.assertRaisesRegex(ValueError,'stale book event'):
             suite.handle('kalshi',dict(type='orderbook_delta',sid=2,seq=5,msg=dict(market_ticker='KXBTC15M-test')),1000)
         self.assertIn('favorites',seen)
-        self.assertEqual(set(seen),set(suite.portfolios)-{first,*MM_FOLDERS})
+        self.assertEqual(set(seen),set(suite.portfolios)-{first,*MM_FOLDERS,'favorites_statistics'})
+        self.assertEqual(suite.portfolios['favorites_statistics'][0].sequences[2],5)
         for folder in MM_FOLDERS:
             self.assertEqual(suite.portfolios[folder][0].sequences[2],5)
 
