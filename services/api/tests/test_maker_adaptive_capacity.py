@@ -7,29 +7,29 @@ from services.api.tests import test_maker_activity_lifecycle as lifecycle
 
 class MakerAdaptiveCapacityTests(unittest.TestCase):
     def stats(self,level=0,own=0,other=0,subscribed=0):
-        return dict(level=level,total=32+8*level,entry_candidates=12+4*level,
+        return dict(level=level,total=32+8*level,entry_candidates=15+4*level,
             entry_markets=own+other,subscribed_markets=subscribed,categories=dict(market_maker=own))
-    def test_eight_twelve_sixteen_targets_with_unused_shared_headroom(self):
-        for level,want in enumerate((8,12,16)):self.assertEqual(maker_entry_limit(self.stats(level)),want)
+    def test_ten_fourteen_eighteen_targets_with_unused_shared_headroom(self):
+        for level,want in enumerate((10,14,18)):self.assertEqual(maker_entry_limit(self.stats(level)),want)
     def test_existing_strategies_and_two_free_slots_bound_maker_allocation(self):
-        self.assertEqual(maker_entry_limit(self.stats(own=4,other=5,subscribed=20)),5)
+        self.assertEqual(maker_entry_limit(self.stats(own=4,other=5,subscribed=20)),8)
         self.assertEqual(maker_entry_limit(self.stats(own=4,other=1,subscribed=32)),2)
     def test_more_than_four_actual_maker_markets_can_be_admitted_without_duplicate_streams(self):
         s,payload=lifecycle.MakerActivityLifecycleTests().suite()
-        for i in range(16):
+        for i in range(18):
             m=dict(payload['market'],ticker='POL-'+str(i))
             s.handle('maker_market',dict(payload,market=m),200)
-        self.assertEqual(len(s.feed_markets()),16)
-        self.assertTrue(all(len(s.portfolios[f][0].markets)==16 for f in MM_FOLDERS))
-        self.assertEqual(s.monitoring_snapshot(200)['maker_entry_limit'],16)  # fixture level 2
+        self.assertEqual(len(s.feed_markets()),18)
+        self.assertTrue(all(len(s.portfolios[f][0].markets)==18 for f in MM_FOLDERS))
+        self.assertEqual(s.monitoring_snapshot(200)['maker_entry_limit'],18)  # fixture level 2
     def test_serialized_admission_honors_cap_and_overload_without_evicting_existing_markets(self):
         s,payload=lifecycle.MakerActivityLifecycleTests().suite()
-        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=12,per_category=4,admitting=True,level=0)
-        for i in range(9):s.handle('maker_market',dict(payload,market=dict(payload['market'],ticker='POL-'+str(i))),200)
-        self.assertEqual(len(s.feed_markets()),8)
-        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=12,per_category=4,admitting=False,level=0)
+        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=15,per_category=4,admitting=True,level=0)
+        for i in range(11):s.handle('maker_market',dict(payload,market=dict(payload['market'],ticker='POL-'+str(i))),200)
+        self.assertEqual(len(s.feed_markets()),10)
+        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=15,per_category=4,admitting=False,level=0)
         s.handle('maker_market',dict(payload,market=dict(payload['market'],ticker='POL-NEW')),201)
-        self.assertEqual(len(s.feed_markets()),8);self.assertEqual(s.monitoring_snapshot(201)['maker_slots_free'],0)
+        self.assertEqual(len(s.feed_markets()),10);self.assertEqual(s.monitoring_snapshot(201)['maker_slots_free'],0)
 
     def test_overload_blocks_new_admission_but_does_not_pause_existing_maker_execution(self):
         s,payload=lifecycle.MakerActivityLifecycleTests().suite()

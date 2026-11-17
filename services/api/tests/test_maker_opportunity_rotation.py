@@ -5,6 +5,41 @@ from services.api.tests import test_maker_activity_lifecycle as fixture
 from services.paper_demo.shadow import maker_allocation
 from services.paper_demo.shadow.market_maker import MM_FOLDERS
 
+class MakerCoverageCapacityTests(unittest.TestCase):
+    def test_bounded_baseline_expands_from_seven_to_ten_maker_markets(self):
+        from services.paper_demo.shadow.monitoring import maker_entry_limit, MonitoringBudget
+        budget=MonitoringBudget()
+        budget.observe(1000,backlog=0,lag_seconds=0.1,per_input_ms=1,
+                       input_count=100)
+        limits=budget.limits(1000)
+        self.assertEqual(limits['total'],32)
+        self.assertEqual(limits['entry_candidates'],15)
+        stats=dict(limits,entry_markets=13,subscribed_markets=19,
+                   categories={'market_maker':10,'hourly':3})
+        self.assertEqual(maker_entry_limit(stats),10)
+        self.assertEqual(maker_entry_limit(dict(stats,entry_markets=12,
+                   categories={'market_maker':9,'hourly':3})),10)
+        # The reserved slots are never lent to an eleventh entry.
+        self.assertEqual(maker_entry_limit(dict(stats,entry_markets=14,
+                   categories={'market_maker':10,'hourly':4})),9)
+
+    def test_no_expansion_during_pressure_and_no_override_of_subscription_cap(self):
+        from services.paper_demo.shadow.monitoring import maker_entry_limit, MonitoringBudget
+        from services.api.tests import test_maker_activity_lifecycle as fixture
+        budget=MonitoringBudget()
+        budget.observe(1000,backlog=4000,lag_seconds=3,per_input_ms=30,
+                       input_count=100)
+        self.assertFalse(budget.limits(1000)['admitting'])
+        s,_=fixture.MakerActivityLifecycleTests().suite()
+        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=15,
+                                             per_category=4,admitting=False,level=0)
+        self.assertFalse(s.search_capacity('market_maker',1000))
+        s.monitoring.limits=lambda now:dict(total=10,entry_candidates=15,
+                                             per_category=4,admitting=True,level=0)
+        s.host.engine.markets={str(i):dict(close=200000) for i in range(10)}
+        self.assertFalse(s.search_capacity('market_maker',1000))
+
+
 class MakerOpportunityRotationTests(unittest.TestCase):
     def setup(self):
         s,p=fixture.MakerActivityLifecycleTests().suite()

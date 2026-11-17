@@ -82,7 +82,7 @@ class Discovery(unittest.TestCase):
         for elapsed in range(0,241,5):suite.monitoring.observe(started+elapsed,0,.01,1)
         self.assertEqual(suite.monitoring_snapshot(240)['total'],48)
         e=suite.portfolios['favorites'][0]
-        for i in range(19):
+        for i in range(22):
             t='KXHIGHNY-'+str(i);market(e,t,close=1000)
             e.markets[t]['weather_category']='weather_daily';suite.extra[t]=t
         self.assertTrue(suite.extra_capacity(['last'],240))
