@@ -197,6 +197,7 @@ def scan_report(s,now,listed=0,active=0):
         discovery_source=s.get('discovery_source'),page_limit=s.get('event_page_limit',50),
         catalog_status=s.get('series_status'),catalog_series=len(s.get('series_pool',[])),
         split_event=bool(s.get('split_event')),ranked=s.get('ranked',[])[:8],shared_active=active,
+        priority_series_reads=s.get('priority_reads_total',0),
         cached_admission_retries=s.get('cached_admission_retries',0),cached_admission_expired=s.get('cached_admission_expired',0),
         screening_only=s.get('screening_only',False),
         reward_estimates_enabled=False,real_orders_enabled=False)),flush=True)
