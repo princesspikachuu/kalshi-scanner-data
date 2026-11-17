@@ -479,6 +479,24 @@ test('timed Favorites totals retain all observed price tiers without mixing 15m 
  assert.doesNotMatch(hourly,/Purchased 7 · settled 7/);
 });
 
+test('Favorites grids report loaded timed-fill coverage per crypto timeframe',()=>{
+ const bot=(id,series,count)=>({id,name:id,series,experiment:{entry_timing:count?[{
+  price:'.80',horizon:'5–10m',clock:'market_close',market_type:'15m_price',
+  contracts:String(count),closed:'0',resolved:'0',winners:'0'
+ }]:[]}});
+ const html=favoriteCollectorOverviewMarkup([
+  bot('btc','KXBTC15M',4),bot('eth','KXETH15M',0),
+  bot('hour','KXBTCD',2)
+ ],new Set(),{loaded:true});
+ assert.match(html,/Timed entry-fill source: 1 of 2 market bots with observations · 4 purchased contracts/);
+ assert.match(html,/Timed entry-fill source: 1 of 1 market bots with observations · 2 purchased contracts/);
+ assert.doesNotMatch(html,/Combined tables may be incomplete/);
+ const unavailable=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',0)],new Set(),{error:'Research unavailable'});
+ assert.match(unavailable,/Favorites research could not load: Research unavailable/);
+ const loading=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',0)],new Set(),{loading:true});
+ assert.match(loading,/Detailed Favorites research is loading/);
+});
+
 test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.experiment.entry_timing=[];
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true},storage=new Map();
