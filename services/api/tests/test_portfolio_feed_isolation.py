@@ -12,10 +12,14 @@ class Isolation(unittest.TestCase):
         for folder,(e,f,ps) in suite.portfolios.items():
             e.handle=Mock(side_effect=lambda *args,folder=folder:seen.append(folder))
         first=next(iter(suite.portfolios));suite.portfolios[first][0].handle.side_effect=ValueError('stale book event')
+        # Favorites must still receive a frame for a market they actually own;
+        # unrelated flat stats and Maker feeds may safely skip full engine work.
+        suite.portfolios['favorites'][0].markets['KXBTC15M-test']=dict(close=2000)
         with self.assertRaisesRegex(ValueError,'stale book event'):
             suite.handle('kalshi',dict(type='orderbook_delta',sid=2,seq=5,msg=dict(market_ticker='KXBTC15M-test')),1000)
         self.assertIn('favorites',seen)
-        self.assertEqual(set(seen),set(suite.portfolios)-{first,*MM_FOLDERS})
+        self.assertEqual(set(seen),set(suite.portfolios)-{first,*MM_FOLDERS,'favorites_statistics'})
+        self.assertEqual(suite.portfolios['favorites_statistics'][0].sequences[2],5)
         for folder in MM_FOLDERS:
             self.assertEqual(suite.portfolios[folder][0].sequences[2],5)
 
