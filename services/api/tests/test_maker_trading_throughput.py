@@ -128,6 +128,10 @@ class TurnoverRankingTests(unittest.TestCase):
         self.assertGreater(hit['execution_score'],miss['execution_score'])
         self.assertGreater(hit['recent_quote_touch_count'],0)
         self.assertEqual(miss['recent_quote_touch_count'],0)
+        ranked=ranked_rows(dict(candidates={'HIT':dict(hit,category='politics',score=1,
+            reason='awaiting_shared_admission')}))
+        self.assertEqual(ranked[0]['recent_quote_touch_count'],hit['recent_quote_touch_count'])
+        self.assertEqual(ranked[0]['recent_tape_sample_count'],hit['recent_tape_sample_count'])
         # Missing side metadata must not invent a trade or reject old fixtures.
         unknown=turnover_score([dict(row,taker_side=None) for row in yes_hit],now,bids,[p],fee,{})
         self.assertEqual(unknown['recent_tape_sample_count'],0)
