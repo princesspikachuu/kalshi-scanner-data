@@ -454,6 +454,31 @@ test('Favorites category rollups preserve timed crypto cohorts, including retire
  assert.match(category,/>6<\/td>/);
 });
 
+test('timed Favorites totals retain all observed price tiers without mixing 15m and hourly',()=>{
+ const make=(id,series,price,contracts)=>({
+  id,series,name:id,asset:series.endsWith('15M')?'15m':'hourly',
+  experiment:{entry_timing:[{series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',
+   price:String(price),contracts:String(contracts),closed:String(contracts),
+   resolved:String(contracts),winners:String(contracts),net:'0',cost:'0'}]}
+ });
+ const bots=[
+  make('btc','KXBTC15M',.80,2),
+  make('eth','KXETH15M',.65,7),
+  make('sol','KXSOL15M',.95,3),
+  make('hour','KXBTCD',.65,4)
+ ];
+ const html=favoriteCollectorOverviewMarkup(bots);
+ const fifteen=html.split('data-research="favorites-collector-crypto-15m"')[1].split('data-research="favorites-collector-crypto-hourly"')[0];
+ const hourly=html.split('data-research="favorites-collector-crypto-hourly"')[1];
+ assert.match(fifteen,/60–64¢|65–69¢/);
+ assert.match(fifteen,/Purchased 7 · settled 7/);
+ assert.match(fifteen,/Purchased 2 · settled 2/);
+ assert.match(fifteen,/Purchased 3 · settled 3/);
+ assert.doesNotMatch(fifteen,/Purchased 4 · settled 4/);
+ assert.match(hourly,/Purchased 4 · settled 4/);
+ assert.doesNotMatch(hourly,/Purchased 7 · settled 7/);
+});
+
 test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.experiment.entry_timing=[];
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true},storage=new Map();
