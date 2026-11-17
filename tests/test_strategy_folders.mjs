@@ -88,7 +88,7 @@ test('dashboard load renders the expanded workspace through the actual gateway c
  const {context,nodes}=setup(data);nodes.get('groups').innerHTML='';
  const env={APP_ORIGIN:'https://app.test',API_ORIGIN:'https://api.test',API_PROXY_SECRET:'s'.repeat(32)};
  context.demoCall=async path=>{
-  const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response(JSON.stringify(path.startsWith('shadow/events')?{contract:'demo-v1',items:[]}:data),{headers:{'content-type':'application/json'}})});
+  const response=await proxyAuth(new Request('https://app.test/api/demo/'+path),env,{fetcher:async()=>new Response(JSON.stringify(path.startsWith('shadow/events')?{contract:'demo-v1',items:[]}:path.startsWith('shadow/research-folder/')?{contract:'demo-v1',bots:{}}:data),{headers:{'content-type':'application/json'}})});
   const body=await response.json();if(!response.ok)throw Error(body.detail);return body;
  };
  await vm.runInContext('load()',context);
@@ -227,6 +227,7 @@ test('summary pause targets only its folder without toggling it and reports pres
   calls.push({path,body});
   if(path==='shadow/bulk')return {saved:true};
   if(path.startsWith('shadow/workspace')){const next=fixture();next.installed=true;next.bots.find(b=>b.id==='sequential').desired='paused';return next}
+  if(path==='shadow/research-folder/favorites')return {bots:{}};
   return {items:[]};
  };
  let prevented=0,stopped=0;
