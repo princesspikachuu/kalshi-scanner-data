@@ -132,6 +132,18 @@ class MakerSeriesDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len([v for k,v in calls if k=='/events']),2)
         self.assertEqual(len([v for k,v in calls if k=='/markets']),1)
 
+    async def test_catalog_refresh_keeps_fresh_hot_cursor_outside_top_volume_pool(self):
+        h=self.host([dict(ticker='COLD',category='Politics',title='Election',volume=100)])
+        s=dict(cursor='broad',reads=0,pages=2,series_at=0,
+            series_pool=['COLD'],series_cursors={'HOT':'saved-hot-page','OLD':'discard-me'},
+            candidates={'recent':dict(event=dict(series_ticker='HOT'),
+                 inspected_at=300,trades_last_hour=7)})
+        await maker_event_page(h,s,330,86400)
+        self.assertEqual(s['series_pool'],['COLD'])
+        self.assertEqual(h.verified_data.call.call_args.args[2]['series_ticker'],'HOT')
+        self.assertEqual(h.verified_data.call.call_args.args[2]['cursor'],'saved-hot-page')
+        self.assertNotIn('OLD',s['series_cursors'])
+
     async def test_catalog_cache_is_bounded_and_never_creates_orders(self):
         h=self.host([dict(ticker=str(i),category='Politics',title='Election',volume=100+i) for i in range(200)]+[dict(ticker='NAN',category='Politics',volume='nan')])
         s=dict(cursor='',reads=0,pages=1,series_cursors={'old':'cursor'})
