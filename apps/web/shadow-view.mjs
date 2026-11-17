@@ -38,7 +38,8 @@ export function favoriteResearchMarkup(bots,open=new Set()){
 export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
  const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const PRICES=[70,75,80,85,90,95];
- const groups=marketTypeGroups(bots.filter(bot=>!bot.retired));
+ // Keep 15-minute and hourly cohorts separate; each pools its currencies.
+ const groups=marketTypeGroups(bots);
  const matrix=(rows,label)=>{
   const cells=new Map();
   for(const row of favoriteCategoryRows(rows,true)){
