@@ -193,13 +193,32 @@ class ForwardRun:
     def resnapshot_allowed(self,ticker):return True
 
     def subscription_tickers(self,now):
+        # The hosted worker may retain dozens of disabled legacy instruments in
+        # self.selected for financial history and settlement. Its consumer
+        # already skips their input, but subscribing still consumes bandwidth,
+        # keeps obsolete books invalid, and starves active Maker discovery.
+        # Match the actual hot-book ownership policy (including open exposure).
+        suspend=getattr(self,'suspend_idle_feeds',False) is True
         legacy={t for t in self.selected.values() if t in self.engine.markets
-                and self.engine.markets[t]['close']>now and not self.engine.markets[t].get('paid')}
+                and self.engine.markets[t]['close']>now and not self.engine.markets[t].get('paid')
+                and (not suspend or self.legacy_ticker_needed(t))}
         suite=getattr(self,'experiments',None)
         if suite is None:return legacy
-        active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
-                if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
-        return legacy | (set(suite.extra) & active)
+        if suspend:
+            # Reuse the per-ticker book ownership rule, NOT feed_markets():
+            # 15-minute Favorites may share a selected legacy ticker without
+            # appearing in suite.extra or the weather/sports/Maker feed summary.
+            # Such a running or exposed portfolio must keep its subscription
+            # even when all original legacy bots are paused.
+            active={t for e,f,_ in suite.portfolios.values() for t,m in e.markets.items()
+                    if m['close']>now and not m.get('paid') and not m.get('entry_parked')
+                    and suite.ticker_feed_needed(e,f,t)}
+            wanted=set(suite.extra)|set(self.selected.values())
+        else:
+            active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
+                    if m['close']>now and not m.get('paid') and not m.get('entry_parked')}
+            wanted=set(suite.extra)
+        return legacy | (wanted & active)
 
     async def kalshi(self):
         delay = .25

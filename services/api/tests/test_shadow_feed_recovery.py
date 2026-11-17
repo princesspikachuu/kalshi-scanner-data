@@ -4,10 +4,77 @@ import json
 import time
 import unittest
 from decimal import Decimal as D
+from types import SimpleNamespace
 from unittest.mock import Mock, patch, AsyncMock
 from services.paper_demo.shadow.core import Engine, FeePolicy
 from services.paper_demo.shadow.runner import ForwardRun
 from services.paper_demo.shadow.host import HostedRun,PROCESSING_COALESCE_SECONDS
+
+
+class HostedSubscriptionPruningTests(unittest.TestCase):
+    def fixture(self):
+        from services.paper_demo.shadow.experiments import ExperimentSuite
+        run=object.__new__(HostedRun)
+        run.suspend_idle_feeds=True
+        run.engine=Engine(Mock())
+        run.engine.advance(1000)
+        all_legacy=('IDLE','RUNNING','HELD','ORDER','CLOSED','SHARED_FAVORITES')
+        run.engine.markets={t:dict(ticker=t,close=1500) for t in all_legacy}
+        run.engine.markets['CLOSED']['close']=900
+        run.selected={t:t for t in all_legacy}
+        run.engine.wallet.lots=[SimpleNamespace(ticker='HELD')]
+        run.engine.orders={'held':SimpleNamespace(ticker='ORDER',status='resting')}
+        run.strategy=Mock()
+        run.strategy.owner.side_effect=lambda t:SimpleNamespace(enabled=True) if t=='RUNNING' else None
+        # Exercise the real shared portfolio eligibility policy, not a mocked
+        # answer to which external markets should remain subscribed.
+        suite=object.__new__(ExperimentSuite)
+        engine=Engine(Mock());engine.advance(1000)
+        engine.markets={t:dict(ticker=t,close=1500,market_maker=True) for t in
+                        ('MAKER','PAUSED_MAKER','EXPOSED_MAKER')}
+        engine.wallet.lots=[SimpleNamespace(ticker='EXPOSED_MAKER')]
+        fleet=Mock()
+        fleet.owner.side_effect=lambda t:SimpleNamespace(enabled=t=='MAKER',profile=dict(paused_markets=[]))
+        favorites=Engine(Mock());favorites.advance(1000)
+        favorites.markets={'SHARED_FAVORITES':dict(ticker='SHARED_FAVORITES',close=1500)}
+        favorite_fleet=Mock()
+        favorite_fleet.owner.side_effect=lambda t:SimpleNamespace(enabled=True,profile=dict(paused_markets=[]))
+        # Shared 15m price markets are NOT in extra or the specialized feed
+        # summary, but still require a websocket when Favorites runs.
+        suite.portfolios={'maker_competitive':(engine,fleet,[]),
+                          'favorites':(favorites,favorite_fleet,[])}
+        suite.extra={t:t for t in engine.markets}
+        run.experiments=suite
+        return run
+
+    def test_hosted_unsubscribes_idle_legacy_and_paused_external_without_exposure(self):
+        run=self.fixture()
+        self.assertEqual(run.subscription_tickers(1000),
+                         {'RUNNING','HELD','ORDER','SHARED_FAVORITES','MAKER','EXPOSED_MAKER'})
+        self.assertNotIn('IDLE',run.subscription_tickers(1000))
+        self.assertNotIn('PAUSED_MAKER',run.subscription_tickers(1000))
+        self.assertNotIn('CLOSED',run.subscription_tickers(1000))
+
+    def test_pause_and_resume_reconcile_subscriptions_without_touching_portfolio_state(self):
+        run=self.fixture()
+        initial=run.subscription_tickers(1000)
+        run.strategy.owner.side_effect=lambda t:None
+        run.experiments.portfolios['maker_competitive'][1].owner.side_effect=lambda t:SimpleNamespace(enabled=False,profile=dict(paused_markets=[]))
+        run.experiments.portfolios['favorites'][1].owner.side_effect=lambda t:SimpleNamespace(enabled=False,profile=dict(paused_markets=[]))
+        paused=run.subscription_tickers(1001)
+        self.assertEqual(paused,{'HELD','ORDER','EXPOSED_MAKER'})
+        self.assertTrue(all(t in run.engine.markets for t in ('IDLE','RUNNING','HELD','ORDER')))
+        self.assertEqual(len(run.engine.wallet.lots),1)
+        run.strategy.owner.side_effect=lambda t:SimpleNamespace(enabled=True) if t=='RUNNING' else None
+        run.experiments.portfolios['maker_competitive'][1].owner.side_effect=lambda t:SimpleNamespace(enabled=t=='MAKER',profile=dict(paused_markets=[]))
+        run.experiments.portfolios['favorites'][1].owner.side_effect=lambda t:SimpleNamespace(enabled=True,profile=dict(paused_markets=[]))
+        self.assertEqual(run.subscription_tickers(1002),initial)
+
+    def test_non_hosted_forward_run_keeps_original_subscription_behavior(self):
+        run=self.fixture()
+        run.suspend_idle_feeds=False
+        self.assertEqual(run.subscription_tickers(1000),
+            {'IDLE','RUNNING','HELD','ORDER','SHARED_FAVORITES','MAKER','PAUSED_MAKER','EXPOSED_MAKER'})
 
 
 class InputRecoveryTests(unittest.TestCase):
