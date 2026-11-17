@@ -42,8 +42,17 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
  const groups=marketTypeGroups(bots);
  const matrix=(rows,label)=>{
   const cells=new Map();
-  for(const row of favoriteCategoryRows(rows,true)){
-   if(!HORIZONS.includes(row.horizon)||!PRICES.includes(row.low))continue;
+  const aggregated=favoriteCategoryRows(rows,true);
+  // Do not silently drop valid collected tiers that fall outside the strategy's
+  // usual 70-95 cent bidding range. The per-market tables already show them.
+  const prices=[...new Set([...PRICES,...aggregated.map(row=>row.low)
+   .filter(low=>Number.isInteger(low)&&low>=0&&low<=100)])].sort((a,b)=>a-b);
+  let unplaced=0;
+  for(const row of aggregated){
+   if(!HORIZONS.includes(row.horizon)||!prices.includes(row.low)){
+    unplaced+=row.contracts;
+    continue;
+   }
    const key=row.low+'|'+row.horizon;
    if(!cells.has(key))cells.set(key,{purchased:0,settled:0,winners:0,closed:0,net:0,cost:0,holding:0});
    const current=cells.get(key);
@@ -52,7 +61,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
    current.net+=row.net;current.cost+=row.cost;current.holding+=row.holding_seconds;
   }
   const head=HORIZONS.map(h=>'<th scope="col">'+e(h)+'</th>').join('');
-  const body=PRICES.map(low=>{
+  const body=prices.map(low=>{
    const bucket=low+'–'+Math.min(low+4,95)+'¢';
    return '<tr><th scope="row">'+e(bucket)+'</th>'+HORIZONS.map(h=>{
     const x=cells.get(low+'|'+h);
@@ -65,7 +74,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
     return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+'"><details><summary><strong>'+e(win)+'</strong><small>n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small></summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
-  return '<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  return (unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
  };
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
