@@ -38,18 +38,8 @@ export function favoriteResearchMarkup(bots,open=new Set()){
 export function favoriteCollectorOverviewMarkup(bots=[],open=new Set()){
  const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const PRICES=[70,75,80,85,90,95];
- // Overall collector research includes retired markets and combines timeframes
-  // into the parent category. The individual market views remain separate.
-  const categories=new Map();
-  for(const group of marketTypeGroups(bots)){
-   const id=group.id.replace(/-(?:15m|hourly)$/,'');
-   const label=group.label.replace(/ · (?:15 minutes|1 hour)$/,'');
-   if(!categories.has(id))categories.set(id,{id,label,rank:group.rank,bots:[]});
-   const category=categories.get(id);
-   category.bots.push(...group.bots);
-   category.rank=Math.min(category.rank,group.rank);
-  }
-  const groups=[...categories.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label));
+ // Keep 15-minute and hourly cohorts separate; each pools its currencies.
+ const groups=marketTypeGroups(bots);
  const matrix=(rows,label)=>{
   const cells=new Map();
   for(const row of favoriteCategoryRows(rows,true)){
