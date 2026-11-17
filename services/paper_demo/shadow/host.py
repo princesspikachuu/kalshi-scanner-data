@@ -65,8 +65,12 @@ def processing_batch_budget(backlog):
     # keeping every 256-input / 80ms cooperative socket yield unchanged.
     # Never hold this longer budget for healthy or moderately busy queues.
     if backlog>8000:return 4096,.900
-    if backlog>2000:return 4096,.640
-    if backlog>128:return 512,.240
+    # Modestly reduce expensive multi-megabyte checkpoint frequency while
+    # caught up enough to keep live socket yields at the unchanged 80ms/256
+    # input interval. One whole transaction still atomically commits every
+    # order, trade, diagnostic record and exact financial checkpoint.
+    if backlog>2000:return 4096,.780
+    if backlog>128:return 768,.320
     return 256,.040
 
 def book_ingest_age_bucket(sending_ts_ms,received_at):
