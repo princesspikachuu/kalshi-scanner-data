@@ -37,7 +37,8 @@ async def catalog(host,s,now,classify,groups):
             for r in items:combined[r['group']][r['ticker']]=r['volume']
         ranked={key:sorted(rows,key=lambda t:-rows[t])[:SERIES_PER_CATEGORY] for key,rows in combined.items()}
         s['series_pool']=[ranked[key][i] for i in range(SERIES_PER_CATEGORY) for key in groups if i<len(ranked[key])]
-        s['series_cursors']={t:c for t,c in s.get('series_cursors',{}).items() if t in s['series_pool']}
+        tracked=set(s['series_pool'])|set(verified_hot_series(s,now))
+        s['series_cursors']={t:c for t,c in s.get('series_cursors',{}).items() if t in tracked}
         s['series_status']='category volume priors; current trades verified separately'
     except Exception as exc:
         s['series_status']='catalogue '+query+' unavailable: '+str(getattr(exc,'code',type(exc).__name__))
