@@ -19,12 +19,37 @@ def favorite_bid(m):
     return max(prices,default=None)
 
 
+FINANCE_PREFIXES=('KXUSDCAD','KXAUDUSD','KXUSDJPY','KXGBPUSD','KXEURUSD',
+                 'KX2YRRATE','KX5YRRATE','KX10YRRATE','KX30YRRATE',
+                 'KXINX','KXNDQ','KXNASDAQ100')
+COMMODITY_PREFIXES=('KXGOLD','KXSILVER','KXPLATINUM','KXPALLADIUM',
+                    'KXCOPPER','KXWTI','KXNATGAS','KXBRENT')
+
+def balanced_hourly_profiles(profiles):
+    """Interleave categories so short bounded scans reach Finance too.
+
+    This does not expand the existing shared subscription/read budgets or
+    imply that an individual series is actually eligible for an order.
+    """
+    groups=[[],[],[]]
+    for p in profiles:
+        series=p['series']
+        group=2 if series.startswith(FINANCE_PREFIXES) else (
+            1 if series.startswith(COMMODITY_PREFIXES) else 0)
+        groups[group].append(p)
+    ordered=[]
+    for index in range(max((len(g) for g in groups),default=0)):
+        for group in groups:
+            if index<len(group):ordered.append(group[index])
+    return ordered
+
+
 async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     if not hasattr(suite,'hourly_metadata'):suite.hourly_metadata={};suite.hourly_retry_at={}
     if not hasattr(suite,'hourly_coverage'):suite.hourly_coverage={}
     active=candidate_markets(suite,markets,'hourly',now)
-    ps=suite.enabled_profiles('hourly');staged=0
+    ps=balanced_hourly_profiles(suite.enabled_profiles('hourly'));staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
               reason='No eligible listed favorite')
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
