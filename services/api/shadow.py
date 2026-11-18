@@ -202,7 +202,7 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                 print(json.dumps(dict(event='favorites_timed_rollup',
                     categories={kind:dict(cov,table_cells=len(aggregate['rows'].get(kind,[])))
                                 for kind,cov in aggregate['coverage'].items()},
-                    source='verified_worker_snapshot',real_orders_enabled=False)),flush=True)
+                    source='worker_entry_timing',real_orders_enabled=False)),flush=True)
         account=folder.get('accounting')
         if account:
             folder['accounting']={k:v for k,v in account.items() if k not in ('current_cycles','bots')}
