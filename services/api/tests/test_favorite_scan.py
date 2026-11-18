@@ -38,7 +38,7 @@ class Scan(unittest.IsolatedAsyncioTestCase):
     async def test_daily_weather_discovery_gets_first_shared_capacity_opportunity(self):
         host=Mock();suite=Mock();host.experiments=suite
         host.put=AsyncMock();host.fee_policy=AsyncMock(return_value=Mock(taker_multiplier=D(1),maker_multiplier=D(0)))
-        suite.feed_markets.return_value={};suite.weather_cursor={};suite.weather_pages={}
+        suite.feed_markets.return_value={};suite.weather_cursor={};suite.weather_pages={};suite.weather_scan_log_at=0
         suite.search_capacity.side_effect=[True,False]
         suite.enabled_profiles.side_effect=lambda category:[dict(series='KXHIGHNY')] if category=='weather_daily' else [dict(series='KXHIGHNYH')]
         suite.candidate_allowed.return_value=True
