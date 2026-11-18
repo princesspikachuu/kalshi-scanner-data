@@ -367,14 +367,17 @@ test('Favorites profitable win rate and final outcome accuracy are independent',
  assert.match(html,/\-\$0\.30/);
  const collector=favoriteCollectorOverviewMarkup([{id:'btc',name:'BTC',series:'KXBTC15M',
   experiment:{entry_timing:[row]}}]);
- assert.match(collector,/Win rate · n=3 closed/);
+ assert.match(collector,/Closed 3 · profit-classified 3/);
  assert.match(collector,/Outcome 100\.0% · n=3 settled/);
  assert.match(collector,/33\.3%/);
  const historic={...row,profitable_closed:undefined,profit_classified_closed:undefined};
  const legacy=favoriteCollectorOverviewMarkup([{id:'btc',name:'BTC',series:'KXBTC15M',
   experiment:{entry_timing:[historic]}}]);
- assert.match(legacy,/Win rate · n=0 closed/);
+ assert.match(legacy,/Closed 3 · profit-classified 0/);
  assert.match(legacy,/Outcome 100\.0% · n=3 settled/);
+ assert.doesNotMatch(legacy,/Win rate · n=0 closed/);
+ const details=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',bots:[{id:'btc',experiment:{entry_timing:[historic]}}]});
+ assert.match(details,/3 closed, 0 classified/);
 });
 
 test('Favorites research sits within each non-sports category and keeps pending outcomes honest',()=>{
