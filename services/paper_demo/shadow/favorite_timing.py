@@ -18,7 +18,7 @@ def market_type(profile,m):
     return 'sports' if m.get('sports') else m.get('weather_category') or (profile.get('asset') if profile.get('asset') in ('weather','weather_daily') else None) or ('hourly_price' if m.get('hourly_price') or profile.get('asset')=='hourly' else '15m_price')
 def cell(cells,key,metadata=None):
     return cells.setdefault(METRICS+key,dict(metadata or {},contracts='0',cost='0',closed='0',closed_cost='0',
-        net='0',dollar_hours='0',holding_seconds='0',resolved='0',winners='0',unverified='0'))
+        net='0',dollar_hours='0',holding_seconds='0',resolved='0',winners='0',profitable_closed='0',profit_classified_closed='0',unverified='0'))
 def add(row,field,value):row[field]=str(D(row.get(field,'0'))+value)
 
 def fill(strategy,order,quantity,entry_key):
@@ -71,7 +71,13 @@ def close(strategy,a,quantity,price,fee,now):
         cost=D(chunk['remaining_cost'])*take/available
         row=cell(strategy.exit_evidence.cells,chunk['key'])
         add(row,'closed',take);add(row,'closed_cost',cost)
-        add(row,'net',take*price-fee*take/quantity-cost)
+        net=take*price-fee*take/quantity-cost
+        add(row,'net',net)
+        # Count realized profitable closures, not the eventual contract outcome.
+        # Each fill cohort carries its exact entry cost including fees; a
+        # partial exit is classified only after its exit fee is allocated.
+        add(row,'profit_classified_closed',take)
+        if net>0:add(row,'profitable_closed',take)
         elapsed=D(str(max(0,now-chunk['at'])))
         add(row,'holding_seconds',take*elapsed);add(row,'dollar_hours',cost*D(str(max(0,now-chunk.get('cost_at',chunk['at']))))/3600)
         chunk['remaining']=str(available-take);chunk['remaining_cost']=str(D(chunk['remaining_cost'])-cost)
