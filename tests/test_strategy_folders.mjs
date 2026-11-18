@@ -464,7 +464,7 @@ test('all Favorites combined categories use saved rollups; Sports retain per-mar
  assert.match(html,/Sports/);
  const category=favoriteCategoryResearchMarkup({id:'sports',label:'Sports',bots:bots.slice(0,2),
   aggregated_entry_timing:timedSummary.rows.sports});
- assert.match(category,/>7<\\/td>/);
+ assert.ok(category.includes('>7</td>'));
 });
 
 test('Favorites category rollups preserve timed crypto cohorts, including retired history',()=>{
