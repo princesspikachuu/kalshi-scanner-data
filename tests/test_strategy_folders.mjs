@@ -354,6 +354,29 @@ test('category research pools series and both sides while keeping price and time
  assert.ok(html.includes('90.0%'));assert.ok(html.includes('100.0%'));assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
  assert.match(favoriteCategoryResearchMarkup({id:'sports',label:'Sports',bots:[]}),/Combined data · time × percentage tier · Sports/);
 });
+test('Favorites profitable win rate and final outcome accuracy are independent',()=>{
+ const row={series:'KXBTC15M',market_type:'15m_price',clock:'market_close',horizon:'5–10m',
+  price:'.80',contracts:'3',closed:'3',resolved:'3',winners:'3',profitable_closed:'1',
+  profit_classified_closed:'3',cost:'2.4',net:'-.3'};
+ const html=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',
+  bots:[{id:'btc',experiment:{entry_timing:[row]}}]});
+ assert.match(html,/Win rate · after fees/);
+ assert.match(html,/Outcome accuracy/);
+ assert.match(html,/33\.3%/);
+ assert.match(html,/100\.0%/);
+ assert.match(html,/\-\$0\.30/);
+ const collector=favoriteCollectorOverviewMarkup([{id:'btc',name:'BTC',series:'KXBTC15M',
+  experiment:{entry_timing:[row]}}]);
+ assert.match(collector,/Win rate · n=3 closed/);
+ assert.match(collector,/Outcome 100\.0% · n=3 settled/);
+ assert.match(collector,/33\.3%/);
+ const historic={...row,profitable_closed:undefined,profit_classified_closed:undefined};
+ const legacy=favoriteCollectorOverviewMarkup([{id:'btc',name:'BTC',series:'KXBTC15M',
+  experiment:{entry_timing:[historic]}}]);
+ assert.match(legacy,/Win rate · n=0 closed/);
+ assert.match(legacy,/Outcome 100\.0% · n=3 settled/);
+});
+
 test('Favorites research sits within each non-sports category and keeps pending outcomes honest',()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.name='<img onerror=x>';
  bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'10–15m',price:'.90',contracts:'4',closed:'0',resolved:'0',winners:'0',cost:'3.6',net:'0'}];
