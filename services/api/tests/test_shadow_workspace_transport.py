@@ -59,6 +59,38 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertEqual(summary['coverage']['crypto-15m']['purchased'],'6')
         self.assertEqual(summary['coverage']['crypto-hourly']['purchased'],'3')
 
+    def test_all_favorites_category_rollups_and_sports_individuals(self):
+        specs=[
+            ('wx','KXHIGHNY','weather','weather-hourly','weather'),
+            ('daily','KXHIGHTEMP','weather_daily','weather-daily','weather_daily'),
+            ('sports','KXNBAGAME','sports','sports','sports'),
+            ('sports2','KXMLBGAME','sports','sports','sports'),
+            ('oil','KXWTIH','hourly','commodities-hourly','hourly_price'),
+            ('gold','KXGOLD15M','commodity','commodities-15m','15m_price'),
+            ('fx','KXUSDCAD15M','finance','finance-15m','15m_price'),
+            ('stock','KXINXH','hourly','finance-hourly','hourly_price'),
+        ]
+        bots=[];folder={}
+        for i,(bot_id,series,asset,category,market_type) in enumerate(specs,1):
+            timing=dict(price='.80',clock='market_close',horizon='5–10m',
+                market_type=market_type,contracts=str(i),closed=str(i),resolved=str(i),
+                winners=str(i),cost='1',net='.2')
+            bots.append(dict(id=bot_id,series=series,asset=asset,experiment=dict(entry_timing=[timing])))
+            folder[bot_id]=dict(entry_timing=[timing])
+        payload=dict(status={},bots=bots,folders=[dict(id='favorites',bots=folder)])
+        saved=json.loads(workspace_response(payload).body)['folders'][0]['collector_timed_summary']
+        for bot_id,series,asset,category,_ in specs:
+            self.assertIn(category,saved['rows'])
+            self.assertGreater(len(saved['rows'][category]),0)
+        self.assertEqual(saved['coverage']['sports']['bots_total'],2)
+        self.assertEqual(saved['coverage']['sports']['purchased'],'7')
+        self.assertEqual(saved['sports_by_bot']['sports'][0]['contracts'],'3')
+        self.assertEqual(saved['sports_by_bot']['sports2'][0]['contracts'],'4')
+        self.assertEqual(saved['coverage']['commodities-15m']['purchased'],'6')
+        self.assertEqual(saved['coverage']['commodities-hourly']['purchased'],'5')
+        self.assertEqual(saved['coverage']['finance-15m']['purchased'],'7')
+        self.assertEqual(saved['coverage']['finance-hourly']['purchased'],'8')
+
     def test_large_favorite_entry_details_can_be_hidden_while_category_totals_remain(self):
         rows=[dict(series='KXBTC15M',market_type='15m_price',clock='market_close',
             horizon='5–10m',price='.80',contracts='1',closed='0',resolved='0') for _ in range(100)]
