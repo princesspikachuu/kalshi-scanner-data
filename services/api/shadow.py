@@ -131,13 +131,32 @@ def learning_diagnostics(folder_id,experiment):
 
 
 
-CRYPTO_FAVORITE_SERIES=re.compile(r'^KX(?:BTC|ETH|SOL|XRP|DOGE|BNB|HYPE|ZEC|NEAR)(?:15M|D|H)?$')
 FAVORITE_TIME_BUCKETS=frozenset(('<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'))
 FAVORITE_TIMING_FIELDS=('contracts','closed','resolved','winners','cost','net','unverified','holding_seconds','dollar_hours')
 
+def favorite_timing_category(profile):
+    """Mirror the Favorites market-type grouping in apps/web/shadow-view.mjs."""
+    series=str(profile.get('series') or '').upper()
+    asset=str(profile.get('asset') or '')
+    if asset=='weather':return 'weather-hourly'
+    if asset=='weather_daily':return 'weather-daily'
+    if asset=='sports':return 'sports'
+    period='-15m' if series.endswith('15M') else '-hourly' if asset=='hourly' else ''
+    if re.fullmatch(r'KX(BTC|ETH|SOL|XRP|DOGE|BNB|HYPE|ZEC|NEAR)(15M|D|H)?',series):
+        return 'crypto'+period
+    if re.fullmatch(r'KX(GOLD|SILVER|PLATINUM|PALLADIUM|COPPER|WTI|NATGAS|BRENT)(15M|H|D)?',series):
+        return 'commodities'+period
+    if re.fullmatch(r'KX(USDCAD|AUDUSD|USDJPY|GBPUSD|EURUSD|2YRRATE|5YRRATE|10YRRATE|30YRRATE|INX|NDQ|NASDAQ100)(15M|AH|H|U|D)?',series):
+        return 'finance'+period
+    return 'other'+period
+
 def favorite_collector_timed_totals(folder_bots,profiles):
-    """Additive 15m/hourly Crypto totals from saved per-currency entry fills."""
-    totals={};coverage={}
+    """Compact saved entry-fill totals for every Favorites category.
+
+    Retain source market groups, contract accounting and missing-outcome status.
+    Individual sports bot rows are provided separately, not double-counted.
+    """
+    totals={};coverage={};per_bot={}
     def decimal(value):
         try:
             n=D(str(value if value is not None else 0))
@@ -145,43 +164,40 @@ def favorite_collector_timed_totals(folder_bots,profiles):
         except (ValueError,ArithmeticError,TypeError):return D(0)
     for bot_id,metric in folder_bots.items():
         if not isinstance(metric,dict):continue
-        profile=profiles.get(bot_id,{})
-        series=str(profile.get('series') or '')
-        if not CRYPTO_FAVORITE_SERIES.fullmatch(series):continue
+        profile=profiles.get(str(bot_id),{})
+        if not profile:continue
         entries=metric.get('entry_timing')
         if not isinstance(entries,list):continue
-        kind='crypto-15m' if series.endswith('15M') else 'crypto-hourly' if profile.get('asset')=='hourly' else None
-        if kind is None:
-            if any(isinstance(row,dict) and row.get('market_type')=='hourly_price' for row in entries):
-                kind='crypto-hourly'
-            else:continue
+        kind=favorite_timing_category(profile)
         cov=coverage.setdefault(kind,dict(bots_total=0,bots_with_rows=0,purchased=D(0),unclassified=D(0)))
         cov['bots_total']+=1
         if entries:cov['bots_with_rows']+=1
+        if kind=='sports':per_bot[str(bot_id)]=entries
         for row in entries:
             if not isinstance(row,dict):continue
             purchased=decimal(row.get('contracts'))
             cov['purchased']+=purchased
             price=decimal(row.get('price'))
             horizon=row.get('horizon')
-            if price<0 or price>1 or horizon not in FAVORITE_TIME_BUCKETS:
+            if row.get('price') is None or price<0 or price>1 or horizon not in FAVORITE_TIME_BUCKETS:
                 cov['unclassified']+=purchased
                 continue
             cents=int((price*100//5)*5)
             clock=row.get('clock') or 'market_close'
-            market_type='15m_price' if kind=='crypto-15m' else 'hourly_price'
-            key=(kind,market_type,clock,horizon,cents)
+            market_type=row.get('market_type') or kind
+            key=(kind,str(market_type),str(clock),horizon,cents)
             cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
             for field in FAVORITE_TIMING_FIELDS:cell[field]+=decimal(row.get(field))
-    result={}
+    rows={}
     for (kind,market_type,clock,horizon,cents),value in totals.items():
-        result.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
+        rows.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
             horizon=horizon,price=str(D(cents)/100),
             **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS}))
-    for rows in result.values():rows.sort(key=lambda r:(D(r['price']),r['horizon'],r['clock']))
-    return dict(rows=result,coverage={kind:{**{k:v for k,v in cov.items() if k in ('bots_total','bots_with_rows')},
-        'purchased':str(cov['purchased']),'unclassified':str(cov['unclassified'])}
-        for kind,cov in coverage.items()})
+    for items in rows.values():items.sort(key=lambda r:(D(r['price']),r['horizon'],r['clock']))
+    return dict(rows=rows,coverage={kind:dict(bots_total=cov['bots_total'],
+        bots_with_rows=cov['bots_with_rows'],purchased=str(cov['purchased']),
+        unclassified=str(cov['unclassified'])) for kind,cov in coverage.items()},
+        sports_by_bot=per_bot)
 
 
 def workspace_response(payload,*,compressed=False,request_started=None):
