@@ -225,6 +225,33 @@ class SocketRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def test_hosted_worker_uses_exchange_supported_100ms_book_conflation(self):
         self.assertEqual(HostedRun.book_update_interval_ms,100)
 
+    async def test_dense_websocket_frames_do_not_rescan_full_bot_catalog_per_frame(self):
+        run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock()
+        run.engine=Engine(Mock());run.selected={'a':'BTC'}
+        run.engine.add_market(dict(ticker='BTC',close=time.time()+900),FeePolicy())
+        run.engine.books['BTC'].valid=True
+        run.subscription_tickers=Mock(return_value={'BTC'})
+        run.subscription_books=Mock(return_value=run.engine.books)
+        received=0
+        class Socket:
+            async def send(self,raw):pass
+            async def recv(self):
+                nonlocal received
+                received+=1
+                if received>=60:run.done.set()
+                if received==1:return json.dumps(dict(type='subscribed',msg=dict(channel='orderbook_delta',sid=11)))
+                if received==2:return json.dumps(dict(type='subscribed',msg=dict(channel='trade',sid=12)))
+                return json.dumps(dict(type='ok'))
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+        async def put(*args):pass
+        run.put=put
+        with patch('services.paper_demo.shadow.runner.connect',return_value=Socket()):
+            await run.kalshi()
+        self.assertEqual(received,60)
+        self.assertLess(run.subscription_tickers.call_count,10)
+        self.assertEqual(run.subscription_tickers.call_count,run.subscription_books.call_count)
+
     async def test_subscriptions_updates_and_resnapshots_use_current_single_sid(self):
         run=object.__new__(ForwardRun);run.done=asyncio.Event();run.signer=Mock()
         run.engine=Engine(Mock());run.selected={'a':'BTC'}
