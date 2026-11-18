@@ -22,7 +22,7 @@ function researchTable(rows,roundTrips=false){
 const researchNote='<p class="small">YES and NO purchases are combined by the purchased contract’s implied percentage and time remaining at fill. Win rates use settled contract quantities; unsettled outcomes stay pending. Price percentages are market prices, not proven outcome probabilities. P/L includes exits and fees. Research uses all collected data, independent of the P/L time selector. Bids are still gathering data and do not automatically adjust.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set()){
  if(group.id==='sports')return '';
- const rows=favoriteCategoryRows(group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
+ const rows=favoriteCategoryRows(Array.isArray(group.aggregated_entry_timing)?group.aggregated_entry_timing:group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
  const key='favorites-category-'+group.id;
  return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${group.research_kind==='round_trips'?'<p class="small">Both contract directions are combined by entry percentage and time. Win rate measures profitable completed trades, including fees; it is not event prediction accuracy. Data includes all collected history.</p>':researchNote}${researchTable(rows,group.research_kind==='round_trips')}</details>`;
 }
@@ -78,10 +78,20 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  };
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
-  const rows=group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]);
+  // The authenticated workspace carries a small, exact aggregate of the
+  // same stored per-currency entry-timing evidence. It is available even if
+  // fetching thousands of detailed rows would exceed gateway limits.
+  const authoritative=source.timedSummary?.rows?.[group.id];
+  const rows=Array.isArray(authoritative)?authoritative:group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]);
   const recorded=group.bots.filter(bot=>(bot.experiment?.entry_timing||[]).length);
   const purchased=rows.reduce((n,row)=>n+(Number.isFinite(Number(row.contracts))?Number(row.contracts):0),0);
-  const sourceNote='<p class="small">Timed entry-fill source: '+recorded.length+' of '+group.bots.length+' market bots with observations · '+purchased+' purchased contracts.'+(recorded.length?'':' Other market statistics do not establish timed entry fills.')+'</p>';
+  const counts=source.timedSummary?.coverage?.[group.id];
+  const n=counts?counts.bots_with_rows:recorded.length;
+  const total=counts?counts.bots_total:group.bots.length;
+  const contracts=counts?counts.purchased:purchased;
+  const sourceNote='<p class="small">Timed entry-fill source: '+e(String(n))+' of '+e(String(total))+' market bots with observations · '+e(String(contracts))+' purchased contracts.'+
+    (counts?.unclassified&&Number(counts.unclassified)>0?' · '+e(String(counts.unclassified))+' contracts have unclassified timing/price.':'')+
+    (n?'':' Other market statistics do not establish timed entry fills.')+'</p>';
   const key='favorites-collector-'+group.id;
   if(group.id==='sports'){
    return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+
@@ -91,7 +101,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
  '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows the settled win rate, number settled, and realized P/L. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
- (source.error?'<p class="small" role="alert">Favorites research could not load: '+e(source.error)+'. Showing compact snapshot data only.</p>':!source.loaded?'<p class="small">Detailed Favorites research '+(source.loading?'is loading.':'has not loaded.')+' Combined tables may be incomplete.</p>':'')+
+ (source.timedSummary?.rows?'<p class="small">Combined totals are calculated from the complete saved Favorites evidence, independently of individual card loading.</p>':source.error?'<p class="small" role="alert">Favorites research could not load: '+e(source.error)+'. Showing compact snapshot data only.</p>':!source.loaded?'<p class="small">Detailed Favorites research '+(source.loading?'is loading.':'has not loaded.')+' Combined tables may be incomplete.</p>':'')+
  sections+'</section>';
 }
 

@@ -19,6 +19,7 @@ from services.paper_demo.shadow.market_maker import MM_FOLDERS,CATEGORIES
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
+FAVORITES_ROLLUP_LOG_AT=0
 
 LEARNING_PROFILES={
     'sequential':dict(classification='data_learning',state='using_statistics_now',
@@ -129,14 +130,79 @@ def learning_diagnostics(folder_id,experiment):
     return profile
 
 
+
+CRYPTO_FAVORITE_SERIES=re.compile(r'^KX(?:BTC|ETH|SOL|XRP|DOGE|BNB|HYPE|ZEC|NEAR)(?:15M|D|H)?$')
+FAVORITE_TIME_BUCKETS=frozenset(('<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'))
+FAVORITE_TIMING_FIELDS=('contracts','closed','resolved','winners','cost','net','unverified','holding_seconds','dollar_hours')
+
+def favorite_collector_timed_totals(folder_bots,profiles):
+    """Additive 15m/hourly Crypto totals from saved per-currency entry fills."""
+    totals={};coverage={}
+    def decimal(value):
+        try:
+            n=D(str(value if value is not None else 0))
+            return n if n.is_finite() else D(0)
+        except (ValueError,ArithmeticError,TypeError):return D(0)
+    for bot_id,metric in folder_bots.items():
+        if not isinstance(metric,dict):continue
+        profile=profiles.get(bot_id,{})
+        series=str(profile.get('series') or '')
+        if not CRYPTO_FAVORITE_SERIES.fullmatch(series):continue
+        entries=metric.get('entry_timing')
+        if not isinstance(entries,list):continue
+        kind='crypto-15m' if series.endswith('15M') else 'crypto-hourly' if profile.get('asset')=='hourly' else None
+        if kind is None:
+            if any(isinstance(row,dict) and row.get('market_type')=='hourly_price' for row in entries):
+                kind='crypto-hourly'
+            else:continue
+        cov=coverage.setdefault(kind,dict(bots_total=0,bots_with_rows=0,purchased=D(0),unclassified=D(0)))
+        cov['bots_total']+=1
+        if entries:cov['bots_with_rows']+=1
+        for row in entries:
+            if not isinstance(row,dict):continue
+            purchased=decimal(row.get('contracts'))
+            cov['purchased']+=purchased
+            price=decimal(row.get('price'))
+            horizon=row.get('horizon')
+            if price<0 or price>1 or horizon not in FAVORITE_TIME_BUCKETS:
+                cov['unclassified']+=purchased
+                continue
+            cents=int((price*100//5)*5)
+            clock=row.get('clock') or 'market_close'
+            market_type='15m_price' if kind=='crypto-15m' else 'hourly_price'
+            key=(kind,market_type,clock,horizon,cents)
+            cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
+            for field in FAVORITE_TIMING_FIELDS:cell[field]+=decimal(row.get(field))
+    result={}
+    for (kind,market_type,clock,horizon,cents),value in totals.items():
+        result.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
+            horizon=horizon,price=str(D(cents)/100),
+            **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS}))
+    for rows in result.values():rows.sort(key=lambda r:(D(r['price']),r['horizon'],r['clock']))
+    return dict(rows=result,coverage={kind:{**{k:v for k,v in cov.items() if k in ('bots_total','bots_with_rows')},
+        'purchased':str(cov['purchased']),'unclassified':str(cov['unclassified'])}
+        for kind,cov in coverage.items()})
+
+
 def workspace_response(payload,*,compressed=False,request_started=None):
+    global FAVORITES_ROLLUP_LOG_AT
     started=time.monotonic()
     # These copies are used to build the bot cards but are not read by the UI.
     # Keep the durable worker snapshot intact and send each accounting view once.
     status=dict(payload['status']);status.pop('experiments',None)
     folders=[]
+    profiles={str(p.get('id')):p for p in payload.get('bots',[]) if p.get('id') is not None}
     for folder in payload['folders']:
         folder=dict(folder)
+        if folder.get('id')=='favorites':
+            aggregate=favorite_collector_timed_totals(folder.get('bots') or {},profiles)
+            folder['collector_timed_summary']=aggregate
+            if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
+                FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
+                print(json.dumps(dict(event='favorites_timed_rollup',
+                    categories={kind:dict(cov,table_cells=len(aggregate['rows'].get(kind,[])))
+                                for kind,cov in aggregate['coverage'].items()},
+                    source='worker_entry_timing',real_orders_enabled=False)),flush=True)
         account=folder.get('accounting')
         if account:
             folder['accounting']={k:v for k,v in account.items() if k not in ('current_cycles','bots')}
