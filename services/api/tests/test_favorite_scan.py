@@ -5,7 +5,8 @@ from decimal import Decimal as D
 from unittest.mock import Mock,AsyncMock,patch
 from services.api.tests import test_strategy_scope as scope
 from services.api.tests.test_strategy_folders import market
-from services.paper_demo.shadow.hourly import hourly_once
+from services.paper_demo.shadow.hourly import hourly_once,balanced_hourly_profiles
+from services.paper_demo.shadow.weather import candidates as weather_candidates,weather_once
 from services.paper_demo.shadow.experiments import ExperimentSuite
 
 class Scan(unittest.IsolatedAsyncioTestCase):
@@ -16,6 +17,41 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         original=suite.enabled_profiles
         suite.enabled_profiles=lambda asset:selected if asset=='hourly' else original(asset)
         return host,suite
+
+    def test_hourly_profile_order_reaches_finance_without_increasing_scan_budget(self):
+        profiles=[dict(series=s) for s in ('KXBTCD','KXETHD','KXSOLD',
+            'KXGOLDH','KXSILVERH','KXUSDCADAH','KX10YRRATEAH')]
+        order=balanced_hourly_profiles(profiles)
+        self.assertEqual(len(order),len(profiles))
+        self.assertEqual(len({p['series'] for p in order}),len(profiles))
+        self.assertEqual([p['series'] for p in order[:3]],['KXBTCD','KXGOLDH','KXUSDCADAH'])
+
+    def test_daily_weather_favorites_with_less_than_an_hour_are_candidates(self):
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        rows=[dict(ticker='KXHIGHNY-eligible',status='active',open_time=date(100),
+                   close_time=date(1600),yes_bid_dollars='.83',no_bid_dollars='.13'),
+              dict(ticker='KXHIGHNY-too-late',status='active',open_time=date(100),
+                   close_time=date(1050))]
+        self.assertEqual([m['ticker'] for m in weather_candidates(rows,'KXHIGHNY',1000)],
+                         ['KXHIGHNY-eligible'])
+
+    async def test_daily_weather_discovery_gets_first_shared_capacity_opportunity(self):
+        host=Mock();suite=Mock();host.experiments=suite
+        host.put=AsyncMock();host.fee_policy=AsyncMock(return_value=Mock(taker_multiplier=D(1),maker_multiplier=D(0)))
+        suite.feed_markets.return_value={};suite.weather_cursor={};suite.weather_pages={}
+        suite.search_capacity.side_effect=[True,False]
+        suite.enabled_profiles.side_effect=lambda category:[dict(series='KXHIGHNY')] if category=='weather_daily' else [dict(series='KXHIGHNYH')]
+        suite.candidate_allowed.return_value=True
+        suite.settlement_markets.return_value={}
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        host.verified_data.call.return_value=dict(markets=[dict(ticker='KXHIGHNY-eligible',
+            event_ticker='WEATHER',status='active',open_time=date(100),
+            close_time=date(1600),yes_bid_dollars='.83',no_bid_dollars='.13')])
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=1000):
+            await weather_once(host)
+        self.assertEqual(suite.search_capacity.call_args_list[0].args[0],'weather_daily')
+        host.put.assert_awaited_once()
+        self.assertEqual(host.put.await_args.args[1]['market']['weather_category'],'weather_daily')
 
     async def test_pass_reaches_third_series_and_filters_unusable_quotes(self):
         host,suite=self.setup_host();now=1000
