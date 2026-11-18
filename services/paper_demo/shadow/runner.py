@@ -236,6 +236,10 @@ class ForwardRun:
                     last_snapshot_request = 0.0
                     last_heartbeat=time.monotonic();ping_sent=0.
                     connected_at = time.monotonic()
+                    last_subscription_scan = float('-inf')
+                    last_selected = None
+                    books = {}
+                    desired = set()
                     while not self.done.is_set():
                         if getattr(self,'book_update_interval_ms',0)!=subscribed_book_interval:
                             raise RuntimeError('book subscription interval changed')
@@ -244,15 +248,30 @@ class ForwardRun:
                                 pong.result()
                                 await self.put('book_heartbeat',dict(sid=book_sid))
                                 last_heartbeat=time.monotonic();pong=None
-                            elif time.monotonic()-ping_sent>self.engine.stale_seconds:
+                            # Pong/transport responsiveness is independent of
+                            # the strict 3s exchange quote-freshness rule.
+                            # Match the socket's 5s ping timeout without ever
+                            # accepting older book data for execution.
+                            elif time.monotonic()-ping_sent>5:
                                 raise TimeoutError('Kalshi heartbeat timeout')
                         elif book_sid is not None and time.monotonic()-last_heartbeat>=getattr(self,'heartbeat_interval',1):
                             # Keep draining application frames while awaiting the
                             # pong: recv flow control can otherwise block its arrival.
                             pong=await ws.ping();ping_sent=time.monotonic()
                         # Keep lifecycle subscription across rolls to avoid missing settlement events.
-                        books=self.subscription_books() if hasattr(self,'subscription_books') else self.engine.books
-                        desired=self.subscription_tickers(time.time())
+                        # Subscription ownership is expensive across hundreds
+                        # of historical paper bots. Re-evaluate at most every
+                        # 250ms during dense quote bursts, while changes to
+                        # selected legacy tickers trigger an immediate scan.
+                        # Per-message sequencing and 3s book freshness remain
+                        # checked by the consumer without any caching.
+                        selected_key=tuple(self.selected.items())
+                        scan_now=time.monotonic()
+                        if scan_now-last_subscription_scan>=.25 or selected_key!=last_selected:
+                            books=self.subscription_books() if hasattr(self,'subscription_books') else self.engine.books
+                            desired=self.subscription_tickers(time.time())
+                            last_subscription_scan=scan_now
+                            last_selected=selected_key
                         additions=desired-subscribed
                         removals=subscribed-desired
                         if removals and book_sid is not None and trade_sid is not None:
