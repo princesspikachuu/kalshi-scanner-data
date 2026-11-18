@@ -132,7 +132,7 @@ def learning_diagnostics(folder_id,experiment):
 
 
 FAVORITE_TIME_BUCKETS=frozenset(('<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'))
-FAVORITE_TIMING_FIELDS=('contracts','closed','resolved','winners','cost','net','unverified','holding_seconds','dollar_hours')
+FAVORITE_TIMING_FIELDS=('contracts','closed','resolved','winners','profitable_closed','profit_classified_closed','cost','net','unverified','holding_seconds','dollar_hours')
 
 def favorite_timing_category(profile):
     """Mirror the Favorites market-type grouping in apps/web/shadow-view.mjs."""
