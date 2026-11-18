@@ -43,7 +43,9 @@ def candidates(rows,series,now):
 
 async def weather_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
-    for category in ('weather','weather_daily'):
+    for category in ('weather_daily','weather'):
+        # Daily contracts have a single closing opportunity. Give them first
+        # consideration within the existing shared capacity and fee checks.
         if not suite.search_capacity(category,now):continue
         choices=suite.enabled_profiles(category)
         if not choices:continue
