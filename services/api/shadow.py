@@ -19,6 +19,7 @@ from services.paper_demo.shadow.market_maker import MM_FOLDERS,CATEGORIES
 
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
+FAVORITES_ROLLUP_LOG_AT=0
 
 LEARNING_PROFILES={
     'sequential':dict(classification='data_learning',state='using_statistics_now',
@@ -184,6 +185,7 @@ def favorite_collector_timed_totals(folder_bots,profiles):
 
 
 def workspace_response(payload,*,compressed=False,request_started=None):
+    global FAVORITES_ROLLUP_LOG_AT
     started=time.monotonic()
     # These copies are used to build the bot cards but are not read by the UI.
     # Keep the durable worker snapshot intact and send each accounting view once.
@@ -193,7 +195,14 @@ def workspace_response(payload,*,compressed=False,request_started=None):
     for folder in payload['folders']:
         folder=dict(folder)
         if folder.get('id')=='favorites':
-            folder['collector_timed_summary']=favorite_collector_timed_totals(folder.get('bots') or {},profiles)
+            aggregate=favorite_collector_timed_totals(folder.get('bots') or {},profiles)
+            folder['collector_timed_summary']=aggregate
+            if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
+                FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
+                print(json.dumps(dict(event='favorites_timed_rollup',
+                    categories={kind:dict(cov,table_cells=len(aggregate['rows'].get(kind,[])))
+                                for kind,cov in aggregate['coverage'].items()},
+                    source='verified_worker_snapshot',real_orders_enabled=False)),flush=True)
         account=folder.get('accounting')
         if account:
             folder['accounting']={k:v for k,v in account.items() if k not in ('current_cycles','bots')}
