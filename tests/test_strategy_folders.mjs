@@ -435,6 +435,38 @@ test('Favorites collector and statistics category tables respect persisted close
  assert.match(favoriteStatisticsMatrixMarkup(stats,new Set(['favorites-stat-weather_daily'])),/data-research="favorites-stat-weather_daily" open/);
 });
 
+test('all Favorites combined categories use saved rollups; Sports retain per-market detail',()=>{
+ const bot=(id,series,asset)=>({id,name:id,series,asset,experiment:{entry_timing:[]}});
+ const bots=[bot('sport1','KXNBAGAME','sports'),bot('sport2','KXMLBGAME','sports'),
+  bot('weather','KXHIGHNY','weather'),bot('daily','KXHIGHTEMP','weather_daily'),
+  bot('oil','KXWTIH','hourly'),bot('gold','KXGOLD15M','commodity'),
+  bot('fx','KXUSDCAD15M','finance')];
+ const row=(n,kind)=>({series:'combined',market_type:kind,clock:'market_close',
+  horizon:'5–10m',price:'.80',contracts:String(n),closed:String(n),resolved:String(n),
+  winners:String(n),cost:'1',net:'0.2'});
+ const counts=(n)=>({bots_total:n,bots_with_rows:n,purchased:String(n)});
+ const timedSummary={
+  rows:{sports:[row(7,'sports')],'weather-hourly':[row(2,'weather')],
+   'weather-daily':[row(3,'weather_daily')],
+   'commodities-hourly':[row(4,'hourly_price')],
+   'commodities-15m':[row(5,'15m_price')],
+   'finance-15m':[row(6,'15m_price')]},
+  coverage:{sports:{...counts(2),purchased:'7'},
+   'weather-hourly':counts(2),'weather-daily':counts(3),
+   'commodities-hourly':counts(4),'commodities-15m':counts(5),
+   'finance-15m':counts(6)},
+  sports_by_bot:{sport1:[row(3,'sports')],sport2:[row(4,'sports')]}
+ };
+ const html=favoriteCollectorOverviewMarkup(bots,new Set(),{timedSummary});
+ for(const n of [2,3,4,5,6,7])assert.match(html,new RegExp('Purchased '+n+' · settled '+n));
+ assert.match(html,/Purchased 3 · settled 3/);
+ assert.match(html,/Purchased 4 · settled 4/);
+ assert.match(html,/Sports/);
+ const category=favoriteCategoryResearchMarkup({id:'sports',label:'Sports',bots:bots.slice(0,2),
+  aggregated_entry_timing:timedSummary.rows.sports});
+ assert.match(category,/>7<\\/td>/);
+});
+
 test('Favorites category rollups preserve timed crypto cohorts, including retired history',()=>{
  const observation=(series,contracts,retired=false)=>({
   id:series,name:series,series,asset:series.endsWith('15M')?'15m':'hourly',retired,
