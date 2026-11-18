@@ -498,6 +498,27 @@ test('Favorites grids report loaded timed-fill coverage per crypto timeframe',()
  assert.match(loading,/Detailed Favorites research is loading/);
 });
 
+test('workspace Crypto timed totals display without loading individual currency research',()=>{
+ const bot=(id,series,asset)=>({id,name:id,series,asset,experiment:{entry_timing:[]}});
+ const bots=[bot('btc','KXBTC15M','crypto'),bot('eth','KXETH15M','crypto'),bot('hour','KXBTCD','hourly')];
+ const row=(n,m)=>({series:'combined',market_type:m,clock:'market_close',horizon:'5–10m',
+  price:'.80',contracts:String(n),closed:String(n),resolved:String(n),winners:String(n),
+  cost:'1',net:'.2'});
+ const timedSummary={rows:{'crypto-15m':[row(6,'15m_price')],'crypto-hourly':[row(3,'hourly_price')]},
+  coverage:{'crypto-15m':{bots_total:2,bots_with_rows:2,purchased:'6'},
+   'crypto-hourly':{bots_total:1,bots_with_rows:1,purchased:'3'}}};
+ const html=favoriteCollectorOverviewMarkup(bots,new Set(),{timedSummary});
+ assert.match(html,/Timed entry-fill source: 2 of 2 market bots with observations · 6 purchased contracts/);
+ assert.match(html,/Timed entry-fill source: 1 of 1 market bots with observations · 3 purchased contracts/);
+ assert.match(html,/Purchased 6 · settled 6/);
+ assert.match(html,/Purchased 3 · settled 3/);
+ assert.doesNotMatch(html,/Purchased 9 · settled 9/);
+ assert.match(html,/calculated from the complete saved Favorites evidence/);
+ const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',
+  bots:bots.slice(0,2),aggregated_entry_timing:timedSummary.rows['crypto-15m']});
+ assert.match(category,/>6<\/td>/);
+});
+
 test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.experiment.entry_timing=[];
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true},storage=new Map();
