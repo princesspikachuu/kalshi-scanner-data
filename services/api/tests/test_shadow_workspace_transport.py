@@ -32,6 +32,43 @@ class LearningDiagnostics(unittest.TestCase):
         self.assertEqual(x['decision_counts']['insufficient_samples'],7)
 
 class WorkspaceTransport(unittest.TestCase):
+    def test_favorites_timed_crypto_aggregates_survive_compaction_with_retired_history(self):
+        def entry(series,market_type,contracts):
+            return dict(series=series,market_type=market_type,clock='market_close',
+                horizon='5–10m',price='.80',contracts=str(contracts),closed=str(contracts),
+                resolved=str(contracts),winners=str(contracts),cost='1',net='.2')
+        specs=[('btc','KXBTC15M','crypto',2,False,'15m_price'),
+               ('eth','KXETH15M','crypto',4,True,'15m_price'),
+               ('hour','KXBTCD','hourly',3,False,'hourly_price')]
+        bots=[dict(id=id,series=series,asset=asset,retired=retired,
+            experiment=dict(entry_timing=[entry(series,market_type,contracts)]))
+            for id,series,asset,contracts,retired,market_type in specs]
+        payload=dict(status={},bots=bots,folders=[dict(id='favorites',bots={
+            bot['id']:bot['experiment'] for bot in bots})])
+        before=deepcopy(payload)
+        sent=json.loads(workspace_response(payload).body)
+        self.assertEqual(payload,before)
+        summary=sent['folders'][0]['collector_timed_summary']
+        fifteen=summary['rows']['crypto-15m']
+        hourly=summary['rows']['crypto-hourly']
+        self.assertEqual(sum(float(r['contracts']) for r in fifteen),6)
+        self.assertEqual(sum(float(r['contracts']) for r in hourly),3)
+        self.assertEqual(summary['coverage']['crypto-15m']['bots_total'],2)
+        self.assertEqual(summary['coverage']['crypto-15m']['bots_with_rows'],2)
+        self.assertEqual(summary['coverage']['crypto-hourly']['bots_total'],1)
+        self.assertEqual(summary['coverage']['crypto-15m']['purchased'],'6')
+        self.assertEqual(summary['coverage']['crypto-hourly']['purchased'],'3')
+
+    def test_large_favorite_entry_details_can_be_hidden_while_category_totals_remain(self):
+        rows=[dict(series='KXBTC15M',market_type='15m_price',clock='market_close',
+            horizon='5–10m',price='.80',contracts='1',closed='0',resolved='0') for _ in range(100)]
+        payload=dict(status={},bots=[dict(id='btc',series='KXBTC15M',asset='crypto',
+            experiment=dict(entry_timing=rows))],
+            folders=[dict(id='favorites',bots={'btc':dict(entry_timing=rows)})])
+        sent=json.loads(workspace_response(payload).body)
+        self.assertNotIn('entry_timing',sent['bots'][0]['experiment'])
+        self.assertEqual(sent['folders'][0]['collector_timed_summary']['rows']['crypto-15m'][0]['contracts'],'100')
+
     def test_compaction_preserves_visible_accounts_and_small_research_without_mutating_snapshot(self):
         evidence=[dict(price='0.9',net='1',label='Quoted "text" · 🌱')]
         account=dict(portfolio=dict(cash='999',total_pnl='-1'),positions=[dict(ticker='held')],
