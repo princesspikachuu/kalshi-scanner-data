@@ -25,6 +25,11 @@ FINANCE_PREFIXES=('KXUSDCAD','KXAUDUSD','KXUSDJPY','KXGBPUSD','KXEURUSD',
 COMMODITY_PREFIXES=('KXGOLD','KXSILVER','KXPLATINUM','KXPALLADIUM',
                     'KXCOPPER','KXWTI','KXNATGAS','KXBRENT')
 
+def hourly_category(series):
+    return ('finance' if series.startswith(FINANCE_PREFIXES) else
+            'commodities' if series.startswith(COMMODITY_PREFIXES) else 'crypto_or_other')
+
+
 def balanced_hourly_profiles(profiles):
     """Interleave categories so short bounded scans reach Finance too.
 
@@ -34,8 +39,7 @@ def balanced_hourly_profiles(profiles):
     groups=[[],[],[]]
     for p in profiles:
         series=p['series']
-        group=2 if series.startswith(FINANCE_PREFIXES) else (
-            1 if series.startswith(COMMODITY_PREFIXES) else 0)
+        group={'crypto_or_other':0,'commodities':1,'finance':2}[hourly_category(series)]
         groups[group].append(p)
     ordered=[]
     for index in range(max((len(g) for g in groups),default=0)):
@@ -51,7 +55,7 @@ async def hourly_once(host):
     active=candidate_markets(suite,markets,'hourly',now)
     ps=balanced_hourly_profiles(suite.enabled_profiles('hourly'));staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
-              reason='No eligible listed favorite')
+              reason='No eligible listed favorite',by_category={})
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
     # series back off; stable frequency metadata is cached independently of fees.
     for _ in range(min(3,len(ps))):
@@ -59,6 +63,8 @@ async def hourly_once(host):
         p,cursor=next_profile(suite,ps,blocked,suite.hourly_cursor)
         if not p:break
         suite.hourly_cursor=cursor;series=p['series'];scan['checked_series']+=1
+        category=scan['by_category'].setdefault(hourly_category(series),dict(checked=0,eligible=0,subscribed=0,capacity_blocked=0))
+        category['checked']+=1
         wake=session_wake(series,now)
         if wake is not None:
             suite.hourly_retry_at[series]=wake
@@ -71,7 +77,7 @@ async def hourly_once(host):
             metadata=dict(at=now,frequency=raw.get('series',{}).get('frequency'))
             suite.hourly_metadata[series]=metadata;scan['metadata_checks']+=1
         if metadata['frequency']!='hourly':
-            suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,reason='Series is not hourly · excluded from hourly test')
+            suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,reason='Series frequency '+str(metadata['frequency'])+' · excluded from hourly test')
             suite.hourly_retry_at[series]=now+900;continue
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=series,
             min_close_ts=int(now+60),max_close_ts=int(now+3600),limit=1000,cursor=suite.hourly_pages.get(series,'')))
@@ -87,7 +93,7 @@ async def hourly_once(host):
             no=D(str(m.get('no_bid_dollars') or D(str(m.get('no_bid') or 0))/100))
             return yes>0 and no>0 and ZERO<=1-yes-no<=D('.10')
         rows=[m for m in listed if m['ticker'] not in markets and suite.candidate_allowed(m['ticker'],now) and (favorite_bid(m) is not None or liquid_scalp(m))]
-        scan['eligible_markets']+=len(rows)
+        scan['eligible_markets']+=len(rows);category['eligible']+=len(rows)
         capacity=suite.search_capacity('hourly',time.time(),staged+1)
         reason=('No active markets closing within one hour' if not listed else
             'Active markets found · no 70–95¢ maker entry' if not rows else
@@ -97,13 +103,15 @@ async def hourly_once(host):
         suite.hourly_retry_at[series]=now+(15 if listed else 60)
         if not rows:continue
         if not capacity:
-            scan['reason']='Active candidates found; admission paused by measured capacity';continue
+            scan['reason']='Active candidates found; admission paused by measured capacity'
+            category['capacity_blocked']+=1
+            continue
         raw=min(rows,key=lambda m:(ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0)))
         fee=await host.fee_policy(raw,{})
         await host.put('hourly_market',dict(market=dict(ticker=raw['ticker'],event_ticker=raw['event_ticker'],series_ticker=series,
             open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,hourly_price=True),
             taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
-        staged+=1;active.append(raw['ticker']);scan['subscribed']+=1;scan['reason']='Eligible favorites submitted for monitoring'
+        staged+=1;active.append(raw['ticker']);scan['subscribed']+=1;category['subscribed']+=1;scan['reason']='Eligible favorites submitted for monitoring'
     suite.hourly_scan=scan
     if now>=getattr(suite,'hourly_scan_log_at',0):
         suite.hourly_scan_log_at=now+30
