@@ -17,9 +17,9 @@ export function favoriteCategoryRows(rows=[],combineSeries=false){
 }
 function researchTable(rows,roundTrips=false){
  if(!rows.length)return '<p class="small">No recorded price-and-time entries yet. Earlier trades without entry timing are not assigned guessed categories.</p>';
- return `<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>${roundTrips?'Completed contracts':'Settled'}</th><th>${roundTrips?'Profitable round trips':'Win rate'}</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`).join('')}</tbody></table></div>`;
+ return `<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>${roundTrips?'Completed contracts':'Settled'}</th><th>${roundTrips?'Profitable round trips':'Outcome win rate'}</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`).join('')}</tbody></table></div>`;
 }
-const researchNote='<p class="small">YES and NO purchases are combined by the purchased contract’s implied percentage and time remaining at fill. Win rates use settled contract quantities; unsettled outcomes stay pending. Price percentages are market prices, not proven outcome probabilities. P/L includes exits and fees. Research uses all collected data, independent of the P/L time selector. Bids are still gathering data and do not automatically adjust.</p>';
+const researchNote='<p class="small">YES and NO purchases are combined by the purchased contract’s implied percentage and time remaining at fill. Outcome win rates use settled contract quantities and the final market outcome, even when a trade was sold early at a loss. They are not profitable-trade rates; unsettled outcomes stay pending. Price percentages are market prices, not proven outcome probabilities. P/L includes exits and fees. Research uses all collected data, independent of the P/L time selector. Bids are still gathering data and do not automatically adjust.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set()){
  const rows=favoriteCategoryRows(Array.isArray(group.aggregated_entry_timing)?group.aggregated_entry_timing:group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
  const key='favorites-category-'+group.id;
@@ -69,7 +69,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     const win=x.settled?(100*x.winners/x.settled).toFixed(1)+'%':'—';
     const pnl=x.closed?dollars(x.net):'—';
     const detail='Purchased '+x.purchased+' · settled '+x.settled+' · still open/unsettled '+pending+
-       ' · net P/L '+pnl+' · win rate '+win;
+       ' · net P/L '+pnl+' · settled outcome win rate '+win;
     return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+'"><details><summary><strong>'+e(win)+'</strong><small>n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small></summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
@@ -100,7 +100,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
   return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+matrix(rows,group.label)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
- '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows the settled win rate, number settled, and realized P/L. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
+ '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows the settled market-outcome win rate, number settled, and realized P/L. A 100% outcome win rate can coexist with negative P/L when positions exit early at a loss or incur costs. Maker entry does not guarantee a profitable exit. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
  (source.timedSummary?.rows?'<p class="small">Combined totals are calculated from the complete saved Favorites evidence, independently of individual card loading.</p>':source.error?'<p class="small" role="alert">Favorites research could not load: '+e(source.error)+'. Showing compact snapshot data only.</p>':!source.loaded?'<p class="small">Detailed Favorites research '+(source.loading?'is loading.':'has not loaded.')+' Combined tables may be incomplete.</p>':'')+
  sections+'</section>';
 }
@@ -134,7 +134,7 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
         cell.fallback_lower===null||cell.fallback_lower===undefined?'':'Fallback confidence lower bound: '+num(cell.fallback_lower*100),
         'Net P/L: '+dollars(cell.realized_net),'Level: '+cell.level.replaceAll('_',' '),fallback,
         'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
-      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
+      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
     }).join('')+'</tr>').join('')+'</tbody></table></div></details>';
  }).join('')+'</section>';
 }
