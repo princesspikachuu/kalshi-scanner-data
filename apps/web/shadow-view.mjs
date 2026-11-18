@@ -60,6 +60,18 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
    current.profitable+=row.profitable_closed;current.profitClassified+=row.profit_classified_closed;
    current.net+=row.net;current.cost+=row.cost;current.holding+=row.holding_seconds;
   }
+  // Mobile viewers see only the leftmost time windows at first. Summarize
+  // all actually populated windows before the horizontally scrollable table.
+  const windowTotals=new Map();
+  for(const [key,cell] of cells){
+   const time=key.split('|')[1];
+   windowTotals.set(time,(windowTotals.get(time)||0)+cell.purchased);
+  }
+  const observedWindows=HORIZONS.filter(time=>(windowTotals.get(time)||0)>0);
+  const windowNote='<p class="small">Observed time windows: '+
+    (observedWindows.length?observedWindows.map(time=>e(time)+' ('+e(String(Number(windowTotals.get(time).toFixed(2))))+' purchased)').join(' · '):
+    'No recorded timed purchases in this category')+
+    '. Scroll the table horizontally for the other time columns.</p>';
   const head=HORIZONS.map(h=>'<th scope="col">'+e(h)+'</th>').join('');
   const body=prices.map(low=>{
    const bucket=low+'–'+Math.min(low+4,95)+'¢';
@@ -75,7 +87,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+'"><details><summary><strong>'+e(win)+'</strong><small>Closed '+e(String(x.closed))+' · profit-classified '+e(String(x.profitClassified))+'</small><small>Outcome '+e(outcome)+' · n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small></summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
-  return (unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
  };
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{

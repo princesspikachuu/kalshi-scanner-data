@@ -577,6 +577,19 @@ test('workspace Crypto timed totals display without loading individual currency 
  assert.match(category,/>6<\/td>/);
 });
 
+test('Favorites matrices reveal populated late windows even when first mobile columns are empty',()=>{
+ const rows=[{series:'KXBTC15M',market_type:'15m_price',clock:'market_close',
+   horizon:'10–15m',price:'.80',contracts:'7',closed:'4',resolved:'3',
+   winners:'2',cost:'5.6',net:'.2'}];
+ const bot={id:'btc',series:'KXBTC15M',name:'Bitcoin',experiment:{entry_timing:rows}};
+ const html=favoriteCollectorOverviewMarkup([bot]);
+ assert.match(html,/Observed time windows: 10–15m \(7 purchased\)/);
+ assert.match(html,/Scroll the table horizontally for the other time columns/);
+ assert.match(html,/Purchased 7 · settled 3/);
+ assert.match(html,/data-research="favorites-collector-crypto-15m"/);
+ assert.doesNotMatch(html,/Observed time windows: <3m/);
+});
+
 test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.experiment.entry_timing=[];
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true},storage=new Map();
