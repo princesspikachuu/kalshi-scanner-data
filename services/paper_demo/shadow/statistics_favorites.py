@@ -31,7 +31,11 @@ class StatisticsFavoritesStrategy(StatisticsFavoritesMixin,FavoritesStrategy):
         return max(options)[1] if options else None
 
     def entry_quote(self,ticker,side,max_price=None):
-        q,decision=statistics_quote(self.e,self.profile,self.contracts,ticker,side,self._source_cells(),max_price,self.statistics_groups())
+        # statistics_quote only consults raw cells when groups is absent. Shared
+        # groups are already aggregated/cached; re-copying every collector
+        # evidence row on each quote caused enormous temporary allocations.
+        groups=self.statistics_groups()
+        q,decision=statistics_quote(self.e,self.profile,self.contracts,ticker,side,{},max_price,groups)
         decision=dict(decision,ticker=ticker,side=side,policy='favorites-statistics-v1',traded=bool(q))
         reason=decision.get('reason') or 'unknown';self.decision_counts[reason]=self.decision_counts.get(reason,0)+1
         self.decisions[ticker]=decision
