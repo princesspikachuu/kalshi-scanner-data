@@ -521,6 +521,37 @@ class HostedRun(ForwardRun):
                     self.health_log_at=time.monotonic()+30
                     print(json.dumps(dict(event='paper_monitoring_capacity',**self.experiments.monitoring_snapshot(now),real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='paper_strategy_health',portfolios={folder:dict(running_bots=sum(b.enabled for b in fleet.bots.values()),virtual_cash=str(e.wallet.cash),weather_markets=sum(bool(m.get('weather_category')) and not m.get('paid',False) for m in e.markets.values()),sports_markets=sum(bool(m.get('sports')) and not m.get('paid',False) for m in e.markets.values()),hourly_markets=sum(bool(m.get('hourly_price')) and not m.get('paid',False) for m in e.markets.values()),open_contracts=str(sum((l.quantity for l in e.wallet.lots),D(0)))) for folder,(e,fleet,ps) in self.experiments.portfolios.items()},real_orders_enabled=False)),flush=True)
+                    # No-trade triage is read-only: show whether a running
+                    # Favorites portfolio has funding, eligible fresh books,
+                    # outstanding bids or an explicit strategy rejection.
+                    # Keep the report bounded (top five reasons, no event data).
+                    for favorites_folder in ('favorites','favorites_statistics'):
+                        portfolio=self.experiments.portfolios.get(favorites_folder)
+                        if portfolio is None:continue
+                        fe,ff,_=portfolio
+                        eligible=[t for t,m in fe.markets.items() if
+                            m.get('close',0)>now and not m.get('paid') and
+                            not m.get('entry_parked') and (owner:=ff.owner(t)) is not None and
+                            owner.enabled]
+                        reason_counts={}
+                        for bot in ff.bots.values():
+                            if not bot.enabled:continue
+                            reason=str(getattr(bot,'last_reason','no decision recorded'))
+                            reason_counts[reason]=reason_counts.get(reason,0)+1
+                        print(json.dumps(dict(event='favorites_trading_diagnostics',
+                            folder=favorites_folder,
+                            running_bots=sum(b.enabled for b in ff.bots.values()),
+                            available_cash=str(fe.available()),
+                            cash=str(fe.wallet.cash),
+                            open_contracts=str(sum((lot.quantity for lot in fe.wallet.lots),D(0))),
+                            active_markets=len(eligible),
+                            fresh_active_books=sum(fe.book_fresh(t) for t in eligible),
+                            orders=sum(o.status in ('pending','resting') for o in fe.orders.values()),
+                            expired_retained_markets=sum(m.get('close',0)<=now for m in fe.markets.values()),
+                            historical_entry_cells=sum(len(getattr(getattr(b,'exit_evidence',None),'cells',{}))
+                                for b in ff.bots.values()),
+                            top_reasons=sorted(reason_counts.items(),key=lambda pair:(-pair[1],pair[0]))[:5],
+                            real_orders_enabled=False)),flush=True)
                     collector=self.experiments.portfolios.get('favorites')
                     if collector:
                         quality=collection_quality(collector[1].bots.values(),now)
