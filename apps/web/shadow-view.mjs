@@ -15,9 +15,28 @@ export function favoriteCategoryRows(rows=[],combineSeries=false){
  }
  return [...groups.values()].sort((a,b)=>a.series.localeCompare(b.series)||String(a.clock).localeCompare(String(b.clock))||a.low-b.low||bands.indexOf(a.horizon)-bands.indexOf(b.horizon));
 }
+// Outcome accuracy is not realized trade profitability. This comparison is a
+// screening proxy: average entry cost spans all purchased contracts, whereas
+// settlement outcomes may cover only a subset. Never call it a proven edge.
+export function favoriteProfitSignal({purchased,settled,winners,cost,closed,net}){
+ const n=[purchased,settled,winners,cost,closed,net].map(Number);
+ if(n.some(v=>!Number.isFinite(v))||n[0]<=0||n[1]<=0||n[4]<=0)return 'unknown';
+ const implied=n[2]/n[1],breakeven=n[3]/n[0];
+ const potential=implied>breakeven;
+ if(potential&&n[5]<0)return 'exit-drag';
+ if(n[5]>0)return 'realized-positive';
+ if(n[5]<0)return 'realized-negative';
+ return 'neutral';
+}
+const favoriteProfitCell=signal=>signal==='exit-drag'?'style="background:rgba(245,158,11,.19);box-shadow:inset 3px 0 #d97706"':
+ signal==='realized-positive'?'style="background:rgba(34,197,94,.16);box-shadow:inset 3px 0 #16a34a"':
+ signal==='realized-negative'?'style="background:rgba(239,68,68,.13);box-shadow:inset 3px 0 #dc2626"':'';
+const favoriteProfitLabel=signal=>signal==='exit-drag'?'⚠ Outcome rate above estimated break-even, but realized P/L is negative — exits/losses/fees may be dragging results':
+ signal==='realized-positive'?'✓ Realized P/L positive':signal==='realized-negative'?'Realized P/L negative':'';
+const favoriteProfitLegend='<p class="small"><strong>Cell colors:</strong> 🟩 realized profit · 🟥 realized loss · 🟧 outcome win rate exceeds approximate entry-cost break-even, but realized P/L is negative (possible exit/loss drag) · uncolored = insufficient/mixed data. Comparison is illustrative, not a hold-to-settlement backtest; different contracts may have settled than were purchased. Orange does not prove a particular stop-loss caused the loss.</p>';
 function researchTable(rows,roundTrips=false){
  if(!rows.length)return '<p class="small">No recorded price-and-time entries yet. Earlier trades without entry timing are not assigned guessed categories.</p>';
- return `<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>${roundTrips?'Completed contracts':'Settled'}</th><th>${roundTrips?'Profitable round trips':'Win rate · after fees'}</th><th>${roundTrips?'':'Outcome accuracy'}</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${roundTrips?(r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'):(r.profit_classified_closed>0?(100*r.profitable_closed/r.profit_classified_closed).toFixed(1)+'%':'— · '+r.closed+' closed, 0 classified')}</td><td>${roundTrips?'':(r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—')}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`).join('')}</tbody></table></div>`;
+ return favoriteProfitLegend+`<div class="table-scroll"><table><thead><tr><th>Entry percentage tier</th><th>Time remaining at fill</th><th>Purchased</th><th>Still open</th><th>${roundTrips?'Completed contracts':'Settled'}</th><th>${roundTrips?'Profitable round trips':'Win rate · after fees'}</th><th>${roundTrips?'':'Outcome accuracy'}</th><th>Average entry · fees included</th><th>Realized P/L</th><th>Average holding time</th><th>Profit signal</th></tr></thead><tbody>${rows.map(r=>{const signal=favoriteProfitSignal({purchased:r.contracts,settled:r.resolved,winners:r.winners,cost:r.cost,closed:r.closed,net:r.net});return `<tr ${favoriteProfitCell(signal)}><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${r.contracts}</td><td>${Math.max(0,r.contracts-r.closed)}</td><td>${r.resolved}</td><td>${roundTrips?(r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—'):(r.profit_classified_closed>0?(100*r.profitable_closed/r.profit_classified_closed).toFixed(1)+'%':'— · '+r.closed+' closed, 0 classified')}</td><td>${roundTrips?'':(r.resolved>0?(100*r.winners/r.resolved).toFixed(1)+'%':'—')}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td><td class="${pnlClass(r.net)}">${r.closed>0?e(dollars(r.net)):'— · no closed contracts'}</td><td>${r.closed>0?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td><td>${e(favoriteProfitLabel(signal)||'—')}</td></tr>`}).join('')}</tbody></table></div>`;
 }
 const researchNote='<p class="small">YES and NO purchases are combined by the purchased contract’s implied percentage and time remaining at fill. Win rate counts realized profitable contract closures after entry and exit fees. Outcome accuracy separately counts the final market outcome of settled contracts, even when they were sold early. Historical closed contracts remain counted as closed; older exits without per-exit profitability evidence are excluded from the win-rate denominator rather than guessed; unsettled outcomes stay pending. Price percentages are market prices, not proven outcome probabilities. P/L includes exits and fees. Research uses all collected data, independent of the P/L time selector. Bids are still gathering data and do not automatically adjust.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set()){
@@ -82,12 +101,13 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     const win=x.profitClassified?(100*x.profitable/x.profitClassified).toFixed(1)+'%':'—';
     const outcome=x.settled?(100*x.winners/x.settled).toFixed(1)+'%':'—';
     const pnl=x.closed?dollars(x.net):'—';
+    const signal=favoriteProfitSignal({purchased:x.purchased,settled:x.settled,winners:x.winners,cost:x.cost,closed:x.closed,net:x.net});
     const detail='Purchased '+x.purchased+' · settled '+x.settled+' · still open/unsettled '+pending+
        ' · net P/L '+pnl+' · closed contracts '+x.closed+' · profit-classified '+x.profitClassified+' · profitable classified closures '+x.profitable+' · win rate after fees '+win+' · final outcome accuracy '+outcome;
-    return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+'"><details><summary><strong>'+e(win)+'</strong><small>Closed '+e(String(x.closed))+' · profit-classified '+e(String(x.profitClassified))+'</small><small>Outcome '+e(outcome)+' · n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small></summary><p class="small">'+e(detail)+'</p></details></td>';
+    return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+'" '+favoriteProfitCell(signal)+'><details><summary><strong>'+e(win)+'</strong><small>Closed '+e(String(x.closed))+' · profit-classified '+e(String(x.profitClassified))+'</small><small>Outcome '+e(outcome)+' · n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small><small>'+e(favoriteProfitLabel(signal))+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
-  return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  return favoriteProfitLegend+windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
  };
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
