@@ -70,6 +70,20 @@ class HostedSubscriptionPruningTests(unittest.TestCase):
         run.experiments.portfolios['favorites'][1].owner.side_effect=lambda t:SimpleNamespace(enabled=True,profile=dict(paused_markets=[]))
         self.assertEqual(run.subscription_tickers(1002),initial)
 
+    def test_subscription_selection_never_scans_full_historical_portfolio(self):
+        run=self.fixture()
+        class LookupOnly(dict):
+            def items(self):
+                raise AssertionError('full historical market scan on each websocket input')
+        for e,_,_ in run.experiments.portfolios.values():
+            for i in range(200):
+                e.markets['PAST-'+str(i)]=dict(ticker='PAST-'+str(i),close=800)
+            e.markets=LookupOnly(e.markets)
+        self.assertEqual(run.subscription_tickers(1000),
+            {'RUNNING','HELD','ORDER','SHARED_FAVORITES','MAKER','EXPOSED_MAKER'})
+        self.assertEqual(run.subscription_tickers(1001),
+            {'RUNNING','HELD','ORDER','SHARED_FAVORITES','MAKER','EXPOSED_MAKER'})
+
     def test_non_hosted_forward_run_keeps_original_subscription_behavior(self):
         run=self.fixture()
         run.suspend_idle_feeds=False
