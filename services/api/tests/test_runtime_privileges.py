@@ -108,7 +108,7 @@ class RuntimePrivilegesTests(unittest.TestCase):
 
     def test_catalog_audit_identifies_operator_and_does_not_mutate_database(self):
         result = audit_database(URL)
-        self.assertTrue(result['migrations_match']); self.assertEqual(result['migration_count'],9)
+        self.assertTrue(result['migrations_match']); self.assertEqual(result['migration_count'],10)
         self.assertEqual(result['history_flags']['found'],len(HISTORY))
         self.assertFalse(result['privilege_boundary_ready'])
         with psycopg.connect(URL) as c:
@@ -184,7 +184,7 @@ class RuntimePrivilegesTests(unittest.TestCase):
                 self.assertTrue(audit_database(direct,profile)['privilege_boundary_ready'])
                 with self.assertRaises(RuntimeError):deployment_check(direct,'research' if profile=='api' else 'api')
             with psycopg.connect(URL) as c:
-                self.assertEqual(c.execute('SELECT count(*) FROM public.schema_migration').fetchone()[0],9)
+                self.assertEqual(c.execute('SELECT count(*) FROM public.schema_migration').fetchone()[0],10)
         finally:
             with psycopg.connect(URL,autocommit=True) as c:
                 for role in RUNTIME_ROLES:c.execute(sql.SQL('ALTER ROLE {} NOLOGIN PASSWORD NULL').format(sql.Identifier(role)))
