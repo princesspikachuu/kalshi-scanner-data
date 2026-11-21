@@ -32,8 +32,20 @@ def strings(value):
 def snapshot(engine,profiles,now):
     by_series={p['series']:p['id'] for p in profiles}
     groups={p['id']:empty() for p in profiles};total=empty();positions=[];orders=[]
+    # Count underlying Kalshi events, not contract quantities, market tickers,
+    # orders or lots. Separate sets reflect bids, open inventory and settlement.
+    event_sets={}
     def owner(ticker):return engine.markets.get(ticker,{}).get('bot_id') or by_series.get(ticker.split('-')[0],'unassigned')
     def buckets(ticker):return (total,groups.setdefault(owner(ticker),empty()))
+    def event_id(ticker):return engine.markets.get(ticker,{}).get('event_ticker') or ticker
+    def note_event(row,ticker,kind):
+        event_sets.setdefault(id(row),{}).setdefault(kind,set()).add(event_id(ticker))
+    def with_event_counts(row):
+        kinds=event_sets.get(id(row),{})
+        row.update(unfilled_bid_events=len(kinds.get('bid',())),
+                   active_events=len(kinds.get('active',())),
+                   pending_events=len(kinds.get('pending',())))
+        return finish(row)
     for order in engine.orders.values():
         if order.status not in ('pending','resting'):continue
         principal=order.remaining*order.price if order.action=='buy' else ZERO
@@ -41,7 +53,8 @@ def snapshot(engine,profiles,now):
             for row in buckets(order.ticker):
                 row['unfilled_bids']+=order.reserved;row['unfilled_principal']+=principal
                 row['reserved_fees']+=order.reserved-principal;row['unfilled_contracts']+=order.remaining
-        orders.append(dict(id=order.id,bot_id=owner(order.ticker),ticker=order.ticker,side=order.side,action=order.action,
+                note_event(row,order.ticker,'bid')
+        orders.append(dict(id=order.id,bot_id=owner(order.ticker),ticker=order.ticker,event_ticker=event_id(order.ticker),side=order.side,action=order.action,
             quantity=order.remaining,price=order.price,status=order.status,maker=order.maker,
             reserved=order.reserved,principal=principal,purpose=order.purpose))
     depth_marks={}
@@ -87,20 +100,21 @@ def snapshot(engine,profiles,now):
         for row in buckets(lot.ticker):
             row[kind+'_cost']+=cost;row['position_cost']+=cost
             row[kind+'_contracts']+=lot.quantity
+            note_event(row,lot.ticker,kind)
             if source not in ('current_bid','executable_depth_net_fees','confirmed_outcome'):row['estimated_contracts']+=lot.quantity
             if value is None:row[kind+'_value_known']=False
             else:row[kind+'_value']+=value
             if pending:
                 row['pending_max_payout']+=lot.quantity
                 row['pending_all_confirmed'] &= source=='confirmed_outcome'
-        positions.append(dict(ticker=lot.ticker,bot_id=owner(lot.ticker),side=lot.side,
+        positions.append(dict(ticker=lot.ticker,event_ticker=event_id(lot.ticker),bot_id=owner(lot.ticker),side=lot.side,
             quantity=lot.quantity,price=lot.price,entry_fee=lot.entry_fee,cost=cost,
             value=value,mark_price=mark,valuation_source=source,quote_at=quote_at,
             state=kind,is_armed=lot.is_armed,phase_origin=lot.phase_origin,
             valuation_estimated=source not in ('current_bid','executable_depth_net_fees','confirmed_outcome'),
             recovery_cost=lot.recovery_cost,recovery_proceeds=lot.recovery_proceeds,
             bot_revision=market.get('bot_revision',1)))
-    total=finish(total);groups={k:finish(v) for k,v in groups.items()}
+    total=with_event_counts(total);groups={k:with_event_counts(v) for k,v in groups.items()}
     # Open cost includes the remaining entry fees. This identity includes ALL
     # realized money movements, even when a cycle is excluded from research.
     total.update(cash=engine.wallet.cash,deposits=engine.wallet.deposits,

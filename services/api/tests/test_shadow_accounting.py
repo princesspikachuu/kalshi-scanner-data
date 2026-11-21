@@ -84,6 +84,41 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(D(a['active_cost']),0);self.assertEqual(D(a['pending_cost']),D('11.3'))
         self.assertEqual(D(a['pending_contracts']),110)
 
+    def test_exposure_events_are_distinct_within_each_status(self):
+        e=fixture()
+        e.markets['KXBTC15M-test']['event_ticker']='EVT-BTC'
+        e.markets['KXETH15M-test']['event_ticker']='EVT-ETH'
+        # A separate contract in the same event plus multiple lots/bids
+        # still represents only one event in each exposure state.
+        e.add_market(dict(ticker='KXBTC15M-other',bot_id='btc',event_ticker='EVT-BTC',close=1900),FeePolicy())
+        e.wallet.lots.append(Lot('also-active','KXBTC15M-other','yes',D(3),D('.5'),D(0),1))
+        e.place('KXBTC15M-other','yes','buy',D(2),D('.5'))
+        e.place('KXBTC15M-test','yes','buy',D(4),D('.2'))
+        e.wallet.lots.append(Lot('also-pending','KXETH15M-test','no',D(2),D('.3'),D(0),2))
+        result=snapshot(e,PROFILES,1000)
+        portfolio=result['portfolio']
+        self.assertEqual((portfolio['unfilled_bid_events'],portfolio['active_events'],portfolio['pending_events']), (1,1,1))
+        self.assertEqual((result['bots']['btc']['unfilled_bid_events'],result['bots']['btc']['active_events'],
+                          result['bots']['btc']['pending_events']), (1,1,0))
+        self.assertEqual(result['bots']['eth']['pending_events'],1)
+        self.assertEqual({p['event_ticker'] for p in result['positions']},
+                         {'EVT-BTC','EVT-ETH'})
+        self.assertEqual({o['event_ticker'] for o in result['orders']},{'EVT-BTC'})
+
+    def test_event_counts_follow_exposure_after_cancels_and_settlement(self):
+        e=fixture();e.markets['KXBTC15M-test']['event_ticker']='EVT-BTC'
+        e.markets['KXETH15M-test']['event_ticker']='EVT-ETH'
+        first=snapshot(e,PROFILES,1000)['portfolio']
+        self.assertEqual((first['unfilled_bid_events'],first['active_events'],first['pending_events']),(1,1,1))
+        e.cancel(next(iter(e.orders)));e.advance(1000.2)
+        current=snapshot(e,PROFILES,1000.2)['portfolio']
+        self.assertEqual(current['unfilled_bid_events'],0)
+        self.assertEqual(current['active_events'],1)
+        self.assertEqual(current['pending_events'],1)
+        when_closed=snapshot(e,PROFILES,1900)['portfolio']
+        self.assertEqual(when_closed['active_events'],0)
+        self.assertEqual(when_closed['pending_events'],2)
+
     def test_partial_fill_moves_only_filled_cost_out_of_reserved_cash(self):
         e=Engine(Mock(),cash='100');e.advance(1000)
         e.add_market(dict(ticker='KXBTC15M-test',bot_id='btc',close=1900),FeePolicy())
