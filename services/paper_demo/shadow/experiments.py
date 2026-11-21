@@ -84,11 +84,14 @@ def scalper_status_snapshot(bot, engine, now):
                  json.dumps(bot.config, sort_keys=True, default=str),
                  tuple((key, repr(value)) for key, value in research['totals'].items()),
                  id(research), len(research.get('cells', {})),
-                 len(research.get('recent', ())), engine.tape.calculations)
+                 len(research.get('recent', ())))
     cached = getattr(bot, '_paused_scalper_status', None)
     if (cached is not None and 0 <= now-cached[0] < PAUSED_SCALPER_STATUS_CACHE_SECONDS
             and signature == cached[1]):
-        return cached[2]
+        # Shared tape calculations advance while unrelated strategies run.
+        # Keep this cheap live display field fresh without rebuilding all
+        # research cells or invalidating every paused bot on each tick.
+        return dict(cached[2], shared_feature_calculations=engine.tape.calculations)
     rendered = bot.research_snapshot()
     bot._paused_scalper_status = (now, signature, rendered)
     return rendered
