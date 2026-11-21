@@ -165,6 +165,31 @@ class HostedRun(ForwardRun):
         return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
             or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
 
+    def legacy_health_readiness(self,now):
+        """Read fee/book readiness only for legacy markets which still matter.
+
+        The hosted worker retains selected legacy markets for settlements and
+        reporting even when all legacy bots are disabled. Unlike a verified
+        entry or an exposed position, those flat inactive records do not need
+        their fee cache parsed every second. The source markets, orders and
+        fees remain untouched and are reconsidered immediately on resume.
+        """
+        candidates=[t for t in self.selected.values() if
+            t in self.engine.markets and self.engine.markets[t]['close']>now]
+        if getattr(self,'suspend_idle_feeds',False) is True:
+            active=[t for t in candidates if self.legacy_ticker_needed(t)]
+        else:
+            active=candidates
+        books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
+        verified=0
+        for ticker in active:
+            try:
+                self.verified_fees.schedule(ticker,now)
+                verified+=1
+            except Exception:
+                pass  # Unverified legacy fees must never make a book entry ready.
+        return active,books,verified,len(candidates)-len(active)
+
     def legacy_ticker_needed(self,ticker):
         if ticker not in self.engine.markets or self.engine.markets[ticker].get('paid'):return False
         if any(l.ticker==ticker for l in self.engine.wallet.lots):return True
@@ -560,12 +585,7 @@ class HostedRun(ForwardRun):
                         raise ValueError('Unsupported shadow wallet command')
                     self.audit.command_key=None
                 now=time.time()
-                active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
-                books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
-                fees_ready=0
-                for ticker in active:
-                    try:self.verified_fees.schedule(ticker,now);fees_ready+=1
-                    except Exception:pass
+                active,books,fees_ready,legacy_fee_checks_skipped=self.legacy_health_readiness(now)
                 legacy_needed=self.spot_required()
                 strategy_books=sum(e.book_fresh(t) for e,f,ps in self.experiments.portfolios.values()
                     for t,m in e.markets.items() if m['close']>now and (f.owner(t) and f.owner(t).enabled or any(l.ticker==t for l in e.wallet.lots)))
@@ -627,6 +647,7 @@ class HostedRun(ForwardRun):
                             real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                         valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
+                    legacy_fee_checks_skipped=legacy_fee_checks_skipped,
                     legacy_spot_required=legacy_needed,active_strategy_books=strategy_books,
                         mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
                         two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
