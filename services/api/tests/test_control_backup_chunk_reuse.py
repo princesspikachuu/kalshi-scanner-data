@@ -29,6 +29,12 @@ def record(index=1):
                 progress={'private_value':'SECRET_PROGRESS','done':False})
 
 
+def part_for(rows):
+    # Production parts are read from the canonical on-disk spool before
+    # put_verified hashes their JSON; fixture insertion order must match.
+    return json.loads(canonical(dict(format=PART_FORMAT,count=len(rows),records=rows)))
+
+
 def snapshot(rows):
     part=dict(format=PART_FORMAT,count=len(rows),records=rows)
     blob=canonical(part)
@@ -57,7 +63,7 @@ def old_root_for(part):
 class ReusedBackupTests(unittest.TestCase):
     def test_catalog_lineage_and_exact_compressed_part_identity(self):
         rows=[record()]
-        part=dict(format=PART_FORMAT,count=1,records=rows)
+        part=part_for(rows)
         chunk,root,catalog,health=old_root_for(part)
         store=MagicMock()
         store.get.return_value=health
@@ -80,7 +86,7 @@ class ReusedBackupTests(unittest.TestCase):
         self.assertEqual(prior_verified_chunks(store,MagicMock()),{})
 
     def test_bad_catalog_or_chunk_cannot_be_reused(self):
-        part=dict(format=PART_FORMAT,count=1,records=[record()])
+        part=part_for([record()])
         chunk,root,catalog,health=old_root_for(part)
         store=MagicMock()
         store.get.return_value=health
@@ -101,7 +107,7 @@ class ReusedBackupTests(unittest.TestCase):
 
     def test_unchanged_chunk_reuses_verified_reference_without_put(self):
         rows=[record()]
-        part=dict(format=PART_FORMAT,count=1,records=rows)
+        part=part_for(rows)
         chunk,root,catalog,health=old_root_for(part)
         staging=snapshot(rows)
         store=MagicMock()
@@ -132,7 +138,7 @@ class ReusedBackupTests(unittest.TestCase):
         self.assertNotIn('private-key',logged)
 
     def test_changed_part_is_uploaded_and_fully_verified(self):
-        old_part=dict(format=PART_FORMAT,count=1,records=[record()])
+        old_part=part_for([record()])
         chunk,root,catalog,health=old_root_for(old_part)
         rows=[record(2)]
         staging=snapshot(rows)
@@ -174,7 +180,7 @@ class ReusedBackupTests(unittest.TestCase):
 
     def test_reused_missing_or_corrupt_object_aborts_without_recovery_catalog(self):
         rows=[record()]
-        part=dict(format=PART_FORMAT,count=1,records=rows)
+        part=part_for(rows)
         chunk,root,catalog,health=old_root_for(part)
         staging=snapshot(rows)
         store=MagicMock()
