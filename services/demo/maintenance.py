@@ -1,5 +1,5 @@
 """Bounded verified archiving and control backups. Historical evidence stays intact."""
-import gzip,hashlib,json,os,smtplib,time
+import gzip,hashlib,json,math,os,smtplib,time
 from datetime import datetime,timezone
 from email.message import EmailMessage
 from tempfile import TemporaryFile
@@ -68,6 +68,39 @@ def failure_details(error,stage):
                       staged_bytes=error.staged_bytes,
                       capacity_unit=error.kind,capacity_limit=error.limit)
     return result
+
+
+def backup_freshness_status(receipt,backup_hours,now):
+    """Inspect only the latest *recorded* verified receipt, not current R2 objects.
+
+    No archive keys, record contents or credentials enter the returned metrics.
+    Missing/malformed/future-dated receipts cannot be considered protected.
+    """
+    progress=receipt.get('progress') if isinstance(receipt,dict) else None
+    at=progress.get('at') if isinstance(progress,dict) and progress.get('verified') is True else None
+    valid=(type(at) in (int,float) and math.isfinite(at) and 0<at<=now)
+    age_minutes=int((now-at)//60) if valid else None
+    return dict(state=('overdue' if now-at>=backup_hours*3600 else 'fresh') if valid
+                else ('missing' if receipt is None else 'unverified'),
+                recorded_verified=bool(valid),age_minutes=age_minutes,
+                backup_interval_hours=backup_hours,r2_rechecked=False)
+
+
+def report_backup_freshness(store,backup_hours,now):
+    """Warn independently of R2 availability and unrelated maintenance errors."""
+    status=backup_freshness_status(store.get('backup-health'),backup_hours,now)
+    if status['state']=='fresh':
+        store.clear_alert('backup-freshness')
+    else:
+        message=('Regular High-Probability Favorites recovery backup is overdue. '
+                 'Review the last verified backup receipt and R2 recovery status.'
+                 if status['state']=='overdue' else
+                 'Regular High-Probability Favorites has no trustworthy verified '
+                 'backup receipt. Review backup-health and R2 recovery status.')
+        store.alert('backup-freshness',message,True)
+    print(json.dumps(dict(event='demo_backup_freshness',**status),sort_keys=True),flush=True)
+    return status
+
 
 def storage_measurement(size,policy,env,now,previous=None):
     # Render capacity is supplied as non-secret deployment configuration after
@@ -234,5 +267,11 @@ def maintenance(store,env,stop):
         finally:objects.client.close()
     if failed:store.alert('backup','Demo backup or archive verification failed. Original records are retained.',True)
     else:store.clear_alert('backup')
+    # An R2 connection failure or skipped scheduled backup must not conceal an
+    # overdue recorded verification receipt. This adds no R2 or history read.
+    try:report_backup_freshness(store,policy['backup_hours'],time.time())
+    except Exception as error:
+        print(json.dumps(dict(event='demo_backup_freshness_unavailable',
+                              error_type=type(error).__name__)),flush=True)
     try:emails(store,env,policy['critical_email'])
     except Exception:store.put('email-health',dict(ready=False,message='Critical email delivery failed; review the in-app alerts'))
