@@ -252,7 +252,9 @@ test('overview, folder and bot headers separate current reserved bids from commi
  for(const html of [folderOverviewMarkup([folder],'1H'),folderCardSummaryMarkup(folder,'1H',{bots:1,running:1}),
   botPnlMarkup({id:'fav',account,performance:{'1H':{pnl:'1',realized_pnl:'.5'}}},'1H')]){
   for(const text of ['Total P/L','Open bids','Open/pending positions','$2.00','$4.50','Open $3.00 · pending $1.50','includes entry fees'])assert.ok(html.includes(text),text);
-  assert.ok(!html.includes('$1,000.00'));assert.ok(!html.includes('$500.00'));
+  // Current portfolio value is intentionally visible; exposure remains cost-based.
+  if(html.includes('Estimated portfolio value'))assert.ok(html.includes('$1,000.00'));
+  assert.ok(!html.includes('Open $500.00'));
  }
  assert.deepEqual(summaryExposure(account),{bids:2,active:3,pending:1.5,positions:4.5});
 });
@@ -734,7 +736,7 @@ test('collapsed folder and at-a-glance summaries display current estimated balan
  const collapsed=folderCardSummaryMarkup(folder);
  const overview=folderOverviewMarkup([folder]);
  for(const html of [collapsed,overview]){
-  assert.ok(html.includes('Estimated balance'));
+  assert.ok(html.includes('Estimated portfolio value'));
   assert.ok(html.includes('$1,005.00'));
   assert.ok(html.includes('Total P/L'));
  }
