@@ -136,12 +136,23 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         self.assertIn('POL-X',restored.maker_allocation['pending'])
         maker_allocation.finalize(restored,1001)
         self.assertNotIn('POL-X',restored.feed_markets());self.assertIn('POL-HOT',restored.maker_allocation['credits'])
-    def test_credit_cannot_oversubscribe_after_another_strategy_uses_the_released_slot(self):
-        s,p=self.setup();s.handle('maker_market',p,1000)
+    def test_reallocation_credit_does_not_override_worker_memory_or_queue_pause(self):
+        s,p=self.setup()
+        self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         for folder in MM_FOLDERS:s.portfolios[folder][0].advance(1000.2)
-        maker_allocation.finalize(s,1000.2);s.host.engine.markets['NEW-OTHER']=dict(close=200000)
+        maker_allocation.finalize(s,1000.2)
+        self.assertTrue(maker_allocation.credited_capacity(s,'POL-HOT',1000.2))
+        s.host.engine.markets['NEW-OTHER']=dict(close=200000)
+        # No static 32-market cap applies, but an explicit resource overload
+        # must still block new maker subscriptions even with an old credit.
+        s.monitoring.limits=lambda now:dict(admitting=False,level=0)
         self.assertFalse(maker_allocation.credited_capacity(s,'POL-HOT',1000.3))
-        s.handle('maker_market',p,1000.3);self.assertNotIn('POL-HOT',s.feed_markets())
+        s.handle('maker_market',p,1000.3)
+        self.assertNotIn('POL-HOT',s.feed_markets())
+        s.monitoring.limits=lambda now:dict(admitting=True,level=0)
+        s.handle('maker_market',p,1000.4)
+        self.assertIn('POL-HOT',s.feed_markets())
+        self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
     def test_overload_does_not_trigger_opportunity_cancellations(self):
         s,p=self.setup();s.monitoring.limits=lambda now:dict(total=32,entry_candidates=12,per_category=4,admitting=False,level=0)
         self.assertFalse(s.can_replace_maker_market(p,1000));s.handle('maker_market',p,1000)
