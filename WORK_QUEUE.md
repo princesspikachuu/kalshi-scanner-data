@@ -1590,3 +1590,25 @@ This is now the dominant Favorites learning-data imbalance.
 
 ### Completion notes
 _Fill in when done._
+
+---
+
+## MT-020 — Stop paused-strategy discovery and repeated reporting waste
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / paused-strategy resource optimization  
+**Claimed:** 2026-11-21 18:42 UTC  
+**Urgency:** U2 — HIGH  
+**Priority:** User-requested resource reduction; independent of MT-011 and MT-019 recovery
+
+### Goal
+Reduce avoidable paper-worker CPU, memory and database growth from paused, unexposed strategies, without deleting historical evidence, pausing active High Probability Favorites, changing live-trading boundaries or compromising settlement and protective exits.
+
+### Scope / safety
+- Avoid creating newly discovered markets in paused, unexposed portfolios; keep existing markets and risks until normal settlement/pruning.
+- Re-enabled bots immediately join relevant currently active shared/legacy markets.
+- Cache unchanged, paused-only derived research views without mutating canonical research/financial data.
+- Instrument skipped work and validate resumed trading and held-position settlement behavior.
+- Do not change ongoing MT-011 checkpoint implementation or MT-019 archive/backup worker.
+
+### Completion notes
+_In progress; implementation branch/PR and tests to be recorded._
