@@ -16,7 +16,38 @@ def failure_details(error,stage):
            'Archive chunk too large':'object_capacity',
            'Archive verification failed':'checksum_mismatch',
            'Archive restore validation failed':'roundtrip_mismatch',
-           'Restored object too large':'restore_capacity'}
+           'Restored object too large':'restore_capacity',
+           # Multipart control snapshots fail closed on these conditions.
+           # Map exact, source-owned messages; NEVER log arbitrary exception text.
+           'Control backup index upper boundary hides rows':'control_scope_boundary',
+           'Control backup snapshot capacity exceeded':'control_snapshot_capacity',
+           'Control backup exceeds row cap':'control_snapshot_capacity',
+           'Control backup row limit exceeded':'control_snapshot_capacity',
+           'Single control record exceeds safe archive size':'control_record_capacity',
+           'Oversize control backup row':'control_record_capacity',
+           'Insufficient temporary disk headroom for control backup':'backup_disk_headroom',
+           'Spool size budget exceeded; no partial backup published':'backup_spool_capacity',
+           'Oversized staged backup part':'backup_part_capacity',
+           'No controls found; refusing empty recovery backup':'backup_no_controls',
+           'Invalid control record':'backup_invalid_record',
+           'Invalid or duplicate control record':'backup_invalid_record',
+           'Incomplete control backup record':'backup_invalid_record',
+           'Duplicate or incomplete control record':'backup_invalid_record',
+           'Duplicate or incomplete control backup record':'backup_invalid_record',
+           'Incomplete local control backup spool':'backup_spool_invalid',
+           'Invalid local control backup spool length':'backup_spool_invalid',
+           'Truncated local control backup spool':'backup_spool_invalid',
+           'Unexpected local control backup spool trailer':'backup_spool_invalid',
+           'Invalid control backup root':'backup_manifest_invalid',
+           'Invalid control backup chunk reference':'backup_manifest_invalid',
+           'Invalid control backup chunk':'backup_manifest_invalid',
+           'Invalid complete control backup manifest':'backup_manifest_invalid',
+           'Invalid multipart control reference':'backup_manifest_invalid',
+           'Invalid control snapshot part':'backup_manifest_invalid',
+           'Control backup chunk count mismatch':'backup_manifest_invalid',
+           'Control backup root digest or count mismatch':'backup_manifest_mismatch',
+           'Control backup aggregate integrity mismatch':'backup_manifest_mismatch',
+           'R2 backup restore verification mismatch':'backup_manifest_mismatch'}
     result=dict(stage=stage,error_type=type(error).__name__,
                 reason_code=known.get(str(error),'operation_failed') if type(error) is ValueError else 'operation_failed')
     response=getattr(error,'response',{})
@@ -155,8 +186,14 @@ def maintenance(store,env,stop):
     def failure(error,stage):
         nonlocal failed
         failed=True
+        details=failure_details(error,stage)
+        if stage=='backup':
+            # Distinguish the complete multipart backup from the 2001-row
+            # legacy path, without publishing any environment value or secret.
+            details['backup_mode']=('multipart_v2'
+                if env.get('MT_CONTROL_BACKUP_V2_ENABLED','false')=='true' else 'legacy_v1')
         print(json.dumps(dict(event='demo_backup_verification_failed',original_records_retained=True,
-                              **failure_details(error,stage))),flush=True)
+                              **details)),flush=True)
     try:
         objects=object_store(env)
     except Exception as error:failure(error,'object_store')
