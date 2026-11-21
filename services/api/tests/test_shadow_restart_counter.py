@@ -26,7 +26,8 @@ class RestartCounterTests(unittest.TestCase):
         self.assertEqual(record_worker_start(db,100120)['restarts_24h'],2)
         self.assertEqual(record_worker_start(db,100000+86400+1)['restarts_24h'],2)
         self.assertTrue(summarize(db.get(KEY)['progress'],100000+86400+1)['full_window'])
-        self.assertEqual(summarize(db.get(KEY)['progress'],100120+86400+1)['restarts_24h'],0)
+        self.assertEqual(summarize(db.get(KEY)['progress'],100120+86400+1)['restarts_24h'],1)
+        self.assertEqual(summarize(db.get(KEY)['progress'],100000+2*86400+2)['restarts_24h'],0)
 
     def test_unknown_is_not_misreported_as_zero_and_stale_events_age_out(self):
         self.assertIsNone(summarize(None,100000)['restarts_24h'])
