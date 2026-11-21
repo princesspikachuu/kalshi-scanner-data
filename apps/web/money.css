@@ -155,3 +155,14 @@
  .favorite-stat-matrix.favorite-wide-matrix td{padding:4px 3px}
  .favorite-wide-matrix small{font-size:10px;line-height:1.3}
 }
+
+/* Balance, P/L and exposure all stay visible in collapsed folder summaries. */
+.folder-card-values{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:700px){
+ .folder-card-values{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .folder-card-values>.summary-total-pnl{grid-column:auto}
+ .folder-overview tr>.summary-total-pnl{grid-column:auto}
+}
+@media(max-width:360px){
+ .folder-card-values{grid-template-columns:minmax(0,1fr)}
+}

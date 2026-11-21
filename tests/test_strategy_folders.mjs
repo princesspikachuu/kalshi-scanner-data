@@ -15,13 +15,14 @@ function fixture(){
    experiment:id==='convexity'?undefined:{attempts:0,completed:0,unmatched:0,message:'Collecting evidence',calibration:id==='favorites'?[{band:'70–79¢',contracts:'0',win_rate:null,breakeven:null,net:'0'}]:[]}}))};
 }
 function setup(data,{storage=new Map(),queries={}}={}){
+ const listeners=new Map();
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:true,textContent:'',innerHTML:'',showModal(){this.open=true},close(){this.open=false},files:[]});return nodes.get(id)};
- const context={document:{getElementById:node,querySelectorAll:selector=>queries[selector]||[]},fixture:data,setTimeout:()=>0,clearTimeout:()=>{},Date,Number,String,JSON,crypto:{randomUUID:()=> 'test-request-unique'},
+ const context={document:{getElementById:node,querySelectorAll:selector=>queries[selector]||[],addEventListener:(type,callback)=>listeners.set(type,callback)},fixture:data,setTimeout:()=>0,clearTimeout:()=>{},Date,Number,String,JSON,crypto:{randomUUID:()=> 'test-request-unique'},
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
   scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
- vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
+ vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes,listeners};
 }
 test('Data Learning panel distinguishes active learning from diagnostics-only and operational strategies',()=>{
  const data=fixture();
@@ -712,4 +713,29 @@ test('90 percent Wilson uncertainty remains nonzero at perfect accuracy and decr
   series:'KXBTC15M',market_type:'15m_price',price:'.8',horizon:'5–10m',clock:'market_close',
   contracts:100,cost:80,closed:100,net:10,events:100,event_win_rate:90}]}}]});
  assert.match(html,/90% win-rate interval/);assert.match(html,/\+10\.0 points/);
+});
+
+test('Add funds opens the selected folder dialog through the stable click handler',()=>{
+ const {nodes,listeners}=setup(fixture());
+ const button={dataset:{folderRefill:'favorites'}};
+ let stopped=false,prevented=false;
+ listeners.get('click')({
+  target:{closest:selector=>selector==='[data-folder-refill]'?button:null},
+  preventDefault(){prevented=true},stopPropagation(){stopped=true}
+ });
+ assert.equal(nodes.get('refillDialog').open,true);
+ assert.equal(nodes.get('refillName').textContent,'High-Probability Favorites');
+ assert.ok(prevented&&stopped);
+});
+
+test('collapsed folder and at-a-glance summaries display current estimated balance',()=>{
+ const folder=fixture().folders[2];
+ folder.accounting.portfolio={cash:'975',equity:'1005',deposits:'1000',total_pnl:'5',position_cost:'30'};
+ const collapsed=folderCardSummaryMarkup(folder);
+ const overview=folderOverviewMarkup([folder]);
+ for(const html of [collapsed,overview]){
+  assert.ok(html.includes('Estimated balance'));
+  assert.ok(html.includes('$1,005.00'));
+  assert.ok(html.includes('Total P/L'));
+ }
 });
