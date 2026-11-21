@@ -144,7 +144,8 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  const PRICES=[70,75,80,85,90,95];
  // Keep 15-minute and hourly cohorts separate; each pools its currencies.
  const groups=marketTypeGroups(bots);
- const matrix=(rows,label)=>{
+ const matrix=(rows,label,scope)=>{
+  const star=(price,time)=>favoriteBucketStarMarkup(scope,'detailed',price,time,source.starredBuckets);
   const cells=new Map();
   const aggregated=favoriteCategoryRows(rows,true);
   // Do not silently drop valid collected tiers that fall outside the strategy's
@@ -184,7 +185,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
    const bucket=low+'–'+Math.min(low+4,95)+'¢';
    return '<tr><th scope="row">'+e(bucket)+'</th>'+HORIZONS.map(h=>{
     const x=cells.get(low+'|'+h);
-    if(!x||x.purchased===0||x.events===0)return '<td class="stat-empty">—</td>';
+    if(!x||x.purchased===0||x.events===0)return '<td class="stat-empty">'+star(bucket,h)+'<span>—</span></td>';
     const observations=x.events;
     const outcome=eventAccuracy(x.eventWins,observations);
     const pnl=averageReturn(x);
@@ -192,7 +193,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     const margin=winConfidence90(x.eventWins,observations,x.purchased?x.cost/x.purchased:null)?.margin;
     const signal=margin==null?'unknown':margin>0?'realized-positive':margin<0?'realized-negative':'neutral';
     const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · win margin '+confidence.margin+' · 90% uncertainty '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
-    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Win margin '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'">'+star(bucket,h)+'<details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Win margin '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
   return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -214,9 +215,9 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
   if(group.id==='sports'){
    const byBot=source.timedSummary?.sports_by_bot||{};
    return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+
-      sourceNote+matrix(rows,group.label)+group.bots.map(bot=>matrix(Array.isArray(byBot[bot.id])?byBot[bot.id]:bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
+      sourceNote+matrix(rows,group.label,'collector:'+group.id)+group.bots.map(bot=>matrix(Array.isArray(byBot[bot.id])?byBot[bot.id]:bot.experiment?.entry_timing||[],bot.name,'market:'+bot.id)).join('')+'</details>';
   }
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+matrix(rows,group.label)+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+matrix(rows,group.label,'collector:'+group.id)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
  '<p class="small">Counts are verified resolved events per price/time cohort, not contracts. Ten contracts from one event count once. An event may appear in multiple cohorts; P/L is the average held-to-outcome return percentage, including entry fees.</p>'+
