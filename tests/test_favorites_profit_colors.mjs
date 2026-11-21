@@ -8,9 +8,11 @@ assert.equal(favoriteProfitSignal({purchased:10,settled:0,winners:0,cost:8,close
 assert.equal(favoriteProfitSignal({purchased:10,settled:10,winners:9,cost:8,closed:10,net:0}),'neutral');
 assert.equal(favoriteProfitSignal({purchased:10,settled:0,winners:0,cost:8,closed:3,net:-2}),'realized-negative');
 assert.equal(favoriteProfitSignal({purchased:10,settled:0,winners:0,cost:8,closed:3,net:2}),'realized-positive');
-const entry={series:'KXBTC15M',market_type:'crypto_15m',price:'0.8',clock:'market_close',horizon:'10–15m',contracts:10,closed:10,resolved:10,winners:9,profitable_closed:6,profit_classified_closed:10,cost:8,net:-1,holding_seconds:600};
+const entry={series:'KXBTC15M',market_type:'crypto_15m',price:'0.8',clock:'market_close',horizon:'10–15m',contracts:10,closed:10,resolved:10,winners:9,profitable_closed:6,profit_classified_closed:10,cost:8,net:-1,holding_seconds:600,events:1,event_win_rate:100};
 const group={id:'crypto_15m',label:'Crypto 15m',bots:[{id:'x',series:'KXBTC15M',experiment:{entry_timing:[entry]}}]};
 assert.ok(favoriteCategoryResearchMarkup(group).includes('Exit/fee drag'));
+assert.match(favoriteCategoryResearchMarkup(group),/>1<\/td>/);
+assert.doesNotMatch(favoriteCategoryResearchMarkup(group),/Purchased<\/th>/);
 assert.doesNotMatch(favoriteCategoryResearchMarkup(group),/Colors:/);
 assert.match(favoriteProfitLegendMarkup(),/Win rate beats break-even/);
 assert.match(favoriteCategoryResearchMarkup(group),/class=\"profit-exit-drag\"/);
