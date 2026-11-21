@@ -105,7 +105,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     const signal=favoriteProfitSignal({purchased:x.purchased,settled:x.settled,winners:x.winners,cost:x.cost,closed:x.closed,net:x.net});
     const detail='Purchased '+x.purchased+' · settled '+x.settled+' · still open/unsettled '+pending+
        ' · net P/L '+pnl+' · closed contracts '+x.closed+' · profit-classified '+x.profitClassified+' · profitable classified closures '+x.profitable+' · win rate after fees '+win+' · final outcome accuracy '+outcome;
-    return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>'+e(win)+'</strong><small>Closed '+e(String(x.closed))+' · profit-classified '+e(String(x.profitClassified))+'</small><small>Outcome '+e(outcome)+' · n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small><small>'+e(favoriteProfitLabel(signal))+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
+    return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>'+e(win)+'</strong><small>Closed '+e(String(x.closed))+' · profit-classified '+e(String(x.profitClassified))+'</small><small>Outcome '+e(outcome)+' · n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
   return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -174,7 +174,7 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
         cell.fallback_lower===null||cell.fallback_lower===undefined?'':'Fallback confidence lower bound: '+num(cell.fallback_lower*100),
         'Net P/L: '+dollars(cell.realized_net),'Level: '+cell.level.replaceAll('_',' '),fallback,
         'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
-      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+'" '+favoriteProfitCell(signal)+'><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small><small>'+e(favoriteProfitLabel(signal))+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
+      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small><small>'+e(favoriteProfitLabel(signal))+'</small></summary><p class="small">'+e(detail)+'</p></details></td>';
     }).join('')+'</tr>').join('')+'</tbody></table></div></details>';
  }).join('')+'</section>';
 }
