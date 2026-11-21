@@ -74,8 +74,11 @@ def _entry_amounts(row, outcomes):
                 continue
 
         event_cost = _number(source.get('cost'))
-        if event_cost is not None and event_cost <= 0:
-            event_cost = None
+        # A present but invalid historical cost is not permission to invent
+        # a different entry basis from cohort averages. A genuinely absent
+        # attribution may be conservatively reconstructed below.
+        if source and (event_cost is None or event_cost <= 0):
+            continue
         # A single fully settled event accounts for all recorded purchases
         # only when no unrelated/unverified quantity can be hiding in the row.
         complete = (len(outcomes) == 1 and mean_unit is not None
