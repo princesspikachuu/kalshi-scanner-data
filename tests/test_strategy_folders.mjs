@@ -356,7 +356,7 @@ test('category research pools independent event observations by price and time t
  assert.equal(r.band,'90–94¢');assert.equal(r.contracts,10);assert.equal(r.events,1);assert.equal(r.event_wins,1);
  assert.equal(rows.find(r=>r.low===95).band,'95–95¢');
  const html=favoriteCategoryResearchMarkup({id:'crypto-hourly',label:'Crypto · 1 hour',bots:input.map((item,i)=>({id:String(i),experiment:{entry_timing:[item]}}))});
- assert.match(html,/Resolved observations/);assert.match(html,/100.0%/);
+ assert.match(html,/favorite-stat-matrix/);assert.match(html,/n=1/);assert.match(html,/100.0%/);
  assert.ok(!html.includes('KXBTCD'));assert.ok(!html.includes('KXETHD'));assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));
 });
 
@@ -365,7 +365,7 @@ test('Favorites displays distinct resolved market events and keeps money returns
   price:'.80',contracts:'10',closed:'10',resolved:'10',winners:'10',profitable_closed:'1',
   profit_classified_closed:'10',cost:'8',net:'-.3',events:1,event_win_rate:100,return_events:{event:{cost:'8',net:'-.3'}}};
  const html=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',bots:[{id:'btc',experiment:{entry_timing:[row]}}]});
- assert.match(html,/Resolved observations/);assert.match(html,/>1<\/td>/);assert.match(html,/100.0%/);assert.match(html,/-3\.75%/);
+ assert.match(html,/favorite-stat-matrix/);assert.match(html,/n=1/);assert.match(html,/100.0%/);assert.match(html,/-3\.75%/);
  assert.doesNotMatch(html,/Purchased<\/th>/);
  const collector=favoriteCollectorOverviewMarkup([{id:'btc',name:'BTC',series:'KXBTC15M',experiment:{entry_timing:[row]}}]);
  assert.match(collector,/n=1/);assert.match(collector,/Exit\/fee drag/);
@@ -474,8 +474,8 @@ test('Favorites rollups show observations across categories and per-sport breakd
  assert.doesNotMatch(html,/Purchased 7 · settled 7/);
  const category=favoriteCategoryResearchMarkup({id:'sports',label:'Sports',bots:bots.slice(0,2),
    aggregated_entry_timing:summary.rows.sports});
- assert.match(category,/Resolved observations/);
- assert.match(category,/>2<\/td>/);
+ assert.match(category,/favorite-stat-matrix/);
+ assert.match(category,/n=2/);
 });
 
 test('Favorites preserves 15-minute versus hourly event observations and retired history',()=>{
@@ -494,8 +494,8 @@ test('Favorites preserves 15-minute versus hourly event observations and retired
  assert.doesNotMatch(html,/Purchased 6 · settled 6/);
  const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',
   bots:bots.filter(b=>b.series.endsWith('15M'))});
- assert.match(category,/Resolved observations/);
- assert.match(category,/>2<\/td>/);
+ assert.match(category,/favorite-stat-matrix/);
+ assert.match(category,/n=2/);
 });
 
 test('Favorites price tiers show independent samples without importing hourly cohorts',()=>{
@@ -545,7 +545,7 @@ test('workspace rollup event samples are visible without loading per-currency re
  assert.match(html,/calculated from the complete saved Favorites evidence/);
  const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',
   bots:bots.slice(0,2),aggregated_entry_timing:timedSummary.rows['crypto-15m']});
- assert.match(category,/>2<\/td>/);
+ assert.match(category,/n=2/);
 });
 
 test('Favorites shows populated late time windows using event observations',()=>{
@@ -708,5 +708,26 @@ test('90 percent Wilson uncertainty remains nonzero at perfect accuracy and decr
  const html=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto',bots:[{experiment:{entry_timing:[{
   series:'KXBTC15M',market_type:'15m_price',price:'.8',horizon:'5–10m',clock:'market_close',
   contracts:100,cost:80,closed:100,net:10,events:100,event_win_rate:90}]}}]});
- assert.match(html,/Uncertainty · 90%/);assert.match(html,/\+10\.0 points/);
+ assert.match(html,/90% uncertainty/);assert.match(html,/\+10\.0 points/);
+});
+
+test('one Favorites selector renders matching detailed or wider matrices in category, sports, and market research',()=>{
+ const rows=[{series:'KXBTC15M',market_type:'15m_price',price:'.8',horizon:'5–10m',clock:'market_close',
+   contracts:10,cost:8,closed:10,events:1,event_wins:1,return_observations:1,return_sum:.20}];
+ const bot={id:'btc',series:'KXBTC15M',name:'Bitcoin',experiment:{entry_timing:rows}};
+ const group={id:'crypto-15m',label:'Crypto · 15 minutes',bots:[bot],aggregated_entry_timing:rows};
+ const wideRow={band:'78–<86¢',horizon:'5m–10m',time_slot:1,events:1,event_wins:1,contracts:1,cost:'.8',return_observations:1,return_sum:'.2'};
+ const summary={price_buckets:['70–<78¢','78–<86¢','86–95¢'],rows:{'crypto-15m':[wideRow]},
+  coverage:{'crypto-15m':{time_buckets:['0m–5m','5m–10m','10m–15m'],time_basis:'market_duration'}},
+  by_bot:{btc:{rows:[wideRow],coverage:{time_buckets:['0m–5m','5m–10m','10m–15m'],time_basis:'market_duration'}}}};
+ const detailed=favoriteCategoryResearchMarkup(group,new Set(),{mode:'detailed',summary});
+ const wider=favoriteCategoryResearchMarkup(group,new Set(),{mode:'wide',summary});
+ assert.match(detailed,/favorite-stat-matrix/);assert.doesNotMatch(detailed,/favorite-wide-matrix/);
+ assert.match(wider,/favorite-wide-matrix/);assert.match(wider,/Uncertainty/);
+ const sports=favoriteResearchMarkup([bot],new Set(),{mode:'wide',summary,categoryId:'crypto-15m'});
+ assert.match(sports,/favorite-wide-matrix/);assert.match(sports,/Bitcoin/);
+ assert.match(favoriteTimingMarkup(rows,null,{matrix:true,label:'Bitcoin'}),/favorite-stat-matrix/);
+ assert.match(favoriteTimingMarkup(rows,[wideRow],{coverage:summary.by_bot.btc.coverage,
+  price_buckets:summary.price_buckets,label:'Bitcoin'}),/favorite-wide-matrix/);
+ assert.match(favoriteCategoryResearchMarkup({...group,research_kind:'round_trips'},new Set(),{mode:'wide',summary}),/Completed cycles/);
 });
