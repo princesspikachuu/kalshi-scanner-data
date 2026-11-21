@@ -45,6 +45,25 @@ class FleetClockDispatchTests(unittest.TestCase):
 
 class StrategyTests(unittest.TestCase):
     def engine(self):return Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
+    def test_independent_experiment_refill_does_not_change_other_wallets_or_profit(self):
+        class Host:
+            def __init__(self):
+                self.audit=QuietAudit()
+                self.engine=Engine(self.audit,cash='1000')
+                self.model_worker_latency=False
+        host=Host()
+        suite=ExperimentSuite(host,[dict(parameters=profile(),progress=dict(desired='paused')),
+            dict(parameters=profile('KXBTC15M','fav_btc','favorites'),progress=dict(desired='paused'))])
+        target=suite.portfolios['favorites'][0]
+        other=suite.portfolios['sequential'][0]
+        before=other.wallet.cash
+        target.refill(D('25'))
+        self.assertEqual(target.wallet.cash,D('1025'))
+        self.assertEqual(target.wallet.deposits,D('1025'))
+        self.assertEqual(other.wallet.cash,before)
+        self.assertEqual(host.engine.wallet.cash,D('1000'))
+        self.assertEqual(target.wallet.cash-target.wallet.deposits,D('0'))
+
     def test_fresh_model_does_not_invent_probabilities(self):
         self.assertIsNone(PairModel().estimate('unseen')['completion_probability'])
     def test_completion_probability_is_conditional_on_first_fill(self):
@@ -182,6 +201,30 @@ class FolderPostgres(unittest.TestCase):
         for _ in range(2):self.assertEqual(self.client.post('/demo/shadow/folders/sequential/reset',json=body).status_code,200)
         self.assertEqual(len(self.demo.rows('shadow/command/',100)),1)
         self.assertEqual(self.client.post('/demo/shadow/folders/complete_set/reset',json=body).status_code,409)
+    def test_refill_routes_to_named_folder_and_rejects_mismatched_retry(self):
+        self.seed()
+        request_id='independent-folder-refill-123'
+        body=dict(request_id=request_id,amount_cents=2500,folder_id='favorites')
+        for _ in range(2):
+            response=self.client.post('/demo/shadow/funds',json=body)
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.json()['folder_id'],'favorites')
+        command=self.demo.get('shadow/command/'+request_id)['parameters']
+        self.assertEqual(command,dict(action='refill',folder_id='favorites',amount_cents=2500))
+        self.assertEqual(len(self.demo.rows('shadow/command/',100)),1)
+        self.assertEqual(self.client.post('/demo/shadow/funds',json=dict(body,folder_id='sequential')).status_code,409)
+        self.assertEqual(self.client.post('/demo/shadow/funds',json=dict(body,amount_cents=2600)).status_code,409)
+        self.assertEqual(self.client.post('/demo/shadow/funds',json=dict(body,folder_id='not_a_folder')).status_code,404)
+        self.assertEqual(self.client.post('/demo/shadow/funds',json=dict(body,amount_cents=0)).status_code,422)
+
+    def test_legacy_refill_keeps_convexity_destination(self):
+        self.seed()
+        request_id='legacy-convexity-refill-123'
+        response=self.client.post('/demo/shadow/funds',json=dict(amount_cents=1500,request_id=request_id))
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['folder_id'],'convexity')
+        self.assertEqual(self.demo.get('shadow/command/'+request_id)['parameters'],dict(amount_cents=1500))
+
     def test_workspace_returns_strategy_folders_without_losing_legacy_bots(self):
         self.seed();r=self.client.get('/demo/shadow/workspace');self.assertEqual(r.status_code,200)
         self.assertEqual(r.headers['x-pocket-workspace-contract'],'demo-v1')
