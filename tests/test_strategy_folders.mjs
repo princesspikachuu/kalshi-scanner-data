@@ -681,7 +681,7 @@ test('collector matrix preserves category research and does not invent pending o
 test('Favorites table setting switches views and persists across reload without changing trading controls',()=>{
  const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
  folder.collector_wide_summary={price_buckets:['70–<78¢','78–<86¢','86–95¢'],
-  rows:{'crypto-15m':[{band:'70–<78¢',horizon:'0m–5m',events:100,event_wins:90,contracts:'100',cost:'75',return_observations:100,return_sum:'20'}]},
+  rows:{'crypto-15m':[{band:'70–<78¢',horizon:'0m–5m',time_slot:0,events:100,event_wins:90,contracts:'100',cost:'75',return_observations:100,return_sum:'20'}]},
   coverage:{'crypto-15m':{time_buckets:['0m–5m','5m–10m','10m–15m'],time_basis:'market_duration'}},by_bot:{}};
  const button={dataset:{favoriteTable:'wide'}},storage=new Map();
  const {nodes}=setup(d,{storage,queries:{'[data-favorite-table]':[button]}});

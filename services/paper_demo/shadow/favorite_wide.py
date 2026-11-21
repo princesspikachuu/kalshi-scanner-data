@@ -15,8 +15,10 @@ def duration(profile):
     return 900 if profile.get('series','').endswith('15M') else 3600
 
 def _label(seconds):
-    minutes=float(seconds)/60
-    return f'{minutes:.1f}'.rstrip('0').rstrip('.')+'m'
+    minutes=int(float(seconds)//60);remaining=float(seconds)-minutes*60
+    if abs(remaining)<1e-6:return f'{minutes}m'
+    part=f'{remaining:.3f}'.rstrip('0').rstrip('.')+'s'
+    return (f'{minutes}m ' if minutes else '')+part
 
 def summarize_wide(folder_bots,profiles,category_for):
     sources={};bounds={};by_bot={};specs={}
