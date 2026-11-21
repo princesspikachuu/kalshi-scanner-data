@@ -12,7 +12,7 @@ WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weathe
 
 def weather_profiles():
     return [dict(id='fav_'+s.lower(),series=s,name=('Hourly weather · ' if category=='weather' else 'Daily weather · ')+s,
-                 asset=category,contracts=10,folder_id='favorites',strategy='favorites',version='favorites-weather-1')
+                 asset=category,contracts=1,folder_id='favorites',strategy='favorites',version='favorites-weather-1')
             for category in ('weather','weather_daily') for s in sorted(SERIES[category])]
 
 def initialize_weather(store,guard):
