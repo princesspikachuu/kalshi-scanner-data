@@ -58,6 +58,8 @@ class DataMode(unittest.TestCase):
         details=json.loads(event['details']);self.assertEqual(event['order_id'],o.id)
         self.assertEqual(details['policy'],'favorites-paper-data-v3');self.assertEqual(details['quantity'],'1')
         self.assertEqual(details['estimate']['samples'],0)
+        self.assertEqual(details['research_bucket'],'yes|80-84|10–15m|market_close')
+        self.assertEqual(details['event_ticker'],e.markets[o.ticker].get('event_ticker',o.ticker))
 
     def test_changed_saved_size_replaces_only_after_cancel_ack(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
