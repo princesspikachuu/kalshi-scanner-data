@@ -473,6 +473,14 @@ class Engine:
             fields = dict(ticker=order.ticker, order_id=order.id, side=order.side,
                           action=order.action, queue_ahead=order.ahead, **fields)
         self.audit.log(self.now, kind, self.wallet, **fields)
+        # Optional read-only regular-Favorites observer. Never let telemetry
+        # failure interrupt paper orders or the canonical audit journal.
+        observer=getattr(self,'_favorite_quote_lifecycle',None)
+        if observer is not None and order is not None:
+            try:
+                observer.observe(kind,order,self.now,self.markets.get(order.ticker,{}),fields.get('reason'))
+            except Exception:
+                self._favorite_quote_lifecycle_errors=getattr(self,'_favorite_quote_lifecycle_errors',0)+1
 
     def refill(self, amount: D):
         if not amount.is_finite() or amount <= 0:
