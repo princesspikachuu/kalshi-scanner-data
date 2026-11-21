@@ -42,24 +42,24 @@ class SingleFavoritesBucketTests(unittest.TestCase):
         self.assertEqual(result['event_wins'], 2)
         self.assertEqual(result['estimated_return_observations'], 1)
         self.assertAlmostEqual(float(result['average_return_pct']), -33.33333333333333)
-        self.assertEqual(result['uncertainty_min_samples'], 20)
+        self.assertEqual(result['uncertainty_min_samples'], 50)
         self.assertIsNone(result['uncertainty90_pct'])
         self.assertIsNone(result['ci90_low_pct'])
         self.assertIsNone(result['ci90_high_pct'])
 
-    def test_twenty_distinct_returns_are_required_but_not_sufficient_for_a_numeric_interval(self):
+    def test_fifty_distinct_returns_required_before_numeric_interval(self):
         # A small number of mixed winners/losers can yield misleadingly
         # confident Student-t intervals; keep their observed mean visible.
-        rows=[self.row('win-'+str(i),cost='8',net='2') for i in range(18)]
+        rows=[self.row('win-'+str(i),cost='8',net='2') for i in range(48)]
         rows.append(self.row('loss-a',cost='8',net='-8',outcome=0))
         early=self.summary({'btc':dict(entry_timing=rows)})['rows']['crypto-15m']
-        self.assertEqual(early['return_observations'],19)
+        self.assertEqual(early['return_observations'],49)
         self.assertGreater(D(early['average_return_pct']),0)
         self.assertIsNone(early['uncertainty90_pct'])
         rows.append(self.row('loss-b',cost='8',net='-8',outcome=0))
         enough=self.summary({'btc':dict(entry_timing=rows)})['rows']['crypto-15m']
-        self.assertEqual(enough['return_observations'],20)
-        self.assertEqual(enough['uncertainty_min_samples'],20)
+        self.assertEqual(enough['return_observations'],50)
+        self.assertEqual(enough['uncertainty_min_samples'],50)
         self.assertIsNotNone(enough['uncertainty90_pct'])
         mean=D(enough['average_return_pct'])
         error=D(enough['uncertainty90_pct'])
