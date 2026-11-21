@@ -1621,7 +1621,7 @@ Reduce avoidable paper-worker CPU, memory and database growth from paused, unexp
 ---
 
 ## MT-021 — Avoid dormant legacy fee-readiness and monitoring work
-**Status:** IN PROGRESS  
+**Status:** DONE — merged, deployed and runtime-verified  
 **Worker:** ChatGPT / inactive legacy fee scope  
 **Claimed:** 2026-11-21 19:09 UTC  
 **Urgency:** U2 — HIGH  
@@ -1634,8 +1634,9 @@ Reduce avoidable paper-worker CPU, memory and database growth from paused, unexp
 - Coordinate separate legacy discovery REST scheduling with PR #314 owner; do not alter that scheduler during its active work. Keep MT-019 backup/storage and P0 PR #317 startup work untouched.
 
 ### Completion notes
-- **Merged implementation:** PR [#318](https://github.com/princesspikachuu/kalshi-scanner-data/pull/318) merged into `build/google-auth-foundation` at `6d8c4057f4b9faac71ce735d665cab492b0e5d04` (2026-11-21 19:17 UTC). `legacy_health_readiness()` skips unneeded hosted idle-account fee/book scans, and `shadow_feed_health` adds `legacy_fee_checks_skipped`. Held positions/orders and standalone mode remain protected.
-- **Validation:** Focused Favorites tests, new regression tests and PR-head API/PostgreSQL passed. Post-merge workflows [44940097891](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44940097891) and [44940102515](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44940102515) were still running at 19:21 UTC.
-- **Deployment:** `pocket-processing-staging` automatically deployed MT-021 commit `6d8c4057` successfully at 2026-11-21 19:23:24 UTC (deploy `dep-dc0uuuvlk1mc73fte3g0`), after both post-merge GitHub checks passed. Replacement instance `jjdwh` emitted `demo_lock_wait` at 19:23:25 and 19:24:25 UTC; previous instance `cv227` still held exclusive paper trading lock and continued running 75 Favorites bots. Thus **code is live, but runtime acceptance remains pending** until new instance takes lock and logs the skipped-fee counter. Render log API then returned HTTP 429; do not claim new counter or lock acquired without follow-up evidence.
-- **Safety baseline:** 75 active Favorites bots; other bot groups paused; real exchange orders disabled; one-contract Favorites maker paper entries had sampled fill fees of zero.
-- **Acceptance:** After checks pass and Render deploys code containing `6d8c4057`, verify exclusive lock, `demo_worker_ready`, new `legacy_fee_checks_skipped` and dormant `verified_fees=0` while Favorites remains active without crashes. Mark DONE only after those checks.
+- **Merged implementation:** PR [#318](https://github.com/princesspikachuu/kalshi-scanner-data/pull/318), merged into `build/google-auth-foundation` as `6d8c4057f4b9faac71ce735d665cab492b0e5d04` (2026-11-21 19:17 UTC). Hosted dormant legacy market fee/book-readiness checks are skipped while held-risk/resumed/standalone checks remain protected. Added `legacy_fee_checks_skipped` counter.
+- **Validation:** Five new regression tests plus idle-fast-path assertion and focused Favorites validation passed; full exact PR-head API/PostgreSQL suite passed. Both post-merge GitHub workflow runs [44940097891](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44940097891) and [44940102515](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44940102515) completed successfully.
+- **Deployment:** Render `pocket-processing-staging` automatically deployed commit `6d8c4057` at **2026-11-21 19:23:24 UTC** (deploy `dep-dc0uuuvlk1mc73fte3g0`). Replacement instance `jjdwh` initially waited for old instance `cv227` to relinquish its exclusive lock; then emitted `demo_worker_ready` at **19:25:30 UTC** with real orders disabled.
+- **Measured runtime at 19:25:57 UTC:** New-instance `shadow_feed_health` logged `selected_markets=9`, `verified_fees=0`, `legacy_fee_checks_skipped=9`, `running_bots=0`, `resting_orders=0`, `pending_orders=0`, `open_contracts=0` for the legacy account. This skipped nine previously repeated local fee readiness calculations per health pass, **not nine external Kalshi HTTP calls**.
+- **Favorites preserved:** Same monitoring sample had **75 enabled Favorites bots**, zero enabled bots in all other portfolios, `real_orders_enabled=false`, and `backlog=0`. New instance logged additional one-contract Favorites paper entries and paper-audit commits after readiness. No error-level logs in the sampled post-start window; previously sampled maker-entry fees were `0`. No original observations, historical positions/orders, balances or settlements were deleted or rewritten.
+- **Limits:** Skipped local checks do not establish a measured CPU/RAM decrease. PR #314 continues to own separate discovery scheduling; MT-011 and MT-019 remain separately owned.
