@@ -691,6 +691,9 @@ test('Favorites table setting switches views and persists across reload without 
  assert.match(nodes.get('groups').innerHTML,/70–&lt;78¢/);
  assert.match(nodes.get('groups').innerHTML,/90% win-rate interval/);
  assert.match(nodes.get('groups').innerHTML,/favorite-wide-matrix/);
+ const lower=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',bots:[{id:'btc',experiment:{entry_timing:[]}}]},new Set(),{mode:'wide',summary:folder.collector_wide_summary});
+ assert.match(lower,/favorite-stat-matrix favorite-wide-matrix/);
+ assert.match(lower,/n=100/);
  assert.doesNotMatch(nodes.get('groups').innerHTML,/\bpp\b/);
  assert.doesNotMatch(nodes.get('groups').innerHTML,/NaN|undefined/);
  assert.match(setup(d,{storage}).nodes.get('groups').innerHTML,/wider 3 × 3/);
