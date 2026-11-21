@@ -1,5 +1,5 @@
 """Reuse compression of byte-identical cold state; decoded checkpoint schema is unchanged."""
-import gzip
+import gzip,time
 from collections import OrderedDict
 import msgpack
 
@@ -9,6 +9,7 @@ class CheckpointSegments:
         self.max_bytes=max_bytes;self.max_entries=max_entries;self.min_bytes=min_bytes
         self.scalper_cold_level=scalper_cold_level
         self.cache=OrderedDict();self.bytes=0;self.hits=0;self.misses=0;self.evictions=0
+        self.cold_member_compression_ms=0.0
     @staticmethod
     def descend(path,key):
         if not path:return key=='experiments'
@@ -36,7 +37,9 @@ class CheckpointSegments:
         level=(self.scalper_cold_level
                if len(path)==6 and path[4:]==('scalper','research') and old is None
                else 1)
+        started=time.monotonic()
         encoded=gzip.compress(raw,compresslevel=level,mtime=0)
+        self.cold_member_compression_ms+=(time.monotonic()-started)*1000
         if old is not None:self.bytes-=len(old[0])+len(old[1]);del self.cache[path]
         size=len(raw)+len(encoded)
         if size<=self.max_bytes and self.max_entries>0:
