@@ -1,4 +1,5 @@
 """Large dashboard views remain strict JSON with verifiable transport bytes."""
+from decimal import Decimal as D
 import hashlib,json,unittest
 from copy import deepcopy
 from services.api.shadow import workspace_response,learning_diagnostics
