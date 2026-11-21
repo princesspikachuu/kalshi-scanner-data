@@ -36,7 +36,7 @@ class WorkspaceTransport(unittest.TestCase):
         def entry(series,market_type,contracts):
             return dict(series=series,market_type=market_type,clock='market_close',
                 horizon='5–10m',price='.80',contracts=str(contracts),closed=str(contracts),
-                resolved=str(contracts),winners=str(contracts),cost='1',net='.2')
+                resolved=str(contracts),winners=str(contracts),cost='1',net='.2',events=1,event_win_rate=100)
         specs=[('btc','KXBTC15M','crypto',2,False,'15m_price'),
                ('eth','KXETH15M','crypto',4,True,'15m_price'),
                ('hour','KXBTCD','hourly',3,False,'hourly_price')]
@@ -52,7 +52,11 @@ class WorkspaceTransport(unittest.TestCase):
         fifteen=summary['rows']['crypto-15m']
         hourly=summary['rows']['crypto-hourly']
         self.assertEqual(sum(float(r['contracts']) for r in fifteen),6)
+        # Two separately observed events, not six contracts.
+        self.assertEqual(sum(int(D(r['events'])) for r in fifteen),2)
+        self.assertEqual(sum(D(r['event_wins']) for r in fifteen),D(2))
         self.assertEqual(sum(float(r['contracts']) for r in hourly),3)
+        self.assertEqual(sum(int(D(r['events'])) for r in hourly),1)
         self.assertEqual(summary['coverage']['crypto-15m']['bots_total'],2)
         self.assertEqual(summary['coverage']['crypto-15m']['bots_with_rows'],2)
         self.assertEqual(summary['coverage']['crypto-hourly']['bots_total'],1)
