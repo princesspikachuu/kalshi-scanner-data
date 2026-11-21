@@ -197,7 +197,13 @@ class ForwardRun:
                     # During the minute after a known opening, a delayed
                     # venue listing must not cause us to sleep through the
                     # current 15-minute opportunity.
-                    if series in recent_wakes:
+                    most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
+                        if t.startswith(series+'-')),default=0)
+                    near_roll=(series in self.known_active and 0<=now-most_recent_close<60)
+                    if series in recent_wakes or near_roll:
+                        # The next contract can appear a few seconds after the
+                        # previous 15-minute close. Never sleep through it just
+                        # because a *later* unopened contract is already listed.
                         self.discovery_retry_at[series]=now+2
                         continue
                     key='fifteen:'+series
@@ -233,13 +239,9 @@ class ForwardRun:
                         remember(wake_store,key,wake,now)
                         self.discovery_retry_at[series]=wake
                         continue
-                    # Fast retry only during a genuinely recent 15-minute
-                    # rollover, not every two seconds during a closed session.
-                    most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
-                        if t.startswith(series+'-')),default=0)
-                    near_roll=(series in recent_wakes or series in self.known_active and
-                        0<=now-most_recent_close<60)
-                    self.discovery_retry_at[series]=now+(2 if near_roll else 900)
+                    # Unknown/unpublished schedules must be checked again
+                    # eventually, but not every two seconds during a closure.
+                    self.discovery_retry_at[series]=now+900
                     continue
                 market=min(candidates,key=lambda m:ts(m['close_time']))
                 metadata,fee=await self.market_metadata(market,series)
