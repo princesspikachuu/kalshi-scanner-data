@@ -3,6 +3,7 @@ import asyncio,json,time,math,traceback
 from uuid import uuid4
 from .runner import ts
 from .discovery_budget import candidate_markets,next_profile
+from .discovery_wake import asleep,remember,known_entry_wake
 from .hourly import favorite_bid
 from .storage import put
 from services.research.reports import SERIES
@@ -96,7 +97,10 @@ async def sports_once(host):
     active_events={markets[t].get('event_ticker') for t in markets
                    if markets[t].get('sports') and not markets[t].get('paid')
                    and markets[t]['close']>now and not markets[t].get('entry_parked')}
-    blocked=[series+'-sleep' for series,c in suite.sports_schedule.items() if c.get('retry_at',0)>now]
+    blocked=[series+'-sleep' for series,c in suite.sports_schedule.items()
+        if c.get('retry_at',0)>now or asleep(suite,'sports:'+series,now)]
+    blocked.extend(p['series']+'-sleep' for p in choices
+        if asleep(suite,'sports:'+p['series'],now))
     p,cursor=next_profile(suite,choices,blocked,suite.sports_cursor)
     if not p:return
     suite.sports_cursor=cursor;series=p['series']
@@ -121,6 +125,13 @@ async def sports_once(host):
         if scan['checked_events']>=3:break
         scan['checked_events']+=1;state['retry_at']=now+60
         raw=min(events[event],key=lambda r:(favorite_bid(r) is None,-float(r.get('volume_fp') or r.get('volume') or 0),r['ticker']))
+        # An exchange-provided expected game end gives an earliest possible
+        # late-game entry. Do not poll milestones/live scores for a game that
+        # cannot yet enter. Prewarm five minutes before the two-hour window.
+        future=known_entry_wake(raw,'sports',now)
+        if future is not None:
+            state['retry_at']=future;scan['scheduled_sleep']+=1
+            continue
         if now>=state.get('refresh_at',0):
             result=await asyncio.to_thread(host.verified_data.call,'GET','/milestones',dict(related_event_ticker=event,limit=20))
             state.update(milestones=result.get('milestones',[]),refresh_at=now+1800)
@@ -132,10 +143,14 @@ async def sports_once(host):
             if start>now+300:
                 state['retry_at']=min(start-300,now+1800);scan['scheduled_sleep']+=1;continue
             live=await live_for(milestone['id'])
-            gate=live_gate(raw,milestone,live,time.time(),late_hours=None)
+            gate=live_gate(raw,milestone,live,time.time(),late_hours=2)
             if not gate['sports_live']:
                 status=str(gate.get('sports_status','')).lower()
-                if status in ('closed','finished','final','completed','ended'):
+                remaining=expected_end(raw)-now if expected_end(raw) is not None else None
+                if remaining is not None and remaining>7200:
+                    state['retry_at']=max(now+15,now+remaining-7200)
+                    scan['scheduled_sleep']+=1
+                elif status in ('closed','finished','final','completed','ended'):
                     state['retry_at']=now+1800
                 continue
             scan['live_events']+=1;state['retry_at']=now+15
@@ -153,7 +168,19 @@ async def sports_once(host):
     # Admission or the three-event budget can stop before every listed event
     # has a state entry. Unvisited events remain immediately eligible for the
     # next fair series pass; never abort a successful admission with KeyError.
-    cache['retry_at']=min([suite.sports_events.get(ev,{}).get('retry_at',now) for ev in events]+[cache['refresh_at']])
+    # On a fully traversed listing, all events with a known future window
+    # can sleep until their earliest verified time hint, not a 10s/300s poll.
+    # Incomplete pages or unvisited events remain immediately discoverable.
+    scheduled=[suite.sports_events.get(ev,{}).get('retry_at',now) for ev in events]
+    listed_all=all(ev in suite.sports_events and
+        suite.sports_events[ev].get('retry_at',0)>now for ev in events)
+    complete=not suite.sports_pages.get(series)
+    if events and listed_all and complete and all(at>now for at in scheduled):
+        cache['retry_at']=min(scheduled)
+        remember(suite,'sports:'+series,cache['retry_at'],now)
+    else:
+        cache['retry_at']=min(scheduled+[cache['refresh_at']]) if events else cache['refresh_at']
+        remember(suite,'sports:'+series,None,now)
     print(json.dumps(dict(event='paper_sports_scan',**scan,next_check_at=cache['retry_at'],real_orders_enabled=False)),flush=True)
 
 async def discover_sports(host):
