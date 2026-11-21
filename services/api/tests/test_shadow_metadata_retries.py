@@ -108,12 +108,13 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now+120):
             await restored.discover_once()
         restored.api.fetch.assert_not_awaited()
-        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+7200):
+        actual_wake=restored.experiments.discovery_wakes[key]
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=actual_wake+.1):
             await restored.discover_once()
         self.assertEqual(restored.api.fetch.await_count,1)
         self.assertNotIn(key,restored.experiments.discovery_wakes)
         # Exchange may list a just-opened market a few seconds late.
-        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+7203):
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=actual_wake+3):
             await restored.discover_once()
         self.assertEqual(restored.api.fetch.await_count,2)
         self.assertFalse(restored.records)
