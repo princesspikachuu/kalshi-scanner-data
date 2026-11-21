@@ -33,6 +33,7 @@ test('historical query degradation still renders Favorites portfolio and researc
  context.demoCall=async path=>{
   if(path.startsWith('shadow/workspace'))return d;
   if(path==='shadow/events')return {items:[]};
+  if(path==='shadow/research-folder/favorites')return {bots:{}};
   return {tracked:false};
  };
  vm.runInContext('lastRestartRefresh=Date.now()',context);
