@@ -78,76 +78,27 @@ function researchTable(rows,roundTrips=false){
 }
 const researchNote='<p class="small">Counts are distinct verified resolved events per price/time cohort, not contracts. Ten contracts from one event count as one observation. One event may appear in multiple cohorts. Hold-only P/L % gives each resolved event equal weight, after fees. Known outcomes assume holding to settlement, ignoring exit proceeds and exit fees. Unknown outcomes are omitted. Estimated historical returns use average entry fees/sizing; account balances retain actual trades.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set(),options={}){
- const rows=options.mode==='wide'?(options.summary?.rows?.[group.id]||[]):favoriteCategoryRows(Array.isArray(group.aggregated_entry_timing)?group.aggregated_entry_timing:group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
+ const roundTrips=group.research_kind==='round_trips',wide=options.mode==='wide'&&!roundTrips;
+ const rows=wide?(options.summary?.rows?.[group.id]||[]):favoriteCategoryRows(Array.isArray(group.aggregated_entry_timing)?group.aggregated_entry_timing:group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
  const key='favorites-category-'+group.id;
- return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${group.research_kind==='round_trips'?'<p class="small">Both contract directions are combined by entry percentage and time. Win rate measures profitable completed trades, including fees; it is not event prediction accuracy. Data includes all collected history.</p>':researchNote}${researchTable(rows,group.research_kind==='round_trips')}</details>`;
+ const table=roundTrips?researchTable(rows,true):wide?favoriteWideMatrixMarkup(rows,options.summary?.coverage?.[group.id]||{},options.summary?.price_buckets,group.label):favoriteDetailedMatrixMarkup(rows,group.label,true);
+ return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${roundTrips?'<p class="small">Both contract directions are combined by entry percentage and time. Win rate measures profitable completed trades, including fees; it is not event prediction accuracy. Data includes all collected history.</p>':researchNote}${table}</details>`;
 }
 export function favoriteResearchMarkup(bots,open=new Set(),options={}){
  const contents=bots.map(bot=>{
-  const rows=options.mode==='wide'?(options.summary?.by_bot?.[bot.id]?.rows||[]):favoriteCategoryRows(bot.experiment?.entry_timing);
+  const wide=options.mode==='wide',record=options.summary?.by_bot?.[bot.id];
+  const rows=wide?(record?.rows||[]):favoriteCategoryRows(bot.experiment?.entry_timing);
   const key='favorites-research-'+bot.id;
-  return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed tiers</summary>${researchTable(rows)}</details>`;
+  const table=wide?favoriteWideMatrixMarkup(rows,record?.coverage||options.summary?.coverage?.[options.categoryId]||{},options.summary?.price_buckets,bot.name):favoriteDetailedMatrixMarkup(rows,bot.name,true);
+  return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed tiers</summary>${table}</details>`;
  }).join('');
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
-/** Add a complementary 2D price x time view; keep every existing research table intact. */
+/** Price/time grids share rendering across the folder summary and lower research. */
 export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}){
- const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
- const PRICES=[70,75,80,85,90,95];
  // Keep 15-minute and hourly cohorts separate; each pools its currencies.
  const groups=marketTypeGroups(bots);
- const matrix=(rows,label)=>{
-  const cells=new Map();
-  const aggregated=favoriteCategoryRows(rows,true);
-  // Do not silently drop valid collected tiers that fall outside the strategy's
-  // usual 70-95 cent bidding range. The per-market tables already show them.
-  const prices=[...new Set([...PRICES,...aggregated.map(row=>row.low)
-   .filter(low=>Number.isInteger(low)&&low>=0&&low<=100)])].sort((a,b)=>a-b);
-  let unplaced=0;
-  for(const row of aggregated){
-   if(!HORIZONS.includes(row.horizon)||!prices.includes(row.low)){
-    unplaced+=Number(row.events)||0;
-    continue;
-   }
-   const key=row.low+'|'+row.horizon;
-   if(!cells.has(key))cells.set(key,{purchased:0,settled:0,winners:0,closed:0,profitable:0,profitClassified:0,net:0,cost:0,holding:0,events:0,eventWins:0,return_sum:0,return_observations:0,estimated_return_observations:0});
-   const current=cells.get(key);
-   current.purchased+=row.contracts;current.settled+=row.resolved;
-   current.winners+=row.winners;current.closed+=row.closed;
-   current.profitable+=row.profitable_closed;current.profitClassified+=row.profit_classified_closed;
-   current.net+=row.net;current.cost+=row.cost;current.holding+=row.holding_seconds;
-   current.return_sum+=row.return_sum;current.return_observations+=row.return_observations;current.estimated_return_observations+=row.estimated_return_observations;
-   current.events+=Number(row.events)||0;current.eventWins+=Number(row.event_wins)||0;
-  }
-  // Mobile viewers see only the leftmost time windows at first. Summarize
-  // all actually populated windows before the horizontally scrollable table.
-  const windowTotals=new Map();
-  for(const [key,cell] of cells){
-   const time=key.split('|')[1];
-   windowTotals.set(time,(windowTotals.get(time)||0)+cell.events);
-  }
-  const observedWindows=HORIZONS.filter(time=>(windowTotals.get(time)||0)>0);
-  const windowNote='<p class="small">Observed time windows: '+
-    (observedWindows.length?observedWindows.map(time=>e(time)+' ('+e(String(Number(windowTotals.get(time).toFixed(2))))+' resolved observations)').join(' · '):
-    'No verified resolved timed events in this category')+
-    '. Scroll the table horizontally for the other time columns.</p>';
-  const head=HORIZONS.map(h=>'<th scope="col">'+e(h)+'</th>').join('');
-  const body=prices.map(low=>{
-   const bucket=low+'–'+Math.min(low+4,95)+'¢';
-   return '<tr><th scope="row">'+e(bucket)+'</th>'+HORIZONS.map(h=>{
-    const x=cells.get(low+'|'+h);
-    if(!x||x.purchased===0||x.events===0)return '<td class="stat-empty">—</td>';
-    const observations=x.events;
-    const outcome=eventAccuracy(x.eventWins,observations);
-    const pnl=averageReturn(x);
-    const confidence=confidenceMarkup(x.eventWins,observations,x.purchased?x.cost/x.purchased:null);
-    const signal=favoriteProfitSignal({purchased:x.purchased,settled:observations,winners:x.eventWins,cost:x.cost,closed:x.closed,net:x.return_observations>0?x.return_sum:x.net});
-    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · above break-even '+confidence.margin+' · 90% uncertainty '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
-    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Above cost '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
-   }).join('')+'</tr>';
-  }).join('');
-  return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
- };
+
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
   // The authenticated workspace carries a small, exact aggregate of the
@@ -165,9 +116,9 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
   if(group.id==='sports'){
    const byBot=source.timedSummary?.sports_by_bot||{};
    return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+
-      sourceNote+matrix(rows,group.label)+group.bots.map(bot=>matrix(Array.isArray(byBot[bot.id])?byBot[bot.id]:bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
+      sourceNote+favoriteDetailedMatrixMarkup(rows,group.label)+group.bots.map(bot=>favoriteDetailedMatrixMarkup(Array.isArray(byBot[bot.id])?byBot[bot.id]:bot.experiment?.entry_timing||[],bot.name)).join('')+'</details>';
   }
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+matrix(rows,group.label)+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+favoriteDetailedMatrixMarkup(rows,group.label)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
  '<p class="small">Counts are verified resolved events per price/time cohort, not contracts. Ten contracts from one event count once. An event may appear in multiple cohorts; P/L is the average held-to-outcome return percentage, including entry fees.</p>'+
@@ -176,34 +127,38 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
 }
 
 export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode!=='wide'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button><p class="small">Above break-even = win rate − entry cost with fees. Example: 90% wins − 85% cost = +5 percentage points. Uncertainty shows how far the win rate could vary at 90% confidence; compare it with the advantage. Related events can be correlated.</p></div>`;
+function favoriteWideMatrixMarkup(rows,coverage={},prices=['70–<78¢','78–<86¢','86–95¢'],label=''){
+ const times=coverage.time_buckets||[];
+ const body=prices.map(price=>'<tr><th scope="row">'+e(price)+'</th>'+times.map((time,slot)=>{
+  const row=rows.find(r=>r.band===price&&Number(r.time_slot)===slot);
+  if(!row||!(Number(row.events)>0))return '<td class="stat-empty">—</td>';
+  const n=Number(row.events),wins=Number(row.event_wins),entry=Number(row.cost)/Number(row.contracts);
+  const c=confidenceMarkup(wins,n,Number.isFinite(entry)?entry:null),ret=averageReturn(row);
+  const signal=Number(row.return_observations)>0?(Number(row.return_sum)>0?'realized-positive':Number(row.return_sum)<0?'realized-negative':'neutral'):'unknown';
+  return '<td class="stat-observed '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Above cost '+e(c.margin)+'</small><small>Uncertainty '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
+ }).join('')+'</tr>').join('');
+ const excluded=Number(coverage.excluded_legacy_observations)||0;
+ const note=(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
+ return '<p class="small">'+e(note)+'</p>'+(times.length?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><caption>'+e(label)+'</caption><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':'<p class="small">Waiting for exact entry times to establish the betting window.</p>');
+}
+
 export function favoriteWideOverviewMarkup(bots,summary,open=new Set()){
  const labels=new Map(marketTypeGroups(bots).map(g=>[g.id,g.label]));
  const categories=[...new Set([...labels.keys(),...Object.keys(summary?.rows||{})])];
  const prices=summary?.price_buckets||['70–<78¢','78–<86¢','86–95¢'];
  const sections=categories.map(category=>{
-  const rows=summary?.rows?.[category]||[],coverage=summary?.coverage?.[category]||{};
-  const times=coverage.time_buckets||[],key='favorites-wide-'+category;
-  const body=prices.map(price=>'<tr><th scope="row">'+e(price)+'</th>'+times.map((time,slot)=>{
-   const row=rows.find(r=>r.band===price&&Number(r.time_slot)===slot);
-   if(!row||!(Number(row.events)>0))return '<td class="stat-empty">—</td>';
-   const n=Number(row.events),wins=Number(row.event_wins),entry=Number(row.cost)/Number(row.contracts);
-   const c=confidenceMarkup(wins,n,entry),ret=averageReturn(row);
-   const signal=Number(row.return_observations)>0?(Number(row.return_sum)>0?'realized-positive':Number(row.return_sum)<0?'realized-negative':'neutral'):'unknown';
-   return '<td class="stat-observed '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Above cost '+e(c.margin)+'</small><small>Uncertainty '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
-  }).join('')+'</tr>').join('');
-  const excluded=Number(coverage.excluded_legacy_observations)||0;
-  const note=(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary><p class="small">'+e(note)+'</p>'+(times.length?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':'<p class="small">Waiting for exact entry times to establish the betting window.</p>')+'</details>';
+  const key='favorites-wide-'+category;
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary>'+
+   favoriteWideMatrixMarkup(summary?.rows?.[category]||[],summary?.coverage?.[category]||{},prices,labels.get(category)||category)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · wider 3 × 3</h3><p class="small">Distinct resolved events · hold-only return after fees · 90% confidence intervals. Wider bins pool different entry states.</p>'+sections+'</section>';
 }
 
-export function favoriteTimingMarkup(rows,wideRows=null){
- if(wideRows!==null)return `<details class="favorite-timing"><summary>Wider entry price × time thirds</summary>${researchTable(wideRows)}</details>`;
+export function favoriteTimingMarkup(rows,wideRows=null,options={}){
+ if(wideRows!==null)return `<details class="favorite-timing"><summary>Wider entry price × time thirds</summary>${favoriteWideMatrixMarkup(wideRows,options.coverage||{},options.price_buckets,options.label||'Market')}</details>`;
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
- return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${researchTable(favoriteCategoryRows(rows))}</details>`;
+ return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${options.matrix?favoriteDetailedMatrixMarkup(favoriteCategoryRows(rows),options.label||'Market',true):researchTable(favoriteCategoryRows(rows))}</details>`;
 }
-
 export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
