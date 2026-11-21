@@ -240,3 +240,10 @@
  .shadow-workspace .favorite-table-settings>p{flex:1 1 100%;margin:3px 0}
  .shadow-workspace .favorite-table-settings button{font-size:12px;padding:7px 9px}
 }
+
+/* Single-bucket evidence is readable from the closed category heading. */
+.shadow-workspace .favorite-single-overview .favorite-collector-category>summary{white-space:normal;overflow-wrap:anywhere;line-height:1.4}
+.shadow-workspace .favorite-single-headline{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px;white-space:normal;font-variant-numeric:tabular-nums}
+@media(max-width:650px){
+ .shadow-workspace .favorite-single-headline{display:block;margin:3px 0 0;font-size:11px}
+}
