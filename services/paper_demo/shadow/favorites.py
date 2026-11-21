@@ -301,20 +301,32 @@ class FavoritesStrategy(ConvexityStrategy):
                     loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
                 self.attempts[ticker]=a
             a.update(recorded=False,entry_deadline=deadline)
+            compare=active
             if a.get('entry_policy')=='favorites-paper-data-v3' and active:
-                # An older valid resting bid must not suppress a different
-                # price/time bucket before the first fill.
+                # Only compare the current candidate with bids in its own 5c
+                # / time bucket. Old distinct-bucket queues are not replacements.
+                _,buckets=self.active_buckets(ticker,a)
+                current=self.research_bucket(ticker,side,q['price'])
+                compare=[order for order in active if buckets.get(order.id)==current]
                 status=self.offer_distinct_bucket(ticker,m,a,[],q)
-                if status in ('blocked','submitted'):continue
+                if status in ('blocked','submitted'):
+                    canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
+                    for order in active:
+                        if order.id not in canceling:order.expiry=min(now+30,deadline)
+                    continue
             reprice_for_data=q['mode']=='paper_exploration' and now-a.get('last_submit',0)>=10
             if any(o.price>q['price'] or o.quantity!=q['quantity'] or
                     (reprice_for_data and q['price']-o.price>=D('.02')) or
-                    (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in active):
-                self.cancel_entry(ticker,'Maker entry refreshed: current price, configured size or fee conditions changed')
+                    (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in compare):
+                if a.get('entry_policy')=='favorites-paper-data-v3':
+                    for order in compare:self.e.cancel(order.id)
+                    self.last_reason='Maker entry refreshed within current research bucket'
+                else:
+                    self.cancel_entry(ticker,'Maker entry refreshed: current price, configured size or fee conditions changed')
                 a['retry_at']=now+1
             elif active:
-                # Extend the safety lease only after full revalidation. Keep the
-                # original arrival/queue position and never revive a cancellation.
+                # Renew only verified, non-canceling orders while retaining their
+                # arrival timestamp and original maker queue position.
                 canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
                 for order in active:
                     if order.id not in canceling:order.expiry=min(now+30,deadline)
