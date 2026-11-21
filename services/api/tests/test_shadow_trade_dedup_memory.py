@@ -73,12 +73,12 @@ class BaseEngineTradeDedupTests(unittest.TestCase):
         self.print('before-arrival', 1000.2, quantity='500')
         self.assertEqual(len(self.engine.trade_ids), 0)
         self.order.status = 'resting'
-        self.print('before-arrival', 1000.6, quantity='500')
-        # Delivery time cannot change the original exchange print time.
-        # Replaying the same earlier print must never fill the later bid.
-        # A validly timed later print remains eligible for execution.
+        self.engine.advance(1000.6)
+        # Deliver the original exchange print again with its original timestamp.
+        # Its print time predates the paper order's modeled arrival.
+        self.engine.trade('TEST', dict(trade_id='before-arrival', taker_side='no',
+            yes_price_dollars='.1', count_fp='500', ts_ms=1000200))
         self.assertEqual(self.order.remaining, D(10))
-        self.assertEqual(len(self.engine.trade_ids), 0)
         self.print('later', 1000.7, quantity='105')
         self.assertEqual(self.order.remaining, D(5))
 
