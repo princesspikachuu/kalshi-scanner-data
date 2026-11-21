@@ -53,9 +53,14 @@ class MonitoringBudget:
             self.service_ms=max(recent_cost,long_cost)
             self.queue_cost_basis='committed burst throughput; slower of 5s and 60s'
         self.queue_seconds=backlog*self.service_ms/1000
-        measured_rss,measured_limit=process_memory()
-        self.rss_bytes=measured_rss if rss_bytes is None else rss_bytes
-        self.memory_limit_bytes=measured_limit if memory_limit_bytes is None else memory_limit_bytes
+        # One local memory sample per five seconds, not for every queued
+        # checkpoint batch. Explicit test injections bypass the cache.
+        if (rss_bytes is not None or memory_limit_bytes is not None or
+                now>=getattr(self,'memory_sample_due',0)):
+            measured_rss,measured_limit=process_memory() if (rss_bytes is None or memory_limit_bytes is None) else (None,None)
+            self.rss_bytes=measured_rss if rss_bytes is None else rss_bytes
+            self.memory_limit_bytes=measured_limit if memory_limit_bytes is None else memory_limit_bytes
+            self.memory_sample_due=now+5
         self.memory_pressure=(self.rss_bytes/self.memory_limit_bytes
                               if self.rss_bytes is not None and self.memory_limit_bytes and self.memory_limit_bytes>0
                               else None)
