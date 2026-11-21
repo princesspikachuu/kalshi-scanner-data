@@ -61,6 +61,43 @@ class ExperimentFleet(StrategyFleet):
                 for ticker in owned.get(id(b),()):b.step(ticker)
         else:super().step(changed_ticker)
 
+PAUSED_SCALPER_STATUS_CACHE_SECONDS = 30
+
+
+def scalper_status_snapshot(bot, engine, now):
+    """Reuse derived research display only while a paper scalper is fully idle.
+
+    Source research and financial checkpoints are never cached or modified.
+    A short TTL guards against research cells changing in place without an
+    aggregate counter change; active positions/orders always bypass the cache.
+    """
+    if (bot.enabled or engine.wallet.lots or
+            any(order.status in ('pending', 'resting') for order in engine.orders.values())):
+        bot.__dict__.pop('_paused_scalper_status', None)
+        return bot.research_snapshot()
+
+    research = bot.research
+    # Compact signatures avoid walking/rebuilding the potentially large cell
+    # table every five seconds. Totals and configuration cover normal updates;
+    # the 30s TTL bounds any less common cell-only update's display staleness.
+    signature = (str(engine.wallet.cash), str(engine.wallet.deposits),
+                 json.dumps(bot.config, sort_keys=True, default=str),
+                 tuple((key, repr(value)) for key, value in research['totals'].items()),
+                 id(research), len(research.get('cells', {})),
+                 len(research.get('recent', ())))
+    cached = getattr(bot, '_paused_scalper_status', None)
+    if (cached is not None and 0 <= now-cached[0] < PAUSED_SCALPER_STATUS_CACHE_SECONDS
+            and signature == cached[1]):
+        # Shared tape calculations advance while unrelated strategies run.
+        # Keep this cheap live display field fresh without rebuilding all
+        # research cells or invalidating every paused bot on each tick.
+        return dict(cached[2], shared_feature_calculations=engine.tape.calculations)
+    rendered = dict(bot.research_snapshot(),
+                    shared_feature_calculations=engine.tape.calculations)
+    bot._paused_scalper_status = (now, signature, rendered)
+    return rendered
+
+
 class ExperimentSuite:
     def __init__(self,host,rows,previous=None):
         self.summary=(previous or {}).get('_summary',{})
@@ -647,7 +684,7 @@ class ExperimentSuite:
                     unmatched=sum(1 for a in attempts if not a.get('complete') and not a.get('finished')) if folder=='complete_set' else sum(1 for a in attempts if a.get('first') and not a.get('recorded')),
                     decision=list(b.decisions.values())[-1] if getattr(b,'decisions',{}) else None,
                     message=self.data_message(e,b,p,now),discovery=getattr(self,'hourly_coverage',{}).get(p['series']),
-                    scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
+                    scalper=(scalper_status_snapshot(b,e,now) if folder in SCALPER_FOLDERS else b.research_snapshot()) if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,
                     statistics=dict(min_samples=int(b.profile.get('statistics_min_samples',20)),latest_decisions=list(b.decisions.values())[-20:]) if isinstance(b,StatisticsFavoritesStrategy) else None,
                     entry_timing=favorite_timing_rows(b.exit_evidence.cells,hold_only=b.hold_only) if folder in ('favorites','favorites_statistics') else [])
