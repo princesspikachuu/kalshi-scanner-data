@@ -739,3 +739,21 @@ test('collapsed folder and at-a-glance summaries display current estimated balan
   assert.ok(html.includes('Total P/L'));
  }
 });
+
+test('strategy header places estimated portfolio value ahead of P/L, exposure and bot count',()=>{
+ const folder=fixture().folders[2];
+ folder.accounting.portfolio={cash:'1025',equity:'1050',deposits:'1000',total_pnl:'50',position_cost:'25'};
+ const header=folderCardSummaryMarkup(folder,'all',{bots:2,running:2});
+ const overview=folderOverviewMarkup([folder]);
+ assert.ok(header.includes('Estimated portfolio value'));
+ assert.ok(header.indexOf('Estimated portfolio value')<header.indexOf('Total P/L'));
+ assert.ok(header.indexOf('Estimated portfolio value')<header.indexOf('2 bots · 2 running'));
+ assert.ok(overview.indexOf('<th>Estimated portfolio value</th>')<overview.indexOf('<th>Total P/L'));
+ assert.ok(overview.includes('$1,050.00'));
+});
+test('invalid folder refill never silently falls back to legacy Convexity account',()=>{
+ const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8');
+ assert.match(source,/folder_id:folder,request_id:refillRequest/);
+ assert.match(source,/No funds were added/);
+ assert.match(source,/Never retry as an unscoped refill/);
+});
