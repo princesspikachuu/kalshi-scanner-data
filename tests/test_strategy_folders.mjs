@@ -1105,6 +1105,67 @@ test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty wit
   assert.match(nodes.get('groups').innerHTML,/favorite-wide-matrix|wider 3 × 3/);
 });
 
+test('regular Favorites evidence brackets retain their meanings at 50/100/300/1000 events',()=>{
+ const checkpoints=new Map([
+  [0,'No evidence'],[1,'Early'],[49,'Early'],[50,'Early'],[99,'Early'],
+  [100,'Preliminary'],[299,'Preliminary'],[300,'Developing'],
+  [999,'Developing'],[1000,'Stronger'],[10000,'Stronger']
+ ]);
+ for(const [n,tier] of checkpoints)assert.equal(favoriteEvidenceTier(n),tier,'evidence tier n='+n);
+});
+
+test('regular Favorites win-rate uncertainty is pending below 50 in detailed and wider buckets',()=>{
+ const row=n=>({
+   series:'KXBTC15M',market_type:'15m_price',side:'yes',clock:'market_close',
+   horizon:'5–10m',price:'.80',events:n,event_wins:n-4,
+   contracts:n,cost:.80*n,resolved:n,closed:n,winners:n-4,
+   return_observations:n,return_sum:.1*n
+ });
+ const bot={id:'btc',name:'Bitcoin',asset:'crypto',series:'KXBTC15M',experiment:{entry_timing:[row(49)]}};
+ const detail49=favoriteCollectorOverviewMarkup([bot]);
+ assert.match(detail49,/n=49 · Early/);
+ assert.match(detail49,/Win margin/);
+ assert.match(detail49,/win-rate error Pending · 49\/50 events/);
+ assert.match(detail49,/90% win-rate error Pending · 49\/50 events/);
+ assert.doesNotMatch(detail49,/win-rate error ±/);
+ const market49=favoriteTimingMarkup([row(49)]);
+ assert.match(market49,/n=49 · Early/);
+ assert.match(market49,/win-rate error Pending · 49\/50 events/);
+ bot.experiment.entry_timing=[row(50)];
+ const detail50=favoriteCollectorOverviewMarkup([bot]);
+ assert.match(detail50,/n=50 · Early/);
+ assert.match(detail50,/win-rate error ±/);
+ assert.doesNotMatch(detail50,/win-rate error Pending/);
+ const wide=n=>favoriteWideOverviewMarkup([bot],{
+   price_buckets:['78–<86¢'],coverage:{'crypto-15m':{time_buckets:['Early','Middle','Late']}},
+   rows:{'crypto-15m':[{band:'78–<86¢',time_slot:1,events:n,
+     event_wins:n-4,contracts:n,cost:.8*n,return_observations:n,return_sum:.1*n}]}
+ });
+ const wider49=wide(49),wider50=wide(50);
+ assert.match(wider49,/n=49 · Early/);
+ assert.match(wider49,/Win-rate error Pending · 49\/50 events/);
+ assert.doesNotMatch(wider49,/90% win-rate interval [0-9]/);
+ assert.match(wider50,/n=50 · Early/);
+ assert.match(wider50,/Win-rate error ±/);
+ assert.match(wider50,/90% win-rate interval [0-9]/);
+});
+
+test('regular Favorites never trusts a stale 20-event P/L uncertainty threshold',()=>{
+ const report={
+   resolved_events:49,event_wins:46,return_observations:49,
+   uncertainty_min_samples:20,average_return_pct:'22.0',
+   uncertainty90_pct:'1.1',ci90_low_pct:'20.9',ci90_high_pct:'23.1'
+ };
+ const cell=favoriteSingleCellMarkup(report);
+ assert.match(cell,/\+22\.00% Hold P\/L/);
+ assert.match(cell,/Pending · 49\/50 held-event returns/);
+ assert.doesNotMatch(cell,/±1\.10|90% interval 20\.90/);
+ const bot={id:'btc',name:'Bitcoin',asset:'crypto',series:'KXBTC15M',experiment:{entry_timing:[]}};
+ const overview=favoriteSingleOverviewMarkup([bot],{rows:{'crypto-15m':report}});
+ assert.match(overview,/90% P\/L uncertainty pending 49\/50/);
+ assert.match(overview,/Early/);
+});
+
 test('low held event counts never display a misleading numeric P/L confidence interval',()=>{
  const tooSmall=favoriteSingleCellMarkup({
    resolved_events:7,event_wins:6,return_observations:7,
