@@ -1670,6 +1670,21 @@ def run(stop):
             else:undo_recent_incident(store)
             from .entry_policy import apply_entry_window_rollout
             apply_entry_window_rollout(store)
+            # The advisory lock guarantees one owner writes this durable startup marker.
+            # Include deployment starts and same-process router recoveries.
+            if paper_mode and shadow_ready:
+                from .worker_restarts import record_worker_start
+                try:
+                    restart_counts=record_worker_start(store)
+                    print(json.dumps(dict(event='shadow_worker_start_recorded',
+                        restarts_24h=restart_counts['restarts_24h'],
+                        full_window=restart_counts['full_window'],
+                        real_orders_enabled=False)),flush=True)
+                except Exception as exc:
+                    # The read-only dashboard counter must never stop paper trading.
+                    print(json.dumps(dict(event='shadow_worker_start_record_failed',
+                        error_type=type(exc).__name__,
+                        real_orders_enabled=False)),flush=True)
             print(json.dumps(dict(event='demo_worker_ready',environment='demo',max_connections=3,watch_limit=100)),flush=True)
             # Retain legacy results/checkpoints but stop obsolete queued work so
             # collection analysis does not keep yielding to an absent replayer.
