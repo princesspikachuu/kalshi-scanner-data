@@ -120,15 +120,27 @@ class RegularFavoritesProfitAuditTests(unittest.TestCase):
         self.assertEqual(D(summary['average_return_pct']),D('-37.5'))
 
     def test_partially_attributed_repeat_event_cannot_inflate_pooled_roi(self):
+        from services.paper_demo.shadow.regular_favorites_hold_research import (
+            regular_favorites_held_bots)
+        from services.paper_demo.shadow.favorite_single import summarize_single
+        from services.paper_demo.shadow.favorite_wide import summarize_wide
         a=self.row(outcomes={'A':1},
             returns={'A':dict(cost='.75',net='.25')})
         b=self.row(outcomes={'A':1},
             returns={'A':dict(cost='NaN',net='.25')})
+        bots={'btc':dict(entry_timing=[a,b])}
+        profiles={'btc':dict(series='KXBTC15M',asset='crypto')}
         result=self.aggregate([a,b])
         self.assertEqual(D(result['events']),1)
         self.assertEqual(result['return_observations'],0,
             'one malformed cohort makes the combined event return incomplete')
         self.assertIsNone(result['average_return_pct'])
+        held=regular_favorites_held_bots(bots)
+        wide=summarize_wide(held,profiles,lambda p:'crypto-15m')['rows']['crypto-15m'][0]
+        single=summarize_single(held,profiles,lambda p:'crypto-15m')['rows']['crypto-15m']
+        for other in (wide,single):
+            self.assertEqual(other['return_observations'],0)
+            self.assertIsNone(other['average_return_pct'])
 
     def test_all_three_regular_favorites_views_restore_known_early_exits(self):
         from services.paper_demo.shadow.regular_favorites_hold_research import (
