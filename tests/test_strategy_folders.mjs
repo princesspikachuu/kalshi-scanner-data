@@ -24,6 +24,48 @@ function setup(data,{storage=new Map(),queries={}}={}){
   scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes,listeners};
 }
+test('historical query degradation still renders Favorites portfolio and research notice',async()=>{
+ const d=fixture();
+ d.installed=true;
+ d.historical_metrics_delayed=true;
+ d.health={message:'Current worker ready'};
+ const {context,nodes}=setup(d);
+ context.demoCall=async path=>{
+  if(path.startsWith('shadow/workspace'))return d;
+  if(path==='shadow/events')return {items:[]};
+  if(path==='shadow/research-folder/favorites')return {bots:{}};
+  return {tracked:false};
+ };
+ vm.runInContext('lastRestartRefresh=Date.now()',context);
+ await vm.runInContext('load()',context);
+ assert.match(nodes.get('groups').innerHTML,/High-Probability Favorites/);
+ assert.match(nodes.get('accountSummary').innerHTML,/At a glance/);
+ assert.match(nodes.get('health').textContent,/historical reports delayed/);
+ assert.match(nodes.get('message').textContent,/Current portfolio balances and Favorites research are available/);
+});
+
+test('collapsed recent activity does not issue costly history requests during Favorites polling',async()=>{
+ const d=fixture();d.installed=true;
+ const calls=[],{context,nodes}=setup(d);
+ context.demoCall=async path=>{
+  calls.push(path);
+  if(path.startsWith('shadow/workspace'))return d;
+  if(path==='shadow/research-folder/favorites')return {bots:{}};
+  if(path==='shadow/events')return {items:[]};
+  return {tracked:false};
+ };
+ vm.runInContext('lastRestartRefresh=Date.now()',context);
+ await vm.runInContext('load()',context);
+ assert.equal(calls.filter(path=>path==='shadow/events').length,0);
+ const activity=nodes.get('activity');
+ activity.open=true;await activity.ontoggle();
+ assert.equal(calls.filter(path=>path==='shadow/events').length,1);
+ await vm.runInContext('refreshRecentActivity()',context);
+ assert.equal(calls.filter(path=>path==='shadow/events').length,1,'an open panel is throttled');
+ activity.open=false;await vm.runInContext('refreshRecentActivity(true)',context);
+ assert.equal(calls.filter(path=>path==='shadow/events').length,1,'closed activity never queries history');
+});
+
 test('Data Learning panel distinguishes active learning from diagnostics-only and operational strategies',()=>{
  const data=fixture();
  data.folders[0].learning={classification:'operational_only',state:'not_learning',observations:4,settled_observations:2,open_observations:2,bot_count:1,decisions:'No historical model currently changes set execution',segments:'event/set execution records',minimum:'Not applicable',fallback:'Current executable-cost and coverage rules',features:['executable set cost','fees']};
