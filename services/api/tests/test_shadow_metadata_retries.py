@@ -79,6 +79,7 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
     async def test_known_rolling_family_retries_quickly_at_market_boundary(self):
         run=self.fixture();run.known_active={'KNOWN'};run.profiles=[dict(series='KNOWN')]
         run.api.fetch=AsyncMock(return_value=dict(markets=[]));now=time.time()
+        run.engine.markets['KNOWN-prior']=dict(close=now-1)
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now):await run.discover_once()
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now+3):await run.discover_once()
         self.assertEqual(run.api.fetch.await_count,2)
