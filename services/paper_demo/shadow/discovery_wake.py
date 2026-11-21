@@ -8,8 +8,13 @@ from datetime import datetime, timedelta, time as day_time
 from zoneinfo import ZoneInfo
 import math
 
-from .runner import ts
 from .weather_window import CITY_ZONES, entry_end
+
+
+def ts(value):
+    if isinstance(value,(int,float)):
+        return float(value)
+    return datetime.fromisoformat(value.replace('Z','+00:00')).timestamp()
 
 
 def wake_state(suite):
