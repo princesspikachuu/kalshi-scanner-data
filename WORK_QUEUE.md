@@ -1708,3 +1708,25 @@ Independently trace regular Favorites observations from maker fills through auth
 - **Deployment verified:** `pocket-processing-staging` deploy `dep-dc0vf6fb9u1s73foic3g` Live on merged commit `04769fa1` at 2026-11-21 19:57:59 UTC; replacement `c9l6c` emitted `demo_worker_ready` at 20:00:00 UTC after the exclusive paper-trading lock handoff. `pocket-api-staging` final deploy `dep-dc0vf7tlfk9s73cgsde0` Live at 19:58:49 UTC on `05f7508d`, a descendant containing MT-022 plus later independently merged regular Favorites uncertainty and storage telemetry. API logged successful `dashboard_transport` responses, no error-level logs in post-release sample.
 - **Safety/operations:** New worker health at 20:00:16 and 20:00:47 UTC reported **75 running regular Favorites bots**, **zero** running unrelated bots, `real_orders_enabled=false`. Favorites monitoring reported 9 active markets; capacity backlog dropped from 25 to 0 in sampled cycles. No new Favorites paper-entry log was observed in the short initial post-handoff sample, so do not infer an observed new fill from this release check. Original settlement records, positions, early-exit financial ledger, balances and archive data remain unchanged by the read-only display transformation.
 
+---
+
+## MT-023 — Audit regular Favorites research completeness, bucket reconciliation and evidence progress
+**Status:** IN PROGRESS — read-only evidence audit
+**Worker:** ChatGPT / MT-023 regular Favorites evidence audit
+**Claimed:** 2026-11-21
+**Urgency:** U2 — HIGH
+**Priority:** User-approved next step after MT-022
+
+### Goal
+Independently validate *actual* regular High-Probability Favorites observation coverage and consistency: Detailed vs Wider vs Single, distinct event identities (not contracts or overlapping correlated cohorts), known hold-to-settlement historical exits, incomplete/estimated/unsettled outcomes, and 50-event uncertainty eligibility. Produce grounded coverage and profitability findings by market type/price/time with measured gaps, source and time window. Do not infer profitability or confidence from partial or correlated observations.
+
+### Coordination and safety
+- Only the regular `favorites` portfolio; exclude `favorites_statistics` and other portfolios. Real exchange orders must remain disabled and every other bot group paused.
+- Coordinate with existing MT-018 (collection balance), MT-019 (history/backup), MT-011 (systems performance); avoid editing their claimed source and never change bot configuration for this audit.
+- Use read-only, bounded queries with explicit market/portfolio provenance; avoid expensive full JSONB scans of mutable hot history or anything that risks the paper worker or database.
+- Keep historical observations, financial ledger, positions, settlement evidence, backups and original fee data immutable.
+- If the audit finds a concrete reporting defect, isolate the fix with tests and a separate PR off `build/google-auth-foundation`; don't edit the uncertainty threshold owned by PR #324 or duplicate MT-022 calculations.
+- Record observed counts and limitations without publishing private financial data or raw user account/contract identifiers in this shared queue.
+
+### Completion notes
+_In progress: source discovery, evidence reconciliation, coverage/uncertainty analysis, findings and next safe work items._
