@@ -207,9 +207,10 @@ test('expanded second-level dashboard panels survive redraw and remain scoped to
   ];
   const {context}=setup(fixture(),{queries:{'details[data-ui-panel]':panels}});
   const expanded=vm.runInContext('expandedDashboardPanels()',context);
+  context.savedExpandedPanels=expanded;
   assert.equal(expanded.size,3);
   panels.forEach(panel=>{panel.open=false});
-  vm.runInContext('restoreDashboardPanels(expanded)',context);
+  vm.runInContext('restoreDashboardPanels(savedExpandedPanels)',context);
   assert.equal(panels[0].open,true);
   assert.equal(panels[1].open,false,'a different market must stay closed');
   assert.equal(panels[2].open,true);
