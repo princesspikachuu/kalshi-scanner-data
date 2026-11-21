@@ -398,20 +398,9 @@ def install_shadow(app,auth,mutate,pool):
             # The initial dashboard intentionally drops latest_report from its
             # wire response. Do not scan all reports just to build cards.
             # Existing current_cycles retain recent execution evidence.
-            metrics=historical_read(c,'quality_metrics',"""WITH r AS (
-                SELECT progress AS p FROM research_job WHERE idempotency_key>='demo/shadow/report/'
-                AND idempotency_key<'demo/shadow/report/zzzz' AND """+scope+"""),
-                windows(period,seconds) AS (VALUES ('all',NULL::integer),('1H',3600),('6H',21600),('24H',86400))
-                SELECT p->>'bot_id' AS bot,period,
-                count(*) FILTER(WHERE (p->>'data_valid')::boolean) AS cycles,
-                count(*) FILTER(WHERE NOT (p->>'data_valid')::boolean) AS excluded_cycles,
-                coalesce(sum((p->>'gross_profit')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0)::text AS gross_profit,
-                coalesce(sum((p->>'total_fees_paid')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0)::text AS fees,
-                coalesce(sum((p->>'net_realized_pnl')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0)::text AS net_realized_pnl,
-                (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean)/
-                nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0))::text AS win_rate
-                FROM r CROSS JOIN windows WHERE seconds IS NULL OR (p->>'at')::numeric>=%s-seconds
-                GROUP BY p->>'bot_id',period""",(reset_at,latest=='full',Jsonb(revisions),now)).fetchall()
+            # One financial scan computes BOTH historical validity metrics and
+            # actual-money P/L. The previous second full JSON scan regularly
+            # exceeded PostgreSQL's 5s statement timeout under paper activity.
             # Financial results include every paper trade. Data quality is a
             # separate count; it must never make a real simulated loss disappear.
             financial=historical_read(c,'financial_metrics',"""WITH history AS (
@@ -428,7 +417,12 @@ def install_shadow(app,auth,mutate,pool):
                 coalesce(sum((p->>'gross_profit')::numeric),0)::text AS gross_profit,
                 coalesce(sum((p->>'total_fees_paid')::numeric),0)::text AS fees,
                 coalesce(sum((p->>'net_realized_pnl')::numeric),0)::text AS net_realized_pnl,
-                (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate
+                (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate,
+                coalesce(sum((p->>'gross_profit')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_gross_profit,
+                coalesce(sum((p->>'total_fees_paid')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_fees,
+                coalesce(sum((p->>'net_realized_pnl')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_net_realized_pnl,
+                (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean)/
+                 nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0))::text AS quality_win_rate
                 FROM r CROSS JOIN windows
                 WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
                 AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
@@ -436,8 +430,11 @@ def install_shadow(app,auth,mutate,pool):
         historical_sql_ms=(time.monotonic()-historical_sql_started)*1000
         if historical_sql_ms>1000:
             print(json.dumps(dict(event='shadow_workspace_query_cost',historical_sql_ms=round(historical_sql_ms,1),source='legacy_report_history')),flush=True)
-        mapped={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in metrics}
-        actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in financial}
+        mapped={(m['bot'],m['period']):dict(cycles=m['cycles'],excluded_cycles=m['excluded_cycles'],
+            gross_profit=m['quality_gross_profit'],fees=m['quality_fees'],
+            net_realized_pnl=m['quality_net_realized_pnl'],win_rate=m['quality_win_rate'])
+            for m in financial if m['period']!='account'}
+        actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period') and not k.startswith('quality_')} for m in financial}
         reports={}  # Legacy latest-report details are not needed in the initial overview.
         bots=[]
         for row in profiles:
