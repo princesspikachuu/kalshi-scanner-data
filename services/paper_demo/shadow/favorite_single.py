@@ -9,7 +9,7 @@ from decimal import Decimal as D, InvalidOperation
 # This is a minimum for displaying the approximate held-ROI Student-t interval,
 # NOT a claim that 20 events are enough to establish profitability. The 90%
 # Wilson win-rate interval is computed separately for the bucket matrices.
-MIN_HOLD_RETURN_UNCERTAINTY_EVENTS = 20
+MIN_HOLD_RETURN_UNCERTAINTY_EVENTS = 50
 
 # Two-sided 90% Student t critical values for small samples (df 1..30).
 T90 = (
