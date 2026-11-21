@@ -223,3 +223,20 @@
  .shadow-workspace .folder-card-values>span{min-width:0}
  .shadow-workspace .market-type-values{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* One combined event bucket should fit on a phone without horizontal scrolling. */
+.shadow-workspace .favorite-single-matrix{width:min(100%,440px);table-layout:fixed}
+.shadow-workspace .favorite-single-matrix th,.shadow-workspace .favorite-single-matrix td{white-space:normal;overflow-wrap:anywhere;text-align:left}
+.shadow-workspace .favorite-single-matrix td{min-width:0;padding:12px}
+.shadow-workspace .favorite-single-matrix td>strong{font-size:clamp(19px,4vw,25px);font-variant-numeric:tabular-nums;display:block;line-height:1.25}
+.shadow-workspace .favorite-single-matrix td>small{display:block;line-height:1.5;font-size:12px;margin-top:5px}
+.shadow-workspace .favorite-single-matrix td>details{margin-top:7px}
+.shadow-workspace .favorite-single-sport{margin:12px 0}
+.shadow-workspace .favorite-single-sport h4{margin:6px 0;font-size:13px}
+@media(max-width:650px){
+ .shadow-workspace .favorite-single-matrix{width:100%}
+ .shadow-workspace .favorite-single-matrix th,.shadow-workspace .favorite-single-matrix td{padding:9px}
+ .shadow-workspace .favorite-table-settings{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+ .shadow-workspace .favorite-table-settings>p{flex:1 1 100%;margin:3px 0}
+ .shadow-workspace .favorite-table-settings button{font-size:12px;padding:7px 9px}
+}
