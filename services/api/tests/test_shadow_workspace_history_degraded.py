@@ -86,7 +86,7 @@ class HistoryDelayedWorkspaceTests(unittest.TestCase):
         favorite=next(f for f in result['folders'] if f['id']=='favorites')
         self.assertEqual(favorite['accounting']['portfolio']['cash'],'999')
         research=favorite['collector_timed_summary']['rows']['crypto-15m']
-        self.assertEqual(research[0]['events'],1)
+        self.assertEqual(int(research[0]['events']),1)
         fav_bot=next(x for x in result['bots'] if x['id']=='fav')
         self.assertEqual(fav_bot['experiment']['completed'],1)
         self.assertEqual(self.conn.execute.call_count,1)
@@ -99,7 +99,7 @@ class HistoryDelayedWorkspaceTests(unittest.TestCase):
         self.assertTrue(first['historical_metrics_delayed'])
         self.assertTrue(second['historical_metrics_delayed'])
         self.assertEqual(self.conn.execute.call_count,1)
-        self.assertEqual(second['folders'][1]['collector_timed_summary']['rows']['crypto-15m'][0]['events'],1)
+        self.assertEqual(int(second['folders'][1]['collector_timed_summary']['rows']['crypto-15m'][0]['events']),1)
 
     def test_cooldown_expires_and_history_reads_are_retried(self):
         self.workspace()
