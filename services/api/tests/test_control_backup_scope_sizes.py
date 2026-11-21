@@ -24,7 +24,7 @@ class BackupScopeTelemetryTests(unittest.TestCase):
         bot=self.row('demo/bot/one',1)
         shadow=self.row('demo/shadow/bot/two',2)
         shadow['parameters']['folder_id']='favorites'
-        other_shadow=self.row('demo/shadow/bot/four',5)
+        other_shadow=self.row('demo/shadow/bot/zeta',5)
         other_shadow['parameters']['folder_id']='favorites_statistics'
         write=self.row('live/write/three',3)
         singleton=self.row('demo/shadow/checkpoint',4)
@@ -135,7 +135,10 @@ class BackupScopeTelemetryTests(unittest.TestCase):
         staged=dict(file=BytesIO(len(blob).to_bytes(4,'big')+blob),records=1,
                     parts=1,sha256=digest_records([row]),staged_bytes=300,
                     scope_sizes={'demo_bots':dict(records=1,bytes=300,
-                                                  largest_record_bytes=300)})
+                                                  largest_record_bytes=300)},
+                    favorites_shadow_bot_sizes={
+                        'regular_favorites':dict(records=0,bytes=0,largest_record_bytes=0),
+                        'all_other_bots':dict(records=0,bytes=0,largest_record_bytes=0)})
         store=MagicMock()
         with patch('services.demo.control_backup_v2.collect_snapshot_spooled',
                    return_value=staged),patch(
