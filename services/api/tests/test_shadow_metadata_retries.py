@@ -2,6 +2,7 @@
 import time
 import unittest
 from datetime import datetime,timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock,Mock,patch
 from services.demo.exchange import ExchangeFailure
 from services.paper_demo.shadow.core import Engine,FeePolicy
@@ -81,6 +82,51 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now):await run.discover_once()
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now+3):await run.discover_once()
         self.assertEqual(run.api.fetch.await_count,2)
+
+    async def test_15m_known_future_open_is_checkpointed_and_skips_closed_hours(self):
+        run=self.fixture();run.profiles=[dict(series='KXGOLD15M')]
+        run.experiments=SimpleNamespace(discovery_wakes={})
+        now=time.time()
+        iso=lambda seconds:datetime.fromtimestamp(seconds,timezone.utc).isoformat()
+        future=dict(ticker='KXGOLD15M-weekend',event_ticker='GOLD-weekend',
+            status='initialized',open_time=iso(now+7200),close_time=iso(now+8100))
+        async def fetch(path,params=None):
+            self.assertEqual(path,'/markets')
+            return dict(markets=[future]) if params.get('status')=='unopened' else dict(markets=[])
+        run.api.fetch=AsyncMock(side_effect=fetch)
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        self.assertEqual(run.api.fetch.await_count,2)
+        key='fifteen:KXGOLD15M'
+        self.assertEqual(run.experiments.discovery_wakes[key],now+7200)
+        # Even across a new worker instance, the saved checkpoint wake prevents
+        # periodic opening scans and does not require a market subscription.
+        restored=self.fixture();restored.profiles=list(run.profiles)
+        restored.experiments=SimpleNamespace(discovery_wakes=dict(run.experiments.discovery_wakes))
+        restored.api.fetch=AsyncMock(side_effect=fetch)
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+120):
+            await restored.discover_once()
+        restored.api.fetch.assert_not_awaited()
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+7200):
+            await restored.discover_once()
+        self.assertEqual(restored.api.fetch.await_count,1)
+        self.assertNotIn(key,restored.experiments.discovery_wakes)
+        # Exchange may list a just-opened market a few seconds late.
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+7203):
+            await restored.discover_once()
+        self.assertEqual(restored.api.fetch.await_count,2)
+        self.assertFalse(restored.records)
+
+    async def test_index_15m_weekend_uses_session_hint_without_exchange_reads(self):
+        run=self.fixture();run.profiles=[dict(series='KXINX15M')]
+        run.experiments=SimpleNamespace(discovery_wakes={})
+        now=datetime(2026,11,7,17,tzinfo=timezone.utc).timestamp()
+        run.api.fetch=AsyncMock(return_value=dict(markets=[]))
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        run.api.fetch.assert_not_awaited()
+        self.assertGreater(run.experiments.discovery_wakes['fifteen:KXINX15M'],now)
+        self.assertFalse(run.records)
 
     async def test_shared_cooldown_creates_one_warning_not_one_per_bot(self):
         run=self.fixture()
