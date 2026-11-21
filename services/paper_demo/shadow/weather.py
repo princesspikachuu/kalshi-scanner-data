@@ -5,9 +5,10 @@ from .runner import ts
 from .storage import put
 from .discovery_budget import candidate_markets,next_profile
 from .hourly import favorite_bid
+from .weather_window import CITY_ZONES,entry_allowed
 from services.research.reports import SERIES
 
-WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets with evidence-based exits. Favorite bias remains a hypothesis.'
+WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets and holds until authoritative settlement. Daily entries are limited to the city’s final two hours. Favorite bias remains a hypothesis.'
 
 def weather_profiles():
     return [dict(id='fav_'+s.lower(),series=s,name=('Hourly weather · ' if category=='weather' else 'Daily weather · ')+s,
@@ -34,7 +35,8 @@ def initialize_weather(store,guard):
 def candidates(rows,series,now):
     """Each contract is independent; never infer exclusivity from thresholds."""
     found=[m for m in rows if m.get('ticker','').startswith(series+'-') and m.get('status')=='active'
-           and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=86400]
+           and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=86400
+           and (series not in CITY_ZONES or entry_allowed(dict(m,close=ts(m['close_time'])),now))]
     # Prefer usable favorites, then nearest close and executable-looking volume.
     def rank(m):
         return (favorite_bid(m) is None,ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0),m['ticker'])

@@ -555,7 +555,15 @@ class Engine:
                 order.status, order.reserved = 'expired', ZERO
                 self.log('EXPIRED', order)
 
+    def entry_order_allowed(self,order):
+        guard=getattr(self.strategy,'entry_order_allowed',None)
+        if order.action!='buy' or guard is None or guard(order):return True
+        order.status,order.reserved='cancelled',ZERO
+        self.log('CANCELLED',order,reason='Entry window closed or not yet open')
+        return False
+
     def arrive(self, order: Order):
+        if not self.entry_order_allowed(order):return
         book = self.books[order.ticker]
         market = self.markets[order.ticker]
         if (not self.book_fresh(order.ticker) or
@@ -621,6 +629,7 @@ class Engine:
                                               if total else None}))
 
     def fill(self, order: Order, quantity: D, price: D, reason: str, slippage=ZERO):
+        if not self.entry_order_allowed(order):return
         fee = self.fees[order.ticker].charge(quantity, price, order.maker)
         # Record net cash actually recovered, including each executed layer's fee.
         # Targets use the same FIFO allocation as Wallet.fill; quotes are never proceeds.
@@ -693,6 +702,7 @@ class Engine:
         remaining_print = volume
         shadow_by_price = {}
         for order in candidates:
+            if not self.entry_order_allowed(order):continue
             effective_volume = volume-sum((q for p,q in shadow_by_price.items() if p > order.price), ZERO)
             old_ahead = order.ahead
             through = trade_price <= order.price-D('.01')
@@ -1016,6 +1026,10 @@ class StrategyFleet:
         bot = self.owner(order.ticker)
         if bot:
             bot.on_fill(order, quantity)
+
+    def entry_order_allowed(self,order):
+        bot=self.owner(order.ticker);guard=getattr(bot,'entry_order_allowed',None)
+        return guard(order) if guard else True
 
     def exit_allowed(self, order):
         bot = self.owner(order.ticker)

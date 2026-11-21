@@ -19,7 +19,7 @@ class HoldOnlyTests(unittest.TestCase):
         self.assertEqual(sum(l.quantity for l in e.wallet.lots),10)
         self.assertEqual(len([o for o in e.orders.values() if o.action=='sell']),1)
 
-    def test_held_settlement_records_return_but_prior_partial_exit_is_excluded(self):
+    def test_known_outcome_uses_hold_return_even_after_prior_partial_exit(self):
         for exited in (False,True):
             e,b,book,o=timing_fixture.EntryTiming().setup_bot(close=1000)
             e.fill(o,D(10),o.price,'TEST')
@@ -29,10 +29,11 @@ class HoldOnlyTests(unittest.TestCase):
             b.hold_only=True
             timing_fixture.EntryTiming().settle(e,b,1001)
             result=rows(b.exit_evidence.cells,hold_only=True)[0]
-            self.assertEqual(result['return_observations'],0 if exited else 1)
-            if not exited:self.assertEqual(D(result['average_return_pct']),D(100)/9)
+            self.assertEqual(result['return_observations'],1)
+            self.assertEqual(D(result['average_return_pct']),D(100)/9)
+            if exited:self.assertNotEqual(D(result['net']),D(1))
 
-    def test_historical_singleton_hold_result_is_reconstructed_but_exit_altered_row_is_not(self):
+    def test_historical_known_outcomes_ignore_exits_and_unknown_outcomes_are_omitted(self):
         key='legacy'
         metric=dict(key=key,series='KXBTCD',side='yes',price='.8',horizon='5–10m',
             contracts='10',closed='10',resolved='10',winners='10',unverified='0',
@@ -40,9 +41,38 @@ class HoldOnlyTests(unittest.TestCase):
         cells={key:dict(events={'one':1}),METRICS+key:metric}
         self.assertEqual(rows(cells,hold_only=True)[0]['return_observations'],1)
         metric['net']='-1'
+        self.assertEqual(rows(cells,hold_only=True)[0]['return_observations'],1)
+        self.assertEqual(D(rows(cells,hold_only=True)[0]['average_return_pct']),100*D('1.9')/D('8.1'))
+        cells[key]['events']['two']=1
+        self.assertEqual(rows(cells,hold_only=True)[0]['estimated_return_observations'],2)
+        cells[key]['events']={}
         self.assertEqual(rows(cells,hold_only=True)[0]['return_observations'],0)
-        metric['net']='1.9';cells[key]['events']['two']=1
-        self.assertEqual(rows(cells,hold_only=True)[0]['return_observations'],0)
+
+    def test_known_losing_outcome_after_exit_has_minus_100_percent_hold_return(self):
+        e,b,book,o=timing_fixture.EntryTiming().setup_bot(close=1000)
+        e.fill(o,D(10),o.price,'TEST')
+        sell=e.place(o.ticker,'yes','sell',D(4),D('.01'),maker=False)
+        e.advance(202)
+        b.hold_only=True
+        e.settled.add(o.ticker);e.markets[o.ticker]['yes_payout_confirmed']='0'
+        e.handle('settlement',dict(ticker=o.ticker,yes_payout='0'),1001);b.step()
+        result=rows(b.exit_evidence.cells,hold_only=True)[0]
+        self.assertEqual(result['return_observations'],1)
+        self.assertEqual(D(result['average_return_pct']),-100)
+        self.assertNotEqual(D(result['net']),-D(result['cost']))
+
+    def test_hold_research_retains_entry_fees_but_ignores_exit_fees_and_keeps_ledger(self):
+        e,b,book,o=timing_fixture.EntryTiming().setup_bot(close=1000,fees=True)
+        e.fill(o,D(10),o.price,'TEST')
+        e.place(o.ticker,'yes','sell',D(4),D('.01'),maker=False);e.advance(202)
+        b.hold_only=True
+        timing_fixture.EntryTiming().settle(e,b,1001)
+        cash=e.wallet.cash
+        result=rows(b.exit_evidence.cells,hold_only=True)[0]
+        self.assertEqual(D(result['average_return_pct']),100*(D(10)-D(result['cost']))/D(result['cost']))
+        self.assertNotEqual(D(result['net']),D(10)-D(result['cost']))
+        rows(b.exit_evidence.cells,hold_only=True)
+        self.assertEqual(e.wallet.cash,cash)
 
     def test_expired_depth_is_released_without_changing_position_or_financial_state(self):
         suite,_=scope_fixture.ScopeTests().suite();engine=suite.portfolios['favorites'][0]

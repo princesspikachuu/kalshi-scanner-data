@@ -1,5 +1,6 @@
 """One consistent virtual-wallet snapshot, independent of strategy evidence quality."""
 from decimal import Decimal as D
+from .weather_window import observation_end
 
 ZERO=D(0)
 FIELDS=('unfilled_bids','unfilled_principal','reserved_fees','unfilled_contracts',
@@ -59,7 +60,7 @@ def snapshot(engine,profiles,now):
                 value=q['gross']-q['fees']+(quantity-q['quantity'])*last
                 depth_marks[(ticker,side)]=(value/quantity,q['quantity']>=quantity)
     for lot in engine.wallet.lots:
-        market=engine.markets[lot.ticker];pending=now>=market['close']
+        market=engine.markets[lot.ticker];pending=now>=observation_end(market)
         cost=lot.quantity*lot.price+lot.entry_fee;book=engine.books.get(lot.ticker)
         confirmed=market.get('yes_payout_confirmed')
         mark=None;source='entry_price';quote_at=None

@@ -36,19 +36,21 @@ class Scan(unittest.IsolatedAsyncioTestCase):
 
     def test_weather_usable_maker_book_ranks_ahead_of_one_sided_extreme(self):
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
-        base=dict(status='active',open_time=date(100),close_time=date(1600))
-        rows=[dict(base,ticker='KXHIGHNY-one',yes_bid_dollars='.90',no_bid_dollars='0'),
-              dict(base,ticker='KXHIGHNY-two',yes_bid_dollars='.80',no_bid_dollars='.18')]
-        self.assertEqual(weather_candidates(rows,'KXHIGHNY',1000)[0]['ticker'],'KXHIGHNY-two')
+        now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp()
+        base=dict(status='active',open_time=date(now-100),close_time=date(now+3600))
+        rows=[dict(base,ticker='KXHIGHNY-26NOV20-one',yes_bid_dollars='.90',no_bid_dollars='0'),
+              dict(base,ticker='KXHIGHNY-26NOV20-two',yes_bid_dollars='.80',no_bid_dollars='.18')]
+        self.assertEqual(weather_candidates(rows,'KXHIGHNY',now)[0]['ticker'],'KXHIGHNY-26NOV20-two')
 
     def test_daily_weather_favorites_with_less_than_an_hour_are_candidates(self):
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
-        rows=[dict(ticker='KXHIGHNY-eligible',status='active',open_time=date(100),
-                   close_time=date(1600),yes_bid_dollars='.83',no_bid_dollars='.13'),
-              dict(ticker='KXHIGHNY-too-late',status='active',open_time=date(100),
-                   close_time=date(1050))]
-        self.assertEqual([m['ticker'] for m in weather_candidates(rows,'KXHIGHNY',1000)],
-                         ['KXHIGHNY-eligible'])
+        now=datetime(2026,11,21,4,30,tzinfo=timezone.utc).timestamp()
+        rows=[dict(ticker='KXHIGHNY-26NOV20-eligible',status='active',open_time=date(now-100),
+                   close_time=date(now+5400),yes_bid_dollars='.83',no_bid_dollars='.13'),
+              dict(ticker='KXHIGHNY-26NOV20-too-late',status='active',open_time=date(now-100),
+                   close_time=date(now+50))]
+        self.assertEqual([m['ticker'] for m in weather_candidates(rows,'KXHIGHNY',now)],
+                         ['KXHIGHNY-26NOV20-eligible'])
 
     async def test_daily_weather_discovery_gets_first_shared_capacity_opportunity(self):
         host=Mock();suite=Mock();host.experiments=suite
@@ -59,10 +61,11 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         suite.candidate_allowed.return_value=True
         suite.settlement_markets.return_value={}
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
-        host.verified_data.call.return_value=dict(markets=[dict(ticker='KXHIGHNY-eligible',
-            event_ticker='WEATHER',status='active',open_time=date(100),
-            close_time=date(1600),yes_bid_dollars='.83',no_bid_dollars='.13')])
-        with patch('services.paper_demo.shadow.weather.time.time',return_value=1000):
+        now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp()
+        host.verified_data.call.return_value=dict(markets=[dict(ticker='KXHIGHNY-26NOV20-eligible',
+            event_ticker='KXHIGHNY-26NOV20',status='active',open_time=date(now-100),
+            close_time=date(now+7200),yes_bid_dollars='.83',no_bid_dollars='.13')])
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now):
             await weather_once(host)
         self.assertEqual(suite.search_capacity.call_args_list[0].args[0],'weather_daily')
         host.put.assert_awaited_once()
@@ -120,21 +123,21 @@ class Scan(unittest.IsolatedAsyncioTestCase):
 
 class Revisit(unittest.TestCase):
     def test_readmission_waits_for_snapshot_and_uses_exploration_policy(self):
-        suite,_=scope.ScopeTests().suite();e,f,_=suite.portfolios['favorites'];e.now=200
-        t='KXHIGHNY-retry';market(e,t,close=10000)
-        e.markets[t].update(weather_category='weather_daily',discovered_at=100,bot_id='fav_kxhighny')
+        suite,_=scope.ScopeTests().suite();e,f,_=suite.portfolios['favorites'];base=datetime(2026,11,21,3,tzinfo=timezone.utc).timestamp();e.now=base+200
+        t='KXHIGHNY-26NOV20-retry';market(e,t,close=base+10000)
+        e.markets[t].update(weather_category='weather_daily',discovered_at=base+100,bot_id='fav_kxhighny')
         b=f.owner(t);b.attempts[t]=dict(first=False,recorded=False,side='yes',price='.79',quantity='1',
-            initial_ceiling='.79',entry_deadline=9000,loss_budget='5',price_band='70–79¢')
-        suite.extra[t]=t;suite.rotate_candidates(250)
-        self.assertTrue(e.markets[t]['entry_parked']);self.assertFalse(suite.candidate_allowed(t,300))
-        self.assertTrue(suite.candidate_allowed(t,311))
-        payload=dict(market=dict(ticker=t,event_ticker='TEST',open=100,close=10000,weather_category='weather_daily',discovered_at=311),taker_multiplier='1',maker_multiplier='0')
-        suite.handle('weather_market',payload,311)
+            initial_ceiling='.79',entry_deadline=base+7000,loss_budget='5',price_band='70–79¢')
+        suite.extra[t]=t;suite.rotate_candidates(base+250)
+        self.assertTrue(e.markets[t]['entry_parked']);self.assertFalse(suite.candidate_allowed(t,base+300))
+        self.assertTrue(suite.candidate_allowed(t,base+311))
+        payload=dict(market=dict(ticker=t,event_ticker='KXHIGHNY-26NOV20',open=base+100,close=base+10000,weather_category='weather_daily',discovered_at=base+311),taker_multiplier='1',maker_multiplier='0')
+        suite.handle('weather_market',payload,base+311)
         self.assertFalse(e.markets[t]['entry_parked']);self.assertFalse(e.books[t].valid)
         self.assertFalse(b.attempts[t]['recorded']);self.assertEqual(b.attempts[t]['initial_ceiling'],'.79')
         b.step();self.assertFalse(e.orders)
         suite.handle('kalshi',dict(type='orderbook_snapshot',sid=1,seq=1,msg=dict(market_ticker=t,
-            yes_dollars_fp=[['.85','100']],no_dollars_fp=[['.13','100']])),312)
+            yes_dollars_fp=[['.85','100']],no_dollars_fp=[['.13','100']])),base+312)
         self.assertTrue(e.orders);self.assertTrue(all(o.price<=D('.95') for o in e.orders.values()))
         self.assertTrue(all(o.quantity==D(10) for o in e.orders.values()))
 

@@ -378,7 +378,7 @@ test('Favorites research sits within each non-sports category and keeps pending 
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.name='<img onerror=x>';
  bot.experiment.entry_timing=[{series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'10–15m',price:'.90',contracts:'4',closed:'0',resolved:'0',winners:'0',cost:'3.6',net:'0'}];
  const {nodes}=setup(d),html=nodes.get('groups').innerHTML;
- for(const text of ['Combined data · time × percentage tier','90–94¢','10–15m left','Resolved observations','Older rows without complete return attribution show —'])assert.ok(html.includes(text),text);
+ for(const text of ['Combined data · time × percentage tier','90–94¢','No timed observations yet','Unknown outcomes are omitted'])assert.ok(html.includes(text),text);
  assert.ok(!html.includes('<img onerror'));assert.ok(!html.includes('NaN'));
  const group=html.indexOf('data-market-type="favorites::crypto-15m"'),research=html.indexOf('Combined data',group),card=html.indexOf('data-market="favorites"',group);
  assert.ok(group<research&&research<card);
@@ -690,6 +690,8 @@ test('Favorites table setting switches views and persists across reload without 
  assert.match(nodes.get('groups').innerHTML,/wider 3 × 3/);
  assert.match(nodes.get('groups').innerHTML,/70–&lt;78¢/);
  assert.match(nodes.get('groups').innerHTML,/90% win-rate interval/);
+ assert.match(nodes.get('groups').innerHTML,/favorite-wide-matrix/);
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/\bpp\b/);
  assert.doesNotMatch(nodes.get('groups').innerHTML,/NaN|undefined/);
  assert.match(setup(d,{storage}).nodes.get('groups').innerHTML,/wider 3 × 3/);
  button.dataset.favoriteTable='detailed';button.onclick();
@@ -706,5 +708,5 @@ test('90 percent Wilson uncertainty remains nonzero at perfect accuracy and decr
  const html=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto',bots:[{experiment:{entry_timing:[{
   series:'KXBTC15M',market_type:'15m_price',price:'.8',horizon:'5–10m',clock:'market_close',
   contracts:100,cost:80,closed:100,net:10,events:100,event_win_rate:90}]}}]});
- assert.match(html,/90% margin of error/);assert.match(html,/\+10\.0 pp/);
+ assert.match(html,/Uncertainty · 90%/);assert.match(html,/\+10\.0 points/);
 });
