@@ -172,3 +172,54 @@
 @media(max-width:360px){
  .folder-card-values{grid-template-columns:minmax(0,1fr)}
 }
+
+/* Compact paper dashboard: summary first, details only on demand. */
+.shadow-workspace .account-panel{padding:10px 12px;margin:8px 0 12px}
+.shadow-workspace .page-title{margin-bottom:8px}
+.shadow-workspace #groups{display:grid;gap:10px}
+.shadow-workspace .strategy-folder{margin:0;padding:10px 12px}
+.shadow-workspace .strategy-folder>summary{margin:0}
+.shadow-workspace .strategy-folder>summary .folder-card-values{row-gap:6px;column-gap:10px}
+.shadow-workspace .folder-card-values .folder-card-label{font-size:11px}
+.shadow-workspace .folder-card-values strong{font-size:clamp(15px,3vw,20px)}
+.shadow-workspace .folder-card-values small{font-size:10px;line-height:1.3}
+.shadow-workspace .folder-actions{margin:8px 0;gap:6px}
+.shadow-workspace .folder-actions button{min-height:30px;padding:5px 9px;font-size:12px}
+.shadow-workspace .folder-account-breakdown,.shadow-workspace .folder-diagnostics,
+.shadow-workspace .folder-research,.shadow-workspace .market-trading-stats,
+.shadow-workspace .compact-diagnostics{margin:7px 0;padding:6px 8px}
+.shadow-workspace .folder-account-breakdown>summary,.shadow-workspace .folder-diagnostics>summary,
+.shadow-workspace .folder-research>summary,.shadow-workspace .market-trading-stats>summary,
+.shadow-workspace .compact-diagnostics>summary{font-size:13px;font-weight:600;cursor:pointer}
+.shadow-workspace .market-type-folder{margin:6px 0}
+.shadow-workspace .market-type-values{gap:8px}
+.shadow-workspace .market-type-coverage{display:none}
+.shadow-workspace .market-card{padding:7px 9px;margin:5px 0}
+.shadow-workspace .market-card>summary.bot-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-height:35px}
+.shadow-workspace .market-card>summary .market-heading{flex:1 1 130px;min-width:0}
+.shadow-workspace .market-card>summary .bot-name{margin:0;font-size:13px}
+.shadow-workspace .market-card>summary .badge{font-size:10px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shadow-workspace .market-pnl-compact{display:flex;align-items:baseline;gap:5px;font-size:11px;white-space:nowrap}
+.shadow-workspace .market-pnl-compact strong{font-size:15px}
+.shadow-workspace .market-card-body{padding-top:7px}
+.shadow-workspace .market-card-body>.bot-stats{margin:4px 0;gap:6px}
+.shadow-workspace .market-card-body>.bot-stats span{font-size:10px}
+.shadow-workspace .market-card-body>.bot-stats strong{font-size:14px}
+.shadow-workspace .market-card-body .money-heading{margin:8px 0 4px}
+.shadow-workspace .market-card-body .bot-footer{margin-top:9px}
+.shadow-workspace .portfolio-headlines{margin:5px 0}
+.shadow-workspace .portfolio-breakdown,.shadow-workspace .money-grid{gap:7px}
+.shadow-workspace .folder-overview td small{font-size:10px}
+.shadow-workspace .overview-heading{margin-bottom:6px}
+.shadow-workspace .account-warning{margin:6px 0}
+@media(max-width:650px){
+ .shadow-workspace .account-panel{padding:7px}
+ .shadow-workspace .strategy-folder{padding:8px}
+ .shadow-workspace .market-card>summary.bot-top{gap:5px}
+ .shadow-workspace .market-card>summary .market-heading{flex:1 1 125px}
+ .shadow-workspace .market-card>summary .badge{order:3;max-width:100%;flex:0 1 auto}
+ .shadow-workspace .market-pnl-compact{margin-left:auto}
+ .shadow-workspace .folder-card-values{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .shadow-workspace .folder-card-values>span{min-width:0}
+ .shadow-workspace .market-type-values{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
