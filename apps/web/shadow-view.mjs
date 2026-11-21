@@ -76,28 +76,29 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
   let unplaced=0;
   for(const row of aggregated){
    if(!HORIZONS.includes(row.horizon)||!prices.includes(row.low)){
-    unplaced+=row.contracts;
+    unplaced+=Number(row.events)||0;
     continue;
    }
    const key=row.low+'|'+row.horizon;
-   if(!cells.has(key))cells.set(key,{purchased:0,settled:0,winners:0,closed:0,profitable:0,profitClassified:0,net:0,cost:0,holding:0});
+   if(!cells.has(key))cells.set(key,{purchased:0,settled:0,winners:0,closed:0,profitable:0,profitClassified:0,net:0,cost:0,holding:0,events:0,eventWins:0});
    const current=cells.get(key);
    current.purchased+=row.contracts;current.settled+=row.resolved;
    current.winners+=row.winners;current.closed+=row.closed;
    current.profitable+=row.profitable_closed;current.profitClassified+=row.profit_classified_closed;
    current.net+=row.net;current.cost+=row.cost;current.holding+=row.holding_seconds;
+   current.events+=Number(row.events)||0;current.eventWins+=Number(row.event_wins)||0;
   }
   // Mobile viewers see only the leftmost time windows at first. Summarize
   // all actually populated windows before the horizontally scrollable table.
   const windowTotals=new Map();
   for(const [key,cell] of cells){
    const time=key.split('|')[1];
-   windowTotals.set(time,(windowTotals.get(time)||0)+cell.purchased);
+   windowTotals.set(time,(windowTotals.get(time)||0)+cell.events);
   }
   const observedWindows=HORIZONS.filter(time=>(windowTotals.get(time)||0)>0);
   const windowNote='<p class="small">Observed time windows: '+
-    (observedWindows.length?observedWindows.map(time=>e(time)+' ('+e(String(Number(windowTotals.get(time).toFixed(2))))+' purchased)').join(' · '):
-    'No recorded timed purchases in this category')+
+    (observedWindows.length?observedWindows.map(time=>e(time)+' ('+e(String(Number(windowTotals.get(time).toFixed(2))))+' resolved observations)').join(' · '):
+    'No verified resolved timed events in this category')+
     '. Scroll the table horizontally for the other time columns.</p>';
   const head=HORIZONS.map(h=>'<th scope="col">'+e(h)+'</th>').join('');
   const body=prices.map(low=>{
@@ -105,17 +106,15 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
    return '<tr><th scope="row">'+e(bucket)+'</th>'+HORIZONS.map(h=>{
     const x=cells.get(low+'|'+h);
     if(!x||x.purchased===0)return '<td class="stat-empty">—</td>';
-    const pending=Math.max(0,x.purchased-x.settled);
-    const win=x.profitClassified?(100*x.profitable/x.profitClassified).toFixed(1)+'%':'—';
-    const outcome=x.settled?(100*x.winners/x.settled).toFixed(1)+'%':'—';
+    const observations=x.events;
+    const outcome=eventAccuracy(x.eventWins,observations);
     const pnl=x.closed?dollars(x.net):'—';
-    const signal=favoriteProfitSignal({purchased:x.purchased,settled:x.settled,winners:x.winners,cost:x.cost,closed:x.closed,net:x.net});
-    const detail='Purchased '+x.purchased+' · settled '+x.settled+' · still open/unsettled '+pending+
-       ' · net P/L '+pnl+' · closed contracts '+x.closed+' · profit-classified '+x.profitClassified+' · profitable classified closures '+x.profitable+' · win rate after fees '+win+' · final outcome accuracy '+outcome;
-    return '<td class="'+(x.settled?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>'+e(win)+'</strong><small>Closed '+e(String(x.closed))+' · profit-classified '+e(String(x.profitClassified))+'</small><small>Outcome '+e(outcome)+' · n='+x.settled+' settled</small><small>'+e(pnl)+' P/L</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+    const signal=favoriteProfitSignal({purchased:x.purchased,settled:observations,winners:x.eventWins,cost:x.cost,closed:x.closed,net:x.net});
+    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' P/L. Each event counts once per cohort, regardless of contract quantity.';
+    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' P/L</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
-  return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(String(unplaced))+' purchased contracts. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
  };
  if(!groups.length)return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · price × time matrix</h3><p class="small">Collector evidence is not yet available.</p></section>';
  const sections=groups.map(group=>{
@@ -125,14 +124,11 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
   const authoritative=source.timedSummary?.rows?.[group.id];
   const rows=Array.isArray(authoritative)?authoritative:group.bots.flatMap(bot=>bot.experiment?.entry_timing||[]);
   const recorded=group.bots.filter(bot=>(bot.experiment?.entry_timing||[]).length);
-  const purchased=rows.reduce((n,row)=>n+(Number.isFinite(Number(row.contracts))?Number(row.contracts):0),0);
   const counts=source.timedSummary?.coverage?.[group.id];
   const n=counts?counts.bots_with_rows:recorded.length;
   const total=counts?counts.bots_total:group.bots.length;
-  const contracts=counts?counts.purchased:purchased;
-  const sourceNote='<p class="small">Timed entry-fill source: '+e(String(n))+' of '+e(String(total))+' market bots with observations · '+e(String(contracts))+' purchased contracts.'+
-    (counts?.unclassified&&Number(counts.unclassified)>0?' · '+e(String(counts.unclassified))+' contracts have unclassified timing/price.':'')+
-    (n?'':' Other market statistics do not establish timed entry fills.')+'</p>';
+  const observations=rows.reduce((count,row)=>count+(Number(row.events)||0),0);
+  const sourceNote='<p class="small">Verified resolved event observations: '+e(observationCount(observations))+' · '+e(String(n))+' of '+e(String(total))+' market bots have timing records.</p>';
   const key='favorites-collector-'+group.id;
   if(group.id==='sports'){
    const byBot=source.timedSummary?.sports_by_bot||{};
@@ -142,7 +138,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
   return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+sourceNote+matrix(rows,group.label)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview" aria-label="High-Probability Favorites price by time matrix"><h3>High-Probability Favorites · price × time matrix</h3>'+
- '<p class="small">Rows are 5¢ entry-price buckets; columns are time remaining at fill. Each cell shows realized win rate after fees, final market-outcome accuracy, and P/L as separate measures. Closed counts include all historical exits. The win-rate denominator includes only exits whose individual net profit could be classified; historical unclassified closures remain in P/L but do not count as losses or wins. A 100% outcome accuracy can coexist with negative P/L from early exits or fees. Open and unsettled observations are not counted as wins or losses; tap a cell for purchase and pending counts. Market categories are separate. The original detailed statistics remain below.</p>'+
+ '<p class="small">Counts are verified resolved events per price/time cohort, not contracts. Ten contracts from one event count once. An event may appear in multiple cohorts; realized P/L is in dollars.</p>'+
  (source.timedSummary?.rows?'<p class="small">Combined totals are calculated from the complete saved Favorites evidence, independently of individual card loading.</p>':source.error?'<p class="small" role="alert">Favorites research could not load: '+e(source.error)+'. Showing compact snapshot data only.</p>':!source.loaded?'<p class="small">Detailed Favorites research '+(source.loading?'is loading.':'has not loaded.')+' Combined tables may be incomplete.</p>':'')+
  sections+'</section>';
 }
