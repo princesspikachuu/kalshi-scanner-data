@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -21,7 +21,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes,listeners};
 }
 test('historical query degradation still renders Favorites portfolio and research notice',async()=>{
@@ -1077,11 +1077,11 @@ test('Favorites table setting switches views and persists across reload without 
 test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty without changing other views',()=>{
   const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
   folder.collector_single_summary={rows:{'crypto-15m':{
-    resolved_events:22,event_wins:20,return_observations:20,
+    resolved_events:52,event_wins:45,return_observations:50,
     average_return_pct:'4.2',uncertainty90_pct:'1.8',ci90_low_pct:'2.4',
     ci90_high_pct:'6.0',incomplete_events:2,estimated_return_observations:0
   }},by_bot:{favorites:{
-    resolved_events:22,event_wins:20,return_observations:20,
+    resolved_events:52,event_wins:45,return_observations:50,
     average_return_pct:'4.2',uncertainty90_pct:'1.8',ci90_low_pct:'2.4',
     ci90_high_pct:'6.0',incomplete_events:2,estimated_return_observations:0
   }}};
@@ -1095,7 +1095,7 @@ test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty wit
   assert.match(html,/favorite-single-matrix/);
   assert.match(html,/\+4\.20% Hold P\/L/);
   assert.match(html,/90% P\/L uncertainty: ±1\.80 percentage points/);
-  assert.match(html,/n=20 distinct event returns/);
+  assert.match(html,/n=50 distinct event returns/);
   assert.match(html,/90% interval 2\.40% to 6\.00%/);
   assert.match(html,/All entries · single bucket/,'market-level research follows mode');
   assert.doesNotMatch(html,/NaN|undefined/);
@@ -1103,6 +1103,67 @@ test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty wit
   button.dataset.favoriteTable='wide';button.onclick();
   assert.equal(storage.get('moneytree-favorite-table-mode'),'wide');
   assert.match(nodes.get('groups').innerHTML,/favorite-wide-matrix|wider 3 × 3/);
+});
+
+test('regular Favorites evidence brackets retain their meanings at 50/100/300/1000 events',()=>{
+ const checkpoints=new Map([
+  [0,'No evidence'],[1,'Early'],[49,'Early'],[50,'Early'],[99,'Early'],
+  [100,'Preliminary'],[299,'Preliminary'],[300,'Developing'],
+  [999,'Developing'],[1000,'Stronger'],[10000,'Stronger']
+ ]);
+ for(const [n,tier] of checkpoints)assert.equal(favoriteEvidenceTier(n),tier,'evidence tier n='+n);
+});
+
+test('regular Favorites win-rate uncertainty is pending below 50 in detailed and wider buckets',()=>{
+ const row=n=>({
+   series:'KXBTC15M',market_type:'15m_price',side:'yes',clock:'market_close',
+   horizon:'5–10m',price:'.80',events:n,event_wins:n-4,
+   contracts:n,cost:.80*n,resolved:n,closed:n,winners:n-4,
+   return_observations:n,return_sum:.1*n
+ });
+ const bot={id:'btc',name:'Bitcoin',asset:'crypto',series:'KXBTC15M',experiment:{entry_timing:[row(49)]}};
+ const detail49=favoriteCollectorOverviewMarkup([bot]);
+ assert.match(detail49,/n=49 · Early/);
+ assert.match(detail49,/Win margin/);
+ assert.match(detail49,/win-rate error Pending · 49\/50 events/);
+ assert.match(detail49,/90% win-rate error Pending · 49\/50 events/);
+ assert.doesNotMatch(detail49,/win-rate error ±/);
+ const market49=favoriteTimingMarkup([row(49)]);
+ assert.match(market49,/n=49 · Early/);
+ assert.match(market49,/win-rate error Pending · 49\/50 events/);
+ bot.experiment.entry_timing=[row(50)];
+ const detail50=favoriteCollectorOverviewMarkup([bot]);
+ assert.match(detail50,/n=50 · Early/);
+ assert.match(detail50,/win-rate error ±/);
+ assert.doesNotMatch(detail50,/win-rate error Pending/);
+ const wide=n=>favoriteWideOverviewMarkup([bot],{
+   price_buckets:['78–<86¢'],coverage:{'crypto-15m':{time_buckets:['Early','Middle','Late']}},
+   rows:{'crypto-15m':[{band:'78–<86¢',time_slot:1,events:n,
+     event_wins:n-4,contracts:n,cost:.8*n,return_observations:n,return_sum:.1*n}]}
+ });
+ const wider49=wide(49),wider50=wide(50);
+ assert.match(wider49,/n=49 · Early/);
+ assert.match(wider49,/Win-rate error Pending · 49\/50 events/);
+ assert.doesNotMatch(wider49,/90% win-rate interval [0-9]/);
+ assert.match(wider50,/n=50 · Early/);
+ assert.match(wider50,/Win-rate error ±/);
+ assert.match(wider50,/90% win-rate interval [0-9]/);
+});
+
+test('regular Favorites never trusts a stale 20-event P/L uncertainty threshold',()=>{
+ const report={
+   resolved_events:49,event_wins:46,return_observations:49,
+   uncertainty_min_samples:20,average_return_pct:'22.0',
+   uncertainty90_pct:'1.1',ci90_low_pct:'20.9',ci90_high_pct:'23.1'
+ };
+ const cell=favoriteSingleCellMarkup(report);
+ assert.match(cell,/\+22\.00% Hold P\/L/);
+ assert.match(cell,/Pending · 49\/50 held-event returns/);
+ assert.doesNotMatch(cell,/±1\.10|90% interval 20\.90/);
+ const bot={id:'btc',name:'Bitcoin',asset:'crypto',series:'KXBTC15M',experiment:{entry_timing:[]}};
+ const overview=favoriteSingleOverviewMarkup([bot],{rows:{'crypto-15m':report}});
+ assert.match(overview,/90% P\/L uncertainty pending 49\/50/);
+ assert.match(overview,/Early/);
 });
 
 test('low held event counts never display a misleading numeric P/L confidence interval',()=>{
@@ -1113,27 +1174,27 @@ test('low held event counts never display a misleading numeric P/L confidence in
    estimated_return_observations:0,incomplete_events:0
  });
  assert.match(tooSmall,/\+17\.50% Hold P\/L/);
- assert.match(tooSmall,/90% P\/L uncertainty: Pending · 7\/20 held-event returns/);
+ assert.match(tooSmall,/90% P\/L uncertainty: Pending · 7\/50 held-event returns/);
  assert.doesNotMatch(tooSmall,/±5\.50|90% interval 12/);
  const stillSmall=favoriteSingleCellMarkup({
-   resolved_events:20,event_wins:19,return_observations:19,
+   resolved_events:50,event_wins:47,return_observations:49,
    average_return_pct:'19',uncertainty90_pct:'3.5',
    ci90_low_pct:'15.5',ci90_high_pct:'22.5'
  });
- assert.match(stillSmall,/Pending · 19\/20 held-event returns/);
+ assert.match(stillSmall,/Pending · 49\/50 held-event returns/);
  const ready=favoriteSingleCellMarkup({
-   resolved_events:20,event_wins:18,return_observations:20,
+   resolved_events:50,event_wins:48,return_observations:50,
    average_return_pct:'12',uncertainty90_pct:'8',
    ci90_low_pct:'4',ci90_high_pct:'20'
  });
  assert.match(ready,/90% P\/L uncertainty: ±8\.00 percentage points/);
  assert.match(ready,/90% interval 4\.00% to 20\.00%/);
  const custom=favoriteSingleCellMarkup({
-   resolved_events:20,event_wins:18,return_observations:20,
-   uncertainty_min_samples:30,
+   resolved_events:50,event_wins:48,return_observations:50,
+   uncertainty_min_samples:60,
    average_return_pct:'12',uncertainty90_pct:'8'
  });
- assert.match(custom,/Pending · 20\/30 held-event returns/);
+ assert.match(custom,/Pending · 50\/60 held-event returns/);
 });
 
 test('single bucket reports insufficient ROI observations without inventing uncertainty',()=>{
@@ -1143,7 +1204,7 @@ test('single bucket reports insufficient ROI observations without inventing unce
     return_observations:1,average_return_pct:'33.3',uncertainty90_pct:null,
     ci90_low_pct:null,ci90_high_pct:null,incomplete_events:0,estimated_return_observations:0});
   assert.match(one,/\+33\.30% Hold P\/L/);
-  assert.match(one,/Pending · 1\/20 held-event returns/);
+  assert.match(one,/Pending · 1\/50 held-event returns/);
   assert.doesNotMatch(one,/±0\.00|NaN|undefined/);
   const empty=favoriteSingleCellMarkup({resolved_events:0,event_wins:0,
     return_observations:0,average_return_pct:null,uncertainty90_pct:null,
@@ -1174,7 +1235,7 @@ test('single bucket displays P/L, 90% uncertainty and event n directly on collap
   const bots=[{id:'btc',name:'Bitcoin',series:'KXBTC15M',asset:'crypto',
     experiment:{entry_timing:[]}}];
   const summary={rows:{'crypto-15m':{
-    resolved_events:23,event_wins:20,return_observations:21,
+    resolved_events:53,event_wins:48,return_observations:51,
     average_return_pct:'3.456',uncertainty90_pct:'2.345',
     ci90_low_pct:'1.111',ci90_high_pct:'5.801',incomplete_events:2
   }},by_bot:{}};
@@ -1183,7 +1244,7 @@ test('single bucket displays P/L, 90% uncertainty and event n directly on collap
   assert.match(head,/favorite-single-headline/);
   assert.match(head,/Hold P\/L \+3\.46%/);
   assert.match(head,/90% ±2\.35 points/);
-  assert.match(head,/n=21/);
+  assert.match(head,/n=51/);
   assert.doesNotMatch(head,/NaN|undefined/);
   assert.match(html,/favorite-single-matrix/,'full evidence remains available when expanded');
   const sparse=favoriteSingleOverviewMarkup(bots,{rows:{'crypto-15m':{
@@ -1191,7 +1252,7 @@ test('single bucket displays P/L, 90% uncertainty and event n directly on collap
     uncertainty90_pct:null
   }}});
   assert.match(sparse,/Hold P\/L -10\.00%/);
-  assert.match(sparse,/90% P\/L uncertainty pending 1\/20/);
+  assert.match(sparse,/90% P\/L uncertainty pending 1\/50/);
   assert.doesNotMatch(sparse,/90% ±0\.00 points/);
 });
 
