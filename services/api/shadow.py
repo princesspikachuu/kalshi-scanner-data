@@ -4,6 +4,7 @@ from uuid import uuid4
 from decimal import Decimal as D
 from fastapi import Request,Response,HTTPException
 from fastapi.responses import JSONResponse
+from psycopg.errors import QueryCanceled
 from pydantic import BaseModel,ConfigDict,Field
 from services.demo.store import DemoStore
 from services.paper_demo.shadow.storage import put
@@ -20,6 +21,9 @@ from services.paper_demo.shadow.market_maker import MM_FOLDERS,CATEGORIES
 PERIODS={'all':None,'1H':3600,'6H':21600,'24H':86400}
 ACCOUNTING_LOG_AT=0
 FAVORITES_ROLLUP_LOG_AT=0
+# Optional legacy report reads must not hold up current paper portfolio views.
+SHADOW_HISTORY_RETRY_AFTER=0
+SHADOW_HISTORY_RETRY_SECONDS=90
 
 LEARNING_PROFILES={
     'sequential':dict(classification='data_learning',state='using_statistics_now',
@@ -401,7 +405,7 @@ def install_shadow(app,auth,mutate,pool):
 
     @app.get('/demo/shadow/workspace')
     def workspace(request:Request,response:Response):
-        global ACCOUNTING_LOG_AT
+        global ACCOUNTING_LOG_AT,SHADOW_HISTORY_RETRY_AFTER
         request_started=time.monotonic()
         auth(request);query(request,('version',))
         latest=request.query_params.get('version','latest')
@@ -440,44 +444,62 @@ def install_shadow(app,auth,mutate,pool):
                     sqlstate=getattr(exc,'sqlstate',None),
                     elapsed_ms=round((time.monotonic()-started)*1000,1))),flush=True)
                 raise
-        historical_sql_started=time.monotonic()
-        with pool.connection() as c:
-            # This DISTINCT ON historical scan was repeatedly canceled at 5s.
-            # The initial dashboard intentionally drops latest_report from its
-            # wire response. Do not scan all reports just to build cards.
-            # Existing current_cycles retain recent execution evidence.
-            # One financial scan computes BOTH historical validity metrics and
-            # actual-money P/L. The previous second full JSON scan regularly
-            # exceeded PostgreSQL's 5s statement timeout under paper activity.
-            # Financial results include every paper trade. Data quality is a
-            # separate count; it must never make a real simulated loss disappear.
-            financial=historical_read(c,'financial_metrics',"""WITH history AS (
-                SELECT progress AS p,true AS reported FROM research_job
-                WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz'
-                AND NOT ((progress->>'ticker')=ANY(%s::text[]))
-                AND (progress->>'at')::numeric<=%s AND (progress->>'at')::numeric>=%s),
-                r AS (SELECT * FROM history UNION ALL SELECT value,false FROM jsonb_each(%s::jsonb)),
-                windows(period,seconds,full_history) AS (VALUES ('account',NULL::integer,true),
-                    ('all',NULL::integer,false),('1H',3600,false),('6H',21600,false),('24H',86400,false))
-                SELECT p->>'bot_id' AS bot,period,
-                count(*) FILTER(WHERE reported AND (p->>'data_valid')::boolean) AS cycles,
-                count(*) FILTER(WHERE reported AND NOT (p->>'data_valid')::boolean) AS excluded_cycles,
-                coalesce(sum((p->>'gross_profit')::numeric),0)::text AS gross_profit,
-                coalesce(sum((p->>'total_fees_paid')::numeric),0)::text AS fees,
-                coalesce(sum((p->>'net_realized_pnl')::numeric),0)::text AS net_realized_pnl,
-                (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate,
-                coalesce(sum((p->>'gross_profit')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_gross_profit,
-                coalesce(sum((p->>'total_fees_paid')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_fees,
-                coalesce(sum((p->>'net_realized_pnl')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_net_realized_pnl,
-                (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean)/
-                 nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0))::text AS quality_win_rate
-                FROM r CROSS JOIN windows
-                WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
-                AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
-                GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,reset_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
-        historical_sql_ms=(time.monotonic()-historical_sql_started)*1000
-        if historical_sql_ms>1000:
-            print(json.dumps(dict(event='shadow_workspace_query_cost',historical_sql_ms=round(historical_sql_ms,1),source='legacy_report_history')),flush=True)
+        financial=[]
+        historical_metrics_delayed=time.monotonic()<SHADOW_HISTORY_RETRY_AFTER
+        if not historical_metrics_delayed:
+            try:
+            historical_sql_started=time.monotonic()
+            with pool.connection() as c:
+                # This DISTINCT ON historical scan was repeatedly canceled at 5s.
+                # The initial dashboard intentionally drops latest_report from its
+                # wire response. Do not scan all reports just to build cards.
+                # Existing current_cycles retain recent execution evidence.
+                # One financial scan computes BOTH historical validity metrics and
+                # actual-money P/L. The previous second full JSON scan regularly
+                # exceeded PostgreSQL's 5s statement timeout under paper activity.
+                # Financial results include every paper trade. Data quality is a
+                # separate count; it must never make a real simulated loss disappear.
+                financial=historical_read(c,'financial_metrics',"""WITH history AS (
+                    SELECT progress AS p,true AS reported FROM research_job
+                    WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz'
+                    AND NOT ((progress->>'ticker')=ANY(%s::text[]))
+                    AND (progress->>'at')::numeric<=%s AND (progress->>'at')::numeric>=%s),
+                    r AS (SELECT * FROM history UNION ALL SELECT value,false FROM jsonb_each(%s::jsonb)),
+                    windows(period,seconds,full_history) AS (VALUES ('account',NULL::integer,true),
+                        ('all',NULL::integer,false),('1H',3600,false),('6H',21600,false),('24H',86400,false))
+                    SELECT p->>'bot_id' AS bot,period,
+                    count(*) FILTER(WHERE reported AND (p->>'data_valid')::boolean) AS cycles,
+                    count(*) FILTER(WHERE reported AND NOT (p->>'data_valid')::boolean) AS excluded_cycles,
+                    coalesce(sum((p->>'gross_profit')::numeric),0)::text AS gross_profit,
+                    coalesce(sum((p->>'total_fees_paid')::numeric),0)::text AS fees,
+                    coalesce(sum((p->>'net_realized_pnl')::numeric),0)::text AS net_realized_pnl,
+                    (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate,
+                    coalesce(sum((p->>'gross_profit')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_gross_profit,
+                    coalesce(sum((p->>'total_fees_paid')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_fees,
+                    coalesce(sum((p->>'net_realized_pnl')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_net_realized_pnl,
+                    (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean)/
+                     nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0))::text AS quality_win_rate
+                    FROM r CROSS JOIN windows
+                    WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
+                    AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
+                    GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,reset_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
+            historical_sql_ms=(time.monotonic()-historical_sql_started)*1000
+            if historical_sql_ms>1000:
+                print(json.dumps(dict(event='shadow_workspace_query_cost',historical_sql_ms=round(historical_sql_ms,1),source='legacy_report_history')),flush=True)
+            except QueryCanceled as exc:
+                # Verified current cash, positions, and Favorites evidence come
+                # from the worker snapshot, not this expensive report scan.
+                SHADOW_HISTORY_RETRY_AFTER=time.monotonic()+SHADOW_HISTORY_RETRY_SECONDS
+                historical_metrics_delayed=True
+                print(json.dumps(dict(event='shadow_workspace_history_degraded',
+                    stage='financial_metrics',sqlstate=getattr(exc,'sqlstate',None),
+                    retry_seconds=SHADOW_HISTORY_RETRY_SECONDS,
+                    financial_snapshot_source='current_worker',
+                    real_orders_enabled=False)),flush=True)
+            else:
+                SHADOW_HISTORY_RETRY_AFTER=0
+        unavailable_metrics=dict(gross_profit=None,fees=None,net_realized_pnl=None,
+            win_rate=None,cycles=None,excluded_cycles=None)
         mapped={(m['bot'],m['period']):dict(cycles=m['cycles'],excluded_cycles=m['excluded_cycles'],
             gross_profit=m['quality_gross_profit'],fees=m['quality_fees'],
             net_realized_pnl=m['quality_net_realized_pnl'],win_rate=m['quality_win_rate'])
@@ -489,18 +511,18 @@ def install_shadow(app,auth,mutate,pool):
             profile=row['parameters']
             account=dict(money['bots'].get(profile['id'],{})) if money else None
             lifetime=actual.get((profile['id'],'account'),aggregate([]))
-            if account is not None:
+            if account is not None and not historical_metrics_delayed:
                 account['realized_pnl']=lifetime['net_realized_pnl']
                 account['total_pnl']=str(D(account['realized_pnl'])+D(account['unrealized_pnl'])) if account.get('unrealized_pnl') is not None else None
             bots.append(dict(profile,desired=row['progress']['desired'],
-                metrics={period:mapped.get((profile['id'],period),aggregate([])) for period in PERIODS},
-                financial_metrics={period:actual.get((profile['id'],period),aggregate([])) for period in PERIODS},
+                metrics={period:mapped.get((profile['id'],period),dict(unavailable_metrics) if historical_metrics_delayed else aggregate([])) for period in PERIODS},
+                financial_metrics={period:actual.get((profile['id'],period),dict(unavailable_metrics) if historical_metrics_delayed else aggregate([])) for period in PERIODS},
                 account=account,
                 execution=next((r.get('execution') for r in sorted(current.values(),key=lambda r:r.get('at',0),reverse=True)
                     if r.get('bot_id')==profile['id'] and r.get('execution')),
                     (reports.get(profile['id']) or {}).get('execution')),
                 latest_report=reports.get(profile['id'])))
-        if money:
+        if money and not historical_metrics_delayed:
             money['quality']=dict(verified_cycles=sum(m['cycles'] for m in financial if m['period']=='account'),
                 gap_cycles=sum(m['excluded_cycles'] for m in financial if m['period']=='account'))
             key='total_pnl' if money['portfolio']['total_pnl'] is not None else 'realized_pnl'
@@ -533,16 +555,29 @@ def install_shadow(app,auth,mutate,pool):
             elif f['id']=='convexity':f['accounting']=money
             f['learning']=learning_diagnostics(f['id'],exp)
             folders.append(f)
-        performance_started=time.monotonic()
-        folder_performance(pool,folders,snapshot_at)
-        folder_ms=(time.monotonic()-performance_started)*1000
-        bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
-        bot_ms=(time.monotonic()-performance_started)*1000-folder_ms
-        if max(folder_ms,bot_ms)>1000:
-            print(json.dumps(dict(event='shadow_workspace_query_cost',folder_performance_ms=round(folder_ms,1),bot_performance_ms=round(bot_ms,1))),flush=True)
+        if not historical_metrics_delayed:
+            try:
+            performance_started=time.monotonic()
+            folder_performance(pool,folders,snapshot_at)
+            folder_ms=(time.monotonic()-performance_started)*1000
+            bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
+            bot_ms=(time.monotonic()-performance_started)*1000-folder_ms
+            if max(folder_ms,bot_ms)>1000:
+                print(json.dumps(dict(event='shadow_workspace_query_cost',folder_performance_ms=round(folder_ms,1),bot_performance_ms=round(bot_ms,1))),flush=True)
+            except QueryCanceled as exc:
+                # Balance-history windows are optional; allow account controls
+                # and settlement research to remain available.
+                historical_metrics_delayed=True
+                SHADOW_HISTORY_RETRY_AFTER=time.monotonic()+SHADOW_HISTORY_RETRY_SECONDS
+                print(json.dumps(dict(event='shadow_workspace_history_degraded',
+                    stage='period_performance',sqlstate=getattr(exc,'sqlstate',None),
+                    retry_seconds=SHADOW_HISTORY_RETRY_SECONDS,
+                    financial_snapshot_source='current_worker',
+                    real_orders_enabled=False)),flush=True)
         commands=store.indexed_control_rows('shadow/command/',100)
         return workspace_response(dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,
+            historical_metrics_delayed=historical_metrics_delayed,
             accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
             connection_configured=bool(store.get('paper-credentials')),
             health=health['progress'] if health else dict(state='waiting',message='Waiting for worker'),
