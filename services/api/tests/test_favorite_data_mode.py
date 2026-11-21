@@ -253,6 +253,54 @@ class DataMode(unittest.TestCase):
         self.assertEqual(len(e.orders),1)
         self.assertEqual(a['last_repeat_suppression']['reason'],'legacy_filled_bucket_unknown')
 
+    def test_within_bucket_quote_improvement_keeps_existing_maker_queue(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        # Bid moves from 80c to 83c, but both remain in the same 80-84c cell.
+        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(first.price,D('.80'))
+        self.assertFalse(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        self.assertEqual(b.attempts[first.ticker].get('repeat_entries',0),0)
+
+    def test_new_bucket_waits_for_cancel_ack_if_old_maker_now_crosses(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        # The old 80c bid now crosses the 77c ask: cancel before new bidding.
+        book.levels={'yes':{D('.75'):D(100)},'no':{D('.23'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertTrue(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        e.advance(213);book.at=213;b.step()
+        self.assertEqual(first.status,'cancelled')
+        orders=list(e.orders.values())
+        self.assertEqual(len(orders),2)
+        self.assertEqual(orders[-1].price,D('.76'))
+        self.assertTrue(orders[-1].maker)
+
+    def test_partly_filled_old_bid_crossing_new_ask_is_cancelled_before_reentry(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.fill(first,D('.4'),first.price,'TEST')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.75'):D(100)},'no':{D('.23'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertTrue(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D('.4'))
+        e.advance(213);book.at=213;b.step()
+        self.assertEqual(first.status,'cancelled')
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(list(e.orders.values())[-1].quantity,D(1))
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D('.4'))
+
     def test_parallel_bucket_needs_unreserved_cash_without_reject_churn(self):
         e,b,book=fixture.MakerEntries().setup_bot()
         e.wallet.cash=D('1.00')
