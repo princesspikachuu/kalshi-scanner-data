@@ -33,15 +33,20 @@ class DataMode(unittest.TestCase):
         self.assertEqual(o.quantity,D(1));self.assertLessEqual(o.reserved,e.wallet.cash)
         self.assertGreater(e.fees[o.ticker].charge(o.quantity,o.price,True),0)
 
-    def test_paper_quotes_follow_current_bid_after_minimum_rest(self):
+    def test_new_bucket_keeps_older_valid_maker_queue_after_minimum_rest(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
         old=next(iter(e.orders.values()));self.assertEqual(old.price,D('.80'))
-        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}};book.at=201
-        b.step();self.assertEqual(len(e.orders),1);self.assertFalse(e.pending)
-        e.advance(211);book.at=211;b.step();self.assertEqual(len(e.orders),1)
-        e.advance(212);book.at=212;b.step();new=list(e.orders.values())[-1]
-        self.assertEqual(old.status,'cancelled');self.assertEqual(new.price,D('.86'));self.assertTrue(new.maker)
-        self.assertGreater(new.price,D(b.attempts[old.ticker]['initial_ceiling']))
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        book.at=201;b.step()
+        self.assertEqual(len(e.orders),1)
+        e.advance(211);book.at=211;b.step()
+        active=[o for o in e.orders.values() if o.status in ('pending','resting')]
+        self.assertEqual(len(active),2)
+        newer=next(o for o in active if o.id!=old.id)
+        self.assertEqual(newer.price,D('.86'))
+        self.assertTrue(newer.maker)
+        self.assertEqual(old.status,'resting')
+        self.assertFalse(any(action=='cancel' and ident==old.id for _,_,action,ident in e.pending))
 
     def test_decision_records_policy_size_and_order_link_for_analysis(self):
         e,b,_=fixture.MakerEntries().setup_bot();b.step();o=next(iter(e.orders.values()))
@@ -128,7 +133,7 @@ class DataMode(unittest.TestCase):
         e,b,book=fixture.MakerEntries().setup_bot()
         b.step();e.advance(201);first=next(iter(e.orders.values()))
         e.advance(212);book.at=212
-        book.levels={'yes':{D('.81'):D(100)},'no':{D('.17'):D(100)}}
+        book.levels={'yes':{D('.80'):D(100)},'no':{D('.18'):D(100)}}
         b.step()
         self.assertEqual(len(e.orders),1)
         self.assertEqual(first.status,'resting')
