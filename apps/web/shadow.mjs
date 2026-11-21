@@ -68,6 +68,76 @@ function makerDiscoveryMarkup(scanner){
  return `<details class="advanced maker-discovery"><summary>Market Maker discovery · ${e(scanner?.state||'Waiting for current worker measurements')}</summary><p class="small">${ranked.length} ranked candidates · ${scanner?.reads||0} shared-budget data reads. Candidates must pass category, actual executed-trade frequency, depth, economics and portfolio limits before orders can be submitted.</p><div class="comparison-grid">${ranked.map(row=>`<article class="comparison-card"><h3>${e(row.ticker)}</h3><p>${e(row.category)} · score ${Number.isFinite(Number(row.score))?Number(row.score).toFixed(4):'—'}</p><p class="small">${e((row.reason||'awaiting inspection').replaceAll('_',' '))}</p></article>`).join('')||'<p class="small">No inspected candidates yet. Discovery waits during processing backlog or read cooldown.</p>'}</div></details>`;
 }
 
+
+/*
+ * Older paper workers omit the event counters (and sometimes event_ticker),
+ * even though their current positions and working orders are already in the
+ * account snapshots. Derive missing counters in the browser so the monitor
+ * works before a backend redeploy. No market-data requests or DB scans.
+ */
+function eventIdFromExposure(row){
+ const event=row?.event_ticker;
+ if(typeof event==='string'&&event)return event;
+ const ticker=row?.ticker;
+ if(typeof ticker!=='string'||!ticker)return null;
+ // Standard Kalshi market tickers append an outcome/strike to the event
+ // ticker. With no such segment, retain the market ticker rather than
+ // merging unrelated events in the same series.
+ const first=ticker.indexOf('-'),last=ticker.lastIndexOf('-');
+ return first>=0&&last>first?ticker.slice(0,last):ticker;
+}
+function hydrateEventCounts(payload){
+ if(!payload||typeof payload!=='object')return payload;
+ const newSets=()=>({bid:new Set(),active:new Set(),pending:new Set()});
+ const fields=[['bid','unfilled_bid_events','unfilled_bids'],['active','active_events','active_cost'],['pending','pending_events','pending_cost']];
+ function apply(account,sets){
+  if(!account||typeof account!=='object')return;
+  for(const [kind,key,amount] of fields){
+   const value=account[key];
+   if(Number.isSafeInteger(Number(value))&&value!=null&&Number(value)>=0)continue;
+   // Missing details must never turn an existing dollar exposure into zero.
+   if(sets[kind].size||Number(account[amount])===0&&account[amount]!=null)account[key]=sets[kind].size;
+  }
+ }
+ function gather(positions,orders){
+  const total=newSets(),byBot=new Map();
+  const mark=(row,kind)=>{
+   const id=eventIdFromExposure(row);if(!id)return;
+   total[kind].add(id);
+   if(typeof row.bot_id==='string'&&row.bot_id){
+    let found=byBot.get(row.bot_id);
+    if(!found){found=newSets();byBot.set(row.bot_id,found)}
+    found[kind].add(id);
+   }
+  };
+  for(const row of Array.isArray(positions)?positions:[]){
+   if(row.state==='active'||row.state==='pending')mark(row,row.state);
+  }
+  for(const row of Array.isArray(orders)?orders:[]){
+   if(row.action==='buy'&&(row.status==='pending'||row.status==='resting'))mark(row,'bid');
+  }
+  return {total,byBot};
+ }
+ const folderSets=new Map();
+ for(const folder of Array.isArray(payload.folders)?payload.folders:[]){
+  const account=folder.accounting;if(!account?.portfolio)continue;
+  const legacy=folder.id==='convexity';
+  const rows=gather(legacy?payload.status?.positions:account.positions,
+                    legacy?payload.status?.orders:account.orders);
+  apply(account.portfolio,rows.total);
+  folderSets.set(folder.id,rows.byBot);
+ }
+ if(payload.accounting?.portfolio){
+  const rows=gather(payload.status?.positions,payload.status?.orders);
+  apply(payload.accounting.portfolio,rows.total);
+  if(!folderSets.has('convexity'))folderSets.set('convexity',rows.byBot);
+ }
+ for(const bot of Array.isArray(payload.bots)?payload.bots:[]){
+  if(bot.account)apply(bot.account,folderSets.get(bot.folder_id||'convexity')?.get(bot.id)||newSets());
+ }
+ return payload;
+}
+
 function draw(){
  const status=data.status||{},health=data.health||{};
  $('health').textContent=health.message||'Waiting for worker';
@@ -124,7 +194,7 @@ async function load(){
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
   if(!result.installed){$('health').textContent='Worker initializing';loadNote('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
   if(loadError&&$('message').textContent===loadError)note('');loadError=null;
-  data=result;draw();
+  data=hydrateEventCounts(result);draw();
   // The combined Favorites matrix must not depend on opening individual cards.
   void loadFolderResearch('favorites');
   for(const folder of openFolders)if(folder!=='favorites')void loadFolderResearch(folder);
@@ -140,6 +210,7 @@ async function load(){
     const snapshot=await demoCall('shadow/portfolio-snapshot');
     if(snapshot.installed&&Array.isArray(snapshot.folders)&&snapshot.folders.length){
      $('health').textContent='Current balances available · historical analytics delayed';
+     hydrateEventCounts(snapshot);
      $('accountSummary').innerHTML='<p class="small">Current paper account balances and positions are shown below. Historical research details are temporarily unavailable and will retry automatically.</p>'+folderOverviewMarkup(snapshot.folders,'all');
      $('groups').innerHTML='<p class="small">Detailed strategy tables are waiting for the historical reporting query. No balances or trade records have been reset.</p>';
      currentShown=true;

@@ -397,7 +397,7 @@ export function summaryExposure(a){
 }
 function exposureHeaderMarkup(a){
  const x=summaryExposure(a);
- return `<span class="exposure-header-value"><span class="folder-card-label">Open bids</span><strong>${e(dollars(x.bids))}</strong><small>${e(exposureNote(a,'unfilled_bid_events','Reserved for buys · now'))}</small></span><span class="exposure-header-value"><span class="folder-card-label">Open/pending positions</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(a,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(a,'pending_events'))}</small><small>Money committed · includes entry fees</small><small>Estimated market value ${e(dollars(a?.position_value))}</small></span>`;
+ return `<span class="exposure-header-value"><span class="folder-card-label">Open bids</span><strong>${e(dollars(x.bids))}${e(eventSuffix(a,'unfilled_bid_events'))}</strong><small>Reserved for buys · now</small></span><span class="exposure-header-value"><span class="folder-card-label">Open/pending positions</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(a,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(a,'pending_events'))}</small><small>Money committed · includes entry fees</small><small>Estimated market value ${e(dollars(a?.position_value))}</small></span>`;
 }
 export function marketTypeSummaryValues(bots,period='all',positions=[]){
  if(!Object.hasOwn(folderPeriods,period))period='all';
@@ -422,6 +422,14 @@ export function marketTypeSummaryValues(bots,period='all',positions=[]){
  return {period,pnl,missing,partial,account:{unfilled_bids:sum('bids'),active_cost:sum('active'),
   pending_cost:sum('pending'),position_cost:sum('positions')}};
 }
+function eventIdForGrouping(row){
+ const id=row?.event_ticker;
+ if(typeof id==='string'&&id)return id;
+ const ticker=row?.ticker;
+ if(typeof ticker!=='string'||!ticker)return null;
+ const first=ticker.indexOf('-'),last=ticker.lastIndexOf('-');
+ return first>=0&&last>first?ticker.slice(0,last):ticker;
+}
 function marketTypeEventCounts(bots,positions,orders,account){
  const matching=new Set(bots.map(b=>b.id));
  const belongs=row=>row.bot_id?matching.has(row.bot_id):
@@ -429,11 +437,11 @@ function marketTypeEventCounts(bots,positions,orders,account){
  const keys={active:new Set(),pending:new Set(),bid:new Set()};
  for(const row of positions){
   if(!belongs(row)||!['active','pending'].includes(row.state))continue;
-  if(row.event_ticker||row.ticker)keys[row.state].add(row.event_ticker||row.ticker);
+  const id=eventIdForGrouping(row);if(id)keys[row.state].add(id);
  }
  for(const row of orders){
   if(!belongs(row)||row.action!=='buy'||!['pending','resting'].includes(row.status))continue;
-  if(row.event_ticker||row.ticker)keys.bid.add(row.event_ticker||row.ticker);
+  const id=eventIdForGrouping(row);if(id)keys.bid.add(id);
  }
  // Do not label an incomplete/old detail list as zero events when it has exposure.
  const count=(kind,amount)=>keys[kind].size||amount===0?keys[kind].size:null;
@@ -477,7 +485,7 @@ export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
  const rows=folders.map(f=>{
   const v=folderSummaryValues(f,period,now),x=summaryExposure(f.accounting?.portfolio);
   const account=f.accounting?.portfolio;
-  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="folder-estimated-balance" data-label="Estimated portfolio value"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash + estimated position value · now</small></td><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}</strong><small>${e(exposureNote(account,'unfilled_bid_events','Reserved for buys · now'))}</small></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(account,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(account,'pending_events'))}</small><small>Money committed · includes entry fees</small></td></tr>`;
+  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="folder-estimated-balance" data-label="Estimated portfolio value"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash + estimated position value · now</small></td><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}${e(eventSuffix(account,'unfilled_bid_events'))}</strong><small>Reserved for buys · now</small></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(account,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(account,'pending_events'))}</small><small>Money committed · includes entry fees</small></td></tr>`;
  }).join('');
  return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Estimated portfolio value</th><th>Total P/L · ${e(folderPeriods[period])}</th><th>Open bids</th><th>Open/pending positions</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">P/L includes realized and unrealized changes after paid fees, excluding added funds. Open bids show cash reserved for buys; positions show committed cost including entry fees. Event counts show distinct underlying Kalshi events in each category, not contracts, bids or market tickers; an event may appear in multiple categories. Exposure amounts are current, independent of the selected P/L period. Estimated portfolio value is current cash plus marked position value, using available estimates when exact quotes are missing; deposits increase value but do not count as profit. P/L uses the best available position marks; older baselines without quotes carry positions at cost. Shorter tracking coverage is shown per folder.</p>`;
 }
