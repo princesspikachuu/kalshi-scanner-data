@@ -17,7 +17,7 @@ from .set_discovery import discover_sets
 from .weather import initialize_weather,discover_weather
 from .history_sampling import MinuteHistory
 from .sports import initialize_sports,discover_sports
-from .scope import initialize_scope,initialize_restored_favorites
+from .scope import initialize_scope,initialize_restored_favorites,initialize_one_contract_favorites
 from .sequential_comparison import initialize_comparison
 from .bot_catalog import load_bots
 from .hourly import discover_hourly
@@ -109,6 +109,8 @@ class HostedRun(ForwardRun):
         apply_requested_volatility_pause(store,guard)
         initialize_market_maker(store,guard)
         initialize_quote_policy(store,guard)
+        # Saved collector settings need a one-time migration, not just a new default.
+        initialize_one_contract_favorites(store,guard)
         all_rows=load_bots(store)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]

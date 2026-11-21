@@ -47,6 +47,9 @@ def estimate(cells, key):
 
 
 def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
+    # The primary Favorites portfolio collects independent outcomes, not volume.
+    # This does not affect the separate Statistics-Backed Favorites quote path.
+    contracts = min(D(contracts), D(1))
     book = engine.books[ticker]
     bid, ask = book.bid(side), book.ask(side)
     if bid is None or ask is None or bid >= ask:

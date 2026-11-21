@@ -9,7 +9,7 @@ from services.research.reports import SERIES
 
 NAMES={'KXNBAGAME':'NBA','KXNFLGAME':'NFL','KXNHLGAME':'NHL','KXMLBGAME':'MLB','KXNCAAFGAME':'College football','KXATPMATCH':'ATP tennis','KXWTAMATCH':'WTA tennis'}
 def sports_profiles():
-    return [dict(id='fav_'+s.lower(),series=s,name='Sports · '+NAMES.get(s,s),asset='sports',contracts=10,
+    return [dict(id='fav_'+s.lower(),series=s,name='Sports · '+NAMES.get(s,s),asset='sports',contracts=1,
         folder_id='favorites',strategy='favorites',version='favorites-sports-1',late_game_hours=2) for s in sorted(SERIES['sports'])]
 
 def initialize_sports(store,guard):

@@ -13,7 +13,7 @@ HOURLY=(('KXBTCD','Bitcoin'),('KXETHD','Ethereum'),('KXSOLD','Solana'),('KXXRPD'
  ('KXINXU','S&P 500'),('KXNASDAQ100U','Nasdaq 100'))
 
 def hourly_profiles():
-    return [dict(id='fav_hour_'+s.lower(),series=s,name='1 hour · '+name,asset='hourly',contracts=10,
+    return [dict(id='fav_hour_'+s.lower(),series=s,name='1 hour · '+name,asset='hourly',contracts=1,
         folder_id='favorites',strategy='favorites',version='favorites-hourly-1') for s,name in HOURLY]
 
 def sequential_profiles():
@@ -68,3 +68,32 @@ def initialize_restored_favorites(store,guard):
         c.execute("UPDATE research_job SET parameters=jsonb_set(parameters,'{description}',to_jsonb(%s::text)) WHERE idempotency_key='demo/shadow/folder/favorites'",(description,))
         put(c,'demo/'+marker,{},dict(at=now,restored=len(rows),running=running,real_orders_enabled=False))
     print(json.dumps(dict(event='paper_favorites_15m_restored',restored=len(rows),running=running,real_orders_enabled=False)),flush=True)
+
+
+def initialize_one_contract_favorites(store,guard):
+    """One-time, paper-only sizing change: one contract per collector entry.
+
+    Preserve every wallet, pending outcome, trade and bot control. Statistics-
+    Backed Favorites is a different portfolio and is deliberately excluded.
+    """
+    marker='shadow/favorites-one-contract-research-v1'
+    if store.get(marker):return
+    guard();now=time.time()
+    with store.pool.connection() as c:
+        c.execute('SELECT pg_advisory_xact_lock(%s)',(73820193,))
+        if c.execute('SELECT 1 FROM research_job WHERE idempotency_key=%s',('demo/'+marker,)).fetchone():return
+        updated=c.execute("""UPDATE research_job SET
+            parameters=parameters || jsonb_build_object(
+                'contracts',1,
+                'revision',coalesce((parameters->>'revision')::integer,0)+1,
+                'changed_at',%s::double precision)
+            WHERE idempotency_key>='demo/shadow/bot/'
+              AND idempotency_key<'demo/shadow/bot/zzzz'
+              AND starts_with(idempotency_key,'demo/shadow/bot/')
+              AND parameters->>'folder_id'='favorites'
+              AND parameters->>'strategy'='favorites'
+              AND parameters->>'contracts' IS DISTINCT FROM '1'
+            RETURNING id""",(now,)).fetchall()
+        put(c,'demo/'+marker,{},dict(at=now,contracts_per_entry=1,bots_updated=len(updated),real_orders_enabled=False))
+    print(json.dumps(dict(event='paper_favorites_one_contract_research',bots_updated=len(updated),
+        contracts_per_entry=1,real_orders_enabled=False)),flush=True)

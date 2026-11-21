@@ -29,7 +29,7 @@ def initialize_folders(store,guard):
         for p in profiles():
             ident='fav_'+p['id']
             put(c,'demo/shadow/bot/'+ident,dict(p,id=ident,key=str(uuid4()),revision=1,changed_at=now,
-                contracts=10,folder_id='favorites',strategy='favorites',version='favorites-1'),dict(desired='running'))
+                contracts=1,folder_id='favorites',strategy='favorites',version='favorites-1'),dict(desired='running'))
         put(c,'demo/shadow/bot/set_scanner',dict(id='set_scanner',key=str(uuid4()),name='Complete-set scanner',
             series='ALL_SAME_DAY',asset='all',contracts=10,revision=1,changed_at=now,
             folder_id='complete_set',strategy='complete_set',version='complete-set-1'),dict(desired='running'))
