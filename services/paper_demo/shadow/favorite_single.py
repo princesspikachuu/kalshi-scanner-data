@@ -84,12 +84,17 @@ def _report(events):
     result['average_return_pct'] = str(100 * mean)
     if n > 1:
         sample_var = sum(((value - mean) ** 2 for value in returns), D(0)) / D(n - 1)
-        error = _critical90(n - 1) * (sample_var / D(n)).sqrt()
-        result.update(
-            uncertainty90_pct=str(100 * error),
-            ci90_low_pct=str(100 * (mean - error)),
-            ci90_high_pct=str(100 * (mean + error)),
-        )
+        # A zero sample variance is not zero future uncertainty: identical
+        # binary-event returns can still be followed by the opposite outcome.
+        # A Student-t interval is uninformative at that boundary. Keep the
+        # P/L observed mean, but do not present a fabricated ±0% error bar.
+        if sample_var > 0:
+            error = _critical90(n - 1) * (sample_var / D(n)).sqrt()
+            result.update(
+                uncertainty90_pct=str(100 * error),
+                ci90_low_pct=str(100 * (mean - error)),
+                ci90_high_pct=str(100 * (mean + error)),
+            )
     return result
 
 
