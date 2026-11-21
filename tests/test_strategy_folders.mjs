@@ -177,7 +177,7 @@ test('favorite timing research combines contract sides using percentage tiers',(
  const row={series:'KXNBAGAME',market_type:'sports',side:'yes',price:'.90',horizon:'10–15m',clock:'estimated_game_end',contracts:'10',closed:'10',resolved:'10',winners:'9',cost:'9',net:'1',holding_seconds:'6000'};
  const html=favoriteTimingMarkup([row,{...row,side:'no',contracts:'5',closed:'5',resolved:'5',winners:'3',cost:'4.5',net:'-.5',holding_seconds:'3000'}]);
  for(const text of ['90–94¢','10–15m','estimated game end','80.0%','$0.50','15'])assert.ok(html.includes(text),text);
- assert.equal((html.match(/<tbody><tr>/g)||[]).length,1);
+ assert.equal((html.match(/<tbody><tr(?:\s[^>]*)?>/g)||[]).length,1);
  assert.ok(!html.includes(' · YES'));assert.ok(!html.includes(' · NO'));assert.ok(!html.includes('NaN'));
 });
 test('bot P/L separates total, realized and unrealized changes with honest coverage',()=>{
