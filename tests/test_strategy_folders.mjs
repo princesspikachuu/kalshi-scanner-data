@@ -280,6 +280,48 @@ test('event monitoring counts each underlying event once per exposure status',()
  assert.ok(typeHtml.includes('1 event · Reserved for buys'),typeHtml);
  assert.ok(typeHtml.includes('Open $5.00 (1 event) · pending $1.50 (1 event)'),typeHtml);
 });
+test('older worker snapshots derive visible event counts without a backend deploy',()=>{
+ const d=fixture();
+ const f=d.folders.find(x=>x.id==='favorites'),bot=d.bots.find(x=>x.folder_id==='favorites');
+ f.accounting.portfolio={cash:'992',equity:'1000',total_pnl:'0',
+  unfilled_bids:'2',active_cost:'3',pending_cost:'1.5'};
+ f.accounting.positions=[
+  {ticker:'KXFED-26NOV21-YES',bot_id:bot.id,state:'active'},
+  {ticker:'KXFED-26NOV21-NO',bot_id:bot.id,state:'active'},
+  {ticker:'KXJOB-26NOV21-YES',bot_id:bot.id,state:'pending'}];
+ f.accounting.orders=[
+  {ticker:'KXFED-26NOV21-YES',bot_id:bot.id,action:'buy',status:'resting'},
+  {ticker:'KXFED-26NOV21-NO',bot_id:bot.id,action:'buy',status:'pending'},
+  {ticker:'KXJOB-26NOV21-YES',bot_id:bot.id,action:'sell',status:'resting'}];
+ bot.account={unfilled_bids:'2',active_cost:'3',pending_cost:'1.5'};
+ const {context,nodes}=setup(d);
+ context.hydrateEventCounts(d);
+ context.draw();
+ assert.equal(f.accounting.portfolio.unfilled_bid_events,1);
+ assert.equal(f.accounting.portfolio.active_events,1);
+ assert.equal(f.accounting.portfolio.pending_events,1);
+ assert.equal(bot.account.unfilled_bid_events,1);
+ const overview=nodes.get('accountSummary').innerHTML;
+ assert.ok(overview.includes('1 event · Reserved for buys'),overview);
+ assert.ok(overview.includes('Open $3.00 (1 event) · pending $1.50 (1 event)'),overview);
+ const group=nodes.get('groups').innerHTML;
+ assert.ok(group.includes('1 event · Reserved for buys'),group);
+});
+test('event hydration respects true provider counts, removes invalid zero guesses, and uses current snapshot fallback',()=>{
+ const d=fixture(),f=d.folders.find(x=>x.id==='favorites');
+ f.accounting.portfolio={unfilled_bids:'3',active_cost:'0',pending_cost:'5',unfilled_bid_events:9};
+ f.accounting.orders=[{ticker:'KXTEMP-26NOV21-70',bot_id:'favorites',action:'buy',status:'resting'}];
+ const {context}=setup(d);
+ context.hydrateEventCounts(d);
+ assert.equal(f.accounting.portfolio.unfilled_bid_events,9);
+ assert.equal(f.accounting.portfolio.active_events,0);
+ assert.equal(f.accounting.portfolio.pending_events,undefined);
+ const fallback={folders:[{id:'favorites',accounting:{portfolio:{unfilled_bids:'2',active_cost:'0',pending_cost:'0'},
+  positions:[],orders:[{ticker:'KXTEMP-26NOV21-70',action:'buy',status:'resting'},{ticker:'KXTEMP-26NOV21-65',action:'buy',status:'resting'}]}}]};
+ context.hydrateEventCounts(fallback);
+ assert.equal(fallback.folders[0].accounting.portfolio.unfilled_bid_events,1);
+ assert.equal(fallback.folders[0].accounting.portfolio.pending_events,0);
+});
 test('exposure summaries distinguish unknown amounts from known zero and support combined cost snapshots',()=>{
  assert.deepEqual(summaryExposure(null),{bids:null,active:null,pending:null,positions:null});
  assert.deepEqual(summaryExposure({unfilled_bids:'0',active_cost:'0',pending_cost:'0'}),{bids:0,active:0,pending:0,positions:0});

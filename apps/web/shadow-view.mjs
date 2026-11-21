@@ -422,6 +422,14 @@ export function marketTypeSummaryValues(bots,period='all',positions=[]){
  return {period,pnl,missing,partial,account:{unfilled_bids:sum('bids'),active_cost:sum('active'),
   pending_cost:sum('pending'),position_cost:sum('positions')}};
 }
+function eventIdForGrouping(row){
+ const id=row?.event_ticker;
+ if(typeof id==='string'&&id)return id;
+ const ticker=row?.ticker;
+ if(typeof ticker!=='string'||!ticker)return null;
+ const first=ticker.indexOf('-'),last=ticker.lastIndexOf('-');
+ return first>=0&&last>first?ticker.slice(0,last):ticker;
+}
 function marketTypeEventCounts(bots,positions,orders,account){
  const matching=new Set(bots.map(b=>b.id));
  const belongs=row=>row.bot_id?matching.has(row.bot_id):
@@ -429,11 +437,11 @@ function marketTypeEventCounts(bots,positions,orders,account){
  const keys={active:new Set(),pending:new Set(),bid:new Set()};
  for(const row of positions){
   if(!belongs(row)||!['active','pending'].includes(row.state))continue;
-  if(row.event_ticker||row.ticker)keys[row.state].add(row.event_ticker||row.ticker);
+  const id=eventIdForGrouping(row);if(id)keys[row.state].add(id);
  }
  for(const row of orders){
   if(!belongs(row)||row.action!=='buy'||!['pending','resting'].includes(row.status))continue;
-  if(row.event_ticker||row.ticker)keys.bid.add(row.event_ticker||row.ticker);
+  const id=eventIdForGrouping(row);if(id)keys.bid.add(id);
  }
  // Do not label an incomplete/old detail list as zero events when it has exposure.
  const count=(kind,amount)=>keys[kind].size||amount===0?keys[kind].size:null;
