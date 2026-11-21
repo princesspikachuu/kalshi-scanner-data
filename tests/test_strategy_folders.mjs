@@ -265,7 +265,7 @@ test('event monitoring counts each underlying event once per exposure status',()
  const htmls=[folderOverviewMarkup([f]),folderCardSummaryMarkup(f,'all',{bots:1,running:1}),
   botPnlMarkup({id:'b',account:a,performance:{}},'all')];
  for(const html of htmls){
-  assert.ok(html.includes('2 events · Reserved for buys'),html);
+  assert.ok(html.includes('$2.00 (2 events)'),html);
   assert.ok(html.includes('Open $3.00 (1 event) · pending $1.50 (1 event)'),html);
  }
  const typeBots=[{id:'b',desired:'running',account:a,performance:{}},
@@ -277,7 +277,7 @@ test('event monitoring counts each underlying event once per exposure status',()
   {ticker:'S-D',bot_id:'c',event_ticker:'EVENT-ONE',action:'buy',status:'pending'},
   {ticker:'S-E',bot_id:'c',event_ticker:'EVENT-THREE',action:'sell',status:'resting'}];
  const typeHtml=marketTypeSummaryMarkup({label:'Crypto',bots:typeBots},'all',positions,null,orders);
- assert.ok(typeHtml.includes('1 event · Reserved for buys'),typeHtml);
+ assert.ok(typeHtml.includes('$3.00 (1 event)'),typeHtml);
  assert.ok(typeHtml.includes('Open $5.00 (1 event) · pending $1.50 (1 event)'),typeHtml);
 });
 test('older worker snapshots derive visible event counts without a backend deploy',()=>{
@@ -302,10 +302,10 @@ test('older worker snapshots derive visible event counts without a backend deplo
  assert.equal(f.accounting.portfolio.pending_events,1);
  assert.equal(bot.account.unfilled_bid_events,1);
  const overview=nodes.get('accountSummary').innerHTML;
- assert.ok(overview.includes('1 event · Reserved for buys'),overview);
+ assert.ok(overview.includes('$2.00 (1 event)'),overview);
  assert.ok(overview.includes('Open $3.00 (1 event) · pending $1.50 (1 event)'),overview);
  const group=nodes.get('groups').innerHTML;
- assert.ok(group.includes('1 event · Reserved for buys'),group);
+ assert.ok(group.includes('$2.00 (1 event)'),group);
 });
 test('event hydration respects true provider counts, removes invalid zero guesses, and uses current snapshot fallback',()=>{
  const d=fixture(),f=d.folders.find(x=>x.id==='favorites');
