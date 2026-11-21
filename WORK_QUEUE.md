@@ -1631,6 +1631,9 @@ This is now the dominant Favorites learning-data imbalance.
 - 15m evidence throughput is not intentionally reduced.
 - Any market type that remains sparse has an explicit measured reason (availability, fills, discovery, risk, or another gate).
 
+### MT-023 read-only coverage evidence (2026-11-21, for MT-018 owner)
+Existing authenticated API `favorites_timed_rollup` snapshots around 20:09–20:12 UTC report **finance-hourly 0/11 bots with entry-timing rows**, weather-hourly 4/8, crypto-hourly 7/9, commodities-hourly 4/5, sports 4/7, and finance-15m 10/11. Overall 53/75 regular Favorites bots have timing rows. These are **bot-level record coverage**, not distinct settled event counts or availability evidence. Investigate no-trade hourly-finance gating/opportunity availability with your existing MT-018 owner scope; do not suppress healthy 15m collection. MT-023's draft PR #326 will measure independently settled event coverage without changing trading.
+
 ### Completion notes
 _Fill in when done._
 
