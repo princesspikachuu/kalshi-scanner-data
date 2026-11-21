@@ -225,6 +225,34 @@ class DataMode(unittest.TestCase):
         self.assertEqual(sum((o.remaining for o in active),D(0)),D('1.6'))
         self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D('.4'))
 
+    def test_legacy_held_entry_bucket_remains_occupied_after_newer_probe_fills(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.fill(first,D(1),first.price,'TEST')
+        a=b.attempts[first.ticker]
+        a.pop('entry_fills')  # Restored held position from before fill-cohort storage.
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step();second=list(e.orders.values())[-1]
+        self.assertEqual(a['legacy_filled_bucket'],'yes|80-84|10–15m|market_close')
+        e.advance(213);e.fill(second,D(1),second.price,'TEST')
+        book.levels={'yes':{D('.79'):D(100)},'no':{D('.19'):D(100)}}
+        e.advance(224);book.at=224;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(a['legacy_filled_bucket'],'yes|80-84|10–15m|market_close')
+
+    def test_unknown_legacy_held_bucket_fails_closed(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.fill(first,D(1),first.price,'TEST')
+        a=b.attempts[first.ticker]
+        a.pop('entry_fills');a.pop('entry_key')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(a['last_repeat_suppression']['reason'],'legacy_filled_bucket_unknown')
+
     def test_calibrated_favorites_stays_single_entry_per_market(self):
         maker=fixture.MakerEntries()
         e,b,book=maker.setup_bot(paper_exploration=False)
