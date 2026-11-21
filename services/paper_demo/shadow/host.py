@@ -165,7 +165,7 @@ class HostedRun(ForwardRun):
         return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
             or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
 
-    def legacy_health_readiness(self,now):
+    def legacy_health_readiness(self,now,legacy_needed=None):
         """Read fee/book readiness only for legacy markets which still matter.
 
         The hosted worker retains selected legacy markets for settlements and
@@ -177,7 +177,11 @@ class HostedRun(ForwardRun):
         candidates=[t for t in self.selected.values() if
             t in self.engine.markets and self.engine.markets[t]['close']>now]
         if getattr(self,'suspend_idle_feeds',False) is True:
-            active=[t for t in candidates if self.legacy_ticker_needed(t)]
+            if legacy_needed is None:legacy_needed=self.spot_required()
+            # The common case has no running legacy bot and no outstanding risk.
+            # Avoid nine per-market exposure/owner scans as well as fee work.
+            active=([t for t in candidates if self.legacy_ticker_needed(t)]
+                    if legacy_needed else [])
         else:
             active=candidates
         books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
@@ -585,8 +589,8 @@ class HostedRun(ForwardRun):
                         raise ValueError('Unsupported shadow wallet command')
                     self.audit.command_key=None
                 now=time.time()
-                active,books,fees_ready,legacy_fee_checks_skipped=self.legacy_health_readiness(now)
                 legacy_needed=self.spot_required()
+                active,books,fees_ready,legacy_fee_checks_skipped=self.legacy_health_readiness(now,legacy_needed)
                 strategy_books=sum(e.book_fresh(t) for e,f,ps in self.experiments.portfolios.values()
                     for t,m in e.markets.items() if m['close']>now and (f.owner(t) and f.owner(t).enabled or any(l.ticker==t for l in e.wallet.lots)))
                 state='ready' if (books and fees_ready==len(active) and self.engine.spot.ready(now) if legacy_needed else strategy_books>0) else 'waiting'
