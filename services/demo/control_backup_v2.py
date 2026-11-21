@@ -29,8 +29,12 @@ MAX_SINGLE_ROW_BYTES=12*1024*1024
 MAX_CHUNK_BYTES=2*1024*1024
 MAX_CHUNK_ROWS=200
 MAX_STAGED_ROWS=100000
-MAX_STAGED_BYTES=512*1024*1024
-MIN_FREE_DISK_RESERVE=256*1024*1024
+# Temporary bounded recovery bridge: verified R2 control snapshots grew from
+# 218 MB to 499 MB in four days, exceeding the old 512 MiB staging cap.
+# This is NOT a substitute for incremental R2 backup; retain source data and
+# verify every R2 part/root before advancing backup-health.
+MAX_STAGED_BYTES=1024*1024*1024
+MIN_FREE_DISK_RESERVE=512*1024*1024
 FORMAT='control-snapshot-multipart-v2'
 PART_FORMAT='control-snapshot-part-v2'
 SELECT_FIELDS='id::text,idempotency_key,parameters,progress'
@@ -126,7 +130,7 @@ def collect_snapshot_spooled(pool):
     """
     # The local staging file is unlinked, but still consumes physical space.
     # Reserve headroom for the running worker and PostgreSQL-free application
-    # operations; do not assume the configured 512 MiB spool cap is available.
+    # operations; do not assume the configured 1 GiB spool cap is available.
     available=shutil.disk_usage(tempfile.gettempdir()).free
     if available<=MIN_FREE_DISK_RESERVE:
         raise ValueError('Insufficient temporary disk headroom for control backup')
