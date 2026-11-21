@@ -60,6 +60,28 @@ class BaseEngineTradeDedupTests(unittest.TestCase):
         self.assertEqual(len(self.engine.trade_ids), len(self.engine._trade_id_recent))
         self.assertNotIn(('TEST', '0'), self.engine.trade_ids)
 
+    def test_print_without_resting_order_does_not_allocate_dedup(self):
+        # No paper bid can fill while every order is still pending/cancelled.
+        self.order.status = 'cancelled'
+        self.print('unfillable', 1000.2, quantity='100')
+        self.assertEqual(len(self.engine.trade_ids), 0)
+        self.assertEqual(len(self.engine._trade_id_recent), 0)
+
+    def test_pending_order_cannot_retroactively_fill_skipped_print(self):
+        self.order.status = 'pending'
+        self.order.arrives = 1000.5
+        self.print('before-arrival', 1000.2, quantity='500')
+        self.assertEqual(len(self.engine.trade_ids), 0)
+        self.order.status = 'resting'
+        self.print('before-arrival', 1000.6, quantity='500')
+        # Delivery time cannot change the original exchange print time.
+        # Replaying the same earlier print must never fill the later bid.
+        # A validly timed later print remains eligible for execution.
+        self.assertEqual(self.order.remaining, D(10))
+        self.assertEqual(len(self.engine.trade_ids), 0)
+        self.print('later', 1000.7, quantity='105')
+        self.assertEqual(self.order.remaining, D(5))
+
     def test_over_capacity_fails_closed_and_leaves_orders_untouched(self):
         with patch('services.paper_demo.shadow.core.TRADE_DEDUP_MAX_IDS', 2):
             self.print('a', 1000.2, quantity='1')
