@@ -268,9 +268,18 @@ def workspace_response(payload,*,compressed=False,request_started=None):
             folder['collector_single_summary']=summarize_single(held_bots,profiles,favorite_timing_category)
             if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
                 FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
+                # Reuse the summaries computed for this exact workspace
+                # response, not an extra historical SQL/R2 read or paper
+                # strategy scan. Keep identifiers and account cash out of logs.
+                from services.paper_demo.shadow.favorite_research_coverage import summarize_regular_favorites_coverage
+                evidence=summarize_regular_favorites_coverage(
+                    aggregate,folder['collector_wide_summary'],folder['collector_single_summary'],
+                    held_bots=held_bots,profiles=profiles,
+                    category_for=favorite_timing_category)
                 print(json.dumps(dict(event='favorites_timed_rollup',
                     categories={kind:dict(cov,table_cells=len(aggregate['rows'].get(kind,[])))
                                 for kind,cov in aggregate['coverage'].items()},
+                    research_evidence=evidence,
                     source='worker_entry_timing',real_orders_enabled=False)),flush=True)
         if folder.get('id')=='favorites_statistics':
             from services.paper_demo.shadow.favorite_single import summarize_statistics_holds
