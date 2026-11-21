@@ -35,7 +35,8 @@ jobs:
             if(config.name!=="pocket-analytics-staging" ||
               config.main!=="../apps/gateway/index.mjs" ||
               config.assets?.directory!=="../apps/web" ||
-              config.keep_vars!==true)
+              config.keep_vars!==true ||
+              config.vars?.APP_ORIGIN!=="https://pocket-analytics-staging.ezrealrose831.workers.dev")
               throw Error("Refusing non-staging deployment target");
           '
       - name: Test authenticated dashboard and profitability colors
@@ -43,6 +44,7 @@ jobs:
           node --test tests/test_bot_table.mjs tests/test_strategy_folders.mjs
           node tests/test_favorites_profit_colors.mjs
           node tests/test_demo_gateway.mjs
+          node --test tests/test_staging_deploy_workflow.mjs
       - name: Verify Cloudflare deployment credentials are present
         env:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -55,3 +57,34 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4 deploy --config infra/wrangler.staging.json
+      - name: Verify deployed staging assets match this commit
+        env:
+          STAGING_ORIGIN: https://pocket-analytics-staging.ezrealrose831.workers.dev
+        run: |
+          set -euo pipefail
+          # Public frontend assets only. No authenticated API or account changes.
+          for attempt in {1..8}; do
+            all_matched=true
+            for file in shadow.html shadow.mjs shadow-view.mjs money.css; do
+              remote="$(mktemp)"
+              if ! curl --fail --silent --show-error --location \
+                  --connect-timeout 8 --max-time 20 \
+                  -H 'Cache-Control: no-cache' \
+                  "$STAGING_ORIGIN/$file?commit=$GITHUB_SHA&attempt=$attempt" \
+                  --output "$remote"; then
+                all_matched=false
+              elif ! cmp --silent "apps/web/$file" "$remote"; then
+                echo "Staging asset does not yet match this commit: $file"
+                all_matched=false
+              fi
+              rm -f "$remote"
+              if [ "$all_matched" = false ]; then break; fi
+            done
+            if [ "$all_matched" = true ]; then
+              echo "Verified four staging frontend assets against $GITHUB_SHA"
+              exit 0
+            fi
+            if [ "$attempt" -lt 8 ]; then sleep 4; fi
+          done
+          echo "::error::Cloudflare staging asset verification failed for $GITHUB_SHA; do not label this release live"
+          exit 1
