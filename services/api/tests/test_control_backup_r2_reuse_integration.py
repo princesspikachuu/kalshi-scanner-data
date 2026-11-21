@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from services.demo.control_backup_v2 import (
     PART_FORMAT,backup_controls,canonical,digest_records,
-    verify_staged_archive,
+    verify_staged_archive,restore_verified_snapshot,
 )
 from services.demo.maintenance import read_verified
 
@@ -128,6 +128,42 @@ class FullReuseReadbackTests(unittest.TestCase):
         self.assertEqual(store.state['backup-health'],original_health)
         self.assertEqual(len(store.writes),1)
         output.assert_not_called()
+
+
+    def test_expiring_old_root_must_keep_reused_chunk(self):
+        """Older root/catalog may expire; their shared part must not expire."""
+        objects=InMemoryR2();store=HealthStore()
+        rows=[row(7)]
+        first=staged(rows)
+        with patch('builtins.print'):
+            backup_controls(store,objects,now=100)
+        old_health=dict(store.state['backup-health'])
+        old_root=read_verified(objects,old_health['reference'])
+        shared_part=old_root['chunks'][0]['reference']
+
+        second=staged(rows)
+        with patch('builtins.print'):
+            result=backup_controls(store,objects,now=200,
+                                   reuse_previous=True)
+        self.assertEqual(result['reused_chunks'],1)
+        new_health=dict(store.state['backup-health'])
+        new_root=read_verified(objects,new_health['reference'])
+        self.assertEqual(new_root['chunks'][0]['reference'],shared_part)
+
+        # A retention policy can drop an expired old root and its independent
+        # catalog without affecting the latest complete verified snapshot.
+        del objects.entries[old_health['reference']['key']]
+        del objects.entries[old_health['catalog_reference']['key']]
+        self.assertEqual(restore_verified_snapshot(
+            objects,new_health['reference']),rows)
+
+        # An AGE-ONLY policy that also expires the old part would corrupt
+        # a *newer* verified root. This deliberately proves the activation
+        # gate: old shared parts need reference-aware retention.
+        del objects.entries[shared_part['key']]
+        with self.assertRaises(KeyError):
+            restore_verified_snapshot(objects,new_health['reference'])
+        self.assertEqual(store.state['backup-health'],new_health)
 
 
 if __name__=='__main__':
