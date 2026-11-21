@@ -351,6 +351,14 @@ def install_shadow(app,auth,mutate,pool):
     def query(request,allowed=()):
         if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):
             raise HTTPException(422,'Invalid filters')
+    @app.get('/demo/shadow/restarts')
+    def worker_restarts(request:Request):
+        """Small, independent 24-hour worker restart read, even if workspace lags."""
+        auth(request);query(request)
+        from services.demo.worker_restarts import KEY,summarize
+        row=store.get(KEY)
+        return summarize(row['progress'] if row else None)
+
     @app.get('/demo/shadow/portfolio-snapshot')
     def portfolio_snapshot(request:Request):
         """Current financial snapshot even when optional historical SQL is slow.
