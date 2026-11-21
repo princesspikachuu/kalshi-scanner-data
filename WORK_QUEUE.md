@@ -1064,6 +1064,11 @@ This task must distinguish:
 - unavoidable platform/provider limits,
 - and avoidable waste caused by duplicate work, oversized state, unbounded histories, repeated serialization, redundant services, polling, unnecessary DB reads/writes, or inefficient queue handling.
 
+### New investigation lead (from MT-021 runtime verification, 2026-11-21)
+- The per-second hosted health path in `services/paper_demo/shadow/host.py` still computes `strategy_books=sum(... for e,f,ps in self.experiments.portfolios.values() for t,m in e.markets.items() ...)` across **all** portfolio market dictionaries. Fully paused, unexposed portfolios still incur iteration over their retained market records even when they cannot add entry-ready books. This is a **code-level potential CPU waste**, not yet quantified by profiling.
+- Assess a safe whole-portfolio fast path **only** when there are no enabled bots, held lots, or pending/resting orders. Preserve the held-risk and restart/resume semantics, and keep canonical market records, settlement, wallet, Favorites evidence and public fee readiness unchanged. Add deterministic tests and a diagnostic before claiming savings.
+- Coordinate with open PR [#124](https://github.com/princesspikachuu/kalshi-scanner-data/pull/124), which also modifies `host.py`, and PR [#314](https://github.com/princesspikachuu/kalshi-scanner-data/pull/314), which owns discovery scheduling. MT-021 skipped 9 legacy fee checks, but does **not** solve the separate all-portfolio scan. This finding is for existing MT-011 owner; no new task claimed or source change made.
+
 ### Confirmed preliminary findings
 1. **Initial dashboard workspace was structurally oversized**
    - Pre-fix live workspace reached ~8.65 MiB.
