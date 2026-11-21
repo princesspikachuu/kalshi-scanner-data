@@ -1,3 +1,4 @@
+import json
 import unittest
 from decimal import Decimal as D
 from types import SimpleNamespace as S
@@ -37,6 +38,100 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             await recover_once(host)
         self.assertEqual(len(calls),7)
         self.assertEqual([p['ticker'] for _,p in queued],['6'])
+
+    async def test_poll_health_distinguishes_venue_delay_missing_result_and_errors(self):
+        results=dict(
+            a=dict(ticker='a',status='closed',result=''),
+            b=dict(ticker='b',status='finalized',result=''),
+            c=dict(ticker='WRONG',status='settled',result='yes'),
+            d=RuntimeError('temporary outage'),
+        )
+        host,calls,queued=self.host(results)
+        with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=1000), patch('builtins.print') as output:
+            await recover_once(host)
+        records=[json.loads(call.args[0]) for call in output.call_args_list]
+        summary=next(row for row in records if row['event']=='paper_position_settlement_poll_health')
+        self.assertEqual(summary['held_markets'],4)
+        self.assertEqual(summary['held_by_folder'],{'favorites':4})
+        self.assertEqual(len(summary['oldest_favorites']),3)
+        self.assertEqual(summary['oldest_unresolved'][0]['folders'],['favorites'])
+        self.assertEqual(summary['rest_calls'],4)
+        self.assertEqual(summary['poll_outcomes'],dict(venue_not_final=1,
+            finalized_missing_result=1,ticker_mismatch=1,lookup_error=1))
+        self.assertEqual(len(summary['oldest_unresolved']),3)
+        self.assertEqual(summary['oldest_expired_seconds'],990)
+        self.assertEqual(sum(summary['age_groups'].values()),4)
+        self.assertEqual(queued,[])
+        self.assertEqual(len(calls),4)
+        self.assertTrue(all(row.quantity==D(10) for row in host.experiments.portfolios['favorites'][0].wallet.lots))
+        self.assertFalse(summary['real_orders_enabled'])
+        self.assertEqual(host.position_settlement_poll_telemetry['per_ticker']['b']['last_venue_status'],
+                         'finalized')
+
+    async def test_poll_summary_is_rate_limited_and_prunes_consumed_positions(self):
+        results=dict(a=dict(ticker='a',status='closed',result=''),
+                     b=dict(ticker='b',status='settled',result='yes'))
+        host,calls,queued=self.host(results)
+        with patch('builtins.print') as output:
+            with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=100):
+                await recover_once(host)
+            with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=120):
+                await recover_once(host)
+            # The serialized consumer, not the polling task, removes a paid lot.
+            host.experiments.portfolios['favorites'][0].wallet.lots=[
+                row for row in host.experiments.portfolios['favorites'][0].wallet.lots if row.ticker!='b']
+            with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=161):
+                await recover_once(host)
+        records=[json.loads(call.args[0]) for call in output.call_args_list]
+        summaries=[row for row in records if row['event']=='paper_position_settlement_poll_health']
+        self.assertEqual(len(summaries),2)
+        self.assertEqual(summaries[0]['rest_calls'],2)
+        self.assertEqual(summaries[0]['poll_outcomes'],dict(venue_not_final=1,confirmed_queued=1))
+        self.assertEqual(summaries[1]['rest_calls'],1)
+        self.assertEqual(summaries[1]['poll_outcomes'],dict(venue_not_final=1))
+        self.assertEqual([x['ticker'] for x in summaries[1]['oldest_unresolved']],['a'])
+        self.assertEqual(calls,['a','b','a'])
+        self.assertEqual(len(queued),1)
+        self.assertNotIn('b',host.position_settlement_poll_telemetry['per_ticker'])
+        self.assertNotIn('b',host.position_settlement_checks)
+
+    async def test_bounded_oldest_unresolved_samples_and_untrusted_status_label(self):
+        results={str(i):dict(ticker=str(i),status='untrusted-secret-marker',result='')
+                 for i in range(7)}
+        host,calls,queued=self.host(results)
+        with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=10000), patch('builtins.print') as output:
+            await recover_once(host)
+        summary=next(json.loads(call.args[0]) for call in output.call_args_list
+                     if json.loads(call.args[0])['event']=='paper_position_settlement_poll_health')
+        self.assertEqual(summary['held_markets'],7)
+        self.assertEqual(summary['rest_calls'],4)
+        self.assertEqual(summary['poll_outcomes'],dict(venue_not_final=4))
+        self.assertEqual(len(summary['oldest_unresolved']),3)
+        self.assertEqual(summary['age_groups']['over_120m'],7)
+        self.assertNotIn('untrusted-secret-marker',json.dumps(summary))
+        self.assertEqual(len(calls),4)
+        self.assertFalse(queued)
+
+    async def test_shared_ticker_counts_once_globally_but_attributes_both_folders(self):
+        results={name:dict(ticker=name,status='closed',result='')
+                 for name in ('a','b','c','z')}
+        host,calls,queued=self.host(results)
+        favorite=host.experiments.portfolios['favorites'][0]
+        favorite.wallet.lots=[lot for lot in favorite.wallet.lots if lot.ticker!='z']
+        other=S(markets={t:dict(close=10,paid=False) for t in ('b','z')},
+                wallet=S(lots=[S(ticker=t,quantity=D(1)) for t in ('b','z')]))
+        host.experiments.portfolios['other']=(other,None,None)
+        with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=1000), patch('builtins.print') as output:
+            await recover_once(host)
+        summary=next(json.loads(c.args[0]) for c in output.call_args_list
+                     if json.loads(c.args[0])['event']=='paper_position_settlement_poll_health')
+        self.assertEqual(summary['held_markets'],4)
+        self.assertEqual(summary['held_by_folder'],dict(favorites=3,other=2))
+        shared=next(row for row in summary['oldest_unresolved'] if row['ticker']=='b')
+        self.assertEqual(shared['folders'],['favorites','other'])
+        self.assertEqual([row['ticker'] for row in summary['oldest_favorites']],['a','b','c'])
+        self.assertEqual(calls,['a','b','c','z'])
+        self.assertFalse(queued)
 
     async def test_actual_consumer_pays_held_experiment_once_after_legacy_rollover(self):
         from services.api.tests.test_strategy_scope import ScopeTests
