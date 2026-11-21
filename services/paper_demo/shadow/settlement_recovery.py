@@ -5,6 +5,14 @@ import time
 from .weather_window import observation_end
 
 
+def due_for_confirmation(markets, checks, now, *, limit=4, cooldown=30):
+    """Fair, bounded lookup selection; an unfinalized older result never starves others."""
+    return sorted(
+        (ticker for ticker in markets if now - checks.get(ticker, 0) >= cooldown),
+        key=lambda ticker: (checks.get(ticker, 0), markets[ticker]['close'], ticker),
+    )[:limit]
+
+
 async def recover_once(host):
     now = time.time()
     checks = getattr(host, 'position_settlement_checks', None)
@@ -17,8 +25,7 @@ async def recover_once(host):
             if lot.quantity > 0 and market and not market.get('paid') and observation_end(market) <= now:
                 held[lot.ticker] = market
     # Least-recently checked first: unresolved/failed markets cannot starve others.
-    due = sorted((ticker for ticker in held if now - checks.get(ticker, 0) >= 30),
-                 key=lambda ticker: (checks.get(ticker, 0), held[ticker]['close'], ticker))[:4]
+    due = due_for_confirmation(held, checks, now)
     for ticker in due:
         checks[ticker] = now
         try:
