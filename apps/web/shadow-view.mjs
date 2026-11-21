@@ -74,9 +74,10 @@ export const favoriteBucketKey=(scope,view,price,time)=>[scope,view,price,time]
 export function favoriteBucketStarMarkup(scope,view,price,time,starred=new Set()){
  if(!scope)return '';
  const key=favoriteBucketKey(scope,view,price,time),on=starred?.has?.(key)===true;
- const label=(on?'Unstar ':'Star ')+String(price||'all prices')+' · '+String(time||'all times')+' research bucket';
+ const title=String(price||'all prices')+' · '+String(time||'all times')+' research bucket';
+ const label=(on?'Unstar ':'Star ')+title;
  return '<button type="button" class="favorite-bucket-star'+(on?' is-starred':'')+
-  '" data-favorite-star="'+e(key)+'" aria-pressed="'+(on?'true':'false')+
+  '" data-favorite-star="'+e(key)+'" data-favorite-star-label="'+e(title)+'" aria-pressed="'+(on?'true':'false')+
   '" aria-label="'+e(label)+'" title="'+e(on?'Remove bucket star':'Star this bucket')+
   '">'+(on?'★':'☆')+'</button>';
 }
