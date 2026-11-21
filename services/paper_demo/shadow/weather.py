@@ -51,6 +51,9 @@ async def weather_once(host):
         # Daily contracts have a single closing opportunity. Give them first
         # consideration within the existing shared capacity and fee checks.
         row=scan['categories'].setdefault(category,dict(reason='not_scanned',eligible=0,closing_within_hour=0,subscribed=0))
+        if not suite.search_capacity(category,now):
+            row['reason']='shared_monitoring_capacity_paused'
+            continue
         choices=suite.enabled_profiles(category)
         if not choices:
             row['reason']='no_enabled_profiles'
@@ -73,9 +76,6 @@ async def weather_once(host):
             row['reason']='known_entry_windows_sleeping'
             row['next_entry_at']=min((v for k,v in suite.discovery_wakes.items()
                 if k.startswith(category+':') and isinstance(v,(int,float)) and v>now),default=None)
-            continue
-        if not suite.search_capacity(category,now):
-            row['reason']='shared_monitoring_capacity_paused'
             continue
         active=candidate_markets(suite,markets,category,now)
         p,cursor=next_profile(suite,awake,active,suite.weather_cursor.get(category,0))
