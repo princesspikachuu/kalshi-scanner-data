@@ -48,9 +48,13 @@ def summarize_wide(folder_bots,profiles,category_for):
         groups={};bot_groups={}
         def add(target,band,slot,event,payout,q,cost,realized=None):
             cell=target.setdefault((band,slot),{})
-            item=cell.setdefault(str(event),dict(outcome=int(payout),quantity=D(0),cost=D(0),returns={}))
+            item=cell.setdefault(str(event),dict(outcome=int(payout),quantity=D(0),cost=D(0),returns={},incomplete=False))
             item['outcome']=min(item['outcome'],int(payout));item['quantity']+=q;item['cost']+=cost
             if realized:merge(item['returns'],{str(event):realized})
+            else:
+                # A separate entry in this same event/price/time cell lacks a
+                # verified hold return. Do not publish a partial-event ROI.
+                item['incomplete']=True
         for bot_id,profile,row in items:
             events=row.get('outcome_events',{})
             band=price_band(row.get('price','0'))
@@ -79,7 +83,8 @@ def summarize_wide(folder_bots,profiles,category_for):
         def rows(target):
             result=[]
             for (band,slot),events in sorted(target.items()):
-                returns={event:value['returns'][event] for event,value in events.items() if event in value['returns']}
+                returns={event:value['returns'][event] for event,value in events.items()
+                         if not value['incomplete'] and event in value['returns']}
                 n=len(events);wins=sum(value['outcome'] for value in events.values())
                 # One event receives one vote for both outcome accuracy and
                 # average entry. Multi-contract positions do not inflate n.

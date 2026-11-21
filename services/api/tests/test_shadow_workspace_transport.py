@@ -35,9 +35,17 @@ class LearningDiagnostics(unittest.TestCase):
 class WorkspaceTransport(unittest.TestCase):
     def test_favorites_timed_crypto_aggregates_survive_compaction_with_retired_history(self):
         def entry(series,market_type,contracts):
+            # Distinct confirmed settlement identities, not a synthetic
+            # contract-derived observation count. The source cash remains as
+            # captured, independently of read-only held-return research.
+            event='settled-'+series
             return dict(series=series,market_type=market_type,clock='market_close',
                 horizon='5–10m',price='.80',contracts=str(contracts),closed=str(contracts),
-                resolved=str(contracts),winners=str(contracts),cost='1',net='.2',events=1,event_win_rate=100)
+                resolved=str(contracts),winners=str(contracts),cost='1',net='.2',
+                events=1,event_win_rate=100,
+                outcome_events={event:1},
+                return_events={event:dict(cost='1',net=str(D(contracts)-D(1)))},
+                return_policy='hold_only')
         specs=[('btc','KXBTC15M','crypto',2,False,'15m_price'),
                ('eth','KXETH15M','crypto',4,True,'15m_price'),
                ('hour','KXBTCD','hourly',3,False,'hourly_price')]

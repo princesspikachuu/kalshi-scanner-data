@@ -154,14 +154,18 @@ def favorite_timing_category(profile):
         return 'finance'+period
     return 'other'+period
 
-def favorite_collector_timed_totals(folder_bots,profiles):
-    """Compact saved entry-fill totals for every Favorites category.
+def favorite_collector_timed_totals(folder_bots,profiles,*,held_view=False):
+    """Regular Favorites Detailed research, with verified hypothetical held P/L.
 
-    Retain source market groups, contract accounting and missing-outcome status.
-    Individual sports bot rows are provided separately, not double-counted.
+    Historic exits are treated as held when their outcome is known; actual
+    account/realized cash fields remain unchanged. A repeated event in one
+    cohort counts only once, regardless of the number of partial fills.
     """
     from services.paper_demo.shadow.observation_returns import merge, summarize
-    totals={};coverage={};per_bot={};returns={};outcomes={}
+    from services.paper_demo.shadow.regular_favorites_hold_research import regular_favorites_held_bots
+    if not held_view:
+        folder_bots=regular_favorites_held_bots(folder_bots)
+    totals={};coverage={};per_bot={};returns={};outcomes={};incomplete={}
     def decimal(value):
         try:
             n=D(str(value if value is not None else 0))
@@ -192,28 +196,46 @@ def favorite_collector_timed_totals(folder_bots,profiles):
             market_type=row.get('market_type') or kind
             key=(kind,str(market_type),str(clock),horizon,cents)
             cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
-            merge(returns.setdefault(key,{}),row.get('return_events',{}))
-            if 'outcome_events' in row:
-                merged=outcomes.setdefault(key,{})
-                for event,value in row['outcome_events'].items():merged[event]=min(merged.get(event,1),int(value))
+            # The read-only held view has already substituted confirmed
+            # settlement returns for historical exits. Unknown outcomes are
+            # not win, loss or zero-ROI observations.
+            verified=row.get('outcome_events',{})
+            attributed=row.get('return_events',{})
+            if not isinstance(verified,dict):verified={}
+            if not isinstance(attributed,dict):attributed={}
+            merged=outcomes.setdefault(key,{})
+            valid_returns={}
+            for event,payout in verified.items():
+                identity=str(event)
+                merged[identity]=min(merged.get(identity,1),int(payout))
+                value=attributed.get(identity)
+                if not isinstance(value,dict):
+                    incomplete.setdefault(key,set()).add(identity)
+                    continue
+                cost=decimal(value.get('cost'));net=decimal(value.get('net'))
+                if cost<=0:
+                    incomplete.setdefault(key,set()).add(identity)
+                    continue
+                # A source row missing attribution makes the event's pooled
+                # return incomplete, even if another entry cohort contributed.
+                valid_returns[identity]=dict(cost=str(cost),net=str(net),
+                    estimated=bool(value.get('estimated')))
+            merge(returns.setdefault(key,{}),valid_returns)
             for field in FAVORITE_TIMING_FIELDS:
-                if field in ('events','event_wins') and 'outcome_events' in row:continue
-                if field=='event_wins':
-                    # An event is one resolved observation regardless of filled
-                    # contract quantity. Existing rows expose a percent, not
-                    # individual event outcomes; never derive count from contracts.
-                    rate=row.get('event_win_rate')
-                    if rate is not None:
-                        cell[field]+=decimal(row.get('events'))*decimal(rate)/100
-                else:cell[field]+=decimal(row.get(field))
+                if field in ('events','event_wins'):continue
+                cell[field]+=decimal(row.get(field))
     rows={}
     for (kind,market_type,clock,horizon,cents),value in totals.items():
-        known=outcomes.get((kind,market_type,clock,horizon,cents),{})
+        key=(kind,market_type,clock,horizon,cents)
+        known=outcomes.get(key,{})
         value['events']+=len(known);value['event_wins']+=sum(known.values())
+        attributed=returns.get(key,{}).copy()
+        for event in incomplete.get(key,()):
+            attributed.pop(event,None)
         rows.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
             horizon=horizon,price=str(D(cents)/100),
             **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS},
-            **summarize(returns.get((kind,market_type,clock,horizon,cents),{}))))
+            **summarize(attributed)))
     for items in rows.values():items.sort(key=lambda r:(D(r['price']),r['horizon'],r['clock']))
     return dict(rows=rows,coverage={kind:dict(bots_total=cov['bots_total'],
         bots_with_rows=cov['bots_with_rows'],purchased=str(cov['purchased']),
@@ -236,12 +258,14 @@ def workspace_response(payload,*,compressed=False,request_started=None):
     for folder in payload['folders']:
         folder=dict(folder)
         if folder.get('id')=='favorites':
-            aggregate=favorite_collector_timed_totals(folder.get('bots') or {},profiles)
+            from services.paper_demo.shadow.regular_favorites_hold_research import regular_favorites_held_bots
+            held_bots=regular_favorites_held_bots(folder.get('bots') or {})
+            aggregate=favorite_collector_timed_totals(held_bots,profiles,held_view=True)
             folder['collector_timed_summary']=aggregate
             from services.paper_demo.shadow.favorite_wide import summarize_wide
-            folder['collector_wide_summary']=summarize_wide(folder.get('bots') or {},profiles,favorite_timing_category)
+            folder['collector_wide_summary']=summarize_wide(held_bots,profiles,favorite_timing_category)
             from services.paper_demo.shadow.favorite_single import summarize_single
-            folder['collector_single_summary']=summarize_single(folder.get('bots') or {},profiles,favorite_timing_category)
+            folder['collector_single_summary']=summarize_single(held_bots,profiles,favorite_timing_category)
             if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
                 FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
                 print(json.dumps(dict(event='favorites_timed_rollup',
@@ -283,6 +307,10 @@ def workspace_response(payload,*,compressed=False,request_started=None):
             if experiment.get('scalper') is None:
                 for key in ('entry_timing','calibration'):
                     rows=experiment.get(key)
+                    if (key=='entry_timing' and bot.get('folder_id')=='favorites'
+                            and isinstance(rows,list)):
+                        from services.paper_demo.shadow.regular_favorites_hold_research import regular_favorites_held_row
+                        rows=[regular_favorites_held_row(row) for row in rows]
                     if isinstance(rows,list) and len(rows)<=8:
                         try:
                             encoded=json.dumps(rows,default=str,separators=(',',':'),
@@ -596,7 +624,11 @@ def install_shadow(app,auth,mutate,pool):
             research={}
             for key in ('entry_timing','calibration'):
                 rows=metric.get(key)
-                if isinstance(rows,list):research[key]=rows
+                if isinstance(rows,list):
+                    if identifier=='favorites' and key=='entry_timing':
+                        from services.paper_demo.shadow.regular_favorites_hold_research import regular_favorites_held_row
+                        rows=[regular_favorites_held_row(row) for row in rows]
+                    research[key]=rows
             if research:out[bot_id]=research
         return dict(contract='demo-v1',folder_id=identifier,at=status.get('at'),bots=out,real_orders_enabled=False)
 

@@ -27,7 +27,10 @@ class HistoryDelayedWorkspaceTests(unittest.TestCase):
             attempts=1,completed=1,entry_timing=[dict(
                 series='KXBTC15M',market_type='15m_price',clock='market_close',
                 price='.80',horizon='5–10m',events=1,event_wins=1,
-                contracts='1',cost='.80',return_sum='.25',return_observations=1)])
+                contracts='1',cost='.80',return_sum='.25',return_observations=1,
+                outcome_events={'btc-settled-event':1},
+                return_events={'btc-settled-event':dict(cost='.80',net='.20')},
+                return_policy='hold_only')])
         self.status=dict(at=1000,accounting=self.worker_money,positions=[],
             orders=[],experiments={'favorites':dict(
                 accounting=self.fav_account,bots={'fav':self.fav_metrics})})
