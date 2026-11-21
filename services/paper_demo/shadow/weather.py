@@ -91,7 +91,7 @@ async def weather_once(host):
     pending={t:m for t,m in suite.settlement_markets().items()
              if m.get('weather_category') and not m.get('paid') and m['close']<=now and t not in held}
     checks=getattr(host,'weather_settlement_checks',None)
-    if checks is None:checks=host.weather_settlement_checks={}
+    if not isinstance(checks,dict):checks=host.weather_settlement_checks={}
     for ticker in due_for_confirmation(pending,checks,now):
         checks[ticker]=now
         try:
