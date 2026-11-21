@@ -247,3 +247,8 @@
 @media(max-width:650px){
  .shadow-workspace .favorite-single-headline{display:block;margin:3px 0 0;font-size:11px}
 }
+
+/* Statistics-Backed Favorites shows verified hold P/L alongside outcome confidence. */
+.shadow-workspace .statistics-matrices .favorite-stat-market>summary{white-space:normal;overflow-wrap:anywhere}
+.shadow-workspace .statistics-matrices .favorite-single-headline{display:block;margin:3px 0 0;font-size:11px}
+.shadow-workspace .favorite-stat-hold-return{font-variant-numeric:tabular-nums;line-height:1.35;overflow-wrap:anywhere;white-space:normal}
