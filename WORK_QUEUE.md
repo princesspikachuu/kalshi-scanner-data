@@ -1681,4 +1681,8 @@ Independently trace regular Favorites observations from maker fills through auth
 - Branch new code from `build/google-auth-foundation` (never `main`); write queue claim to `main`; use draft PR until tests and evidence confirm safety.
 
 ### Completion notes
-_In progress: audit, concrete defects, code, tests, PR, deployment to follow._
+- **User policy clarification (2026-11-21):** For regular High-Probability Favorites research, any historic early exit **with a confirmed outcome must be evaluated counterfactually as held through settlement**, using original entry quantity, cost, and entry fees. Ignore actual exit proceeds/exit fees in research; preserve actual ledger. Unknown outcomes must not count as profitability or uncertainty observations.
+- **Implementation in draft PR [#323](https://github.com/princesspikachuu/kalshi-scanner-data/pull/323):** Branch `audit/mt022-regular-favorites-profit-evidence-20261121` from `build/google-auth-foundation`. A read-only derived per-event held evidence view feeds regular Favorites Detailed, Wider, Single and research detail responses, with exact fills preferred, estimated historic sizing visibly flagged, no known-outcome exits discarded, no unknown-outcome P/L invented, and no source data/positions/accounting changes. Dedicated regression tests cover known winning/losing exits, multiple entry fills, fee-inclusive basis, conservative event labels, original ledger preservation, malformed/missing outcomes and all three table views.
+- **Coordination:** PR #322 has since merged the separate 20-event uncertainty display safeguard. PR #323 does not alter Statistics-Backed Favorites; no conflicting UI/threshold edits.
+- **Pending:** Exact draft PR-head API/PostgreSQL CI and independent review of reconstruction; merge/deploy only after checks pass and no data integrity issues. Runtime validation remains read-only.
+
