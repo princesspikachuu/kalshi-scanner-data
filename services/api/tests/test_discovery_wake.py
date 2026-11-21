@@ -60,7 +60,7 @@ class DiscoveryWakeIntegration(unittest.IsolatedAsyncioTestCase):
         suite=Mock();suite.feed_markets.return_value={}
         suite.enabled_profiles.side_effect=lambda category:(
             [dict(series='KXHIGHNY')] if category=='weather_daily' else [])
-        suite.weather_cursor={};suite.weather_pages={};suite.portfolios={}
+        suite.weather_cursor={};suite.weather_pages={};suite.portfolios={};suite.weather_scan_log_at=0
         suite.settlement_markets.return_value={}
         suite.search_capacity.return_value=True
         host=Mock(experiments=suite);host.put=AsyncMock()
