@@ -816,9 +816,9 @@ _Fill in when done._
 # PRIORITY 6 — Keep paused items out of the way without losing them
 
 ## MT-006 — Sort paused folders/strategies/markets to the bottom everywhere
-**Status:** READY  
-**Worker:** —  
-**Claimed:** —  
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / MT-006 paused-first dashboard ordering  
+**Claimed:** 2026-11-21 18:24 UTC  
 **Urgency:** U3 — NORMAL  
 **Priority:** Medium
 
