@@ -286,6 +286,7 @@ class DataMode(unittest.TestCase):
         e.advance(213)
         self.assertEqual(first.status,'resting')
         self.assertEqual(second.status,'resting')
+        e.fill(first,D('.4'),first.price,'TEST')
         b.profile['paper_repeat_inventory_multiplier']=1
         book.at=213;b.step()
         pending_cancels={ident for _,_,action,ident in e.pending if action=='cancel'}
