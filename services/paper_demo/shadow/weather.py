@@ -6,6 +6,7 @@ from .storage import put
 from .discovery_budget import candidate_markets,next_profile
 from .hourly import favorite_bid
 from .weather_window import CITY_ZONES,entry_allowed
+from .settlement_recovery import due_for_confirmation
 from services.research.reports import SERIES
 
 WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets and holds until authoritative settlement. Daily entries are limited to the city’s final two hours. Favorite bias remains a hypothesis.'
@@ -83,12 +84,27 @@ async def weather_once(host):
     if now>=getattr(suite,'weather_scan_log_at',0):
         suite.weather_scan_log_at=now+60
         print(json.dumps(dict(event='paper_weather_scan',**scan,real_orders_enabled=False)),flush=True)
-    # Settlement requires the exchange result, even after the daily close.
-    due=[t for t,m in suite.settlement_markets().items() if m.get('weather_category') and not m.get('paid') and m['close']<=now]
-    for ticker in due[:4]:
-        raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market']
-        if raw.get('ticker')==ticker and raw.get('status') in ('settled','finalized') and raw.get('result') in ('yes','no'):
-            await host.put('experiment_settlement',dict(ticker=ticker,result=raw['result'],status=raw['status']))
+    # Only the exchange's finalized result may authorize a paper payout.
+    # Held lots have their own independent, fair recovery loop. Avoid duplicate
+    # REST reads here and rotate the remaining weather markets fairly.
+    held={lot.ticker for engine,_,_ in suite.portfolios.values() for lot in engine.wallet.lots if lot.quantity>0}
+    pending={t:m for t,m in suite.settlement_markets().items()
+             if m.get('weather_category') and not m.get('paid') and m['close']<=now and t not in held}
+    checks=getattr(host,'weather_settlement_checks',None)
+    if checks is None:checks=host.weather_settlement_checks={}
+    for ticker in due_for_confirmation(pending,checks,now):
+        checks[ticker]=now
+        try:
+            raw=(await asyncio.to_thread(host.verified_data.call,'GET','/markets/'+ticker))['market']
+            if raw.get('ticker')==ticker and raw.get('status') in ('settled','finalized') and raw.get('result') in ('yes','no'):
+                await host.put('experiment_settlement',dict(ticker=ticker,result=raw['result'],status=raw['status']))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(json.dumps(dict(event='paper_weather_settlement_retry',ticker=ticker,
+                error=type(exc).__name__,real_orders_enabled=False)),flush=True)
+    for ticker in list(checks):
+        if ticker not in pending:del checks[ticker]
 
 async def discover_weather(host):
     while not host.done.is_set():
