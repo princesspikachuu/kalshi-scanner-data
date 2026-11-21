@@ -26,7 +26,7 @@ class PausedScalperStatusCacheTests(unittest.TestCase):
     def test_idle_reuses_snapshot_for_30_seconds(self):
         bot, engine = self.fixture()
         first = scalper_status_snapshot(bot, engine, 100)
-        self.assertIs(first, scalper_status_snapshot(bot, engine, 105))
+        self.assertEqual(first, scalper_status_snapshot(bot, engine, 105))
         self.assertEqual(bot.research_snapshot.call_count, 1)
         self.assertIsNot(first, scalper_status_snapshot(bot, engine, 131))
         self.assertEqual(bot.research_snapshot.call_count, 2)
@@ -40,8 +40,18 @@ class PausedScalperStatusCacheTests(unittest.TestCase):
         engine.wallet.cash = D(99)
         scalper_status_snapshot(bot, engine, 102)
         engine.tape.calculations += 1
-        scalper_status_snapshot(bot, engine, 103)
-        self.assertEqual(bot.research_snapshot.call_count, 4)
+        refreshed = scalper_status_snapshot(bot, engine, 103)
+        self.assertEqual(refreshed['shared_feature_calculations'], 3)
+        self.assertEqual(bot.research_snapshot.call_count, 3)
+
+    def test_unrelated_tape_activity_does_not_rebuild_heavy_research(self):
+        bot, engine = self.fixture()
+        scalper_status_snapshot(bot, engine, 100)
+        for i in range(100):
+            engine.tape.calculations += 1
+            view = scalper_status_snapshot(bot, engine, 100+i*.1)
+            self.assertEqual(view['shared_feature_calculations'], 3+i)
+        self.assertEqual(bot.research_snapshot.call_count, 1)
 
     def test_position_order_and_running_bot_bypass_cache(self):
         bot, engine = self.fixture()
