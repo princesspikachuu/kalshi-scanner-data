@@ -98,6 +98,33 @@ def scalper_status_snapshot(bot, engine, now):
     return rendered
 
 
+PAUSED_FAVORITE_TIMING_CACHE_SECONDS = 30
+
+
+def favorite_timing_status_rows(bot, engine, now):
+    """Cache only the derived display rows of an idle, paused Favorites bot.
+
+    The underlying event observations, wallet and checkpoint are never cached
+    or changed. Active exposure always recomputes immediately; the short TTL
+    catches in-place updates to a historical cell without changing its count.
+    """
+    if (bot.enabled or engine.wallet.lots or
+            any(order.status in ('pending', 'resting') for order in engine.orders.values())):
+        bot.__dict__.pop('_paused_favorite_timing', None)
+        return favorite_timing_rows(bot.exit_evidence.cells, hold_only=bot.hold_only)
+
+    cells = bot.exit_evidence.cells
+    signature = (id(cells), len(cells), bool(bot.hold_only))
+    cached = getattr(bot, '_paused_favorite_timing', None)
+    if (cached is not None and 0 <= now - cached[0] < PAUSED_FAVORITE_TIMING_CACHE_SECONDS
+            and signature == cached[1]):
+        return cached[2]
+
+    rendered = favorite_timing_rows(cells, hold_only=bot.hold_only)
+    bot._paused_favorite_timing = (now, signature, rendered)
+    return rendered
+
+
 class ExperimentSuite:
     def __init__(self,host,rows,previous=None):
         self.summary=(previous or {}).get('_summary',{})
@@ -727,7 +754,7 @@ class ExperimentSuite:
                     scalper=(scalper_status_snapshot(b,e,now) if folder in SCALPER_FOLDERS else b.research_snapshot()) if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,
                     statistics=dict(min_samples=int(b.profile.get('statistics_min_samples',20)),latest_decisions=list(b.decisions.values())[-20:]) if isinstance(b,StatisticsFavoritesStrategy) else None,
-                    entry_timing=favorite_timing_rows(b.exit_evidence.cells,hold_only=b.hold_only) if folder in ('favorites','favorites_statistics') else [])
+                    entry_timing=favorite_timing_status_rows(b,e,now) if folder in ('favorites','favorites_statistics') else [])
                 if isinstance(b,VolatilityScalper):
                     retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
             stats_bot=next((b for b in f.bots.values() if isinstance(b,StatisticsFavoritesStrategy)),None)
