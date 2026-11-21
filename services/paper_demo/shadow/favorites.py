@@ -75,13 +75,21 @@ class FavoritesStrategy(ConvexityStrategy):
         if a and order.action=='buy':
             a['first']=True
             if a.get('entry_policy')=='favorites-paper-data-v3':
-                filled=(a.get('pending_buckets') or {}).get(order.id)
-                if filled is None:filled=self.research_bucket(order.ticker,order.side,order.price,order.created)
+                origin=(a.get('pending_buckets') or {}).get(order.id)
+                if origin is None:origin=self.research_bucket(order.ticker,order.side,order.price,order.created)
+                # The submitted time band is not evidence of the actual fill
+                # band. An old resting order may fill after a horizon transition.
+                recent=getattr(self.e,'_recent_fills',{}).get(order.id,[])
+                fill_price=D(recent[-1]['price']) if recent else order.price
+                actual=self.research_bucket(order.ticker,order.side,fill_price)
                 active,buckets=self.active_buckets(order.ticker,a)
-                # A second distinct 5c x time-band bid must survive another
-                # bucket filling; duplicate bids inside the same bucket do not.
                 for other in active:
-                    if other.id!=order.id and buckets.get(other.id)==filled:self.e.cancel(other.id)
+                    if other.id==order.id:continue
+                    # Cancel only redundant cohort exposure: bids in different
+                    # current fill buckets may continue resting independently.
+                    if (buckets.get(other.id) in (origin,actual) or
+                            self.research_bucket(order.ticker,other.side,other.price)==actual):
+                        self.e.cancel(other.id)
                 return
         self.e.cancel_buys(order.ticker)
         if a and order.action=='sell':self.finish_data_window(order.ticker,a)
