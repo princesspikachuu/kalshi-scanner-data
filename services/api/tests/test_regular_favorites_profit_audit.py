@@ -65,17 +65,96 @@ class RegularFavoritesProfitAuditTests(unittest.TestCase):
         self.assertEqual(unknown['return_observations'],0)
         self.assertIsNone(unknown['average_return_pct'])
 
-    def test_historical_exit_proceeds_are_not_mislabeled_as_hold_returns(self):
+    def test_historical_known_winning_exit_is_evaluated_as_held_to_settlement(self):
         row=self.row(outcomes={'verified':1},
             returns={'verified':dict(cost='.75',net='-.50')},
             cost='.75',net='-.50',policy='all_executions')
+        prior=copy.deepcopy(row)
         summary=self.aggregate([row])
+        self.assertEqual(row,prior,'no recorded exits or cash can be rewritten')
         self.assertEqual(D(summary['events']),1)
         self.assertEqual(D(summary['event_wins']),1)
         self.assertEqual(D(summary['net']),D('-.50'),
-            'keep the separately reported actual realized ledger total')
-        self.assertEqual(summary['return_observations'],0)
-        self.assertIsNone(summary['average_return_pct'])
+            'separate historical realized ledger retains the early sale')
+        self.assertEqual(summary['return_observations'],1)
+        self.assertEqual(D(summary['average_return_pct']),D(100)/3,
+            'research must report the counterfactual winning hold, not the exit')
+        self.assertEqual(D(summary['return_sum']),D(1)/D(3))
+
+    def test_known_losing_exit_is_a_full_held_loss_and_unknown_is_omitted(self):
+        loss=self.row(price='.80',contracts='1',cost='.80',net='-.05',
+            outcomes={'settled-loss':0},
+            returns={'settled-loss':dict(cost='.80',net='-.05')},
+            policy='all_executions')
+        result=self.aggregate([loss])
+        self.assertEqual(result['return_observations'],1)
+        self.assertEqual(D(result['average_return_pct']),-100)
+        self.assertEqual(D(result['net']),D('-.05'))
+        no_result=self.aggregate([self.row(outcomes={},
+            returns={'early-exit':dict(cost='.80',net='-.05')},
+            policy='all_executions')])
+        self.assertEqual(no_result['return_observations'],0)
+        self.assertEqual(D(no_result['events']),0)
+        self.assertIsNone(no_result['average_return_pct'])
+
+    def test_older_exits_without_return_map_use_verified_entry_basis(self):
+        row=self.row(price='.80',contracts='10',cost='8.10',net='-4',
+            outcomes={'one':1},returns={},policy='all_executions')
+        row.update(resolved='10',winners='10')
+        summary=self.aggregate([row])
+        self.assertEqual(summary['return_observations'],1)
+        self.assertEqual(summary['estimated_return_observations'],0)
+        self.assertEqual(D(summary['average_return_pct']),
+                         100*(D(10)-D('8.10'))/D('8.10'))
+
+    def test_multi_event_historical_costs_estimate_entry_quantities_not_exit_profits(self):
+        row=self.row(price='.80',contracts='6',cost='4.8',net='-1',
+            outcomes={'win':1,'loss':0},
+            returns={'win':dict(cost='3.2',net='-1.1'),
+                     'loss':dict(cost='1.6',net='.1')},
+            policy='all_executions')
+        row.update(resolved='6',winners='4')
+        summary=self.aggregate([row])
+        self.assertEqual(summary['return_observations'],2)
+        self.assertEqual(summary['estimated_return_observations'],2)
+        self.assertEqual(D(summary['average_return_pct']),D('-37.5'))
+
+    def test_partially_attributed_repeat_event_cannot_inflate_pooled_roi(self):
+        a=self.row(outcomes={'A':1},
+            returns={'A':dict(cost='.75',net='.25')})
+        b=self.row(outcomes={'A':1},
+            returns={'A':dict(cost='NaN',net='.25')})
+        result=self.aggregate([a,b])
+        self.assertEqual(D(result['events']),1)
+        self.assertEqual(result['return_observations'],0,
+            'one malformed cohort makes the combined event return incomplete')
+        self.assertIsNone(result['average_return_pct'])
+
+    def test_all_three_regular_favorites_views_restore_known_early_exits(self):
+        from services.paper_demo.shadow.regular_favorites_hold_research import (
+            regular_favorites_held_bots)
+        from services.paper_demo.shadow.favorite_single import summarize_single
+        from services.paper_demo.shadow.favorite_wide import summarize_wide
+        row=self.row(price='.80',contracts='4',cost='3.2',net='-1.6',
+            outcomes={'settled':1},
+            returns={'settled':dict(cost='3.2',net='-1.6')},
+            policy='all_executions')
+        row.update(time_min=400,time_max=401,
+            wide_events={'settled':[[400,'4','3.2','-1.6']]})
+        original=copy.deepcopy(row)
+        bots={'btc':dict(entry_timing=[row])}
+        profiles={'btc':dict(series='KXBTC15M',asset='crypto')}
+        held=regular_favorites_held_bots(bots)
+        self.assertEqual(row,original)
+        entry=held['btc']['entry_timing'][0]
+        self.assertEqual(D(entry['wide_events']['settled'][0][3]),D('.8'))
+        self.assertEqual(D(entry['return_events']['settled']['net']),D('.8'))
+        detailed=favorite_collector_timed_totals(held,profiles,held_view=True)['rows']['crypto-15m'][0]
+        wide=summarize_wide(held,profiles,lambda p:'crypto-15m')['rows']['crypto-15m'][0]
+        single=summarize_single(held,profiles,lambda p:'crypto-15m')['rows']['crypto-15m']
+        for view in (detailed,wide,single):
+            self.assertEqual(view['return_observations'],1)
+            self.assertEqual(D(view['average_return_pct']),25)
 
     def test_bad_legacy_evidence_never_invents_a_profit_or_breaks_workspace(self):
         rows=[
