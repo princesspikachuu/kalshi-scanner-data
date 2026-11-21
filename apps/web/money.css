@@ -247,3 +247,29 @@
 @media(max-width:650px){
  .shadow-workspace .favorite-single-headline{display:block;margin:3px 0 0;font-size:11px}
 }
+
+/* Statistics-Backed Favorites shows verified hold P/L alongside outcome confidence. */
+.shadow-workspace .statistics-matrices .favorite-stat-market>summary{white-space:normal;overflow-wrap:anywhere}
+.shadow-workspace .statistics-matrices .favorite-single-headline{display:block;margin:3px 0 0;font-size:11px}
+.shadow-workspace .favorite-stat-hold-return{font-variant-numeric:tabular-nums;line-height:1.35;overflow-wrap:anywhere;white-space:normal}
+
+/* Favorites: compact, independently toggleable saved research-bucket stars. */
+.shadow-workspace .favorite-stat-matrix td{position:relative}
+.shadow-workspace .favorite-bucket-star{
+ position:absolute;top:3px;right:3px;display:grid;place-items:center;
+ width:28px;height:28px;min-height:28px;max-width:28px;
+ padding:0;border:1px solid transparent;border-radius:7px;
+ background:transparent;color:var(--muted);font-size:21px;line-height:1;
+ z-index:2;cursor:pointer
+}
+.shadow-workspace .favorite-bucket-star:hover{background:var(--raised);border-color:var(--line)}
+.shadow-workspace .favorite-bucket-star.is-starred{color:var(--amber);background:#40331d;border-color:#856a35}
+.shadow-workspace .favorite-stat-matrix td>details>summary{padding-right:28px}
+.shadow-workspace .favorite-stat-matrix td.stat-empty>span{display:block;padding-right:24px}
+.shadow-workspace .favorite-single-matrix td>strong{padding-right:30px}
+.shadow-workspace .favorite-star-empty{position:relative;min-height:48px;padding:4px 36px 0 0}
+.shadow-workspace .favorite-star-empty>.favorite-bucket-star{top:2px;right:2px}
+@media(max-width:650px){
+ .shadow-workspace .favorite-bucket-star{width:27px;height:27px;min-height:27px}
+ .shadow-workspace .favorite-stat-matrix td>details>summary{padding-right:23px}
+}

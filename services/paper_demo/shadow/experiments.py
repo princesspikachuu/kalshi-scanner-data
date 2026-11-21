@@ -97,6 +97,33 @@ def scalper_status_snapshot(bot, engine, now):
     return rendered
 
 
+PAUSED_FAVORITE_TIMING_CACHE_SECONDS = 30
+
+
+def favorite_timing_status_rows(bot, engine, now):
+    """Cache only the derived display rows of an idle, paused Favorites bot.
+
+    The underlying event observations, wallet and checkpoint are never cached
+    or changed. Active exposure always recomputes immediately; the short TTL
+    catches in-place updates to a historical cell without changing its count.
+    """
+    if (bot.enabled or engine.wallet.lots or
+            any(order.status in ('pending', 'resting') for order in engine.orders.values())):
+        bot.__dict__.pop('_paused_favorite_timing', None)
+        return favorite_timing_rows(bot.exit_evidence.cells, hold_only=bot.hold_only)
+
+    cells = bot.exit_evidence.cells
+    signature = (id(cells), len(cells), bool(bot.hold_only))
+    cached = getattr(bot, '_paused_favorite_timing', None)
+    if (cached is not None and 0 <= now - cached[0] < PAUSED_FAVORITE_TIMING_CACHE_SECONDS
+            and signature == cached[1]):
+        return cached[2]
+
+    rendered = favorite_timing_rows(cells, hold_only=bot.hold_only)
+    bot._paused_favorite_timing = (now, signature, rendered)
+    return rendered
+
+
 class ExperimentSuite:
     def __init__(self,host,rows,previous=None):
         self.summary=(previous or {}).get('_summary',{})
@@ -104,6 +131,8 @@ class ExperimentSuite:
         self.monitoring=MonitoringBudget();self.tape=MarketTape()
         self.rotation_exclusions={t:min(end,time.time()+60) for t,end in (previous or {}).get('_rotation_exclusions',{}).items()}
         self.host=host;self.rows=rows;self.portfolios={};self.models={};self.extra={};self.scanner_cursor='';self.scanner_state={}
+        # Diagnostic counters only; never included in trading/checkpoint state.
+        self.paused_discovery_skipped=0;self.paused_market_copies_skipped=0
         for folder in EXPERIMENT_FOLDERS:
             ps=[r['parameters'] for r in rows if r['parameters'].get('folder_id')==folder]
             model_data=(previous or {}).get(folder,{}).get('model')
@@ -175,11 +204,13 @@ class ExperimentSuite:
             strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
+        resumed=False
         for folder,(e,f,ps) in self.portfolios.items():
             for p in ps:
                 row=next((r for r in rows if r['parameters']['id']==p['id']),None)
                 if not row:continue
                 b=f.bots[p['series']];enabled=row['progress'].get('desired')=='running' and mode=='demo' and not row['parameters'].get('retired')
+                if enabled and not b.enabled:resumed=True
                 old_paused=set(p.get('paused_markets',[]))
                 if not enabled and b.enabled:
                     for t in e.markets:
@@ -193,6 +224,12 @@ class ExperimentSuite:
                         if t in e.markets and f.owner(t) is b:
                             e.cancel_buys(t)
                             if not self.ticker_exposed(e,t):e.books[t].valid=False
+        # A resumed bot must immediately join already admitted shared feeds;
+        # this only adds market metadata/books with an invalid (untrusted) book.
+        # It never submits orders or changes another portfolio's risk state.
+        if resumed:
+            self.share_external_markets()
+            self.share_legacy_markets()
     def add_set(self,payload,now):
         if not self.extra_capacity([p['market']['ticker'] for p in payload['markets']],now):return
         e,f,ps=self.portfolios['complete_set'];profile=ps[0]
@@ -223,6 +260,9 @@ class ExperimentSuite:
                 if ticker in e.markets or folder in SEQUENTIAL_FOLDERS and m.get('hourly_price'):continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
                 if not p:continue
+                if not f.bots[p['series']].enabled and not self.ticker_exposed(e,ticker):
+                    self.paused_market_copies_skipped+=1
+                    continue
                 market=dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
                             strategy_version=p.get('version',folder+'-1'),discovered_at=now)
                 e.add_market(market,source.fees[ticker])
@@ -237,6 +277,9 @@ class ExperimentSuite:
                 if ticker in e.markets:continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
                 if not p:continue
+                if not f.bots[p['series']].enabled and not self.ticker_exposed(e,ticker):
+                    self.paused_market_copies_skipped+=1
+                    continue
                 e.add_market(dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
                     strategy_version=p.get('version',folder+'-1'),discovered_at=now),self.host.engine.fees[ticker])
 
@@ -265,6 +308,8 @@ class ExperimentSuite:
         stats['maker_slots_free']=max(0,stats['maker_entry_limit']-stats['categories']['market_maker']) if stats['admitting'] else 0
         stats['maker_reallocations_pending']=len(self.maker_allocation['pending'])
         stats['maker_reallocations_completed']=self.maker_allocation.get('completed',0)
+        stats['paused_new_market_discoveries_skipped']=self.paused_discovery_skipped
+        stats['paused_new_market_copies_skipped']=self.paused_market_copies_skipped
         return stats
     def can_replace_maker_market(self,payload,now):
         return maker_allocation.credited_capacity(self,payload['market']['ticker'],now) or maker_allocation.replacement(self,payload['market'],now) is not None
@@ -488,7 +533,7 @@ class ExperimentSuite:
             ticker=payload['ticker']
             for folder in (*SEQUENTIAL_FOLDERS,'favorites','favorites_statistics',*SCALPER_FOLDERS):
                 e,f,ps=self.portfolios[folder]
-                if ticker in e.markets:
+                if ticker in e.markets and not (getattr(self.host,'suspend_idle_feeds',False) is True and self.idle_feed(e,f)):
                     self.prepare(e,'clock',{},now)
                     e.advance(now);e.markets[ticker].update(payload['gate']);f.step(ticker)
             return
@@ -520,6 +565,9 @@ class ExperimentSuite:
                 e,f,ps=self.portfolios[folder]
                 profile=next((p for p in ps if p['market_category']==m['market_category']),None)
                 if not profile:continue
+                if ticker not in e.markets and not f.bots[profile['series']].enabled and not self.ticker_exposed(e,ticker):
+                    self.paused_discovery_skipped+=1
+                    continue
                 if ticker in e.markets:
                     e.markets[ticker].update(m,entry_parked=False)
                     e.books[ticker].valid=False
@@ -550,6 +598,14 @@ class ExperimentSuite:
                     if source=='clock':
                         self.idle_clock_skipped=getattr(self,'idle_clock_skipped',0)+1
                     e.idle_feed_suspended=True;continue
+            if source=='market' and not any(b.enabled for b in f.bots.values()):
+                # Legacy 15m rollovers have no reason to allocate fresh books
+                # in a fully paused wallet. Existing markets remain available
+                # for exposure/settlement; they are never removed by this gate.
+                ticker=payload.get('market',{}).get('ticker')
+                if ticker and ticker not in e.markets and not self.ticker_exposed(e,ticker):
+                    self.paused_discovery_skipped+=1
+                    continue
             if self.skip_unrelated_lifecycle(e,source,payload):continue
             if getattr(self.host,'suspend_idle_feeds',False) is True and self.skip_paused_ticker_input(e,f,source,payload,now):continue
             if folder in SCALPER_FOLDERS:
@@ -580,6 +636,14 @@ class ExperimentSuite:
                 if folder not in (*SEQUENTIAL_FOLDERS,'favorites',*SCALPER_FOLDERS) or source=='hourly_market' and folder not in ('favorites',*SCALPER_FOLDERS):continue
                 profile=next((p for p in ps if p['series']==payload['market']['ticker'].split('-')[0]),None)
                 if not profile or profile.get('retired'):continue
+                # A paused bot cannot trade a newly discovered market. Avoid
+                # constructing its book, fee state, stats and checkpoint data.
+                # Existing known markets still pass through for any remaining
+                # orders, held positions, outcomes or strategy reactivation.
+                ticker=payload['market']['ticker']
+                if ticker not in e.markets and not f.bots[profile['series']].enabled and not self.ticker_exposed(e,ticker):
+                    self.paused_discovery_skipped+=1
+                    continue
                 local=dict(payload,market=dict(payload['market'],bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile.get('version',folder+'-1'),bot_revision=profile['revision']))
                 ticker=local['market']['ticker']
                 if e.markets.get(ticker,{}).get('entry_parked'):
@@ -692,7 +756,7 @@ class ExperimentSuite:
                     scalper=(scalper_status_snapshot(b,e,now) if folder in SCALPER_FOLDERS else b.research_snapshot()) if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,
                     statistics=dict(min_samples=int(b.profile.get('statistics_min_samples',20)),latest_decisions=list(b.decisions.values())[-20:]) if isinstance(b,StatisticsFavoritesStrategy) else None,
-                    entry_timing=favorite_timing_rows(b.exit_evidence.cells,hold_only=b.hold_only) if folder in ('favorites','favorites_statistics') else [])
+                    entry_timing=favorite_timing_status_rows(b,e,now) if folder in ('favorites','favorites_statistics') else [])
                 if isinstance(b,VolatilityScalper):
                     retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
             stats_bot=next((b for b in f.bots.values() if isinstance(b,StatisticsFavoritesStrategy)),None)

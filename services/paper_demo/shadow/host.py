@@ -91,6 +91,37 @@ def book_ingest_age_bucket(sending_ts_ms,received_at):
     return 'over_10s'
 
 
+class ShadowStartupStopped(Exception):
+    """The service was stopped before a complete startup catalog could load."""
+
+
+def load_startup_controls(store,stop):
+    """Retry only a read-only statement timeout; never start with partial bots.
+
+    Called after acquiring the existing worker fence, before constructing the
+    simulator or admitting new paper orders. No database writes or exchanges
+    occur during the retry loop.
+    """
+    attempts=0;notice_at=0
+    while True:
+        try:
+            rows=load_bots(store)
+        except QueryCanceled:
+            attempts+=1
+            now=time.monotonic()
+            if now>=notice_at:
+                notice_at=now+30
+                print(json.dumps(dict(event='shadow_startup_control_read_deferred',
+                    reason='statement_timeout',new_entries_blocked=True,
+                    retry_seconds=2,real_orders_enabled=False)),flush=True)
+            if stop.wait(2):raise ShadowStartupStopped()
+        else:
+            if attempts:
+                print(json.dumps(dict(event='shadow_startup_control_read_restored',
+                    retries=attempts,real_orders_enabled=False)),flush=True)
+            return rows
+
+
 class HostedRun(ForwardRun):
     # Kalshi's 100 ms server-side conflation preserves exact net L2 changes and
     # contiguous subscription sequence while collapsing repeated price-level churn.
@@ -113,7 +144,7 @@ class HostedRun(ForwardRun):
         initialize_quote_policy(store,guard)
         # Saved collector settings need a one-time migration, not just a new default.
         initialize_one_contract_favorites(store,guard)
-        all_rows=load_bots(store)
+        all_rows=load_startup_controls(store,stop)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
@@ -164,6 +195,35 @@ class HostedRun(ForwardRun):
     def spot_required(self):
         return (any(b.enabled for b in self.strategy.bots.values()) or bool(self.engine.wallet.lots)
             or any(o.status in ('pending','resting') for o in self.engine.orders.values()))
+
+    def legacy_health_readiness(self,now,legacy_needed=None):
+        """Read fee/book readiness only for legacy markets which still matter.
+
+        The hosted worker retains selected legacy markets for settlements and
+        reporting even when all legacy bots are disabled. Unlike a verified
+        entry or an exposed position, those flat inactive records do not need
+        their fee cache parsed every second. The source markets, orders and
+        fees remain untouched and are reconsidered immediately on resume.
+        """
+        candidates=[t for t in self.selected.values() if
+            t in self.engine.markets and self.engine.markets[t]['close']>now]
+        if getattr(self,'suspend_idle_feeds',False) is True:
+            if legacy_needed is None:legacy_needed=self.spot_required()
+            # The common case has no running legacy bot and no outstanding risk.
+            # Avoid nine per-market exposure/owner scans as well as fee work.
+            active=([t for t in candidates if self.legacy_ticker_needed(t)]
+                    if legacy_needed else [])
+        else:
+            active=candidates
+        books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
+        verified=0
+        for ticker in active:
+            try:
+                self.verified_fees.schedule(ticker,now)
+                verified+=1
+            except Exception:
+                pass  # Unverified legacy fees must never make a book entry ready.
+        return active,books,verified,len(candidates)-len(active)
 
     def legacy_ticker_needed(self,ticker):
         if ticker not in self.engine.markets or self.engine.markets[ticker].get('paid'):return False
@@ -560,13 +620,8 @@ class HostedRun(ForwardRun):
                         raise ValueError('Unsupported shadow wallet command')
                     self.audit.command_key=None
                 now=time.time()
-                active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
-                books=[self.engine.books[t] for t in active if self.engine.books[t].valid]
-                fees_ready=0
-                for ticker in active:
-                    try:self.verified_fees.schedule(ticker,now);fees_ready+=1
-                    except Exception:pass
                 legacy_needed=self.spot_required()
+                active,books,fees_ready,legacy_fee_checks_skipped=self.legacy_health_readiness(now,legacy_needed)
                 strategy_books=sum(e.book_fresh(t) for e,f,ps in self.experiments.portfolios.values()
                     for t,m in e.markets.items() if m['close']>now and (f.owner(t) and f.owner(t).enabled or any(l.ticker==t for l in e.wallet.lots)))
                 state='ready' if (books and fees_ready==len(active) and self.engine.spot.ready(now) if legacy_needed else strategy_books>0) else 'waiting'
@@ -627,6 +682,7 @@ class HostedRun(ForwardRun):
                             real_orders_enabled=False)),flush=True)
                     print(json.dumps(dict(event='shadow_feed_health',state=state,active_markets=len(active),
                         valid_books=len(books),verified_fees=fees_ready,selected_markets=len(self.selected),
+                    legacy_fee_checks_skipped=legacy_fee_checks_skipped,
                     legacy_spot_required=legacy_needed,active_strategy_books=strategy_books,
                         mode=mode,running_bots=sum(b.enabled for b in self.strategy.bots.values()),
                         two_sided_books=sum(self.engine.books[t].bid('yes') is not None and self.engine.books[t].bid('no') is not None for t in active),
@@ -767,7 +823,9 @@ def run(stop,store,guard,env):
         guard()
         signer=credentials(store,env)
         if signer:
-            asyncio.run(HostedRun(store,guard,stop,signer).run());return
+            try: hosted=HostedRun(store,guard,stop,signer)
+            except ShadowStartupStopped:return
+            asyncio.run(hosted.run());return
         store.put('health',dict(state='connection_required',message='28 shadow bots ready. Connect a production Read key for market data; no real orders are enabled.',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
         print(json.dumps(dict(event='shadow_connection_required',bots=28,real_orders_enabled=False)),flush=True)
         if time.time()>=maintenance_at:

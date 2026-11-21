@@ -188,6 +188,49 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(run.experiments.discovery_wakes['fifteen:KXINX15M'],now)
         self.assertFalse(run.records)
 
+    async def test_hosted_disabled_legacy_skips_reads_and_stale_wake_until_resumed(self):
+        run=self.fixture();now=time.time();series='KXGOLD15M'
+        run.suspend_idle_feeds=True
+        run.strategy=SimpleNamespace(bots={series:SimpleNamespace(enabled=False)})
+        run.profiles=[dict(series=series,id='test',name='test',version='1')]
+        run.experiments=SimpleNamespace(discovery_wakes={'fifteen:'+series:now+3600})
+        run.discovery_retry_at={series:now+900}
+        run.api.fetch=AsyncMock(return_value=dict(markets=[]))
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        run.api.fetch.assert_not_awaited()
+        self.assertNotIn(series,run.discovery_retry_at)
+        self.assertNotIn('fifteen:'+series,run.experiments.discovery_wakes)
+        run.strategy.bots[series].enabled=True
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+1):
+            await run.discover_once()
+        self.assertGreater(run.api.fetch.await_count,0)
+
+    async def test_disabled_hosted_legacy_still_polls_selected_settlement(self):
+        run=self.fixture();now=time.time();series='KXGOLD15M'
+        ticker=series+'-settled'
+        run.suspend_idle_feeds=True
+        run.strategy=SimpleNamespace(bots={series:SimpleNamespace(enabled=False)})
+        run.profiles=[dict(series=series,id='test',name='test',version='1')]
+        run.selected={series:ticker}
+        run.engine.add_market(dict(ticker=ticker,close=now-1),FeePolicy())
+        run.engine.settled.add(ticker)
+        run.api.fetch=AsyncMock(return_value=dict(
+            market=dict(ticker=ticker,status='finalized',result='yes')))
+        await run.discover_once()
+        self.assertNotIn(series,run.selected)
+        self.assertTrue(run.engine.markets[ticker]['paid'])
+        run.api.fetch.assert_awaited_once_with('/markets/'+ticker)
+
+    async def test_standalone_disabled_legacy_keeps_normal_discovery(self):
+        run=self.fixture();series='KXGOLD15M'
+        run.suspend_idle_feeds=False
+        run.strategy=SimpleNamespace(bots={series:SimpleNamespace(enabled=False)})
+        run.profiles=[dict(series=series,id='test',name='test',version='1')]
+        run.api.fetch=AsyncMock(return_value=dict(markets=[]))
+        await run.discover_once()
+        self.assertGreater(run.api.fetch.await_count,0)
+
     async def test_shared_cooldown_creates_one_warning_not_one_per_bot(self):
         run=self.fixture()
         for i in range(28):await run.metadata_unavailable('fees',ExchangeFailure('paper_data_rate_limited'),series=str(i))

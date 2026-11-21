@@ -16,6 +16,7 @@ from psycopg_pool import ConnectionPool
 
 from services.demo.control_backup_capacity_audit import PREFIX_SCOPES, SINGLETONS
 from services.demo.maintenance import object_store, put_verified, read_verified
+from services.demo.backup_limit import BackupSnapshotLimit
 from services.demo.store import DemoStore
 from services.demo.shadow_prefix_boundary_guard import (
     _bounded_collation, BOUNDED_ABOVE_UPPER_SQL,
@@ -28,8 +29,12 @@ MAX_SINGLE_ROW_BYTES=12*1024*1024
 MAX_CHUNK_BYTES=2*1024*1024
 MAX_CHUNK_ROWS=200
 MAX_STAGED_ROWS=100000
-MAX_STAGED_BYTES=512*1024*1024
-MIN_FREE_DISK_RESERVE=256*1024*1024
+# Temporary bounded recovery bridge: verified R2 control snapshots grew from
+# 218 MB to 499 MB in four days, exceeding the old 512 MiB staging cap.
+# This is NOT a substitute for incremental R2 backup; retain source data and
+# verify every R2 part/root before advancing backup-health.
+MAX_STAGED_BYTES=1024*1024*1024
+MIN_FREE_DISK_RESERVE=512*1024*1024
 FORMAT='control-snapshot-multipart-v2'
 PART_FORMAT='control-snapshot-part-v2'
 SELECT_FIELDS='id::text,idempotency_key,parameters,progress'
@@ -125,13 +130,14 @@ def collect_snapshot_spooled(pool):
     """
     # The local staging file is unlinked, but still consumes physical space.
     # Reserve headroom for the running worker and PostgreSQL-free application
-    # operations; do not assume the configured 512 MiB spool cap is available.
+    # operations; do not assume the configured 1 GiB spool cap is available.
     available=shutil.disk_usage(tempfile.gettempdir()).free
     if available<=MIN_FREE_DISK_RESERVE:
         raise ValueError('Insufficient temporary disk headroom for control backup')
     disk_budget=min(MAX_STAGED_BYTES,available-MIN_FREE_DISK_RESERVE)
     file=tempfile.TemporaryFile(mode='w+b')
     seen=set();current=[];chunk_bytes=0;total_bytes=0;count=0;parts=0
+    scope='singletons'
     aggregate=hashlib.sha256()
 
     def flush():
@@ -159,8 +165,10 @@ def collect_snapshot_spooled(pool):
         raw=canonical(row);size=len(raw)+1
         if size>MAX_SINGLE_ROW_BYTES:
             raise ValueError('Single control record exceeds safe archive size')
-        if count>=MAX_STAGED_ROWS or total_bytes+size>disk_budget:
-            raise ValueError('Spool size budget exceeded; no partial backup published')
+        if count>=MAX_STAGED_ROWS:
+            raise BackupSnapshotLimit('rows',scope,count,total_bytes,MAX_STAGED_ROWS)
+        if total_bytes+size>disk_budget:
+            raise BackupSnapshotLimit('bytes',scope,count,total_bytes,disk_budget)
         if current and (len(current)>=MAX_CHUNK_ROWS or chunk_bytes+size>MAX_CHUNK_BYTES):
             flush()
         current.append(row);chunk_bytes+=size;count+=1;total_bytes+=size
@@ -172,7 +180,8 @@ def collect_snapshot_spooled(pool):
             with connection.transaction():
                 connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
                 connection.execute('SET LOCAL statement_timeout=5000')
-                for _,prefix,predicate in PREFIX_SCOPES:
+                for name,prefix,predicate in PREFIX_SCOPES:
+                    scope=name
                     cursor=None;query=select_prefix_query(predicate)
                     while True:
                         page=connection.execute(query,(
@@ -181,6 +190,7 @@ def collect_snapshot_spooled(pool):
                         for record in page:add(record)
                         cursor=page[-1]['idempotency_key']
                         if len(page)<PAGE_SIZE:break
+                scope='singletons'
                 for record in connection.execute(
                         SINGLETON_QUERY,(list(SINGLETONS),)).fetchall():
                     add(record)

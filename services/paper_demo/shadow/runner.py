@@ -128,6 +128,18 @@ class ForwardRun:
         await self.put('metadata_retry',dict(scope=scope,ticker=None if rate_limited else ticker,
             series=series,reason=reason,status=status,code=code or type(exc).__name__))
 
+    def legacy_discovery_required(self,series):
+        """Only active hosted legacy bots may discover additional contracts.
+
+        Selected positions are still checked for settlement separately.
+        Standalone/replay operation retains its original discovery semantics.
+        """
+        if getattr(self,'suspend_idle_feeds',False) is not True:return True
+        bots=getattr(getattr(self,'strategy',None),'bots',None)
+        if not isinstance(bots,dict):return True
+        bot=bots.get(series)
+        return bot is None or bool(getattr(bot,'enabled',True))
+
     async def discover_once(self):
         if not hasattr(self,'discovery_retry_at'):self.discovery_retry_at={}
         if not hasattr(self,'known_active'):self.known_active=set(self.selected)
@@ -153,6 +165,13 @@ class ForwardRun:
         wanted={};recent_wakes=set()
         for p in self.profiles:
             series=p['series']
+            if not self.legacy_discovery_required(series):
+                # No future-listing requests or stale sleep hints for disabled
+                # bots. Re-enabling immediately resumes ordinary discovery.
+                self.discovery_retry_at.pop(series,None)
+                self.discovery_postwake_until.pop(series,None)
+                remember(wake_store,'fifteen:'+series,None,now)
+                continue
             if series in self.selected:continue
             key='fifteen:'+series
             session=session_wake(series,now)
@@ -194,6 +213,8 @@ class ForwardRun:
         if not hasattr(self,'discovery_future_retry_at'):
             self.discovery_future_retry_at={}
         for series,profile in wanted.items():
+            # Bot controls may change while the shared listing is in flight.
+            if not self.legacy_discovery_required(series):continue
             try:
                 candidates=[m for m in rows if isinstance(m,dict) and m.get('ticker','').startswith(series+'-') and
                     m.get('status')=='active' and ts(m['open_time'])<=now and
