@@ -185,7 +185,13 @@ $('refillForm').onsubmit=async event=>{
   $('refillDialog').close();
   note('Virtual refill queued for '+(data.folders?.find(f=>f.id===folder)?.name||folder)+'. Existing trades and P/L remain intact; the worker will apply the deposit shortly.');
   await load();
- }catch(error){$('refillError').textContent=error.message}finally{button.disabled=false}
+ }catch(error){
+  // Never retry as an unscoped refill: the legacy endpoint would deposit
+  // into Convexity rather than the selected strategy account.
+  $('refillError').textContent=/^Invalid request$|^Invalid sign-in request$/i.test(error.message)
+   ?'This server does not accept strategy-specific refills yet. No funds were added. The Render paper API needs the updated folder-refill endpoint; do not use the top Convexity refill as a workaround.'
+   :error.message;
+ }finally{button.disabled=false}
 };
 $('confirmReset').onclick=async()=>{const b=$('confirmReset');b.disabled=true;try{
  resetRequest=resetRequest||crypto.randomUUID();await demoCall('shadow/folders/'+resetFolder+'/reset',{request_id:resetRequest});
