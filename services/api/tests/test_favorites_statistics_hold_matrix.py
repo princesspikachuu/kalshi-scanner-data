@@ -88,15 +88,29 @@ class VerifiedStatisticsHoldResearch(unittest.TestCase):
         self.assertEqual(set(report['by_cell']['15m_price']),{'80-84|10–15m'})
         self.assertEqual(report['by_market_type']['15m_price']['resolved_events'],1)
 
-    def test_estimated_reconstructed_hold_returns_are_labeled(self):
+    def test_estimated_reconstructed_hold_returns_remain_labeled_while_uncertainty_is_pending(self):
         collector={'btc':dict(entry_timing=[row('a',estimated=True),
                                            row('b',cost='9',net='-9',outcome=0)])}
         report=self.summarize(collector)['by_market_type']['15m_price']
         self.assertEqual(report['return_observations'],2)
         self.assertEqual(report['estimated_return_observations'],1)
-        self.assertGreater(D(report['uncertainty90_pct']),0)
-        self.assertLess(D(report['ci90_low_pct']),D(report['average_return_pct']))
-        self.assertGreater(D(report['ci90_high_pct']),D(report['average_return_pct']))
+        self.assertEqual(report['uncertainty_min_samples'],20)
+        self.assertIsNone(report['uncertainty90_pct'])
+        self.assertIsNone(report['ci90_low_pct'])
+        self.assertIsNone(report['ci90_high_pct'])
+
+    def test_statistics_held_interval_starts_at_twenty_distinct_events_with_gains_and_losses(self):
+        rows=[row('win-'+str(i)) for i in range(18)]
+        rows.append(row('loss-a',cost='8',net='-8',outcome=0))
+        early=self.summarize({'btc':dict(entry_timing=rows)})['by_market_type']['15m_price']
+        self.assertEqual(early['return_observations'],19)
+        self.assertIsNone(early['uncertainty90_pct'])
+        rows.append(row('loss-b',cost='8',net='-8',outcome=0))
+        enough=self.summarize({'btc':dict(entry_timing=rows)})['by_market_type']['15m_price']
+        self.assertEqual(enough['return_observations'],20)
+        self.assertGreater(D(enough['uncertainty90_pct']),0)
+        self.assertLess(D(enough['ci90_low_pct']),D(enough['average_return_pct']))
+        self.assertGreater(D(enough['ci90_high_pct']),D(enough['average_return_pct']))
 
     def test_authenticated_workspace_merges_saved_paper_sources_without_mutating_them(self):
         bots=[
