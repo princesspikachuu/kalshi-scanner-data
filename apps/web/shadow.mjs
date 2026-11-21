@@ -178,7 +178,7 @@ function hydrateEventCounts(payload){
 function draw(){
   const expandedPanels=expandedDashboardPanels();
  const status=data.status||{},health=data.health||{};
- $('health').textContent=health.message||'Waiting for worker';
+ $('health').textContent=(health.message||'Waiting for worker')+(data.historical_metrics_delayed?' · historical reports delayed':'');
  // At a glance describes strategies accepting new entries, not historical/paused portfolios.
  const activeOverview=(data.folders||[]).filter(folder=>(data.bots||[]).some(bot=>
   (bot.folder_id||'convexity')===folder.id&&bot.desired==='running'&&!bot.retired));
@@ -254,7 +254,7 @@ async function load(){
    loadError=null;
   }
   data=hydrateEventCounts(result);draw();
-  if(result.historical_metrics_delayed)$('health').textContent+=' · historical reports delayed';
+
   // The combined Favorites matrix must not depend on opening individual cards.
   void loadFolderResearch('favorites');
   for(const folder of openFolders)if(folder!=='favorites')void loadFolderResearch(folder);
