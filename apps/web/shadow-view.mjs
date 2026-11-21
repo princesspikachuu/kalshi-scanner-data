@@ -103,7 +103,7 @@ export function favoriteSingleCellMarkup(sample){
  const low=finitePercent(sample.ci90_low_pct)?Number(sample.ci90_low_pct):null;
  const high=finitePercent(sample.ci90_high_pct)?Number(sample.ci90_high_pct):null;
  const result=mean===null?'—':(mean>0?'+':'')+mean.toFixed(2)+'%';
- const uncertainty=error===null?'Not available · too few or identical observed event returns':'±'+error.toFixed(2)+' percentage points';
+ const uncertainty=error===null?'Not available · need observed gains and losses':'±'+error.toFixed(2)+' percentage points';
  const interval=low===null||high===null?'':(' · 90% interval '+low.toFixed(2)+'% to '+high.toFixed(2)+'%');
  const signal=mean===null?'':mean>0?'profit-positive':mean<0?'profit-negative':'';
  const win=resolved>0?eventAccuracy(Number(sample.event_wins)||0,resolved):'—';
@@ -279,7 +279,7 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set(),holdSum
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
  const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='exploration_candidate'?'Exploration opportunity · sparse':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
- return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A 90% P/L interval requires at least two independent held returns. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
+ return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A 90% held-P/L interval requires independent observed gains and losses. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
    const key='favorites-stat-'+grid.market_type;
