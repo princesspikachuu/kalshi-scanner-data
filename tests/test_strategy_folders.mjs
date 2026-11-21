@@ -401,6 +401,66 @@ test('market type grouping partitions the full legacy registry and keeps hourly,
  const ids=groups.flatMap(g=>g.bots.map(b=>b.id));assert.equal(ids.length,legacy.length+extra.length);
  assert.equal(new Set(ids).size,ids.length);
 });
+test('paused-only market types trail active types without changing priority within each group',()=>{
+ const bots=[
+  {id:'paused-maker',strategy:'market_maker',series:'MM_POLITICS',market_category:'politics',name:'Politics',desired:'paused'},
+  {id:'paused-crypto',series:'KXBTC15M',name:'Alpha paused',desired:'paused'},
+  {id:'retired-crypto',series:'KXSOL15M',name:'Beta retired',desired:'running',retired:true},
+  {id:'active-crypto',series:'KXETH15M',name:'Zulu active',desired:'running'},
+  {id:'paused-weather',series:'KXRAIN',asset:'weather',name:'Weather',desired:'paused'},
+  {id:'active-sports',series:'KXSPORT',asset:'sports',name:'Sports',desired:'running'},
+  {id:'paused-sports',series:'KXSPORT2',asset:'sports',name:'A paused',desired:'paused'}
+ ];
+ const original=bots.map(b=>b.id),groups=marketTypeGroups(bots);
+ assert.deepEqual(groups.map(g=>g.id),['crypto-15m','sports','maker-politics','weather-hourly']);
+ assert.deepEqual(groups[0].bots.map(b=>b.id),['active-crypto','paused-crypto','retired-crypto']);
+ assert.deepEqual(groups[1].bots.map(b=>b.id),['active-sports','paused-sports']);
+ assert.deepEqual(bots.map(b=>b.id),original,'sorting must not mutate the worker snapshot');
+ bots.find(b=>b.id==='active-sports').desired='paused';
+ bots.find(b=>b.id==='paused-weather').desired='running';
+ assert.deepEqual(marketTypeGroups(bots).map(g=>g.id),['crypto-15m','weather-hourly','maker-politics','sports']);
+});
+test('paused folders move below active folders without losing expanded cards or settling positions',()=>{
+ const data=fixture();
+ data.folders=[data.folders[3],data.folders[2],data.folders[0],data.folders[1]];
+ const sequential=data.bots.find(b=>b.id==='sequential'),convexity=data.bots.find(b=>b.id==='convexity');
+ const held={ticker:'KXBTC15M-26NOV21-YES',bot_id:'sequential',state:'pending',side:'yes',quantity:'2',
+  cost:'1.20',value:'2.00',phase_origin:1,is_armed:false};
+ data.folders.find(f=>f.id==='sequential').accounting.positions=[held];
+ const storage=new Map([['moneytree-folder-views',JSON.stringify({open:['sequential'],periods:{}})],
+  ['moneytree-market-views',JSON.stringify(['sequential'])]]);
+ const {nodes,context}=setup(data,{storage});
+ const html=()=>nodes.get('groups').innerHTML;
+ const ids=()=>[...html().matchAll(/id="folder-([^"]+)"/g)].map(m=>m[1]);
+ assert.deepEqual(ids(),['favorites','complete_set','sequential','convexity']);
+ sequential.desired='paused';convexity.desired='running';vm.runInContext('draw()',context);
+ assert.deepEqual(ids(),['convexity','favorites','complete_set','sequential']);
+ assert.ok(html().includes('id="folder-sequential" open'));
+ assert.ok(html().includes('data-market="sequential" open'));
+ assert.ok(html().includes('Position · awaiting settlement'));
+ assert.deepEqual(data.folders.find(f=>f.id==='sequential').accounting.positions,[held]);
+ sequential.desired='running';convexity.desired='paused';vm.runInContext('draw()',context);
+ assert.deepEqual(ids(),['favorites','complete_set','sequential','convexity']);
+ assert.ok(html().includes('data-market="sequential" open'));
+});
+test('dashboard categories and Maker market cards put paused entries last',()=>{
+ const data=fixture(),base=data.bots.find(b=>b.id==='favorites');
+ data.bots.push({...base,id:'sports-active',series:'KXSPORT',asset:'sports',name:'Sports active',desired:'running'});
+ data.bots.push({...base,id:'weather-paused',series:'KXRAIN',asset:'weather',name:'Weather paused',desired:'paused'});
+ const html=setup(data).nodes.get('groups').innerHTML;
+ const crypto=html.indexOf('data-market-type="favorites::crypto-15m"');
+ const sports=html.indexOf('data-market-type="favorites::sports"');
+ const weather=html.indexOf('data-market-type="favorites::weather-hourly"');
+ assert.ok(crypto>=0&&sports>crypto&&weather>sports,'active sports should precede paused weather');
+ const maker=scalperMarkup({market_maker:true,totals:{},markets:[
+  {ticker:'KXM-PAUSED',title:'Alpha paused',paused:true,position:1,orders:0,trades_24h:1,schedule_source:'verified',incentives:[]},
+  {ticker:'KXM-ACTIVE',title:'Zulu active',paused:false,position:2,orders:1,trades_24h:3,schedule_source:'verified',incentives:[]}
+ ]},'maker');
+ assert.ok(maker.indexOf('Zulu active')<maker.indexOf('Alpha paused'));
+ assert.ok(maker.includes('1 held contracts'));
+ assert.ok(maker.includes('data-desired="running"'));
+});
+
 test('market type subfolders remember state independently per strategy and search does not overwrite preferences',()=>{
  const storage=new Map(),detail={dataset:{marketType:'favorites::crypto-15m'},open:true,isConnected:true};
  const data=fixture(),{context,nodes}=setup(data,{storage,queries:{'details[data-market-type]':[detail]}});

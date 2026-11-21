@@ -413,10 +413,16 @@ export function marketTypeGroups(bots){
   if(!groups.has(id))groups.set(id,{id,label,rank,bots:[]});
   groups.get(id).bots.push(bot);
  }
+ // An entire category is paused only when none of its current bots can enter.
+ // Use the same active predicate for category headings and their market cards.
+ const active=bot=>bot.desired==='running'&&!bot.retired;
  for(const group of groups.values())group.bots.sort((a,b)=>
-  Number(a.desired==='paused')-Number(b.desired==='paused')||
+  Number(active(b))-Number(active(a))||
   String(a.name||a.series).localeCompare(String(b.name||b.series)));
- return [...groups.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label));
+ // Keep the previous category priority and alphabetical order inside each status.
+ return [...groups.values()].sort((a,b)=>
+  Number(b.bots.some(active))-Number(a.bots.some(active))||
+  a.rank-b.rank||a.label.localeCompare(b.label));
 }
 export function summaryExposure(a){
  const number=key=>finite(a?.[key])?Number(a[key]):null;
