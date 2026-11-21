@@ -59,7 +59,7 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         suite.search_capacity.side_effect=[True,False]
         suite.enabled_profiles.side_effect=lambda category:[dict(series='KXHIGHNY')] if category=='weather_daily' else [dict(series='KXHIGHNYH')]
         suite.candidate_allowed.return_value=True
-        suite.settlement_markets.return_value={}
+        suite.settlement_markets.return_value={};suite.portfolios={}
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
         now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp()
         host.verified_data.call.return_value=dict(markets=[dict(ticker='KXHIGHNY-26NOV20-eligible',
