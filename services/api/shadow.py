@@ -380,10 +380,22 @@ def install_shadow(app,auth,mutate,pool):
         revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
         now=time.time()
         scope="(progress->>'at')::numeric>=%s AND (%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
+        # Stage-labelled diagnostic on *failed* SQL too; a total elapsed-time
+        # log alone cannot tell which historical scan crossed the 5s limit.
+        def historical_read(connection,stage,statement,params):
+            started=time.monotonic()
+            try:
+                return connection.execute(statement,params)
+            except Exception as exc:
+                print(json.dumps(dict(event='shadow_workspace_query_failure',
+                    stage=stage,error_type=type(exc).__name__,
+                    sqlstate=getattr(exc,'sqlstate',None),
+                    elapsed_ms=round((time.monotonic()-started)*1000,1))),flush=True)
+                raise
         historical_sql_started=time.monotonic()
         with pool.connection() as c:
-            latest_rows=c.execute("SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(reset_at,latest=='full',Jsonb(revisions))).fetchall()
-            metrics=c.execute("""WITH r AS (
+            latest_rows=historical_read(c,'latest_reports',"SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(reset_at,latest=='full',Jsonb(revisions))).fetchall()
+            metrics=historical_read(c,'quality_metrics',"""WITH r AS (
                 SELECT progress AS p FROM research_job WHERE idempotency_key>='demo/shadow/report/'
                 AND idempotency_key<'demo/shadow/report/zzzz' AND """+scope+"""),
                 windows(period,seconds) AS (VALUES ('all',NULL::integer),('1H',3600),('6H',21600),('24H',86400))
@@ -399,7 +411,7 @@ def install_shadow(app,auth,mutate,pool):
                 GROUP BY p->>'bot_id',period""",(reset_at,latest=='full',Jsonb(revisions),now)).fetchall()
             # Financial results include every paper trade. Data quality is a
             # separate count; it must never make a real simulated loss disappear.
-            financial=c.execute("""WITH history AS (
+            financial=historical_read(c,'financial_metrics',"""WITH history AS (
                 SELECT progress AS p,true AS reported FROM research_job
                 WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz'
                 AND NOT ((progress->>'ticker')=ANY(%s::text[]))
