@@ -149,6 +149,7 @@ class ForwardRun:
         # 15-minute contracts with exchange-confirmed future open timestamps.
         # Standalone replay/forward runs use the same scheduler in memory.
         wake_store=getattr(self,'experiments',self)
+        if not hasattr(self,'discovery_postwake_until'):self.discovery_postwake_until={}
         wanted={};recent_wakes=set()
         for p in self.profiles:
             series=p['series']
@@ -163,6 +164,8 @@ class ForwardRun:
             if not asleep(wake_store,key,now) and now>=self.discovery_retry_at.get(series,0):
                 wanted[series]=p
                 if isinstance(previous,(int,float)) and 0<=now-previous<=60:
+                    self.discovery_postwake_until[series]=previous+60
+                if now<self.discovery_postwake_until.get(series,0):
                     recent_wakes.add(series)
         if not wanted:return
         try:
@@ -191,6 +194,12 @@ class ForwardRun:
                     m.get('status')=='active' and ts(m['open_time'])<=now and
                     0<ts(m['close_time'])-now<=900 and m['ticker'] not in self.engine.markets]
                 if not candidates:
+                    # During the minute after a known opening, a delayed
+                    # venue listing must not cause us to sleep through the
+                    # current 15-minute opportunity.
+                    if series in recent_wakes:
+                        self.discovery_retry_at[series]=now+2
+                        continue
                     key='fifteen:'+series
                     # Preserve any announced future market returned by the
                     # current listing. It must still be active and freshly
