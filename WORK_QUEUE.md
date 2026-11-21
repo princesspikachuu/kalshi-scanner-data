@@ -1752,3 +1752,25 @@ Determine whether regular High Probability Favorites one-contract maker bids res
 
 ### Completion notes
 Pending implementation / CI / runtime verification. Record branch, PR, commit, observations, and limitations here.
+
+---
+
+## MT-025 — Warn when regular Favorites recovery backup coverage is overdue
+**Status:** IN PROGRESS — isolated safety alert and regression tests  
+**Worker:** ChatGPT / regular Favorites backup freshness  
+**Claimed:** 2026-11-21 UTC  
+**Urgency:** U1 — URGENT  
+**Priority:** Supports sole active regular High-Probability Favorites strategy; P0 MT-019 recovery safeguard
+
+### Goal
+Detect a missing, unverified or older-than-configured **recorded verified R2 backup receipt** on the existing five-minute maintenance cadence, even when an R2 connection or other maintenance stage fails. Emit only bounded, secret-free freshness measurements and an idempotent in-app alert; do not treat the recorded receipt as proof that today's R2 object remains present. Preserve the existing backup schedule and every original financial/trading/research record.
+
+### Coordination and safety
+- This is strictly regular High-Probability Favorites data-protection infrastructure under MT-019 / issue #238. Do not optimize, reactivate or modify Statistics-Backed Favorites or another strategy.
+- Limit changes to freshness evaluation and maintenance hook with deterministic tests. Keep the full backup snapshot, R2 chunk reuse feature flag OFF, retention rules, active worker's lock, paper fills and real trading settings unchanged.
+- On existing verified receipt within the configured backup interval, clear **only** the freshness warning; never suppress real backup failures or archival alerts.
+- Use no credentials, market keys, contracts, bot identities, raw records or exception text in public alert/log output.
+- Do not deploy until full API/PostgreSQL CI passes and no active branch conflict; verify Render live service and 75 regular Favorites / zero Statistics-Backed bots if merged.
+
+### Completion notes
+_In progress: add testable receipt freshness classification, independent alert, and post-maintenance report. PR pending._
