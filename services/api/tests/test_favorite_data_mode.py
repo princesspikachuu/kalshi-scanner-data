@@ -143,6 +143,20 @@ class DataMode(unittest.TestCase):
         self.assertEqual(first.status,'resting')
         self.assertEqual(b.attempts[first.ticker].get('repeat_entries',0),0)
 
+    def test_remaining_time_bucket_transition_allows_new_bid_without_price_change(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        # Keep the original maker bid valid while its time horizon advances.
+        for now in range(220,401,20):
+            e.advance(now);book.at=now;b.step()
+            self.assertEqual(first.status,'resting')
+        e.advance(401);book.at=401;b.step()
+        active=[o for o in e.orders.values() if o.status in ('pending','resting')]
+        self.assertEqual(len(active),2)
+        self.assertEqual({o.price for o in active},{D('.80')})
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(len(set(b.attempts[first.ticker]['pending_buckets'].values())),2)
+
     def test_filling_one_bucket_preserves_other_resting_bid_and_cohort_identity(self):
         e,b,book=fixture.MakerEntries().setup_bot()
         b.step();e.advance(201);first=next(iter(e.orders.values()))
