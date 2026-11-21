@@ -351,6 +351,37 @@ def install_shadow(app,auth,mutate,pool):
     def query(request,allowed=()):
         if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):
             raise HTTPException(422,'Invalid filters')
+    @app.get('/demo/shadow/portfolio-snapshot')
+    def portfolio_snapshot(request:Request):
+        """Current financial snapshot even when optional historical SQL is slow.
+
+        Never infer missing history as zero profit. No research report scans,
+        writes, money changes, or trading controls are performed here.
+        """
+        auth(request);query(request)
+        if not store.get('shadow/installed'):
+            return dict(contract='demo-v1',installed=False,real_orders_enabled=False)
+        row=store.get('shadow/status')
+        if not row:raise HTTPException(503,'Current portfolio snapshot not yet available')
+        status=row['progress']
+        money=status.get('accounting')
+        experiments=status.get('experiments') or {}
+        folders=[]
+        for record in store.indexed_control_rows('shadow/folder/',24):
+            folder=dict(record['parameters'],**record['progress'])
+            identifier=folder['id']
+            experiment=experiments.get(identifier) or {}
+            account=(money if identifier=='convexity' else experiment.get('accounting'))
+            if account:
+                # Keep current cash, marked positions and true session P/L,
+                # but omit bulky per-bot history and cycle reports.
+                folder['accounting']={k:v for k,v in account.items()
+                    if k not in ('bots','current_cycles')}
+            folders.append(folder)
+        folders.sort(key=lambda f:f.get('order',999))
+        return dict(contract='demo-v1',installed=True,history_delayed=True,
+            at=status.get('at'),folders=folders,real_orders_enabled=False)
+
     @app.get('/demo/shadow/workspace')
     def workspace(request:Request,response:Response):
         global ACCOUNTING_LOG_AT
