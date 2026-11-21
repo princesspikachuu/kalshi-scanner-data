@@ -39,6 +39,22 @@ class DemoStore:
                 AND starts_with(idempotency_key,%s) ORDER BY idempotency_key LIMIT %s""",
                 (prefix,prefix+'zzzz',prefix,limit)).fetchall()
 
+    def indexed_control_rows(self,prefix,limit=100):
+        """Use the idempotency-key B-tree for bounded stable control catalogs.
+
+        The general rows() helper sorts by a random UUID and can make a large
+        research_job table scan to retrieve just a handful of paper folders.
+        Folder and command keys are unique, so an indexed key walk is safe.
+        """
+        if prefix not in ('shadow/folder/','shadow/command/'):
+            raise ValueError('Invalid indexed control prefix')
+        key=self.namespace+'/'+prefix
+        with self.pool.connection() as c:
+            return c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at,finished_at
+                FROM research_job WHERE idempotency_key >= %s AND idempotency_key < %s
+                ORDER BY idempotency_key LIMIT %s""",
+                (key,key+'zzzz',limit)).fetchall()
+
     def rows(self,prefix,limit=100,before=None):
         with self.pool.connection() as c:
             return c.execute("""SELECT id::text,idempotency_key,parameters,progress,created_at,finished_at
