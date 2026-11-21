@@ -1,0 +1,95 @@
+"""Reuse compression of byte-identical cold state; decoded checkpoint schema is unchanged."""
+import gzip
+from collections import OrderedDict
+import msgpack
+
+class CheckpointSegments:
+    def __init__(self,max_bytes=16*1024*1024,max_entries=512,min_bytes=4096,
+                 scalper_cold_level=6):
+        self.max_bytes=max_bytes;self.max_entries=max_entries;self.min_bytes=min_bytes
+        self.scalper_cold_level=scalper_cold_level
+        self.cache=OrderedDict();self.bytes=0;self.hits=0;self.misses=0;self.evictions=0
+    @staticmethod
+    def descend(path,key):
+        if not path:return key=='experiments'
+        if len(path)==1:return not str(key).startswith('_')
+        if len(path)==2:return key=='strategies'
+        if len(path)==3:return True
+        if len(path)==4:return key=='scalper'
+        return False
+    @staticmethod
+    def cold(path):
+        return (len(path)==2 and path[1] in ('_summary','_comparison') or
+            len(path)==3 and path[2]=='model' or
+            len(path)==5 and path[4]=='exit_evidence' or
+            len(path)==6 and path[4:] == ('scalper','research'))
+    def member(self,path,raw):
+        old=self.cache.get(path)
+        if old is not None and old[0]==raw:
+            self.cache.move_to_end(path);self.hits+=1;return old[1]
+        self.misses+=1
+        # Most per-strategy scalper research stays byte-identical while paused.
+        # Compress its FIRST cached member more tightly; every later checkpoint
+        # reuses these bytes at zero recompression cost. If a running strategy
+        # mutates research, use the original fast level-1 path thereafter.
+        # Both levels produce the SAME gzip/member format and lossless hash.
+        level=(self.scalper_cold_level
+               if len(path)==6 and path[4:]==('scalper','research') and old is None
+               else 1)
+        encoded=gzip.compress(raw,compresslevel=level,mtime=0)
+        if old is not None:self.bytes-=len(old[0])+len(old[1]);del self.cache[path]
+        size=len(raw)+len(encoded)
+        if size<=self.max_bytes and self.max_entries>0:
+            while self.cache and (self.bytes+size>self.max_bytes or len(self.cache)>=self.max_entries):
+                _,(previous,compressed)=self.cache.popitem(last=False)
+                self.bytes-=len(previous)+len(compressed);self.evictions+=1
+            self.cache[path]=(raw,encoded);self.bytes+=size
+        return encoded
+    @staticmethod
+    def section(path):
+        # Bounded, nonsensitive categories: never print raw evidence, series IDs,
+        # or state values in operator telemetry.
+        if len(path)==2:return 'shared_summary'
+        if len(path)==3:return 'calibration_models'
+        if len(path)==5:return 'verified_exit_evidence'
+        if len(path)==6:return 'scalper_research'
+        return 'other_cold'
+
+    def parts(self,data,fallback):
+        packer=msgpack.Packer(use_bin_type=True,default=fallback);buffer=bytearray();parts=[]
+        sections={}
+        def walk(value,path=()):
+            if self.cold(path):
+                raw=packer.pack(value)
+                if len(raw)>=self.min_bytes:
+                    if buffer:parts.append((bytes(buffer),None));buffer.clear()
+                    compressed=self.member(path,raw)
+                    # Aggregation only; it does not affect encoded bytes or
+                    # cache eviction, which continue to depend on exact content.
+                    name=self.section(path)
+                    row=sections.setdefault(name,dict(raw_bytes=0,compressed_bytes=0,members=0))
+                    row['raw_bytes']+=len(raw)
+                    row['compressed_bytes']+=len(compressed)
+                    row['members']+=1
+                    parts.append((raw,compressed));return
+                buffer.extend(raw);return
+            if isinstance(value,dict) and len(path)<=5:
+                buffer.extend(packer.pack_map_header(len(value)))
+                for key,item in value.items():
+                    buffer.extend(packer.pack(key))
+                    if self.descend(path,key) or self.cold(path+(key,)):walk(item,path+(key,))
+                    else:buffer.extend(packer.pack(item))
+            else:buffer.extend(packer.pack(value))
+        walk(data)
+        if buffer:parts.append((bytes(buffer),None))
+        # Small blocks and MessagePack headers are joined in the regular hot
+        # stream; the codec compresses these separately after this function.
+        hot=sum(len(raw) for raw,compressed in parts if compressed is None)
+        sections['hot_and_small']=dict(raw_bytes=hot,compressed_bytes=None,
+                                       members=sum(encoded is None for _,encoded in parts))
+        self.last_state_sections=sections
+        return parts
+    def metrics(self):
+        return dict(hits=self.hits,misses=self.misses,evictions=self.evictions,
+            entries=len(self.cache),retained_bytes=self.bytes,max_bytes=self.max_bytes,
+            last_state_sections=getattr(self,'last_state_sections',{}))

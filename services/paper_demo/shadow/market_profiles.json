@@ -1,0 +1,226 @@
+[
+  {
+    "id": "btc",
+    "name": "Bitcoin",
+    "series": "KXBTC15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "eth",
+    "name": "Ethereum",
+    "series": "KXETH15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "sol",
+    "name": "Solana",
+    "series": "KXSOL15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "xrp",
+    "name": "XRP",
+    "series": "KXXRP15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "doge",
+    "name": "Dogecoin",
+    "series": "KXDOGE15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "bnb",
+    "name": "BNB",
+    "series": "KXBNB15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "hype",
+    "name": "Hyperliquid",
+    "series": "KXHYPE15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "zec",
+    "name": "Zcash",
+    "series": "KXZEC15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "near",
+    "name": "NEAR",
+    "series": "KXNEAR15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "gold_15m",
+    "name": "Gold",
+    "series": "KXGOLD15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "silver_15m",
+    "name": "Silver",
+    "series": "KXSILVER15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "platinum_15m",
+    "name": "Platinum",
+    "series": "KXPLATINUM15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "palladium_15m",
+    "name": "Palladium",
+    "series": "KXPALLADIUM15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "copper_15m",
+    "name": "Copper",
+    "series": "KXCOPPER15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "wti_15m",
+    "name": "WTI Oil",
+    "series": "KXWTI15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "natgas_15m",
+    "name": "Natural Gas",
+    "series": "KXNATGAS15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "brent_15m",
+    "name": "Brent Oil",
+    "series": "KXBRENT15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "usdcad_15m",
+    "name": "USD/CAD",
+    "series": "KXUSDCAD15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "audusd_15m",
+    "name": "AUD/USD",
+    "series": "KXAUDUSD15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "usdjpy_15m",
+    "name": "USD/JPY",
+    "series": "KXUSDJPY15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "gbpusd_15m",
+    "name": "GBP/USD",
+    "series": "KXGBPUSD15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "eurusd_15m",
+    "name": "EUR/USD",
+    "series": "KXEURUSD15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "rate2y_15m",
+    "name": "2-Year Treasury",
+    "series": "KX2YRRATE15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "rate5y_15m",
+    "name": "5-Year Treasury",
+    "series": "KX5YRRATE15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "rate10y_15m",
+    "name": "10-Year Treasury",
+    "series": "KX10YRRATE15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "rate30y_15m",
+    "name": "30-Year Treasury",
+    "series": "KX30YRRATE15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "sp500_15m",
+    "name": "S&P 500",
+    "series": "KXINX15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  },
+  {
+    "id": "nasdaq100_15m",
+    "name": "Nasdaq 100",
+    "series": "KXNDQ15M",
+    "contracts": 100,
+    "version": "convexity-1",
+    "live_enabled": false
+  }
+]

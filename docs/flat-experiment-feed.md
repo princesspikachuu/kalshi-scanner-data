@@ -1,0 +1,11 @@
+# Flat experiment feed coalescing
+
+Only the two new Momentum and Liquidity Dislocation portfolios reuse their primary scalper's already validated incoming book/trade frames while entirely flat. Subscription sequences and clock advance are retained. Before an entry evaluation, the latest causal public depth is copied into independent books. Hypothetical depth consumption stays local. Public prints are already deduplicated in the shared causal tape.
+
+An order or position disables coalescing immediately, so all arrivals, queue updates, partial fills and protective exits use every event. A missing or invalid authoritative source fails closed and requires a verified replacement; stale depth is never patched with a delta after skipped frames. Existing Mean Reversion, Fixed, Grid, High Probability and other strategy execution paths remain unchanged. There are no extra subscriptions, REST requests, capital or fee changes.
+
+Tests cover detached depth, no look-ahead at delayed IOC arrival, partial liquidity and fees, active-order processing, sequence gaps/recovery, local depth overlays, and unchanged existing experiments. paper_monitoring_capacity includes cumulative coalesced_inputs for operational cost comparison.
+
+Market Maker persists its cursor, bounded candidate pool, rejection/retry state, incentive metadata and scan counters in the same checkpoint. Candidate rows retain only required market fields and already linked schedule timestamps, avoiding repeated full rules/milestone payloads. Deployments resume the scan rather than restarting at the far-future listings.
+
+Scalper engines still apply and sequence-check every depth update. Strategy protection is evaluated on bid/ask price changes, material top-level quantity changes (at least 25% or one contract), public trades, pending transport actions and regular clock frames. Insignificant quantity-only/deep updates no longer repeat identical strategy calculations. The opt-in flag leaves non-scalper strategies unchanged; filtered_quote_updates is observable in monitoring.

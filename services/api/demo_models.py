@@ -1,0 +1,83 @@
+"""Versioned shared configuration for multi-square Kalshi Demo bots."""
+from typing import Literal,Annotated
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from services.research.reports import SERIES
+
+PERIOD_HOURS={'1H':1,'6H':6,'24H':24,'7D':168,'30D':720}
+
+class Square(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    asset:str
+    min_price:int=Field(ge=1,le=99)
+    max_price:int=Field(ge=1,le=99)
+    min_minutes:int=Field(ge=0,le=1439)
+    max_minutes:int=Field(ge=1,le=1440)
+    report_id:int|None=Field(default=None,ge=1)
+    expected_roi:float|None=None
+    loss_cents:int|None=Field(default=None,ge=1,le=99)
+    maximum_cents:int|None=Field(default=None,ge=1,le=99)
+    loss_prevention_cents:int|None=Field(default=None,ge=1,le=99)
+    @model_validator(mode='after')
+    def ranges(self):
+        if self.asset not in SERIES or self.min_price>self.max_price or self.min_minutes>=self.max_minutes:raise ValueError('Invalid square')
+        return self
+
+class BotConfig(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    version:Literal[1]=1
+    name:str=Field(min_length=1,max_length=80)
+    strategy:Literal['conditions','buy_low_sell_high']='conditions'
+    cycle_buy_cents:int=Field(default=10,ge=1,le=49)
+    cycle_sell_cents:int=Field(default=20,ge=2,le=99)
+    cycle_cutoff_minutes:int=Field(default=3,ge=0,le=1439)
+    cycle_entry_minutes:int|None=Field(default=None,ge=1,le=1440)
+    cycle_exit_mode:Literal['profit','late_threshold']='profit'
+    late_exit_minutes:int=Field(default=5,ge=1,le=1440)
+    late_exit_threshold_cents:int=Field(default=40,ge=1,le=99)
+    late_exit_reprice_cents:int=Field(default=5,ge=0,le=99)
+    require_active_market:bool=False
+    cycle_repeat:bool=True
+    squares:list[Square]=Field(min_length=1,max_length=45)
+    qualification:Literal['bid','ask']='ask'
+    price_reference:Literal['bid','ask']='ask'
+    adjustment_cents:int=Field(default=-1,ge=-99,le=99)
+    maximum_cents:int|None=Field(default=None,ge=1,le=99)
+    minimum_cents:int|None=Field(default=None,ge=1,le=99)
+    column_maximum_cents:dict[Literal['50-60','60-70','70-80','80-90','90-100'],Annotated[int,Field(strict=True,ge=1,le=99)]]=Field(default_factory=dict,max_length=5)
+    bid_percent:float=Field(default=1,gt=0,le=100)
+    market_percent:float=Field(default=3,gt=0,le=100)
+    bot_percent:float=Field(default=10,gt=0,le=100)
+    loss_mode:Literal['off','manual','research']='off'
+    loss_cents:int|None=Field(default=None,ge=1,le=99)
+    daily_loss_percent:float|None=Field(default=None,gt=0,le=100)
+    @model_validator(mode='after')
+    def limits(self):
+        if self.strategy=='buy_low_sell_high':
+            if self.cycle_sell_cents<=self.cycle_buy_cents:raise ValueError('The profit sell price must be higher than the low buy price')
+            if self.loss_mode=='research':raise ValueError('Use manual or off loss prevention for buy low, sell high')
+            if self.cycle_exit_mode=='late_threshold' and (self.cycle_repeat or self.loss_mode!='off'):
+                raise ValueError('Conditional late exits require no repeat buys and loss prevention off')
+        if self.minimum_cents is not None and self.maximum_cents is not None and self.minimum_cents>self.maximum_cents:raise ValueError('Minimum bid must not exceed maximum bid')
+        if self.loss_mode=='manual' and self.loss_cents is None:raise ValueError('Enter an exit threshold')
+        keys=[(s.asset,s.min_price,s.max_price,s.min_minutes,s.max_minutes) for s in self.squares]
+        if len(set(keys))!=len(keys):raise ValueError('Duplicate squares')
+        return self
+
+class Controls(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    action:Literal['pause','resume','archive','restore']
+    revision:int=Field(ge=1)
+
+class Policy(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    archive_enabled:bool=True
+    archive_days:int=Field(default=30,ge=7,le=3650)
+    storage_warning_percent:int=Field(default=70,ge=20,le=95)
+    storage_critical_percent:int=Field(default=85,ge=30,le=99)
+    storage_limit_gb:int=Field(default=5,ge=1,le=16000)
+    backup_hours:int=Field(default=24,ge=1,le=168)
+    critical_email:bool=True
+    @model_validator(mode='after')
+    def levels(self):
+        if self.storage_warning_percent>=self.storage_critical_percent:raise ValueError('Storage thresholds must increase')
+        return self
