@@ -6,6 +6,11 @@ wallet accounting or the existing detailed/wide research summaries.
 """
 from decimal import Decimal as D, InvalidOperation
 
+# This is a minimum for displaying the approximate held-ROI Student-t interval,
+# NOT a claim that 20 events are enough to establish profitability. The 90%
+# Wilson win-rate interval is computed separately for the bucket matrices.
+MIN_HOLD_RETURN_UNCERTAINTY_EVENTS = 20
+
 # Two-sided 90% Student t critical values for small samples (df 1..30).
 T90 = (
     '6.3138', '2.9200', '2.3534', '2.1318', '2.0150', '1.9432',
@@ -73,6 +78,7 @@ def _report(events):
         resolved_events=resolved,
         event_wins=sum(event['outcome'] for event in events.values()),
         return_observations=n,
+        uncertainty_min_samples=MIN_HOLD_RETURN_UNCERTAINTY_EVENTS,
         incomplete_events=resolved - n,
         estimated_return_observations=sum(event['estimated'] for event in return_events),
         average_return_pct=None, uncertainty90_pct=None,
@@ -82,7 +88,7 @@ def _report(events):
         return result
     mean = sum(returns, D(0)) / D(n)
     result['average_return_pct'] = str(100 * mean)
-    if n > 1:
+    if n >= MIN_HOLD_RETURN_UNCERTAINTY_EVENTS:
         sample_var = sum(((value - mean) ** 2 for value in returns), D(0)) / D(n - 1)
         # A zero sample variance is not zero future uncertainty: identical
         # binary-event returns can still be followed by the opposite outcome.
