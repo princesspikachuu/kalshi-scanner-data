@@ -146,5 +146,65 @@ class PausedMarketDiscoveryTests(unittest.TestCase):
         self.assertTrue(set(MM_FOLDERS).issubset(suite.portfolios))
 
 
+class PausedFavoritesTimingCacheTests(unittest.TestCase):
+    def fixture(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        bot = SimpleNamespace(enabled=False, hold_only=True,
+            exit_evidence=SimpleNamespace(cells={'seed': {'observations': 3}}))
+        engine = SimpleNamespace(wallet=SimpleNamespace(lots=[]), orders={})
+        build = Mock(side_effect=lambda cells, hold_only: [
+            dict(size=len(cells), hold_only=hold_only, value=cells['seed']['observations'])
+        ])
+        return bot, engine, build
+
+    def test_unchanged_paused_history_reuses_display_not_source_research(self):
+        from unittest.mock import patch
+        from services.paper_demo.shadow.experiments import (
+            favorite_timing_status_rows, PAUSED_FAVORITE_TIMING_CACHE_SECONDS
+        )
+        bot, engine, build = self.fixture()
+        with patch('services.paper_demo.shadow.experiments.favorite_timing_rows', build):
+            first = favorite_timing_status_rows(bot, engine, 100)
+            self.assertIs(first, favorite_timing_status_rows(bot, engine, 105))
+            self.assertEqual(build.call_count, 1)
+            self.assertEqual(PAUSED_FAVORITE_TIMING_CACHE_SECONDS, 30)
+            self.assertEqual(bot.exit_evidence.cells, {'seed': {'observations': 3}})
+            bot.exit_evidence.cells['seed']['observations'] = 4
+            self.assertIsNot(first, favorite_timing_status_rows(bot, engine, 131))
+            self.assertEqual(build.call_count, 2)
+
+    def test_research_shape_and_policy_changes_invalidate_before_ttl(self):
+        from unittest.mock import patch
+        from services.paper_demo.shadow.experiments import favorite_timing_status_rows
+        bot, engine, build = self.fixture()
+        with patch('services.paper_demo.shadow.experiments.favorite_timing_rows', build):
+            favorite_timing_status_rows(bot, engine, 100)
+            bot.exit_evidence.cells['new'] = {'observations': 1}
+            favorite_timing_status_rows(bot, engine, 101)
+            bot.hold_only = False
+            favorite_timing_status_rows(bot, engine, 102)
+        self.assertEqual(build.call_count, 3)
+
+    def test_resumed_or_exposed_portfolios_never_use_paused_display_cache(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from services.paper_demo.shadow.experiments import favorite_timing_status_rows
+        bot, engine, build = self.fixture()
+        with patch('services.paper_demo.shadow.experiments.favorite_timing_rows', build):
+            favorite_timing_status_rows(bot, engine, 100)
+            engine.wallet.lots = [object()]
+            favorite_timing_status_rows(bot, engine, 101)
+            engine.wallet.lots = []
+            engine.orders['active'] = SimpleNamespace(status='resting')
+            favorite_timing_status_rows(bot, engine, 102)
+            engine.orders.clear()
+            bot.enabled = True
+            favorite_timing_status_rows(bot, engine, 103)
+        self.assertEqual(build.call_count, 4)
+        self.assertFalse(hasattr(bot, '_paused_favorite_timing'))
+
+
+
 if __name__ == '__main__':
     unittest.main()
