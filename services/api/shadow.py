@@ -394,7 +394,10 @@ def install_shadow(app,auth,mutate,pool):
                 raise
         historical_sql_started=time.monotonic()
         with pool.connection() as c:
-            latest_rows=historical_read(c,'latest_reports',"SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(reset_at,latest=='full',Jsonb(revisions))).fetchall()
+            # This DISTINCT ON historical scan was repeatedly canceled at 5s.
+            # The initial dashboard intentionally drops latest_report from its
+            # wire response. Do not scan all reports just to build cards.
+            # Existing current_cycles retain recent execution evidence.
             metrics=historical_read(c,'quality_metrics',"""WITH r AS (
                 SELECT progress AS p FROM research_job WHERE idempotency_key>='demo/shadow/report/'
                 AND idempotency_key<'demo/shadow/report/zzzz' AND """+scope+"""),
@@ -435,7 +438,7 @@ def install_shadow(app,auth,mutate,pool):
             print(json.dumps(dict(event='shadow_workspace_query_cost',historical_sql_ms=round(historical_sql_ms,1),source='legacy_report_history')),flush=True)
         mapped={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in metrics}
         actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in financial}
-        reports={r['progress'].get('bot_id'):r['progress'] for r in latest_rows}
+        reports={}  # Legacy latest-report details are not needed in the initial overview.
         bots=[]
         for row in profiles:
             profile=row['parameters']
