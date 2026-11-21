@@ -56,13 +56,16 @@ class FavoritesUnrelatedInputTests(unittest.TestCase):
 
 class MakerAdaptiveCapacityTests(unittest.TestCase):
     def stats(self,level=0,own=0,other=0,subscribed=0):
-        return dict(level=level,total=32+8*level,entry_candidates=15+4*level,
+        return dict(level=level,total=None,entry_candidates=None,admitting=True,
             entry_markets=own+other,subscribed_markets=subscribed,categories=dict(market_maker=own))
-    def test_ten_fourteen_eighteen_targets_with_unused_shared_headroom(self):
-        for level,want in enumerate((10,14,18)):self.assertEqual(maker_entry_limit(self.stats(level)),want)
-    def test_existing_strategies_and_two_free_slots_bound_maker_allocation(self):
-        self.assertEqual(maker_entry_limit(self.stats(own=4,other=5,subscribed=20)),8)
-        self.assertEqual(maker_entry_limit(self.stats(own=4,other=1,subscribed=32)),2)
+    def test_maker_verification_batch_has_no_fixed_total_market_ceiling(self):
+        for level in range(3):
+            self.assertEqual(maker_entry_limit(self.stats(level,own=100,other=50,subscribed=180)),103)
+    def test_other_strategies_do_not_consume_fixed_maker_slots(self):
+        self.assertEqual(maker_entry_limit(self.stats(own=4,other=5,subscribed=20)),7)
+        self.assertEqual(maker_entry_limit(self.stats(own=4,other=1,subscribed=32)),7)
+        blocked=self.stats(own=4);blocked['admitting']=False
+        self.assertEqual(maker_entry_limit(blocked),4)
     def test_more_than_four_actual_maker_markets_can_be_admitted_without_duplicate_streams(self):
         s,payload=lifecycle.MakerActivityLifecycleTests().suite()
         for i in range(18):
@@ -70,15 +73,15 @@ class MakerAdaptiveCapacityTests(unittest.TestCase):
             s.handle('maker_market',dict(payload,market=m),200)
         self.assertEqual(len(s.feed_markets()),18)
         self.assertTrue(all(len(s.portfolios[f][0].markets)==18 for f in MM_FOLDERS))
-        self.assertEqual(s.monitoring_snapshot(200)['maker_entry_limit'],18)  # fixture level 2
-    def test_serialized_admission_honors_cap_and_overload_without_evicting_existing_markets(self):
+        self.assertEqual(s.monitoring_snapshot(200)['maker_entry_limit'],21)  # 18 active + 3 scan slots
+    def test_serialized_admission_has_no_count_cap_but_respects_overload(self):
         s,payload=lifecycle.MakerActivityLifecycleTests().suite()
         s.monitoring.limits=lambda now:dict(total=32,entry_candidates=15,per_category=4,admitting=True,level=0)
         for i in range(11):s.handle('maker_market',dict(payload,market=dict(payload['market'],ticker='POL-'+str(i))),200)
-        self.assertEqual(len(s.feed_markets()),10)
+        self.assertEqual(len(s.feed_markets()),11)
         s.monitoring.limits=lambda now:dict(total=32,entry_candidates=15,per_category=4,admitting=False,level=0)
         s.handle('maker_market',dict(payload,market=dict(payload['market'],ticker='POL-NEW')),201)
-        self.assertEqual(len(s.feed_markets()),10);self.assertEqual(s.monitoring_snapshot(201)['maker_slots_free'],0)
+        self.assertEqual(len(s.feed_markets()),11);self.assertEqual(s.monitoring_snapshot(201)['maker_slots_free'],0)
 
     def test_overload_blocks_new_admission_but_does_not_pause_existing_maker_execution(self):
         s,payload=lifecycle.MakerActivityLifecycleTests().suite()
