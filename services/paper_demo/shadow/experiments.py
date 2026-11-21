@@ -256,7 +256,7 @@ class ExperimentSuite:
                 if ticker in e.markets or folder in SEQUENTIAL_FOLDERS and m.get('hourly_price'):continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
                 if not p:continue
-                if not f.bots[p['series']].enabled:
+                if not f.bots[p['series']].enabled and not self.ticker_exposed(e,ticker):
                     self.paused_market_copies_skipped+=1
                     continue
                 market=dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
@@ -273,7 +273,7 @@ class ExperimentSuite:
                 if ticker in e.markets:continue
                 p=next((p for p in ps if p['series']==ticker.split('-')[0] and not p.get('retired')),None)
                 if not p:continue
-                if not f.bots[p['series']].enabled:
+                if not f.bots[p['series']].enabled and not self.ticker_exposed(e,ticker):
                     self.paused_market_copies_skipped+=1
                     continue
                 e.add_market(dict(m,bot_id=p['id'],bot_name=p['name'],bot_revision=p['revision'],
@@ -563,7 +563,7 @@ class ExperimentSuite:
                 e,f,ps=self.portfolios[folder]
                 profile=next((p for p in ps if p['market_category']==m['market_category']),None)
                 if not profile:continue
-                if ticker not in e.markets and not f.bots[profile['series']].enabled:
+                if ticker not in e.markets and not f.bots[profile['series']].enabled and not self.ticker_exposed(e,ticker):
                     self.paused_discovery_skipped+=1
                     continue
                 if ticker in e.markets:
@@ -601,7 +601,7 @@ class ExperimentSuite:
                 # in a fully paused wallet. Existing markets remain available
                 # for exposure/settlement; they are never removed by this gate.
                 ticker=payload.get('market',{}).get('ticker')
-                if ticker and ticker not in e.markets:
+                if ticker and ticker not in e.markets and not self.ticker_exposed(e,ticker):
                     self.paused_discovery_skipped+=1
                     continue
             if self.skip_unrelated_lifecycle(e,source,payload):continue
@@ -639,7 +639,7 @@ class ExperimentSuite:
                 # Existing known markets still pass through for any remaining
                 # orders, held positions, outcomes or strategy reactivation.
                 ticker=payload['market']['ticker']
-                if ticker not in e.markets and not f.bots[profile['series']].enabled:
+                if ticker not in e.markets and not f.bots[profile['series']].enabled and not self.ticker_exposed(e,ticker):
                     self.paused_discovery_skipped+=1
                     continue
                 local=dict(payload,market=dict(payload['market'],bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile.get('version',folder+'-1'),bot_revision=profile['revision']))
