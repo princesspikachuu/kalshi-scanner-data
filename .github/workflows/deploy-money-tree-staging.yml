@@ -44,6 +44,7 @@ jobs:
           node --test tests/test_bot_table.mjs tests/test_strategy_folders.mjs
           node tests/test_favorites_profit_colors.mjs
           node tests/test_demo_gateway.mjs
+          node --test tests/test_staging_deploy_workflow.mjs
       - name: Verify Cloudflare deployment credentials are present
         env:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
