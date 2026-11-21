@@ -135,16 +135,20 @@ class FullReuseReadbackTests(unittest.TestCase):
         objects=InMemoryR2();store=HealthStore()
         rows=[row(7)]
         first=staged(rows)
-        with patch('builtins.print'):
+        with patch(MODULE+'.collect_snapshot_spooled',return_value=first),patch(
+                'builtins.print'):
             backup_controls(store,objects,now=100)
+        self.assertTrue(first['file'].closed)
         old_health=dict(store.state['backup-health'])
         old_root=read_verified(objects,old_health['reference'])
         shared_part=old_root['chunks'][0]['reference']
 
         second=staged(rows)
-        with patch('builtins.print'):
+        with patch(MODULE+'.collect_snapshot_spooled',return_value=second),patch(
+                'builtins.print'):
             result=backup_controls(store,objects,now=200,
                                    reuse_previous=True)
+        self.assertTrue(second['file'].closed)
         self.assertEqual(result['reused_chunks'],1)
         new_health=dict(store.state['backup-health'])
         new_root=read_verified(objects,new_health['reference'])
