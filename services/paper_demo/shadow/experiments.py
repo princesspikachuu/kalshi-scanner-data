@@ -92,7 +92,8 @@ def scalper_status_snapshot(bot, engine, now):
         # Keep this cheap live display field fresh without rebuilding all
         # research cells or invalidating every paused bot on each tick.
         return dict(cached[2], shared_feature_calculations=engine.tape.calculations)
-    rendered = bot.research_snapshot()
+    rendered = dict(bot.research_snapshot(),
+                    shared_feature_calculations=engine.tape.calculations)
     bot._paused_scalper_status = (now, signature, rendered)
     return rendered
 
