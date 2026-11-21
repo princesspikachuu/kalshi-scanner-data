@@ -7,7 +7,7 @@ series retain provider-driven discovery; unknown calendar years fail open.
 from datetime import datetime,timedelta,time
 from zoneinfo import ZoneInfo
 
-CASH_INDEX_SERIES={'KXINXU','KXNASDAQ100U'}
+CASH_INDEX_SERIES={'KXINXU','KXNASDAQ100U','KXINX15M','KXNDQ15M'}
 HOLIDAYS={
     2026:'01-01 01-19 02-16 04-03 05-25 06-19 07-03 09-07 11-26 12-25',
     2027:'01-01 01-18 02-15 03-26 05-31 06-18 07-05 09-06 11-25 12-24',
