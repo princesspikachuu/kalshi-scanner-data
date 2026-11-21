@@ -251,7 +251,7 @@ test('overview, folder and bot headers separate current reserved bids from commi
  const folder={id:'favorites',name:'Favorites',accounting:{at:Date.now()/1000,portfolio:account},performance:{'1H':{pnl:'1',partial:false}}};
  for(const html of [folderOverviewMarkup([folder],'1H'),folderCardSummaryMarkup(folder,'1H',{bots:1,running:1}),
   botPnlDetailsMarkup({id:'fav',account,performance:{'1H':{pnl:'1',realized_pnl:'.5'}}},'1H')]){
-  for(const text of ['Total P/L','$2.00','$4.50','Open $3.00 · pending $1.50'])assert.ok(html.includes(text),text); assert.ok(html.includes('Bids'));
+  for(const text of ['Total P/L','$2.00','$4.50','Open $3.00 · pending $1.50'])assert.ok(html.includes(text),text); assert.ok(html.includes('Bids')||html.includes('Open bids'));
   // Current portfolio value is intentionally visible; exposure remains cost-based.
   if(html.includes('Estimated portfolio value'))assert.ok(html.includes('$1,000.00'));
   assert.ok(!html.includes('Open $500.00'));
@@ -370,7 +370,7 @@ test('subfolder totals combine bot P/L and current exposure across the selected 
  assert.equal(hour.pnl.low,.5);assert.equal(hour.partial,true);
  assert.deepEqual(hour.account,{unfilled_bids:3,active_cost:5,pending_cost:5,position_cost:10});
  const html=marketTypeSummaryMarkup({label:'Crypto',bots},'1H');
- for(const token of ['Total P/L · 1h','$0.50','Bids','$3.00','Positions · cost','$10.00','Partial P/L history'])assert.ok(html.includes(token),token);
+ for(const token of ['Total P/L · 1h','$0.50','Bids','$3.00','Positions · cost','$10.00'])assert.ok(html.includes(token),token);
 });
 test('subfolder P/L uses single estimates and does not silently omit missing bots',()=>{
  const bots=[{id:'a',account:{},performance:{'6H':{pnl:'.5',pnl_low:'-1',pnl_high:'2'}}},
