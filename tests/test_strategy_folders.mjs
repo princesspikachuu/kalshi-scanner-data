@@ -258,6 +258,28 @@ test('overview, folder and bot headers separate current reserved bids from commi
  }
  assert.deepEqual(summaryExposure(account),{bids:2,active:3,pending:1.5,positions:4.5});
 });
+test('event monitoring counts each underlying event once per exposure status',()=>{
+ const a={equity:'1000',cash:'990',total_pnl:'0',unfilled_bids:'2',active_cost:'3',pending_cost:'1.5',
+  unfilled_bid_events:2,active_events:1,pending_events:1,position_cost:'4.5'};
+ const f={id:'favorites',name:'Favorites',accounting:{at:Date.now()/1000,portfolio:a}};
+ const htmls=[folderOverviewMarkup([f]),folderCardSummaryMarkup(f,'all',{bots:1,running:1}),
+  botPnlMarkup({id:'b',account:a,performance:{}},'all')];
+ for(const html of htmls){
+  assert.ok(html.includes('2 events · Reserved for buys'),html);
+  assert.ok(html.includes('Open $3.00 (1 event) · pending $1.50 (1 event)'),html);
+ }
+ const typeBots=[{id:'b',desired:'running',account:a,performance:{}},
+  {id:'c',desired:'running',account:{unfilled_bids:'1',active_cost:'2',pending_cost:'0'},performance:{}}];
+ const positions=[{ticker:'S-A',bot_id:'b',event_ticker:'EVENT-ONE',state:'active'},
+  {ticker:'S-B',bot_id:'c',event_ticker:'EVENT-ONE',state:'active'},
+  {ticker:'S-C',bot_id:'b',event_ticker:'EVENT-TWO',state:'pending'}];
+ const orders=[{ticker:'S-A',bot_id:'b',event_ticker:'EVENT-ONE',action:'buy',status:'resting'},
+  {ticker:'S-D',bot_id:'c',event_ticker:'EVENT-ONE',action:'buy',status:'pending'},
+  {ticker:'S-E',bot_id:'c',event_ticker:'EVENT-THREE',action:'sell',status:'resting'}];
+ const typeHtml=marketTypeSummaryMarkup({label:'Crypto',bots:typeBots},'all',positions,null,orders);
+ assert.ok(typeHtml.includes('1 event · Reserved for buys'),typeHtml);
+ assert.ok(typeHtml.includes('Open $5.00 (1 event) · pending $1.50 (1 event)'),typeHtml);
+});
 test('exposure summaries distinguish unknown amounts from known zero and support combined cost snapshots',()=>{
  assert.deepEqual(summaryExposure(null),{bids:null,active:null,pending:null,positions:null});
  assert.deepEqual(summaryExposure({unfilled_bids:'0',active_cost:'0',pending_cost:'0'}),{bids:0,active:0,pending:0,positions:0});
