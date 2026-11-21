@@ -190,7 +190,7 @@ class ForwardRun:
         # Only a few new future-window catalogue reads per pass. The normal
         # live-market query stays fast for continuously rolling crypto series.
         # Inactive series get a verified next wake rather than 2-second polling.
-        future_read_budget=2 if hasattr(self,'experiments') else 0
+        future_read_budget=1 if hasattr(self,'experiments') else 0
         if not hasattr(self,'discovery_future_retry_at'):
             self.discovery_future_retry_at={}
         for series,profile in wanted.items():
@@ -226,15 +226,23 @@ class ForwardRun:
                         future_read_budget-=1
                         self.discovery_future_retry_at[series]=now+900
                         try:
-                            pre=await self.api.fetch('/markets',dict(status='unopened',
-                                series_ticker=series,min_close_ts=int(now),
-                                max_close_ts=int(now+7*86400),limit=100))
-                            if not pre.get('cursor'):
+                            # Search progressively wider time horizons. A
+                            # seven-day page often has hundreds of unopened
+                            # 15m windows; its first page cannot be trusted
+                            # to contain the earliest opening. Small complete
+                            # windows find the next business session cheaply.
+                            for hours in (6,36,72,120):
+                                pre=await self.api.fetch('/markets',dict(status='unopened',
+                                    series_ticker=series,min_close_ts=int(now),
+                                    max_close_ts=int(now+hours*3600),limit=100))
+                                if pre.get('cursor'):
+                                    break  # Incomplete listing is never a sleep authorization.
                                 future=[known_entry_wake(m,'15m',now)
                                     for m in pre.get('markets',[])
                                     if isinstance(m,dict) and
                                        m.get('ticker','').startswith(series+'-')]
                                 future=[at for at in future if at is not None]
+                                if future:break
                         except asyncio.CancelledError:
                             raise
                         except Exception as exc:
