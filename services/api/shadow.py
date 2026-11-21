@@ -225,6 +225,10 @@ def workspace_response(payload,*,compressed=False,request_started=None):
     status=dict(payload['status']);status.pop('experiments',None)
     folders=[]
     profiles={str(p.get('id')):p for p in payload.get('bots',[]) if p.get('id') is not None}
+    # Read-only statistics research pools collector and statistics experiments
+    # without touching the trading worker's decision cache or wallet data.
+    hold_sources=tuple(f.get('bots') or {} for f in payload['folders']
+                       if f.get('id') in ('favorites','favorites_statistics'))
     for folder in payload['folders']:
         folder=dict(folder)
         if folder.get('id')=='favorites':
@@ -240,6 +244,9 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                     categories={kind:dict(cov,table_cells=len(aggregate['rows'].get(kind,[])))
                                 for kind,cov in aggregate['coverage'].items()},
                     source='worker_entry_timing',real_orders_enabled=False)),flush=True)
+        if folder.get('id')=='favorites_statistics':
+            from services.paper_demo.shadow.favorite_single import summarize_statistics_holds
+            folder['statistics_hold_summary']=summarize_statistics_holds(hold_sources,profiles)
         account=folder.get('accounting')
         if account:
             folder['accounting']={k:v for k,v in account.items() if k not in ('current_cycles','bots')}

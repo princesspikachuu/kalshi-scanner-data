@@ -79,12 +79,25 @@ class SingleFavoritesBucketTests(unittest.TestCase):
         self.assertEqual(result['rows']['crypto-15m']['return_observations'],1)
         self.assertEqual(result['rows']['crypto-hourly']['return_observations'],1)
 
+    def test_only_winning_returns_with_different_prices_do_not_imply_90_percent_certainty(self):
+        bots={'btc':dict(entry_timing=[
+            self.row('a',cost='7.5',net='2.5'),
+            self.row('b',cost='8.5',net='1.5',price='.85'),
+            self.row('c',cost='9',net='1',price='.90'),
+        ])}
+        result=self.summary(bots)['by_bot']['btc']
+        self.assertEqual(result['return_observations'],3)
+        self.assertGreater(D(result['average_return_pct']),D(0))
+        self.assertIsNone(result['uncertainty90_pct'])
+        self.assertIsNone(result['ci90_low_pct'])
+        self.assertIsNone(result['ci90_high_pct'])
+
     def test_single_unvarying_sample_or_no_sample_never_invents_precision(self):
         bots = {'btc':dict(entry_timing=[
             self.row('a'),self.row('b',cost='7.5',net='2.5'),
         ]),'empty':dict(entry_timing=[])}
         result = self.summary(bots)
-        self.assertEqual(D(result['by_bot']['btc']['uncertainty90_pct']),D(0))
+        self.assertIsNone(result['by_bot']['btc']['uncertainty90_pct'])
         self.assertEqual(result['by_bot']['empty']['return_observations'],0)
         self.assertIsNone(result['by_bot']['empty']['uncertainty90_pct'])
 

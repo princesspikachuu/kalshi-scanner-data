@@ -774,6 +774,64 @@ test('statistics-backed Favorites renders a category-separated 5-cent by time ma
  assert.ok(!html.includes('n=0'));assert.ok(html.includes('No settled events'));
 });
 
+test('statistics-backed Favorites shows distinct event hold ROI and 90% uncertainty alongside outcome evidence',()=>{
+  const stats={min_samples:20,matrix:[{
+    market_type:'15m_price',price_buckets:['80-84','85-89'],
+    time_buckets:['10–15m','5–10m'],cells:[{
+      price_bucket:'80-84',horizon:'10–15m',samples:20,win_rate:.85,
+      realized_roi:-.9,realized_net:'-999',lower:.7,level:'market_type_price_time',
+      fallback_level:'market_type_price_time',fallback_samples:20,
+      eligibility:'evidence_candidate'
+    },{
+      price_bucket:'85-89',horizon:'5–10m',samples:3,win_rate:1,
+      realized_roi:4,realized_net:'999',lower:.4,level:'market_type_price_time',
+      fallback_level:'market_type_price',fallback_samples:20,
+      eligibility:'insufficient_samples'
+    }]
+  }]};
+  const sample={resolved_events:20,event_wins:17,return_observations:12,
+    average_return_pct:'12.345',uncertainty90_pct:'4.567',
+    ci90_low_pct:'7.778',ci90_high_pct:'16.912',
+    estimated_return_observations:2,incomplete_events:8};
+  const hold={basis:'verified_hold_only',
+    by_market_type:{'15m_price':sample},
+    by_cell:{'15m_price':{'80-84|10–15m':sample}}};
+  const html=favoriteStatisticsMatrixMarkup(stats,new Set(),hold);
+  const summary=html.slice(html.indexOf('<summary>'),html.indexOf('</summary>'));
+  assert.match(summary,/Hold P\/L \+12\.35%/);
+  assert.match(summary,/90% ±4\.57 points/);
+  assert.match(summary,/n=12/);
+  assert.match(html,/n=20/,'settled outcome sample stays intact');
+  assert.match(html,/n=12 held/,'hold return sample remains separate');
+  assert.match(html,/2 historical returns estimated/);
+  assert.match(html,/8 resolved events without complete held return attribution/);
+  assert.match(html,/Evidence candidate/);
+  assert.match(html,/Under-sampled/);
+  assert.doesNotMatch(html,/Hold P\/L -90|Hold P\/L \+400|NaN|undefined/);
+  assert.doesNotMatch(html,/profit-positive|profit-negative/,
+    'statistics trading eligibility colors must not be overwritten by held ROI');
+  assert.match(html,/Hold P\/L — · 90% uncertainty — · n=0 held/);
+});
+
+test('statistics-backed Favorites does not invent ROI when only realized exits or outcomes exist',()=>{
+  const stats={matrix:[{market_type:'15m_price',price_buckets:['80-84'],
+    time_buckets:['10–15m'],cells:[{price_bucket:'80-84',horizon:'10–15m',
+      samples:25,win_rate:.9,realized_roi:9,realized_net:'10000',
+      eligibility:'evidence_rejected',lower:.7,level:'exact',
+      fallback_level:'exact',fallback_samples:25}]}]};
+  const noHold=favoriteStatisticsMatrixMarkup(stats);
+  assert.match(noHold,/Hold P\/L —/);
+  assert.doesNotMatch(noHold,/Hold P\/L \+900%/);
+  const sparse={by_market_type:{'15m_price':{resolved_events:1,return_observations:1,
+      average_return_pct:'-20',uncertainty90_pct:null}},
+    by_cell:{'15m_price':{'80-84|10–15m':{resolved_events:1,return_observations:1,
+      average_return_pct:'-20',uncertainty90_pct:null}}}};
+  const html=favoriteStatisticsMatrixMarkup(stats,new Set(),sparse);
+  assert.match(html,/Hold P\/L -20\.00%/);
+  assert.match(html,/90% uncertainty —/);
+  assert.doesNotMatch(html,/90% ±0\.00/);
+});
+
 test('statistical Favorites decision cannot erase all detailed bot panels',()=>{
  const d=fixture();
  d.folders.push({id:'favorites_statistics',name:'Favorites · Statistics-Backed',description:'Independent statistical paper strategy',accounting:{at:Date.now()/1000,portfolio:{cash:'1000'}}});
@@ -925,7 +983,7 @@ test('single bucket reports insufficient ROI observations without inventing unce
     return_observations:1,average_return_pct:'33.3',uncertainty90_pct:null,
     ci90_low_pct:null,ci90_high_pct:null,incomplete_events:0,estimated_return_observations:0});
   assert.match(one,/\+33\.30% Hold P\/L/);
-  assert.match(one,/fewer than 2 independent return observations/);
+  assert.match(one,/need observed gains and losses/);
   assert.doesNotMatch(one,/±0\.00|NaN|undefined/);
   const empty=favoriteSingleCellMarkup({resolved_events:0,event_wins:0,
     return_observations:0,average_return_pct:null,uncertainty90_pct:null,
