@@ -1,7 +1,7 @@
 import {scalperMarkup} from './scalper-view.mjs';
 import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferences} from './demo-client.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,learningDiagnosticsMarkup,marketTypeGroups,marketTypeSummaryMarkup} from './shadow-view.mjs';
+import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,learningDiagnosticsMarkup,marketTypeGroups,marketTypeSummaryMarkup} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences(undefined,true);
 let loadError=null;
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null;
@@ -83,7 +83,7 @@ function draw(){
   const running=folder=>(data.bots||[]).some(bot=>(bot.folder_id||'convexity')===folder.id&&bot.desired==='running'&&!bot.retired);
   return Number(running(b))-Number(running(a));
  });
- $('groups').innerHTML=folders.map(folder=>{
+ $('groups').innerHTML=((folders.some(folder=>['favorites','favorites_statistics'].includes(folder.id)))?favoriteProfitLegendMarkup():'')+folders.map(folder=>{
   const folderBots=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id).map(researchBot);
   const activeFolderBots=folderBots.filter(b=>!b.retired);
   const matching=folderBots.filter(b=>(b.name+' '+b.series).toLowerCase().includes(find));

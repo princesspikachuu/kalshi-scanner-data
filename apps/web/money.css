@@ -128,3 +128,17 @@
 .favorite-stat-matrix .stat-rejected{background:#332629}
 .favorite-stat-matrix .stat-empty{background:#1b1e25;color:var(--muted,#aaa)}
 @media(max-width:650px){.statistics-matrices{padding:8px}.favorite-stat-matrix{font-size:11px}}
+
+
+/* Explicit cell fills win over prior evidence-status and base table backgrounds. */
+.shadow-workspace .favorite-stat-matrix td.profit-positive,
+.shadow-workspace .table-scroll table tbody tr.profit-positive > td{background:#204b36!important;border-color:#4b9b71!important}
+.shadow-workspace .favorite-stat-matrix td.profit-negative,
+.shadow-workspace .table-scroll table tbody tr.profit-negative > td{background:#542b35!important;border-color:#be6877!important}
+.shadow-workspace .favorite-stat-matrix td.profit-exit-drag,
+.shadow-workspace .table-scroll table tbody tr.profit-exit-drag > td{background:#63471e!important;border-color:#cf973e!important}
+.shadow-workspace .table-scroll table tbody tr.profit-positive > td,
+.shadow-workspace .table-scroll table tbody tr.profit-negative > td,
+.shadow-workspace .table-scroll table tbody tr.profit-exit-drag > td{border-style:solid;border-width:1px}
+.favorite-profit-legend{margin:14px 0 10px;padding:7px 0}
+.profit-warning{display:block;color:#ffdb9e;font-size:11px;font-weight:700}
