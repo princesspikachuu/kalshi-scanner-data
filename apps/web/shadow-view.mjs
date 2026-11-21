@@ -94,6 +94,62 @@ export function favoriteResearchMarkup(bots,open=new Set(),options={}){
  }).join('');
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
+function favoriteDetailedMatrixMarkup(rows,label,emptyAsNote=false){
+ const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
+ const PRICES=[70,75,80,85,90,95];
+  const cells=new Map();
+  const aggregated=favoriteCategoryRows(rows,true);
+  if(emptyAsNote&&!aggregated.some(r=>Number(r.events)>0))return '<p class="small">No timed observations yet.</p>';
+  // Do not silently drop valid collected tiers that fall outside the strategy's
+  // usual 70-95 cent bidding range. The per-market tables already show them.
+  const prices=[...new Set([...PRICES,...aggregated.map(row=>row.low)
+   .filter(low=>Number.isInteger(low)&&low>=0&&low<=100)])].sort((a,b)=>a-b);
+  let unplaced=0;
+  for(const row of aggregated){
+   if(!HORIZONS.includes(row.horizon)||!prices.includes(row.low)){
+    unplaced+=Number(row.events)||0;
+    continue;
+   }
+   const key=row.low+'|'+row.horizon;
+   if(!cells.has(key))cells.set(key,{purchased:0,settled:0,winners:0,closed:0,profitable:0,profitClassified:0,net:0,cost:0,holding:0,events:0,eventWins:0,return_sum:0,return_observations:0,estimated_return_observations:0});
+   const current=cells.get(key);
+   current.purchased+=row.contracts;current.settled+=row.resolved;
+   current.winners+=row.winners;current.closed+=row.closed;
+   current.profitable+=row.profitable_closed;current.profitClassified+=row.profit_classified_closed;
+   current.net+=row.net;current.cost+=row.cost;current.holding+=row.holding_seconds;
+   current.return_sum+=row.return_sum;current.return_observations+=row.return_observations;current.estimated_return_observations+=row.estimated_return_observations;
+   current.events+=Number(row.events)||0;current.eventWins+=Number(row.event_wins)||0;
+  }
+  // Mobile viewers see only the leftmost time windows at first. Summarize
+  // all actually populated windows before the horizontally scrollable table.
+  const windowTotals=new Map();
+  for(const [key,cell] of cells){
+   const time=key.split('|')[1];
+   windowTotals.set(time,(windowTotals.get(time)||0)+cell.events);
+  }
+  const observedWindows=HORIZONS.filter(time=>(windowTotals.get(time)||0)>0);
+  const windowNote='<p class="small">Observed time windows: '+
+    (observedWindows.length?observedWindows.map(time=>e(time)+' ('+e(String(Number(windowTotals.get(time).toFixed(2))))+' resolved observations)').join(' · '):
+    'No verified resolved timed events in this category')+
+    '. Scroll the table horizontally for the other time columns.</p>';
+  const head=HORIZONS.map(h=>'<th scope="col">'+e(h)+'</th>').join('');
+  const body=prices.map(low=>{
+   const bucket=low+'–'+Math.min(low+4,95)+'¢';
+   return '<tr><th scope="row">'+e(bucket)+'</th>'+HORIZONS.map(h=>{
+    const x=cells.get(low+'|'+h);
+    if(!x||x.purchased===0||x.events===0)return '<td class="stat-empty">—</td>';
+    const observations=x.events;
+    const outcome=eventAccuracy(x.eventWins,observations);
+    const pnl=averageReturn(x);
+    const confidence=confidenceMarkup(x.eventWins,observations,x.purchased?x.cost/x.purchased:null);
+    const signal=favoriteProfitSignal({purchased:x.purchased,settled:observations,winners:x.eventWins,cost:x.cost,closed:x.closed,net:x.return_observations>0?x.return_sum:x.net});
+    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · above break-even '+confidence.margin+' · 90% uncertainty '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
+    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Above cost '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+   }).join('')+'</tr>';
+  }).join('');
+  return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+ }
+
 /** Price/time grids share rendering across the folder summary and lower research. */
 export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}){
  // Keep 15-minute and hourly cohorts separate; each pools its currencies.
