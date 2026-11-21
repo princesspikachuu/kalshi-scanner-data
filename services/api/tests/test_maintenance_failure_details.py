@@ -112,7 +112,7 @@ class BackupFreshnessTests(unittest.TestCase):
         self.assertEqual(status['state'],'overdue')
         args=store.alert.call_args.args
         self.assertEqual(args[0],'backup-freshness')
-        self.assertIn('regular High-Probability Favorites',args[1])
+        self.assertIn('Regular High-Probability Favorites',args[1])
         self.assertIs(args[2],True)
         store.clear_alert.assert_not_called()
         logged=json.loads(emit.call_args.args[0])
