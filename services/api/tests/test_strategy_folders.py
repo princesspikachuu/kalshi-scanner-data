@@ -225,6 +225,27 @@ class FolderPostgres(unittest.TestCase):
         self.assertEqual(response.json()['folder_id'],'convexity')
         self.assertEqual(self.demo.get('shadow/command/'+request_id)['parameters'],dict(amount_cents=1500))
 
+    def test_portfolio_snapshot_survives_unavailable_legacy_report_queries(self):
+        self.seed()
+        current=dict(cash='850',equity='925',deposits='1000',total_pnl='-75',
+                     position_cost='125',unfilled_bids='15',active_cost='125',pending_cost='0')
+        favorite=dict(cash='90',equity='105',deposits='1000',total_pnl='-895',
+                      position_cost='15',unfilled_bids='0',active_cost='15',pending_cost='0')
+        self.demo.put('shadow/status',dict(at=123,accounting=dict(portfolio=current,
+            bots={'large-history-omitted':dict(net='1')},current_cycles={'old':dict(net='1')}),
+            experiments=dict(favorites=dict(accounting=dict(portfolio=favorite,bots={} )))))
+        response=self.client.get('/demo/shadow/portfolio-snapshot')
+        self.assertEqual(response.status_code,200)
+        payload=response.json()
+        self.assertTrue(payload['history_delayed'])
+        self.assertFalse(payload['real_orders_enabled'])
+        by_id={folder['id']:folder for folder in payload['folders']}
+        self.assertEqual(by_id['convexity']['accounting']['portfolio']['equity'],'925')
+        self.assertEqual(by_id['favorites']['accounting']['portfolio']['equity'],'105')
+        self.assertNotIn('current_cycles',by_id['convexity']['accounting'])
+        self.assertNotIn('bots',by_id['favorites']['accounting'])
+        self.assertEqual(self.client.get('/demo/shadow/portfolio-snapshot?secret=1').status_code,422)
+
     def test_workspace_returns_strategy_folders_without_losing_legacy_bots(self):
         self.seed();r=self.client.get('/demo/shadow/workspace');self.assertEqual(r.status_code,200)
         self.assertEqual(r.headers['x-pocket-workspace-contract'],'demo-v1')
