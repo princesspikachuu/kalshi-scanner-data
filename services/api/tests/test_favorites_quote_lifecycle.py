@@ -78,6 +78,16 @@ class FavoriteQuoteLifecycleTests(unittest.TestCase):
         self.assertEqual(s['submitted_events'],1)
         self.assertEqual(s['first_filled_orders'],0)
 
+    def test_missing_event_ticker_never_fabricates_independent_event(self):
+        t=FavoriteQuoteLifecycle(100)
+        o=order('SNOEVENT',ticker='NOEVENT-1',now=100)
+        t.observe('ORDER_SUBMITTED',o,100,{})
+        s=t.snapshot(101)
+        self.assertEqual(s['submitted_orders'],1)
+        self.assertEqual(s['submitted_tickers'],1)
+        self.assertEqual(s['submitted_events'],0)
+        self.assertEqual(s['submitted_missing_event_id'],1)
+
     def test_restored_orders_do_not_invent_new_submissions(self):
         e,b,book=MakerEntries().setup_bot()
         b.step();e.advance(201)

@@ -34,7 +34,7 @@ class FavoriteQuoteLifecycle:
         if len(self.open)>=MAX_OPEN:
             self.open.popitem(last=False)
             self.evicted+=1
-        row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or order.ticker,
+        row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or None,
                  created=float(order.created),
                  resting=(float(order.arrives) if restored and order.status=='resting' else None),
                  filled=False,cancel=None,restored=restored)
@@ -58,7 +58,7 @@ class FavoriteQuoteLifecycle:
             return
         if kind=='ORDER_REJECTED':
             if row is None:
-                row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or order.ticker)
+                row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or None)
             self._record(at,'rejected',row)
             self.open.pop(order.id,None)
             return
@@ -107,9 +107,11 @@ class FavoriteQuoteLifecycle:
                     coverage='read-only since worker start; outcomes unconfirmed',
                     submitted_orders=counts['submitted'],
                     submitted_tickers=len({r[2] for r in submitted}),
-                    submitted_events=len({r[3] for r in submitted}),
+                    submitted_events=len({r[3] for r in submitted if r[3]}),
+                    submitted_missing_event_id=sum(not r[3] for r in submitted),
                     first_filled_orders=counts['first_filled'],
-                    first_filled_events=len({r[3] for r in first_filled}),
+                    first_filled_events=len({r[3] for r in first_filled if r[3]}),
+                    first_filled_missing_event_id=sum(not r[3] for r in first_filled),
                     fill_events=counts['fill_events'],
                     completely_filled_orders=counts['filled_complete'],
                     cancelled_without_fill=counts['cancelled_without_fill'],
