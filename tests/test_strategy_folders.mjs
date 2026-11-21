@@ -841,7 +841,7 @@ test('statistics-backed Favorites shows distinct event hold ROI and 90% uncertai
   const html=favoriteStatisticsMatrixMarkup(stats,new Set(),hold);
   const summary=html.slice(html.indexOf('<summary>'),html.indexOf('</summary>'));
   assert.match(summary,/Hold P\/L \+12\.35%/);
-  assert.match(summary,/90% ±4\.57 points/);
+  assert.match(summary,/90% P\/L uncertainty pending 12\/20/);
   assert.match(summary,/n=12/);
   assert.match(html,/n=20/,'settled outcome sample stays intact');
   assert.match(html,/n=12 held/,'hold return sample remains separate');
@@ -852,7 +852,7 @@ test('statistics-backed Favorites shows distinct event hold ROI and 90% uncertai
   assert.doesNotMatch(html,/Hold P\/L -90|Hold P\/L \+400|NaN|undefined/);
   assert.doesNotMatch(html,/profit-positive|profit-negative/,
     'statistics trading eligibility colors must not be overwritten by held ROI');
-  assert.match(html,/Hold P\/L — · 90% uncertainty — · n=0 held/);
+  assert.match(html,/Hold P\/L — · 90% uncertainty pending 0\/20 · n=0 held/);
 });
 
 test('statistics-backed Favorites does not invent ROI when only realized exits or outcomes exist',()=>{
@@ -870,7 +870,7 @@ test('statistics-backed Favorites does not invent ROI when only realized exits o
       average_return_pct:'-20',uncertainty90_pct:null}}}};
   const html=favoriteStatisticsMatrixMarkup(stats,new Set(),sparse);
   assert.match(html,/Hold P\/L -20\.00%/);
-  assert.match(html,/90% uncertainty —/);
+  assert.match(html,/90% uncertainty pending 1\/20/);
   assert.doesNotMatch(html,/90% ±0\.00/);
 });
 
@@ -1077,13 +1077,13 @@ test('Favorites table setting switches views and persists across reload without 
 test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty without changing other views',()=>{
   const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
   folder.collector_single_summary={rows:{'crypto-15m':{
-    resolved_events:3,event_wins:2,return_observations:2,
+    resolved_events:22,event_wins:20,return_observations:20,
     average_return_pct:'4.2',uncertainty90_pct:'1.8',ci90_low_pct:'2.4',
-    ci90_high_pct:'6.0',incomplete_events:1,estimated_return_observations:0
+    ci90_high_pct:'6.0',incomplete_events:2,estimated_return_observations:0
   }},by_bot:{favorites:{
-    resolved_events:3,event_wins:2,return_observations:2,
+    resolved_events:22,event_wins:20,return_observations:20,
     average_return_pct:'4.2',uncertainty90_pct:'1.8',ci90_low_pct:'2.4',
-    ci90_high_pct:'6.0',incomplete_events:1,estimated_return_observations:0
+    ci90_high_pct:'6.0',incomplete_events:2,estimated_return_observations:0
   }}};
   const button={dataset:{favoriteTable:'single'}},storage=new Map();
   const {nodes}=setup(d,{storage,queries:{'[data-favorite-table]':[button]}});
@@ -1095,7 +1095,7 @@ test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty wit
   assert.match(html,/favorite-single-matrix/);
   assert.match(html,/\+4\.20% Hold P\/L/);
   assert.match(html,/90% P\/L uncertainty: ±1\.80 percentage points/);
-  assert.match(html,/n=2 distinct event returns/);
+  assert.match(html,/n=20 distinct event returns/);
   assert.match(html,/90% interval 2\.40% to 6\.00%/);
   assert.match(html,/All entries · single bucket/,'market-level research follows mode');
   assert.doesNotMatch(html,/NaN|undefined/);
@@ -1105,6 +1105,37 @@ test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty wit
   assert.match(nodes.get('groups').innerHTML,/favorite-wide-matrix|wider 3 × 3/);
 });
 
+test('low held event counts never display a misleading numeric P/L confidence interval',()=>{
+ const tooSmall=favoriteSingleCellMarkup({
+   resolved_events:7,event_wins:6,return_observations:7,
+   average_return_pct:'17.5',uncertainty90_pct:'5.5',
+   ci90_low_pct:'12.0',ci90_high_pct:'23.0',
+   estimated_return_observations:0,incomplete_events:0
+ });
+ assert.match(tooSmall,/\+17\.50% Hold P\/L/);
+ assert.match(tooSmall,/90% P\/L uncertainty: Pending · 7\/20 held-event returns/);
+ assert.doesNotMatch(tooSmall,/±5\.50|90% interval 12/);
+ const stillSmall=favoriteSingleCellMarkup({
+   resolved_events:20,event_wins:19,return_observations:19,
+   average_return_pct:'19',uncertainty90_pct:'3.5',
+   ci90_low_pct:'15.5',ci90_high_pct:'22.5'
+ });
+ assert.match(stillSmall,/Pending · 19\/20 held-event returns/);
+ const ready=favoriteSingleCellMarkup({
+   resolved_events:20,event_wins:18,return_observations:20,
+   average_return_pct:'12',uncertainty90_pct:'8',
+   ci90_low_pct:'4',ci90_high_pct:'20'
+ });
+ assert.match(ready,/90% P\/L uncertainty: ±8\.00 percentage points/);
+ assert.match(ready,/90% interval 4\.00% to 20\.00%/);
+ const custom=favoriteSingleCellMarkup({
+   resolved_events:20,event_wins:18,return_observations:20,
+   uncertainty_min_samples:30,
+   average_return_pct:'12',uncertainty90_pct:'8'
+ });
+ assert.match(custom,/Pending · 20\/30 held-event returns/);
+});
+
 test('single bucket reports insufficient ROI observations without inventing uncertainty',()=>{
   const unknown=favoriteSingleCellMarkup(null);
   assert.match(unknown,/Event-level combined evidence is not available/);
@@ -1112,7 +1143,7 @@ test('single bucket reports insufficient ROI observations without inventing unce
     return_observations:1,average_return_pct:'33.3',uncertainty90_pct:null,
     ci90_low_pct:null,ci90_high_pct:null,incomplete_events:0,estimated_return_observations:0});
   assert.match(one,/\+33\.30% Hold P\/L/);
-  assert.match(one,/need observed gains and losses/);
+  assert.match(one,/Pending · 1\/20 held-event returns/);
   assert.doesNotMatch(one,/±0\.00|NaN|undefined/);
   const empty=favoriteSingleCellMarkup({resolved_events:0,event_wins:0,
     return_observations:0,average_return_pct:null,uncertainty90_pct:null,
@@ -1143,16 +1174,16 @@ test('single bucket displays P/L, 90% uncertainty and event n directly on collap
   const bots=[{id:'btc',name:'Bitcoin',series:'KXBTC15M',asset:'crypto',
     experiment:{entry_timing:[]}}];
   const summary={rows:{'crypto-15m':{
-    resolved_events:12,event_wins:10,return_observations:11,
+    resolved_events:23,event_wins:20,return_observations:21,
     average_return_pct:'3.456',uncertainty90_pct:'2.345',
-    ci90_low_pct:'1.111',ci90_high_pct:'5.801',incomplete_events:1
+    ci90_low_pct:'1.111',ci90_high_pct:'5.801',incomplete_events:2
   }},by_bot:{}};
   const html=favoriteSingleOverviewMarkup(bots,summary);
   const head=html.slice(html.indexOf('<summary>'),html.indexOf('</summary>')+10);
   assert.match(head,/favorite-single-headline/);
   assert.match(head,/Hold P\/L \+3\.46%/);
   assert.match(head,/90% ±2\.35 points/);
-  assert.match(head,/n=11/);
+  assert.match(head,/n=21/);
   assert.doesNotMatch(head,/NaN|undefined/);
   assert.match(html,/favorite-single-matrix/,'full evidence remains available when expanded');
   const sparse=favoriteSingleOverviewMarkup(bots,{rows:{'crypto-15m':{
@@ -1160,7 +1191,7 @@ test('single bucket displays P/L, 90% uncertainty and event n directly on collap
     uncertainty90_pct:null
   }}});
   assert.match(sparse,/Hold P\/L -10\.00%/);
-  assert.match(sparse,/90% uncertainty —/);
+  assert.match(sparse,/90% P\/L uncertainty pending 1\/20/);
   assert.doesNotMatch(sparse,/90% ±0\.00 points/);
 });
 
