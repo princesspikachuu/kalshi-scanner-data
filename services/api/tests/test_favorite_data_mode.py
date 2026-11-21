@@ -253,6 +253,27 @@ class DataMode(unittest.TestCase):
         self.assertEqual(len(e.orders),1)
         self.assertEqual(a['last_repeat_suppression']['reason'],'legacy_filled_bucket_unknown')
 
+    def test_older_bid_filling_in_new_time_bucket_cancels_duplicate_rester(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        # Transition from 10-15m to 5-10m while the initial 80c bid rests.
+        for now in range(220,401,20):
+            e.advance(now);book.at=now;b.step()
+        e.advance(401);book.at=401;b.step()
+        second=list(e.orders.values())[-1]
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(second.price,first.price)
+        e.advance(402);book.at=402
+        e.fill(first,D(1),first.price,'TEST')
+        cohort=b.attempts[first.ticker]['entry_fills'][-1]
+        self.assertIn('|5–10m|',cohort['key'])
+        # Both bids would now fill in the *same* actual price/time cohort.
+        self.assertTrue(any(action=='cancel' and ident==second.id for _,_,action,ident in e.pending))
+        e.advance(403)
+        self.assertEqual(second.status,'cancelled')
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(1))
+
     def test_within_bucket_quote_improvement_keeps_existing_maker_queue(self):
         e,b,book=fixture.MakerEntries().setup_bot()
         b.step();e.advance(201)
