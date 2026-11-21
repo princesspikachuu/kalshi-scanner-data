@@ -245,10 +245,11 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set()){
 }
 
 export function favoriteTimingMarkup(rows,wideRows=null,options={}){
- if(options.mode==='single')return '<details class="favorite-timing"><summary>All entries · single bucket</summary>'+favoriteSingleCellMarkup(options.single)+'</details>';
- if(wideRows!==null)return `<details class="favorite-timing"><summary>Wider entry price × time thirds</summary>${favoriteResearchGrid(wideRows,{mode:'wide'})}</details>`;
+ const panelKey=options.panelKey?` data-ui-panel="${e(options.panelKey)}"`:'';
+ if(options.mode==='single')return `<details class="favorite-timing"${panelKey}><summary>All entries · single bucket</summary>${favoriteSingleCellMarkup(options.single)}</details>`;
+ if(wideRows!==null)return `<details class="favorite-timing"${panelKey}><summary>Wider entry price × time thirds</summary>${favoriteResearchGrid(wideRows,{mode:'wide'})}</details>`;
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
- return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${favoriteResearchGrid(favoriteCategoryRows(rows))}</details>`;
+ return `<details class="favorite-timing"${panelKey}><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${favoriteResearchGrid(favoriteCategoryRows(rows))}</details>`;
 }
 
 export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
