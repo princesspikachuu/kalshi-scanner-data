@@ -354,6 +354,10 @@ class HostedRun(ForwardRun):
                     markets=len(engine.markets),fresh_books=sum(engine.book_fresh(t) for t in engine.books),
                     active_orders=sum(o.status in ('pending','resting') for o in engine.orders.values()),
                     position_lots=len(engine.wallet.lots),orders_generated_total=engine.serial,
+                    trade_ids_retained=len(engine.trade_ids),
+                    trade_id_cache_entries=len(getattr(engine,'_trade_id_recent',())),
+                    expired_markets_retained=sum(m.get('close',float('inf'))<=engine.now
+                        for m in engine.markets.values()),
                     coalesced_inputs_total=getattr(engine,'coalesced_inputs',0),
                     unrelated_inputs_skipped_total=getattr(engine,'unrelated_inputs_skipped',0),
                     unrelated_lifecycle_skipped_total=getattr(engine,'unrelated_lifecycle_skipped',0),
@@ -362,6 +366,8 @@ class HostedRun(ForwardRun):
         print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
             process=self.process_metrics.sample(),rest=REQUESTS.drain(),
             strategy_processing=strategies,
+            legacy_trade_ids_retained=(len(self.engine.trade_ids)
+                if isinstance(getattr(self.engine,'trade_ids',None),set) else None),
             audit_commits_total=getattr(self.audit,'commits',0) if isinstance(self.audit,HostedAudit) else None,
             audit_rows_written_total=getattr(self.audit,'rows_written',0) if isinstance(self.audit,HostedAudit) else None,
             event_loop_lag_max_seconds=getattr(self,'loop_lag_max',0),
