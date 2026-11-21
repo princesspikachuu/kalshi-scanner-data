@@ -138,6 +138,8 @@ def collect_snapshot_spooled(pool):
     file=tempfile.TemporaryFile(mode='w+b')
     seen=set();current=[];chunk_bytes=0;total_bytes=0;count=0;parts=0
     scope='singletons'
+    # Fixed category counters only: no keys, rows, bot IDs, or source values.
+    scope_sizes={}
     aggregate=hashlib.sha256()
 
     def flush():
@@ -172,6 +174,9 @@ def collect_snapshot_spooled(pool):
         if current and (len(current)>=MAX_CHUNK_ROWS or chunk_bytes+size>MAX_CHUNK_BYTES):
             flush()
         current.append(row);chunk_bytes+=size;count+=1;total_bytes+=size
+        totals=scope_sizes.setdefault(scope,dict(records=0,bytes=0,largest_record_bytes=0))
+        totals['records']+=1;totals['bytes']+=size
+        totals['largest_record_bytes']=max(totals['largest_record_bytes'],size)
         aggregate.update(raw);aggregate.update(b'\n')
         seen.add(key)
 
@@ -199,7 +204,7 @@ def collect_snapshot_spooled(pool):
             raise ValueError('No controls found; refusing empty recovery backup')
         flush();file.seek(0)
         return dict(file=file,records=count,parts=parts,sha256=aggregate.hexdigest(),
-                    staged_bytes=total_bytes)
+                    staged_bytes=total_bytes,scope_sizes=scope_sizes)
     except Exception:
         file.close()
         raise
@@ -364,7 +369,7 @@ def backup_controls(store,objects,*,now=None,reuse_previous=False):
             records=staging['records'],chunks=len(chunks),
             catalog_stored=True,staged_bytes=staging['staged_bytes'],
             compressed_bytes=total_compressed+root_ref['size']+catalog_ref['size'],
-            verified=True)
+            verified=True,scope_sizes=staging.get('scope_sizes',{}))
         if reuse_previous:
             # Only after all old and new parts passed complete R2 readback.
             result.update(reused_chunks=reused_chunks,reused_bytes=reused_bytes,
