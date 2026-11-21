@@ -78,7 +78,7 @@ def backup_freshness_status(receipt,backup_hours,now):
     """
     progress=receipt.get('progress') if isinstance(receipt,dict) else None
     at=progress.get('at') if isinstance(progress,dict) and progress.get('verified') is True else None
-    valid=(type(at) in (int,float) and math.isfinite(at) and 0<at<=now)
+    valid=(type(at) in (int,float) and 0<at<=now and math.isfinite(at))
     age_minutes=int((now-at)//60) if valid else None
     return dict(state=('overdue' if now-at>=backup_hours*3600 else 'fresh') if valid
                 else ('missing' if receipt is None else 'unverified'),
