@@ -286,13 +286,13 @@ test('older worker snapshots derive visible event counts without a backend deplo
  f.accounting.portfolio={cash:'992',equity:'1000',total_pnl:'0',
   unfilled_bids:'2',active_cost:'3',pending_cost:'1.5'};
  f.accounting.positions=[
-  {ticker:'KXFED-26NOV21-YES',bot_id:bot.id,state:'active'},
-  {ticker:'KXFED-26NOV21-NO',bot_id:bot.id,state:'active'},
-  {ticker:'KXJOB-26NOV21-YES',bot_id:bot.id,state:'pending'}];
+  {ticker:'KXFED-26NOV21-YES',bot_id:bot.id,state:'active',side:'yes',quantity:1,cost:'1',value:'1',phase_origin:1},
+  {ticker:'KXFED-26NOV21-NO',bot_id:bot.id,state:'active',side:'no',quantity:1,cost:'2',value:'2',phase_origin:1},
+  {ticker:'KXJOB-26NOV21-YES',bot_id:bot.id,state:'pending',side:'yes',quantity:1,cost:'1.5',value:'1',phase_origin:1}];
  f.accounting.orders=[
-  {ticker:'KXFED-26NOV21-YES',bot_id:bot.id,action:'buy',status:'resting'},
-  {ticker:'KXFED-26NOV21-NO',bot_id:bot.id,action:'buy',status:'pending'},
-  {ticker:'KXJOB-26NOV21-YES',bot_id:bot.id,action:'sell',status:'resting'}];
+  {ticker:'KXFED-26NOV21-YES',bot_id:bot.id,side:'yes',action:'buy',status:'resting',maker:true,quantity:1,price:'.7',reserved:'.7'},
+  {ticker:'KXFED-26NOV21-NO',bot_id:bot.id,side:'no',action:'buy',status:'pending',maker:true,quantity:1,price:'.8',reserved:'.8'},
+  {ticker:'KXJOB-26NOV21-YES',bot_id:bot.id,side:'yes',action:'sell',status:'resting',maker:true,quantity:1,price:'.9',reserved:'0'}];
  bot.account={unfilled_bids:'2',active_cost:'3',pending_cost:'1.5'};
  const {context,nodes}=setup(d);
  context.hydrateEventCounts(d);
