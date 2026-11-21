@@ -1661,3 +1661,24 @@ Reduce avoidable paper-worker CPU, memory and database growth from paused, unexp
 - **Measured runtime at 19:25:57 UTC:** New-instance `shadow_feed_health` logged `selected_markets=9`, `verified_fees=0`, `legacy_fee_checks_skipped=9`, `running_bots=0`, `resting_orders=0`, `pending_orders=0`, `open_contracts=0` for the legacy account. This skipped nine previously repeated local fee readiness calculations per health pass, **not nine external Kalshi HTTP calls**.
 - **Favorites preserved:** Same monitoring sample had **75 enabled Favorites bots**, zero enabled bots in all other portfolios, `real_orders_enabled=false`, and `backlog=0`. New instance logged additional one-contract Favorites paper entries and paper-audit commits after readiness. No error-level logs in the sampled post-start window; previously sampled maker-entry fees were `0`. No original observations, historical positions/orders, balances or settlements were deleted or rewritten.
 - **Limits:** Skipped local checks do not establish a measured CPU/RAM decrease. PR #314 continues to own separate discovery scheduling; MT-011 and MT-019 remain separately owned.
+
+---
+
+## MT-022 — Audit regular Favorites event-level held-profit attribution and statistical integrity
+**Status:** IN PROGRESS
+**Worker:** ChatGPT / regular Favorites P&L evidence audit
+**Claimed:** 2026-11-21 19:36 UTC
+**Urgency:** U2 — HIGH
+**Priority:** Direct user request; regular High-Probability Favorites only
+
+### Goal
+Independently trace regular Favorites observations from maker fills through authoritative settlement to price/time buckets and combined event-level held-to-settlement P/L. Validate fee treatment, independent event identity, repeated fills, missing outcomes, denominator selection, and uncertainty units/assumptions. Correct verified defects with isolated regression tests, without modifying the source observations, paper orders, balances, settlement or unrelated strategies.
+
+### Coordination and boundaries
+- Active [PR #322](https://github.com/princesspikachuu/kalshi-scanner-data/pull/322) already owns the regular Favorites small-sample uncertainty **display threshold**, `favorite_single.py`, `apps/web/shadow-view.mjs` and their tests. Do not edit those files or duplicate its numerical/UI changes in this task; audit underlying P/L attribution and source evidence separately.
+- MT-018 owns collection balance; MT-019 owns recovery/backup; MT-011 owns general efficiency. No overlaps or strategy reactivation.
+- Only regular `favorites` portfolio. Do not change Statistics-Backed Favorites strategy/metrics, other bots, live trading, fee safety gates, historical data or past settlements.
+- Branch new code from `build/google-auth-foundation` (never `main`); write queue claim to `main`; use draft PR until tests and evidence confirm safety.
+
+### Completion notes
+_In progress: audit, concrete defects, code, tests, PR, deployment to follow._
