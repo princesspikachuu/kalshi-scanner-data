@@ -186,3 +186,19 @@ test('shadow accounting freshness is visible when the worker snapshot stops upda
 
 // Execute strategy-folder rendering checks in the existing frontend CI job.
 await import('./test_strategy_folders.mjs');
+
+test('each strategy folder exposes a refill without routing through reset',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve,dirname}=await import('node:path');
+ const root=resolve(dirname(fileURLToPath(import.meta.url)),'../apps/web');
+ const ui=readFileSync(resolve(root,'shadow.mjs'),'utf8');
+ const html=readFileSync(resolve(root,'shadow.html'),'utf8');
+ assert.match(ui,/data-folder-refill/);
+ assert.match(ui,/folder_id:folder,request_id:refillRequest/);
+ assert.match(ui,/shadow\/funds/);
+ assert.match(html,/id="refillDialog"/);
+ assert.match(html,/id="refillForm"/);
+ assert.match(html,/id="refillAmount"/);
+ assert.match(ui,/data-folder-reset/);
+});
