@@ -15,7 +15,7 @@ class MakerEntries(unittest.TestCase):
         e=Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
         e.advance(200)
         book=market(e,self.ticker,yes='.79',no='.19',close=1000)
-        p=dict(profile(series='KXBTCD',strategy='favorites'),**settings)
+        p=dict(profile(series='KXBTCD',strategy='favorites'),contracts=1,**settings)
         b=FavoritesStrategy(e,p);e.strategy=b;e.fill_callback=b.on_fill
         return e,b,book
 
@@ -24,21 +24,21 @@ class MakerEntries(unittest.TestCase):
         for i in range(n):observe(b.exit_evidence.cells,key,str(i),int(i<wins))
         return key
 
-    def test_unknown_probability_uses_configured_size_and_competitive_maker_bid(self):
+    def test_unknown_probability_uses_one_contract_and_competitive_maker_bid(self):
         e,b,book=self.setup_bot();b.step();o=next(iter(e.orders.values()))
-        self.assertEqual((o.price,o.quantity,o.maker,o.expiry),(D('.80'),D(10),True,230))
+        self.assertEqual((o.price,o.quantity,o.maker,o.expiry),(D('.80'),D(1),True,230))
         self.assertEqual(b.attempts[self.ticker]['entry_mode'],'paper_exploration')
-        self.assertIn('10-contract maker data trial',b.last_reason)
+        self.assertIn('1-contract maker data trial',b.last_reason)
         self.assertFalse(any(not x.maker for x in e.orders.values()))
 
     def test_exploration_can_be_disabled_without_inventing_an_edge(self):
         e,b,_=self.setup_bot(paper_exploration=False);b.step();self.assertFalse(e.orders)
 
-    def test_supported_estimate_can_use_configured_size_after_all_costs(self):
+    def test_supported_estimate_uses_one_contract_after_all_costs(self):
         e,b,_=self.setup_bot(paper_exploration=False);self.seed(b)
         e.fees[self.ticker]=FeePolicy(D(1),D(1));b.step()
         o=next(iter(e.orders.values()));a=b.attempts[self.ticker]
-        self.assertEqual(o.quantity,D(10));self.assertTrue(o.maker)
+        self.assertEqual(o.quantity,D(1));self.assertTrue(o.maker)
         cost=o.price+e.fees[self.ticker].charge(o.quantity,o.price,True)/o.quantity
         self.assertLessEqual(cost+D('.02'),D(str(a['entry_estimate']['lower'])))
 
@@ -90,12 +90,12 @@ class MakerEntries(unittest.TestCase):
 
     def test_partial_fill_keeps_requested_remainder_without_duplicate_entries(self):
         e,b,book=self.setup_bot();self.seed(b);b.step();e.advance(201)
-        o=next(iter(e.orders.values()));e.fill(o,D(1),o.price,'TEST');e.advance(202)
+        o=next(iter(e.orders.values()));e.fill(o,D('.4'),o.price,'TEST');e.advance(202)
         book.at=202;b.step()
         self.assertTrue(b.attempts[self.ticker]['first'])
         self.assertEqual(len(e.orders),1);self.assertEqual(o.status,'resting')
-        self.assertEqual(o.remaining,D(9))
-        self.assertEqual(e.wallet.inventory(self.ticker,'yes'),D(1))
+        self.assertEqual(o.remaining,D('.6'))
+        self.assertEqual(e.wallet.inventory(self.ticker,'yes'),D('.4'))
 
     def test_only_confirmed_settlement_teaches_entry_model_and_survives_json(self):
         e,b,_=self.setup_bot();b.step();e.advance(201)

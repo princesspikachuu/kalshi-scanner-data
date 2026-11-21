@@ -351,6 +351,45 @@ def install_shadow(app,auth,mutate,pool):
     def query(request,allowed=()):
         if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):
             raise HTTPException(422,'Invalid filters')
+    @app.get('/demo/shadow/restarts')
+    def worker_restarts(request:Request):
+        """Small, independent 24-hour worker restart read, even if workspace lags."""
+        auth(request);query(request)
+        from services.demo.worker_restarts import KEY,summarize
+        row=store.get(KEY)
+        return summarize(row['progress'] if row else None)
+
+    @app.get('/demo/shadow/portfolio-snapshot')
+    def portfolio_snapshot(request:Request):
+        """Current financial snapshot even when optional historical SQL is slow.
+
+        Never infer missing history as zero profit. No research report scans,
+        writes, money changes, or trading controls are performed here.
+        """
+        auth(request);query(request)
+        if not store.get('shadow/installed'):
+            return dict(contract='demo-v1',installed=False,real_orders_enabled=False)
+        row=store.get('shadow/status')
+        if not row:raise HTTPException(503,'Current portfolio snapshot not yet available')
+        status=row['progress']
+        money=status.get('accounting')
+        experiments=status.get('experiments') or {}
+        folders=[]
+        for record in store.indexed_control_rows('shadow/folder/',24):
+            folder=dict(record['parameters'],**record['progress'])
+            identifier=folder['id']
+            experiment=experiments.get(identifier) or {}
+            account=(money if identifier=='convexity' else experiment.get('accounting'))
+            if account:
+                # Keep current cash, marked positions and true session P/L,
+                # but omit bulky per-bot history and cycle reports.
+                folder['accounting']={k:v for k,v in account.items()
+                    if k not in ('bots','current_cycles')}
+            folders.append(folder)
+        folders.sort(key=lambda f:f.get('order',999))
+        return dict(contract='demo-v1',installed=True,history_delayed=True,
+            at=status.get('at'),folders=folders,real_orders_enabled=False)
+
     @app.get('/demo/shadow/workspace')
     def workspace(request:Request,response:Response):
         global ACCOUNTING_LOG_AT
@@ -375,30 +414,35 @@ def install_shadow(app,auth,mutate,pool):
             p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
         all_profiles.sort(key=lambda r:r['parameters']['name'])
         profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
-        folder_rows=store.rows('shadow/folder/',24)
+        folder_rows=store.indexed_control_rows('shadow/folder/',24)
         reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
         revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
         now=time.time()
         scope="(progress->>'at')::numeric>=%s AND (%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
+        # Stage-labelled diagnostic on *failed* SQL too; a total elapsed-time
+        # log alone cannot tell which historical scan crossed the 5s limit.
+        def historical_read(connection,stage,statement,params):
+            started=time.monotonic()
+            try:
+                return connection.execute(statement,params)
+            except Exception as exc:
+                print(json.dumps(dict(event='shadow_workspace_query_failure',
+                    stage=stage,error_type=type(exc).__name__,
+                    sqlstate=getattr(exc,'sqlstate',None),
+                    elapsed_ms=round((time.monotonic()-started)*1000,1))),flush=True)
+                raise
+        historical_sql_started=time.monotonic()
         with pool.connection() as c:
-            latest_rows=c.execute("SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(reset_at,latest=='full',Jsonb(revisions))).fetchall()
-            metrics=c.execute("""WITH r AS (
-                SELECT progress AS p FROM research_job WHERE idempotency_key>='demo/shadow/report/'
-                AND idempotency_key<'demo/shadow/report/zzzz' AND """+scope+"""),
-                windows(period,seconds) AS (VALUES ('all',NULL::integer),('1H',3600),('6H',21600),('24H',86400))
-                SELECT p->>'bot_id' AS bot,period,
-                count(*) FILTER(WHERE (p->>'data_valid')::boolean) AS cycles,
-                count(*) FILTER(WHERE NOT (p->>'data_valid')::boolean) AS excluded_cycles,
-                coalesce(sum((p->>'gross_profit')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0)::text AS gross_profit,
-                coalesce(sum((p->>'total_fees_paid')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0)::text AS fees,
-                coalesce(sum((p->>'net_realized_pnl')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0)::text AS net_realized_pnl,
-                (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean)/
-                nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE (p->>'data_valid')::boolean),0))::text AS win_rate
-                FROM r CROSS JOIN windows WHERE seconds IS NULL OR (p->>'at')::numeric>=%s-seconds
-                GROUP BY p->>'bot_id',period""",(reset_at,latest=='full',Jsonb(revisions),now)).fetchall()
+            # This DISTINCT ON historical scan was repeatedly canceled at 5s.
+            # The initial dashboard intentionally drops latest_report from its
+            # wire response. Do not scan all reports just to build cards.
+            # Existing current_cycles retain recent execution evidence.
+            # One financial scan computes BOTH historical validity metrics and
+            # actual-money P/L. The previous second full JSON scan regularly
+            # exceeded PostgreSQL's 5s statement timeout under paper activity.
             # Financial results include every paper trade. Data quality is a
             # separate count; it must never make a real simulated loss disappear.
-            financial=c.execute("""WITH history AS (
+            financial=historical_read(c,'financial_metrics',"""WITH history AS (
                 SELECT progress AS p,true AS reported FROM research_job
                 WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz'
                 AND NOT ((progress->>'ticker')=ANY(%s::text[]))
@@ -412,14 +456,25 @@ def install_shadow(app,auth,mutate,pool):
                 coalesce(sum((p->>'gross_profit')::numeric),0)::text AS gross_profit,
                 coalesce(sum((p->>'total_fees_paid')::numeric),0)::text AS fees,
                 coalesce(sum((p->>'net_realized_pnl')::numeric),0)::text AS net_realized_pnl,
-                (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate
+                (100*sum((p->>'winning_contracts')::numeric)/nullif(sum((p->>'closed_contracts')::numeric),0))::text AS win_rate,
+                coalesce(sum((p->>'gross_profit')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_gross_profit,
+                coalesce(sum((p->>'total_fees_paid')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_fees,
+                coalesce(sum((p->>'net_realized_pnl')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0)::text AS quality_net_realized_pnl,
+                (100*sum((p->>'winning_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean)/
+                 nullif(sum((p->>'closed_contracts')::numeric) FILTER(WHERE reported AND (p->>'data_valid')::boolean),0))::text AS quality_win_rate
                 FROM r CROSS JOIN windows
                 WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
                 AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
                 GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,reset_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
-        mapped={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in metrics}
-        actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in financial}
-        reports={r['progress'].get('bot_id'):r['progress'] for r in latest_rows}
+        historical_sql_ms=(time.monotonic()-historical_sql_started)*1000
+        if historical_sql_ms>1000:
+            print(json.dumps(dict(event='shadow_workspace_query_cost',historical_sql_ms=round(historical_sql_ms,1),source='legacy_report_history')),flush=True)
+        mapped={(m['bot'],m['period']):dict(cycles=m['cycles'],excluded_cycles=m['excluded_cycles'],
+            gross_profit=m['quality_gross_profit'],fees=m['quality_fees'],
+            net_realized_pnl=m['quality_net_realized_pnl'],win_rate=m['quality_win_rate'])
+            for m in financial if m['period']!='account'}
+        actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period') and not k.startswith('quality_')} for m in financial}
+        reports={}  # Legacy latest-report details are not needed in the initial overview.
         bots=[]
         for row in profiles:
             profile=row['parameters']
@@ -469,9 +524,14 @@ def install_shadow(app,auth,mutate,pool):
             elif f['id']=='convexity':f['accounting']=money
             f['learning']=learning_diagnostics(f['id'],exp)
             folders.append(f)
+        performance_started=time.monotonic()
         folder_performance(pool,folders,snapshot_at)
+        folder_ms=(time.monotonic()-performance_started)*1000
         bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
-        commands=store.rows('shadow/command/',100)
+        bot_ms=(time.monotonic()-performance_started)*1000-folder_ms
+        if max(folder_ms,bot_ms)>1000:
+            print(json.dumps(dict(event='shadow_workspace_query_cost',folder_performance_ms=round(folder_ms,1),bot_performance_ms=round(bot_ms,1))),flush=True)
+        commands=store.indexed_control_rows('shadow/command/',100)
         return workspace_response(dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,
             accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
@@ -561,7 +621,7 @@ def install_shadow(app,auth,mutate,pool):
         mutate(request);query(request)
         if not store.get('shadow/installed'):raise HTTPException(409,'Shadow engine is initializing')
         folder=body.folder_id or 'convexity'
-        if folder not in ('convexity','complete_set','favorites','favorites_statistics',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or not store.get('shadow/folder/'+folder):
+        if folder not in ('convexity','complete_set','favorites','favorites_statistics',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or (body.folder_id is not None and not store.get('shadow/folder/'+folder)):
             raise HTTPException(404,'Bot folder not found')
         command=(dict(amount_cents=body.amount_cents,folder_id=folder,action='refill')
                  if body.folder_id is not None else dict(amount_cents=body.amount_cents))

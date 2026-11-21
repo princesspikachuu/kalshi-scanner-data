@@ -284,6 +284,12 @@ export function executionMarkup(x){
 }
 const metric=(label,value,note='')=>`<div><span>${e(label)}</span><strong>${e(dollars(value))}</strong>${note?`<small>${e(note)}</small>`:''}</div>`;
 const finite=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+function eventLabel(a,key){
+ const raw=a?.[key],value=raw==null?NaN:Number(raw);
+ return Number.isSafeInteger(value)&&value>=0?`${value} ${value===1?'event':'events'}`:'';
+}
+const eventSuffix=(a,key)=>eventLabel(a,key)?` (${eventLabel(a,key)})`:'';
+const exposureNote=(a,key,note)=>eventLabel(a,key)?`${eventLabel(a,key)} · ${note}`:note;
 export function valueBounds(a,positions=[],kind='position'){
  if(!a)return null;
  const exact=a[kind+'_value'];
@@ -322,7 +328,7 @@ export function pendingLabel(a){
 export function exposureMarkup(a,positions=[]){
  if(!a)return '<p class="small">Waiting for the worker’s accounting snapshot…</p>';
  const unreal=finite(a.unrealized_pnl)?{low:Number(a.unrealized_pnl),high:Number(a.unrealized_pnl),unpriced:0}:shifted(valueBounds(a,positions),-Number(a.position_cost));
- return `<div class="money-grid bot-money">${metric('Unfilled buy bids',a.unfilled_bids,'Cash reserved, not spent')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}${rangedMetric('Open position P/L',unreal,unreal?.unpriced?'Best estimate · last available quote or entry price':'Current and pending positions · after entry fees')}</div>`;
+ return `<div class="money-grid bot-money">${metric('Unfilled buy bids',a.unfilled_bids,exposureNote(a,'unfilled_bid_events','Cash reserved, not spent'))}${metric('Active positions · cost',a.active_cost,exposureNote(a,'active_events',`Current value ${rangeText(valueBounds(a,positions,'active'))}`))}${metric('Awaiting settlement · cost',a.pending_cost,exposureNote(a,'pending_events',pendingLabel(a)))}${rangedMetric('Open position P/L',unreal,unreal?.unpriced?'Best estimate · last available quote or entry price':'Current and pending positions · after entry fees')}</div>`;
 }
 export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  if(!account)return '<p>Waiting for a consistent accounting snapshot…</p>';
@@ -335,7 +341,7 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
  return `<div class="portfolio-headlines"><div><span>Portfolio value · best current estimate</span><strong class="${uncertain?'value-range':''}">${e(rangeText(equity))}</strong><small>Cash plus the current value of positions</small></div><div><span>Total P/L · best current estimate · after fees</span><strong class="${rangeClass(pnl)} ${uncertain?'value-range':''}">${e(rangeText(pnl))}</strong><small>Lifetime · all bots and versions</small></div></div>
  <p class="small">Scalper and Market Maker positions use executable bid depth after exit fees. Other positions use current bids. The last verified bid or entry price provides the fallback estimate; unavailable depth is identified as estimated.</p>
  <div class="portfolio-breakdown">${metric('Realized P/L',a.realized_pnl,'Closed trades and settled contracts · after fees')}${rangedMetric('Unrealized P/L',unreal,uncertain?'Best estimate for positions still held':'Value change of positions still held')}${metric('Virtual funds added',a.deposits,'Starting bankroll plus refills; not profit')}</div>
- <div class="money-grid">${metric('Available cash',a.available_cash,`Total cash ${dollars(a.cash)}`)}${metric('Unfilled buy bids',a.unfilled_bids,'Reserved from cash; includes estimated fees')}${metric('Active positions · cost',a.active_cost,`Current value ${rangeText(valueBounds(a,positions,'active'))}`)}${metric('Awaiting settlement · cost',a.pending_cost,pendingLabel(a))}</div>
+ <div class="money-grid">${metric('Available cash',a.available_cash,`Total cash ${dollars(a.cash)}`)}${metric('Unfilled buy bids',a.unfilled_bids,exposureNote(a,'unfilled_bid_events','Reserved from cash; includes estimated fees'))}${metric('Active positions · cost',a.active_cost,exposureNote(a,'active_events',`Current value ${rangeText(valueBounds(a,positions,'active'))}`))}${metric('Awaiting settlement · cost',a.pending_cost,exposureNote(a,'pending_events',pendingLabel(a)))}</div>
  <p class="small accounting-equation">Portfolio value = cash (including reserved bids) + active position value + estimated pending payout. Position cost is shown separately from value. Values round to cents on screen.</p>
  ${now-account.at>30?`<p class="account-warning">Accounting snapshot is ${e(String(Math.floor(now-account.at)))} seconds old. These figures may be stale.</p>`:''}
  ${a.equity===null&&!equity?'<p class="account-warning">A position has no current verified quote. Its value is unavailable; confirmed cash and realized P/L remain shown.</p>':''}
@@ -391,7 +397,7 @@ export function summaryExposure(a){
 }
 function exposureHeaderMarkup(a){
  const x=summaryExposure(a);
- return `<span class="exposure-header-value"><span class="folder-card-label">Open bids</span><strong>${e(dollars(x.bids))}</strong><small>Reserved for buys · now</small></span><span class="exposure-header-value"><span class="folder-card-label">Open/pending positions</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))} · pending ${e(dollars(x.pending))}</small><small>Money committed · includes entry fees</small><small>Estimated market value ${e(dollars(a?.position_value))}</small></span>`;
+ return `<span class="exposure-header-value"><span class="folder-card-label">Bids</span><strong>${e(dollars(x.bids))}${e(eventSuffix(a,'unfilled_bid_events'))}</strong></span><span class="exposure-header-value"><span class="folder-card-label">Positions · cost</span><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(a,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(a,'pending_events'))}</small></span>`;
 }
 export function marketTypeSummaryValues(bots,period='all',positions=[]){
  if(!Object.hasOwn(folderPeriods,period))period='all';
@@ -416,11 +422,38 @@ export function marketTypeSummaryValues(bots,period='all',positions=[]){
  return {period,pnl,missing,partial,account:{unfilled_bids:sum('bids'),active_cost:sum('active'),
   pending_cost:sum('pending'),position_cost:sum('positions')}};
 }
-export function marketTypeSummaryMarkup(group,period='all',positions=[],shown=null){
+function eventIdForGrouping(row){
+ const id=row?.event_ticker;
+ if(typeof id==='string'&&id)return id;
+ const ticker=row?.ticker;
+ if(typeof ticker!=='string'||!ticker)return null;
+ const first=ticker.indexOf('-'),last=ticker.lastIndexOf('-');
+ return first>=0&&last>first?ticker.slice(0,last):ticker;
+}
+function marketTypeEventCounts(bots,positions,orders,account){
+ const matching=new Set(bots.map(b=>b.id));
+ const belongs=row=>row.bot_id?matching.has(row.bot_id):
+   bots.some(b=>typeof row.ticker==='string'&&row.ticker.startsWith(b.series+'-'));
+ const keys={active:new Set(),pending:new Set(),bid:new Set()};
+ for(const row of positions){
+  if(!belongs(row)||!['active','pending'].includes(row.state))continue;
+  const id=eventIdForGrouping(row);if(id)keys[row.state].add(id);
+ }
+ for(const row of orders){
+  if(!belongs(row)||row.action!=='buy'||!['pending','resting'].includes(row.status))continue;
+  const id=eventIdForGrouping(row);if(id)keys.bid.add(id);
+ }
+ // Do not label an incomplete/old detail list as zero events when it has exposure.
+ const count=(kind,amount)=>keys[kind].size||amount===0?keys[kind].size:null;
+ return {active_events:count('active',account.active_cost),pending_events:count('pending',account.pending_cost),
+         unfilled_bid_events:count('bid',account.unfilled_bids)};
+}
+export function marketTypeSummaryMarkup(group,period='all',positions=[],shown=null,orders=[]){
  const v=marketTypeSummaryValues(group.bots,period,positions);
+ const events=marketTypeEventCounts(group.bots,positions,orders,v.account);
  const running=group.bots.filter(b=>b.desired==='running').length;
  const coverage=v.missing?`${v.missing} ${v.missing===1?'bot':'bots'} missing P/L history`:v.partial?'Partial P/L history':v.period==='all'?'Current session':'Rolling '+folderPeriods[v.period];
- return `<span class="market-type-heading"><span class="market-type-name">${e(group.label)}</span><span class="badge">${group.bots.length} bots · ${running} running${shown!==null?' · '+shown+' shown':''}</span><span class="market-type-disclosure" aria-hidden="true"></span></span><span class="folder-card-values market-type-values"><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${rangeClass(v.pnl)} ${v.pnl?.unpriced?'value-range':''}">${e(rangeText(v.pnl))}</strong><small>${e(coverage)} · after fees</small></span>${exposureHeaderMarkup(v.account)}</span><span class="small market-type-coverage">P/L follows the folder’s time selector. Exposure shows current amounts for all bots in this subfolder.</span>`;
+ return `<span class="market-type-heading"><span class="market-type-name">${e(group.label)}</span><span class="badge">${running}/${group.bots.length} running${shown!==null?' · '+shown+' shown':''}</span><span class="market-type-disclosure" aria-hidden="true"></span></span><span class="folder-card-values market-type-values"><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${rangeClass(v.pnl)} ${v.pnl?.unpriced?'value-range':''}">${e(rangeText(v.pnl))}</strong>${v.missing?'<small>'+e(coverage)+'</small>':''}</span>${exposureHeaderMarkup({...v.account,...events})}</span>`;
 }
 export function folderSummaryValues(f,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
@@ -445,18 +478,31 @@ export function folderCardSummaryMarkup(folder,period='all',counts={},now=Date.n
  const v=folderSummaryValues(folder,period,now);
  const action=counts.running?'pause':'resume',label=counts.pending?'Saving…':counts.running?'Pause folder':'Resume folder';
  const control=counts.controls===false?'':`<button type="button" class="secondary folder-run-control" data-folder-${action}="${e(folder.id)}" aria-label="${counts.running?'Pause':'Resume'} all bots in ${e(folder.name)}" ${counts.pending||!counts.bots?'disabled':''}>${label}</button>`;
- return `<span class="folder-summary-heading"><span class="folder-name">${e(folder.name)}</span>${control}<span class="folder-disclosure" aria-hidden="true"></span></span><span class="folder-card-values"><span class="folder-estimated-balance"><span class="folder-card-label">Estimated portfolio value</span><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash + estimated position value · current</small><small>${counts.bots||0} bots · ${counts.running||0} running</small></span><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${v.period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</span>${exposureHeaderMarkup(folder.accounting?.portfolio)}</span><span class="folder-summary-periods" role="group" aria-label="P/L period for ${e(folder.name)}">${folderPeriodButtons(v.period,folder.id)}</span>`;
+ return `<span class="folder-summary-heading"><span class="folder-name">${e(folder.name)}</span>${control}<span class="folder-disclosure" aria-hidden="true"></span></span><span class="folder-card-values"><span class="folder-estimated-balance"><span class="folder-card-label">Estimated portfolio value</span><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>${counts.running||0}/${counts.bots||0} running</small></span><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${v.period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong>${v.stale?'<small>Snapshot stale</small>':''}</span>${exposureHeaderMarkup(folder.accounting?.portfolio)}</span><span class="folder-summary-periods" role="group" aria-label="P/L period for ${e(folder.name)}">${folderPeriodButtons(v.period,folder.id)}</span>`;
 }
 export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
  const rows=folders.map(f=>{
   const v=folderSummaryValues(f,period,now),x=summaryExposure(f.accounting?.portfolio);
-  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="folder-estimated-balance" data-label="Estimated portfolio value"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>Cash + estimated position value · now</small></td><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}</strong><small>Reserved for buys · now</small></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))} · pending ${e(dollars(x.pending))}</small><small>Money committed · includes entry fees</small></td></tr>`;
+  const account=f.accounting?.portfolio;
+  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="folder-estimated-balance" data-label="Estimated portfolio value"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong></td><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}${e(eventSuffix(account,'unfilled_bid_events'))}</strong></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(account,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(account,'pending_events'))}</small></td></tr>`;
  }).join('');
- return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Estimated portfolio value</th><th>Total P/L · ${e(folderPeriods[period])}</th><th>Open bids</th><th>Open/pending positions</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">P/L includes realized and unrealized changes after paid fees, excluding added funds. Open bids show cash reserved for buys; positions show committed cost including entry fees. Exposure amounts are current, independent of the selected P/L period. Estimated portfolio value is current cash plus marked position value, using available estimates when exact quotes are missing; deposits increase value but do not count as profit. P/L uses the best available position marks; older baselines without quotes carry positions at cost. Shorter tracking coverage is shown per folder.</p>`;
+ return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Estimated portfolio value</th><th>Total P/L · ${e(folderPeriods[period])}</th><th>Open bids</th><th>Open/pending positions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function botPnlMarkup(bot,period='all',positions=[]){
+ if(!Object.hasOwn(folderPeriods,period))period='all';
+ const r=bot.performance?.[period],all=period==='all';
+ const fallback=accountPnl(bot.account,positions);
+ const total=point(performanceEstimate(r));
+ const realized=finite(r?.realized_pnl)?Number(r.realized_pnl):all&&finite(bot.account?.realized_pnl)?Number(bot.account.realized_pnl):null;
+ const unreal=total&&realized!==null?{low:total.low-realized,high:total.high-realized}:null;
+ const text=total?rangeText(total):all?fallback.text:'—';
+ const coverage=all?'Current session · all versions':r?.missing_history||!r?'Waiting for balance history':r.partial?`Partial window · tracked since ${new Date(r.since*1000).toLocaleString()}`:`Last ${folderPeriods[period]} · sampled to the minute`;
+ return `<span class="market-pnl-compact"><span>Total P/L</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong></span>`;
+}
+
+export function botPnlDetailsMarkup(bot,period='all',positions=[]){
  if(!Object.hasOwn(folderPeriods,period))period='all';
  const r=bot.performance?.[period],all=period==='all';
  const fallback=accountPnl(bot.account,positions);

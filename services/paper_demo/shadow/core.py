@@ -412,6 +412,9 @@ class Spot:
                 and now-self.at <= 3)
 
 
+TRADE_DEDUP_MAX_IDS = 32768  # Fail closed rather than evicting potentially valid duplicate protection.
+
+
 class Engine:
     def __init__(self, audit: Audit, cash='50', latency_ms=150, seed=7,
                  toxic_fill_probability=.35, stale_seconds=3):
@@ -428,6 +431,10 @@ class Engine:
         self.pending = []
         self.serial, self.now = 0, 0.0
         self.trade_ids = set()
+        # A trade print can be fresh for at most +/- stale_seconds. Keep IDs
+        # long enough to cover that entire overlap, not until market settlement.
+        # This queue and the set are intentionally absent from durable state.
+        self._trade_id_recent = deque()
         self.sequences = {}
         self.spot = Spot()
         self.fill_callback: Callable[[Order,D],None] | None = None
@@ -700,12 +707,20 @@ class Engine:
             self.fill_callback(order, quantity)
 
     def trade(self, ticker: str, trade: dict):
-        if ticker in self.settled:
+        if ticker in self.settled or trade.get('is_block_trade'):
             return
+        # An exchange print must fall within stale_seconds of the engine's
+        # monotonic clock to affect a simulated fill. Two valid deliveries of
+        # that same print can be separated by at most twice stale_seconds.
+        # Extra margin protects replay boundaries without keeping every ID
+        # until settlement, which can be hours or days later.
+        dedup_window = max(8., 2*self.stale_seconds + 2.)
+        while self._trade_id_recent and self.now-self._trade_id_recent[0][0] > dedup_window:
+            _, old = self._trade_id_recent.popleft()
+            self.trade_ids.discard(old)
         ident = (ticker, trade['trade_id'])
-        if ident in self.trade_ids or trade.get('is_block_trade'):
+        if ident in self.trade_ids:
             return
-        self.trade_ids.add(ident)
         book = self.books[ticker]
         if not self.book_fresh(ticker):
             return
@@ -722,6 +737,22 @@ class Engine:
         if abs(self.now-print_time) > self.stale_seconds:
             self.data_gap(ticker, 'stale/future trade print')
             return
+        # A print with no resting paper order cannot contribute to any
+        # fill: a new order cannot arrive retroactively before this print.
+        # Still validate the feed/book first so bad market data is not hidden.
+        # In the collector this avoids retaining thousands of trade IDs when
+        # funds are exhausted or a candidate has no maker bid in the book.
+        if not any(order.ticker == ticker and order.status == 'resting'
+                   for order in self.orders.values()):
+            return
+        # Invalid, blocked, or stale prints do not consume dedup capacity.
+        # At exceptional quote bursts fail closed rather than forgetting an
+        # ID that could still be replayed and double-fill a maker bid.
+        if len(self.trade_ids) >= TRADE_DEDUP_MAX_IDS:
+            self.data_gap(ticker, 'trade deduplication capacity reached')
+            return
+        self.trade_ids.add(ident)
+        self._trade_id_recent.append((self.now, ident))
         candidates = sorted((o for o in self.orders.values() if o.ticker == ticker and
             o.side == resting_side and o.status == 'resting' and o.arrives <= print_time and
             (o.price == trade_price or trade_price <= o.price-D('.01'))),
@@ -792,6 +823,14 @@ class Engine:
         write_dashboard(self.audit.path)
         return report
 
+    def clear_trade_ids(self):
+        """Reset dedup state together when starting a new paper session."""
+        self.trade_ids.clear()
+        self._trade_id_recent.clear()
+        # ScalperEngine uses a separately bounded trade-print clock.
+        if hasattr(self, '_print_times'):
+            self._print_times.clear()
+
     def complete_settlement(self, ticker: str, yes_payout: D):
         """Book a confirmed payout without advancing queued order actions."""
         if ticker not in self.settled:
@@ -799,6 +838,11 @@ class Engine:
         if not self.markets[ticker].get('paid'):
             self.wallet.settle(ticker, yes_payout)
             self.trade_ids = {ident for ident in self.trade_ids if ident[0] != ticker}
+            self._trade_id_recent = deque((at, ident) for at, ident in self._trade_id_recent
+                                          if ident[0] != ticker)
+            if hasattr(self, '_print_times'):
+                self._print_times = deque((at, ident) for at, ident in self._print_times
+                                          if ident[0] != ticker)
             self.markets[ticker]['paid'] = True
             self.log('SETTLED', ticker=ticker, price=str(yes_payout))
             self.report(ticker, final=True)

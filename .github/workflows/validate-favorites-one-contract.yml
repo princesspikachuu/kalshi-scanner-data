@@ -29,4 +29,12 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r services/api/requirements.txt
       - name: Verify Favorites one-contract pricing and migration
-        run: python -m unittest services.api.tests.test_strategy_folders.OneContractFavoritesResearchTests -v
+        run: |
+          python -m unittest \
+            services.api.tests.test_strategy_folders.OneContractFavoritesResearchTests \
+            services.api.tests.test_strategy_folders.FavoriteTests \
+            services.api.tests.test_favorite_maker_entries \
+            services.api.tests.test_favorite_data_mode \
+            services.api.tests.test_favorite_15m_restore.RestoreBehavior \
+            services.api.tests.test_favorite_scan.Revisit \
+            services.api.tests.test_worker_delay_and_windows.DelayAndWindows -v

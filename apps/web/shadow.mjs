@@ -1,10 +1,34 @@
 import {scalperMarkup} from './scalper-view.mjs';
 import {demoCall,escapeHTML as e,botSummaryPeriodMarkup,botSummaryPeriodPreferences} from './demo-client.mjs';
 import {createAuthClient} from './auth-client.mjs';
-import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,learningDiagnosticsMarkup,marketTypeGroups,marketTypeSummaryMarkup} from './shadow-view.mjs';
+import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,learningDiagnosticsMarkup,marketTypeGroups,marketTypeSummaryMarkup,botPnlDetailsMarkup} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences(undefined,true);
 let loadError=null;
-let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null,refillFolder=null,refillRequest=null;
+let lastRestartRefresh=0,restartRequestPending=false;
+async function refreshWorkerRestarts(){
+ if(restartRequestPending || (Date.now()-lastRestartRefresh<15000))return;
+ restartRequestPending=true;
+ try{
+  const status=await demoCall('shadow/restarts');
+  const count=$('workerRestartCount'),note=$('workerRestartNote'),box=$('workerRestarts');
+  box.classList.remove('attention');
+  if(!status.tracked){
+   count.textContent='—';note.textContent='Tracking starts after the next worker startup';
+  }else{
+   const n=Number(status.restarts_24h);
+   count.textContent=Number.isSafeInteger(n)&&n>=0?String(n):'—';
+   box.classList.toggle('attention',n>0||status.lower_bound);
+   note.textContent=status.lower_bound?'At least this many · unusually high restart volume'
+    :status.full_window?'Rolling 24h · includes deployments':'Recording history · first 24h incomplete';
+  }
+  lastRestartRefresh=Date.now();
+ }catch{
+  $('workerRestartCount').textContent='—';
+  $('workerRestartNote').textContent='Restart count unavailable';
+  lastRestartRefresh=Date.now();
+ }finally{restartRequestPending=false}
+}
+let data,events=[],timer,busy=false,resetFolder=null,resetRequest=null,refillFolder=null,refillRequest=null;
 let favoriteTableMode='detailed';try{if(localStorage.getItem('moneytree-favorite-table-mode')==='wide')favoriteTableMode='wide'}catch{}
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
 if(!Object.hasOwn(folderPeriods,folderPeriod))folderPeriod='all';
@@ -46,7 +70,7 @@ function marketTypeFolders(bots,status,folderId,search='',retired=false,allBots=
  return marketTypeGroups(bots).map(group=>{
   const key=folderId+'::'+(retired?'retired::':'')+group.id;
   const summary=fullGroups.get(group.id)||group;
-  return `<details class="market-type-folder" data-market-type="${e(key)}" ${openMarketTypes.has(key)||search?'open':''}><summary>${marketTypeSummaryMarkup(summary,period,status.positions||[],search?group.bots.length:null)}</summary><div class="category-research">${folderId==='favorites'?(group.id==='sports'?favoriteResearchMarkup(group.bots,openResearch,{mode:favoriteTableMode,summary:wideSummary}):favoriteCategoryResearchMarkup({...summary,aggregated_entry_timing:timedSummary?.rows?.[summary.id]},openResearch,{mode:favoriteTableMode,summary:wideSummary})):group.bots.some(b=>['volatility_scalper','market_maker'].includes(b.strategy))?favoriteCategoryResearchMarkup({...summary,research_kind:'round_trips',bots:summary.bots.map(b=>({...b,experiment:{entry_timing:(b.experiment?.scalper?.cells||[]).filter(c=>c.dimensions?.price_tier&&c.dimensions.price_tier!=='unfilled').map(c=>({series:b.series,market_type:group.id,clock:'market_close',horizon:c.dimensions.horizon,price:Number(c.dimensions.price_tier.split('–')[0])/100,contracts:c.entry_quantity||0,closed:c.closed_quantity||0,resolved:c.closed_quantity||0,winners:c.winning_quantity||0,events:c.completed||0,event_wins:c.wins||0,cost:c.entry_cost||0,net:c.net,holding_seconds:c.holding_seconds}))}}))},openResearch):''}</div><div class="bot-list">${group.bots.map(b=>botCard(b,status)).join('')}</div></details>`;
+  return `<details class="market-type-folder" data-market-type="${e(key)}" ${openMarketTypes.has(key)||search?'open':''}><summary>${marketTypeSummaryMarkup(summary,period,status.positions||[],search?group.bots.length:null,status.orders||[])}</summary><div class="category-research">${folderId==='favorites'?'':group.bots.some(b=>['volatility_scalper','market_maker'].includes(b.strategy))?favoriteCategoryResearchMarkup({...summary,research_kind:'round_trips',bots:summary.bots.map(b=>({...b,experiment:{entry_timing:(b.experiment?.scalper?.cells||[]).filter(c=>c.dimensions?.price_tier&&c.dimensions.price_tier!=='unfilled').map(c=>({series:b.series,market_type:group.id,clock:'market_close',horizon:c.dimensions.horizon,price:Number(c.dimensions.price_tier.split('–')[0])/100,contracts:c.entry_quantity||0,closed:c.closed_quantity||0,resolved:c.closed_quantity||0,winners:c.winning_quantity||0,events:c.completed||0,event_wins:c.wins||0,cost:c.entry_cost||0,net:c.net,holding_seconds:c.holding_seconds}))}}))},openResearch):''}</div><div class="bot-list">${group.bots.map(b=>botCard(b,status)).join('')}</div></details>`;
  }).join('');
 }
 const note=value=>$('message').textContent=value;
@@ -58,8 +82,9 @@ function botCard(bot,status){
   const orders=(status.orders||[]).filter(o=>o.bot_id?o.bot_id===bot.id:o.ticker.startsWith(bot.series+'-'));
   const accountTotal=accountPnl(bot.account,positions);
   const state=bot.desired==='paused'?'Paused':!data.connection_configured?'Connect data':bot.experiment?bot.experiment.message:ticker?active?market.entries_paused?'Entries paused · next cycle':!market.data_valid?'Data gap · entries blocked':'Active market':'Settlement pending':'Waiting for active market';
+  const briefState=bot.desired==='paused'?'Paused':!data.connection_configured?'Connect data':active&&market?.entries_paused?'Entries paused':active&&!market?.data_valid?'Data gap':'Running';
   const stats=[['Gross realized P/L · before fees',dollars(metrics.gross_profit)],['Fees paid',dollars(metrics.fees)],['Win rate',metrics.win_rate===null?'—':Number(metrics.win_rate).toFixed(1)+'%'],['Verified cycle reports',metrics.cycles],['Cycle reports with gaps',metrics.excluded_cycles]];
-  return `<details class="bot-card market-card" data-market="${e(bot.id)}" ${openMarkets.has(bot.id)?'open':''}><summary class="bot-top"><div class="market-heading"><div class="bot-name">${e(bot.name)}</div><p class="small market-description">${e(bot.strategy==='market_maker'?'Market Maker · covered maker quotes · independent paper capital':bot.strategy==='volatility_scalper'?'Volatility Scalper · repeated paper round trips · timed liquidation':bot.strategy==='sequential'?(bot.asset==='sports'?'Sequential complementary bids · throughout verified live games':'Sequential complementary bids · learned completion estimates'):bot.strategy==='complete_set'?'Taker complete sets · depth and fees checked':bot.strategy==='favorites_statistics'?'Statistics-backed maker favorites · historical evidence gated':bot.strategy==='favorites'?(bot.asset==='sports'?'70–95¢ favorites · live game only · hold to settlement':'70–95¢ favorites · maker entry · hold to settlement'):'10¢ → 3¢ · recover cost at 40¢+ · final freeze')}</p></div><span class="badge ${bot.desired==='paused'?'paused':''}">${e(state)}</span><span class="market-disclosure" aria-hidden="true"></span>${botPnlMarkup(bot,selected,positions)}</summary><div class="market-card-body">${bot.experiment?`<div class="bot-stats"><div><span>Attempts</span><strong>${e(String(bot.experiment.attempts||0))}</strong></div><div><span>${['favorites','favorites_statistics'].includes(bot.strategy)?'Settled entries':'Completed'}</span><strong>${e(String(bot.experiment.completed||0))}</strong></div><div><span>Unmatched attempts</span><strong>${e(String(bot.experiment.unmatched||0))}</strong></div></div>${bot.strategy==='favorites_statistics'&&bot.experiment.decision?`<p class="small">Last statistical decision · ${e(bot.experiment.decision.decision_type==='exploration'?'Learning probe':bot.experiment.decision.decision_type==='evidence'?'Evidence-backed':'No entry')} · ${e(bot.experiment.decision.reason||'Awaiting evidence')} · ${e(String(bot.experiment.decision.exact_samples??0))} exact-cell / ${e(String(bot.experiment.decision.samples??0))} pooled observed events · ${e(bot.experiment.decision.level||'No grouping yet')} ${bot.experiment.decision.expected_roi!=null?' · expected ROI '+e((100*Number(bot.experiment.decision.expected_roi)).toFixed(1))+'%':''}</p>`:bot.strategy==='sequential'&&bot.experiment.decision?`<p class="small">Last bids: YES ${(Number(bot.experiment.decision.yes)*100).toFixed(0)}¢ / NO ${(Number(bot.experiment.decision.no)*100).toFixed(0)}¢ · ${bot.experiment.decision.mode==='paper_exploration'?'Exploration: probabilities not established':bot.experiment.decision.estimate?.completion_probability!=null?`Estimated completion: ${(100*bot.experiment.decision.estimate.completion_probability).toFixed(1)}%`:'Estimate unavailable'} · ${e(String(bot.experiment.decision.estimate?.samples??0))} matching observations</p>`:''}`:''}${bot.experiment?.calibration?.length&&!bot.experiment?.entry_timing?.length?`<div class="table-scroll"><table><thead><tr><th>Favorite entry band</th><th>Settled contracts</th><th>Outcome win rate</th><th>Hold break-even after fees</th><th>Net P/L</th></tr></thead><tbody>${bot.experiment.calibration.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.contracts)}</td><td>${r.win_rate===null?'—':Number(r.win_rate).toFixed(1)+'%'}</td><td>${r.breakeven===null?'—':Number(r.breakeven).toFixed(1)+'%'}</td><td>${e(dollars(r.net))}</td></tr>`).join('')}</tbody></table></div>`:''}${['volatility_scalper','market_maker'].includes(bot.strategy)?scalperMarkup(bot.experiment?.scalper,bot.id,selected):''}${['favorites','favorites_statistics'].includes(bot.strategy)?favoriteTimingMarkup(bot.experiment?.entry_timing,favoriteTableMode==='wide'&&bot.folder_id==='favorites'?(data.folders?.find(f=>f.id==='favorites')?.collector_wide_summary?.by_bot?.[bot.id]?.rows||[]):null):''}<p class="money-heading">Money currently committed · all versions</p>${exposureMarkup(bot.account,positions)}<p class="small">${data.version==='latest'?'Most recent version · v'+bot.revision:'Full shadow history'} · ${new Date(bot.changed_at*1000).toLocaleString()}</p><p class="money-heading">Trading statistics · full available period</p><p class="small">The P/L controls above change the profit window. These statistics follow the version filter and show the full available period.</p><div class="bot-stats">${stats.map(([label,value])=>`<div><span>${e(label)}</span><strong>${e(value)}</strong></div>`).join('')}</div>${metrics.excluded_cycles?`<p class="account-warning">Includes simulated trades from ${e(String(metrics.excluded_cycles))} cycle reports with gaps. These results are unverified.</p>`:""}${!bot.strategy||bot.strategy==='convexity'?executionMarkup(bot.execution):''}<p class="small">${e(ticker||bot.series)}${market&&!market.data_valid?' · Current cycle excluded after a data gap':''}</p><details class="advanced"><summary>${positions.length} position lots · ${orders.length} pending/resting orders</summary><div class="table-scroll"><table><thead><tr><th>Type</th><th>Side</th><th>Contracts</th><th>Cost / reserved</th><th>Value</th><th>State</th></tr></thead><tbody>${positions.map(p=>`<tr><td>Position${p.state==='pending'?' · awaiting settlement':''}</td><td>${e(p.side.toUpperCase())}</td><td>${e(p.quantity)}</td><td>${e(dollars(p.cost))}</td><td>${e(dollars(p.value))}</td><td>${p.is_armed?'Armed':'Not armed'} · Phase ${e(p.phase_origin)}${Number(p.recovery_cost)>0?` · Recovered ${e(dollars(p.recovery_proceeds))} / ${e(dollars(p.recovery_cost))}`:''}</td></tr>`).join('')}${orders.map(o=>`<tr><td>${e(o.action)} · ${o.maker?'Maker':'IOC'}</td><td>${e(o.side.toUpperCase())}</td><td>${e(o.quantity)}</td><td>${e(dollars(o.reserved))}</td><td>—</td><td>${e(o.status)} @ ${e((Number(o.price)*100).toFixed(2))}¢</td></tr>`).join('')}</tbody></table></div></details><div class="bot-footer">${bot.retired?'<p class="small">Retired · entries disabled · existing positions hold to settlement.</p>':`<button data-toggle="${e(bot.id)}">${bot.desired==='running'?'Pause':'Resume'}${bot.strategy==='market_maker'?' category':''}</button><label>Contracts / order<input data-size="${e(bot.id)}" type="number" min="1" max="10000" value="${bot.contracts}"></label><button class="secondary" data-save="${e(bot.id)}">Save new version</button>`}</div></div></details>`;
+  return `<details class="bot-card market-card" data-market="${e(bot.id)}" ${openMarkets.has(bot.id)?'open':''}><summary class="bot-top"><div class="market-heading"><div class="bot-name">${e(bot.name)}</div></div><span class="badge ${bot.desired==='paused'?'paused':''}">${e(briefState)}</span><span class="market-disclosure" aria-hidden="true"></span>${botPnlMarkup(bot,selected,positions)}</summary><div class="market-card-body">${briefState!==state?`<details class="advanced market-status"><summary>Current market status</summary><p class="small">${e(state)}</p></details>`:''}<details class="advanced market-money"><summary>Profit & exposure</summary>${botPnlDetailsMarkup(bot,selected,positions)}</details>${bot.experiment?`<div class="bot-stats"><div><span>Attempts</span><strong>${e(String(bot.experiment.attempts||0))}</strong></div><div><span>${['favorites','favorites_statistics'].includes(bot.strategy)?'Settled entries':'Completed'}</span><strong>${e(String(bot.experiment.completed||0))}</strong></div><div><span>Unmatched attempts</span><strong>${e(String(bot.experiment.unmatched||0))}</strong></div></div>${bot.strategy==='favorites_statistics'&&bot.experiment.decision?`<p class="small">Last statistical decision · ${e(bot.experiment.decision.decision_type==='exploration'?'Learning probe':bot.experiment.decision.decision_type==='evidence'?'Evidence-backed':'No entry')} · ${e(bot.experiment.decision.reason||'Awaiting evidence')} · ${e(String(bot.experiment.decision.exact_samples??0))} exact-cell / ${e(String(bot.experiment.decision.samples??0))} pooled observed events · ${e(bot.experiment.decision.level||'No grouping yet')} ${bot.experiment.decision.expected_roi!=null?' · expected ROI '+e((100*Number(bot.experiment.decision.expected_roi)).toFixed(1))+'%':''}</p>`:bot.strategy==='sequential'&&bot.experiment.decision?`<p class="small">Last bids: YES ${(Number(bot.experiment.decision.yes)*100).toFixed(0)}¢ / NO ${(Number(bot.experiment.decision.no)*100).toFixed(0)}¢ · ${bot.experiment.decision.mode==='paper_exploration'?'Exploration: probabilities not established':bot.experiment.decision.estimate?.completion_probability!=null?`Estimated completion: ${(100*bot.experiment.decision.estimate.completion_probability).toFixed(1)}%`:'Estimate unavailable'} · ${e(String(bot.experiment.decision.estimate?.samples??0))} matching observations</p>`:''}`:''}${bot.experiment?.calibration?.length&&!bot.experiment?.entry_timing?.length?`<div class="table-scroll"><table><thead><tr><th>Favorite entry band</th><th>Settled contracts</th><th>Outcome win rate</th><th>Hold break-even after fees</th><th>Net P/L</th></tr></thead><tbody>${bot.experiment.calibration.map(r=>`<tr><td>${e(r.band)}</td><td>${e(r.contracts)}</td><td>${r.win_rate===null?'—':Number(r.win_rate).toFixed(1)+'%'}</td><td>${r.breakeven===null?'—':Number(r.breakeven).toFixed(1)+'%'}</td><td>${e(dollars(r.net))}</td></tr>`).join('')}</tbody></table></div>`:''}${['volatility_scalper','market_maker'].includes(bot.strategy)?scalperMarkup(bot.experiment?.scalper,bot.id,selected):''}${['favorites','favorites_statistics'].includes(bot.strategy)?favoriteTimingMarkup(bot.experiment?.entry_timing,favoriteTableMode==='wide'&&bot.folder_id==='favorites'?(data.folders?.find(f=>f.id==='favorites')?.collector_wide_summary?.by_bot?.[bot.id]?.rows||[]):null):''}<details class="advanced market-trading-stats"><summary>Trading statistics</summary><div class="bot-stats">${stats.map(([label,value])=>`<div><span>${e(label)}</span><strong>${e(value)}</strong></div>`).join('')}</div></details>${metrics.excluded_cycles?`<p class="account-warning">${e(String(metrics.excluded_cycles))} unverified cycles</p>`:""}${(!bot.strategy||bot.strategy==='convexity')&&bot.execution?`<details class="advanced"><summary>Execution details</summary>${executionMarkup(bot.execution)}</details>`:''}${market&&!market.data_valid?'<p class="account-warning">Current market data gap</p>':''}<details class="advanced"><summary>${positions.length} position lots · ${orders.length} pending/resting orders</summary><div class="table-scroll"><table><thead><tr><th>Type</th><th>Side</th><th>Contracts</th><th>Cost / reserved</th><th>Value</th><th>State</th></tr></thead><tbody>${positions.map(p=>`<tr><td>Position${p.state==='pending'?' · awaiting settlement':''}</td><td>${e(p.side.toUpperCase())}</td><td>${e(p.quantity)}</td><td>${e(dollars(p.cost))}</td><td>${e(dollars(p.value))}</td><td>${p.is_armed?'Armed':'Not armed'} · Phase ${e(p.phase_origin)}${Number(p.recovery_cost)>0?` · Recovered ${e(dollars(p.recovery_proceeds))} / ${e(dollars(p.recovery_cost))}`:''}</td></tr>`).join('')}${orders.map(o=>`<tr><td>${e(o.action)} · ${o.maker?'Maker':'IOC'}</td><td>${e(o.side.toUpperCase())}</td><td>${e(o.quantity)}</td><td>${e(dollars(o.reserved))}</td><td>—</td><td>${e(o.status)} @ ${e((Number(o.price)*100).toFixed(2))}¢</td></tr>`).join('')}</tbody></table></div></details><div class="bot-footer">${bot.retired?'<p class="small">Retired · entries disabled · existing positions hold to settlement.</p>':`<button data-toggle="${e(bot.id)}">${bot.desired==='running'?'Pause':'Resume'}${bot.strategy==='market_maker'?' category':''}</button><label>Contracts / order<input data-size="${e(bot.id)}" type="number" min="1" max="10000" value="${bot.contracts}"></label><button class="secondary" data-save="${e(bot.id)}">Save new version</button>`}</div></div></details>`;
 
 }
 
@@ -68,13 +93,83 @@ function makerDiscoveryMarkup(scanner){
  return `<details class="advanced maker-discovery"><summary>Market Maker discovery · ${e(scanner?.state||'Waiting for current worker measurements')}</summary><p class="small">${ranked.length} ranked candidates · ${scanner?.reads||0} shared-budget data reads. Candidates must pass category, actual executed-trade frequency, depth, economics and portfolio limits before orders can be submitted.</p><div class="comparison-grid">${ranked.map(row=>`<article class="comparison-card"><h3>${e(row.ticker)}</h3><p>${e(row.category)} · score ${Number.isFinite(Number(row.score))?Number(row.score).toFixed(4):'—'}</p><p class="small">${e((row.reason||'awaiting inspection').replaceAll('_',' '))}</p></article>`).join('')||'<p class="small">No inspected candidates yet. Discovery waits during processing backlog or read cooldown.</p>'}</div></details>`;
 }
 
+/*
+ * Older paper workers omit the event counters (and sometimes event_ticker),
+ * even though their current positions and working orders are already in the
+ * account snapshots. Derive missing counters in the browser so the monitor
+ * works before a backend redeploy. No market-data requests or DB scans.
+ */
+function eventIdFromExposure(row){
+ const event=row?.event_ticker;
+ if(typeof event==='string'&&event)return event;
+ const ticker=row?.ticker;
+ if(typeof ticker!=='string'||!ticker)return null;
+ // Standard Kalshi market tickers append an outcome/strike to the event
+ // ticker. With no such segment, retain the market ticker rather than
+ // merging unrelated events in the same series.
+ const first=ticker.indexOf('-'),last=ticker.lastIndexOf('-');
+ return first>=0&&last>first?ticker.slice(0,last):ticker;
+}
+function hydrateEventCounts(payload){
+ if(!payload||typeof payload!=='object')return payload;
+ const newSets=()=>({bid:new Set(),active:new Set(),pending:new Set()});
+ const fields=[['bid','unfilled_bid_events','unfilled_bids'],['active','active_events','active_cost'],['pending','pending_events','pending_cost']];
+ function apply(account,sets){
+  if(!account||typeof account!=='object')return;
+  for(const [kind,key,amount] of fields){
+   const value=account[key];
+   if(Number.isSafeInteger(Number(value))&&value!=null&&Number(value)>=0)continue;
+   // Missing details must never turn an existing dollar exposure into zero.
+   if(sets[kind].size||Number(account[amount])===0&&account[amount]!=null)account[key]=sets[kind].size;
+  }
+ }
+ function gather(positions,orders){
+  const total=newSets(),byBot=new Map();
+  const mark=(row,kind)=>{
+   const id=eventIdFromExposure(row);if(!id)return;
+   total[kind].add(id);
+   if(typeof row.bot_id==='string'&&row.bot_id){
+    let found=byBot.get(row.bot_id);
+    if(!found){found=newSets();byBot.set(row.bot_id,found)}
+    found[kind].add(id);
+   }
+  };
+  for(const row of Array.isArray(positions)?positions:[]){
+   if(row.state==='active'||row.state==='pending')mark(row,row.state);
+  }
+  for(const row of Array.isArray(orders)?orders:[]){
+   if(row.action==='buy'&&(row.status==='pending'||row.status==='resting'))mark(row,'bid');
+  }
+  return {total,byBot};
+ }
+ const folderSets=new Map();
+ for(const folder of Array.isArray(payload.folders)?payload.folders:[]){
+  const account=folder.accounting;if(!account?.portfolio)continue;
+  const legacy=folder.id==='convexity';
+  const rows=gather(legacy?payload.status?.positions:account.positions,
+                    legacy?payload.status?.orders:account.orders);
+  apply(account.portfolio,rows.total);
+  folderSets.set(folder.id,rows.byBot);
+ }
+ if(payload.accounting?.portfolio){
+  const rows=gather(payload.status?.positions,payload.status?.orders);
+  apply(payload.accounting.portfolio,rows.total);
+  if(!folderSets.has('convexity'))folderSets.set('convexity',rows.byBot);
+ }
+ for(const bot of Array.isArray(payload.bots)?payload.bots:[]){
+  if(bot.account)apply(bot.account,folderSets.get(bot.folder_id||'convexity')?.get(bot.id)||newSets());
+ }
+ return payload;
+}
+
 function draw(){
  const status=data.status||{},health=data.health||{};
  $('health').textContent=health.message||'Waiting for worker';
  // At a glance describes strategies accepting new entries, not historical/paused portfolios.
  const activeOverview=(data.folders||[]).filter(folder=>(data.bots||[]).some(bot=>
   (bot.folder_id||'convexity')===folder.id&&bot.desired==='running'&&!bot.retired));
- $('accountSummary').innerHTML=data.folders?.length?folderOverviewMarkup(activeOverview,folderPeriod)+sequentialComparisonMarkup(data.folders)+monitoringMarkup(status.monitoring):accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
+ $('accountSummary').innerHTML=data.folders?.length?folderOverviewMarkup(activeOverview,folderPeriod):accountMarkup(data.accounting,Date.now()/1000,status.positions||[]);
+ $('diagnostics').innerHTML='<details class="panel compact-diagnostics"><summary>Strategy comparisons & monitoring</summary>'+sequentialComparisonMarkup(data.folders||[])+monitoringMarkup(status.monitoring)+'</details>';
  for(const b of document.querySelectorAll('[data-folder-period]'))b.onclick=()=>{folderPeriod=b.dataset.folderPeriod;for(const id of Object.keys(folderSummaryPeriods))delete folderSummaryPeriods[id];saveFolderViews();try{localStorage.setItem('moneytree-folder-period',folderPeriod)}catch{}draw()};
  $('connect').textContent=data.connection_configured?'Manage production data key':'Connect production Read key';
  const find=$('find').value.toLowerCase();
@@ -84,7 +179,7 @@ function draw(){
   const running=folder=>(data.bots||[]).some(bot=>(bot.folder_id||'convexity')===folder.id&&bot.desired==='running'&&!bot.retired);
   return Number(running(b))-Number(running(a));
  });
- $('groups').innerHTML=((folders.some(folder=>['favorites','favorites_statistics'].includes(folder.id)))?favoriteProfitLegendMarkup():'')+folders.map(folder=>{
+ $('groups').innerHTML=folders.map(folder=>{
   const folderBots=data.bots.filter(b=>(b.folder_id||'convexity')===folder.id).map(researchBot);
   const activeFolderBots=folderBots.filter(b=>!b.retired);
   const matching=folderBots.filter(b=>(b.name+' '+b.series).toLowerCase().includes(find));
@@ -94,7 +189,7 @@ function draw(){
   // A collapsed folder does not need to build dozens of hidden, detailed bot cards.
   // On opening, the toggle handler redraws and restores every detailed card.
   const expandContent=openFolders.has(folder.id)||!!find||folderBots.length<=15;
-  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary><p>${e(folder.description)}</p>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button>${folder.id==='volatility_scalper'?'<button data-volatility-family="pause" class="secondary">Pause all volatility</button><button data-volatility-family="resume" class="secondary">Resume all volatility</button>':''}<button data-folder-refill="${e(folder.id)}" class="secondary">Add funds</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<p class="small">Separate virtual account · $1,000 starting balance · paper trades only</p>${learningDiagnosticsMarkup(folder.learning)}${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Waiting for the worker’s first account snapshot…</p>'}${folder.id==='favorites_statistics'?favoriteStatisticsMatrixMarkup(folder.statistics,openResearch):''}${folder.id==='favorites'&&expandContent?favoriteTableSettingsMarkup(favoriteTableMode)+(favoriteTableMode==='wide'?favoriteWideOverviewMarkup(folderBots,folder.collector_wide_summary,openResearch):favoriteCollectorOverviewMarkup(folderBots,openResearch,{loaded:folderResearchLoadedAt.has('favorites'),loading:loadingFolderResearch.has('favorites'),error:folderResearchErrors.get('favorites'),timedSummary:folder.collector_timed_summary})):''}${folder.strategy==='market_maker'?makerDiscoveryMarkup(folder.scanner):folder.scanner?`<p class="small">Scanner: ${e(folder.scanner.state||'waiting')} · ${folder.scanner.groups||0} verified event groups · ${folder.scanner.subscribed_markets||0} markets</p>`:''}${expandContent?marketTypeFolders(bots,local,folder.id,find,false,folder.id==='favorites'?folderBots:activeFolderBots,folder.collector_timed_summary,folder.collector_wide_summary):'<p class="small">Expand this folder to load its bot details, research, and positions.</p>'}${retired.length&&expandContent?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary>${marketTypeFolders(retired,local,folder.id,find,true,folderBots.filter(b=>b.retired))}</details>`:''}</details>`;
+  return `<details class="strategy-folder panel" id="folder-${e(folder.id)}" ${openFolders.has(folder.id)?'open':''} data-folder="${e(folder.id)}"><summary>${folderCardSummaryMarkup(folder,folderSummaryPeriods[folder.id]||folderPeriod,{bots:activeFolderBots.length,running,pending:pendingFolders.has(folder.id),controls:!!data.folders?.length})}</summary>${data.folders?.length?`<div class="folder-actions"><button data-folder-pause="${e(folder.id)}" class="secondary">Pause folder</button><button data-folder-resume="${e(folder.id)}" class="secondary">Resume folder</button>${folder.id==='volatility_scalper'?'<button data-volatility-family="pause" class="secondary">Pause all volatility</button><button data-volatility-family="resume" class="secondary">Resume all volatility</button>':''}<button data-folder-refill="${e(folder.id)}" class="secondary">Add funds</button><button data-folder-reset="${e(folder.id)}" class="secondary">Reset funds</button></div>`:'<p class="small">Strategy folders are waiting for the paper worker upgrade. Existing bots retain their current state.</p>'}<details class="advanced folder-account-breakdown"><summary>Account breakdown</summary>${money?accountMarkup(money,Date.now()/1000,money.positions||status.positions||[]):'<p>Awaiting wallet snapshot</p>'}</details>${folder.id==='favorites_statistics'?'<details class="advanced folder-research"><summary>Statistics research</summary>'+favoriteStatisticsMatrixMarkup(folder.statistics,openResearch)+'</details>':''}${folder.id==='favorites'&&expandContent?'<details class="advanced folder-research"><summary>Favorites research · '+(favoriteTableMode==='wide'?'wide':'detailed')+'</summary>'+favoriteProfitLegendMarkup()+favoriteTableSettingsMarkup(favoriteTableMode)+(favoriteTableMode==='wide'?favoriteWideOverviewMarkup(folderBots,folder.collector_wide_summary,openResearch):favoriteCollectorOverviewMarkup(folderBots,openResearch,{loaded:folderResearchLoadedAt.has('favorites'),loading:loadingFolderResearch.has('favorites'),error:folderResearchErrors.get('favorites'),timedSummary:folder.collector_timed_summary}))+'</details>':''}${folder.id==='convexity'?'<details class="advanced"><summary>Convexity strategy rules</summary><p class="small">10¢ maker bids, then 3¢ late bids; recovery targets at 40¢/50¢; freeze ordinary entries and exits in the final phase. Paused bots keep their history.</p></details>':''}<details class="advanced folder-diagnostics"><summary>Strategy diagnostics</summary>${learningDiagnosticsMarkup(folder.learning)}${folder.strategy==='market_maker'?makerDiscoveryMarkup(folder.scanner):folder.scanner?`<p class="small">Scanner ${e(folder.scanner.state||'waiting')} · ${folder.scanner.subscribed_markets||0} markets</p>`:''}</details>${expandContent?marketTypeFolders(bots,local,folder.id,find,false,folder.id==='favorites'?folderBots:activeFolderBots,folder.collector_timed_summary,folder.collector_wide_summary):''}${retired.length&&expandContent?`<details class="advanced"><summary>Retired 15-minute bots · ${retired.length} · history and remaining exits</summary>${marketTypeFolders(retired,local,folder.id,find,true,folderBots.filter(b=>b.retired))}</details>`:''}</details>`;
  }).join('');
  for(const button of document.querySelectorAll('[data-favorite-table]'))button.onclick=()=>{favoriteTableMode=button.dataset.favoriteTable==='wide'?'wide':'detailed';try{localStorage.setItem('moneytree-favorite-table-mode',favoriteTableMode)}catch{}draw()};
  for(const detail of document.querySelectorAll('details[data-research]'))detail.ontoggle=event=>{if(event.target!==detail||detail.isConnected===false)return;const key=detail.dataset.research;if(detail.open)openResearch.add(key);else openResearch.delete(key);try{localStorage.setItem('moneytree-research-views',JSON.stringify([...openResearch]))}catch{}};
@@ -119,25 +214,44 @@ function draw(){
  $('events').innerHTML='<table><thead><tr><th>Time</th><th>Strategy</th><th>Market</th><th>Event</th><th>Details</th></tr></thead><tbody>'+events.map(r=>`<tr><td>${e(new Date(r.time*1000).toLocaleString())}</td><td>${e(data.folders?.find(f=>f.id===(r.folder_id||'convexity'))?.name||'Convexity')}</td><td>${e(data.bots.find(b=>r.ticker?.startsWith(b.series+'-'))?.name||r.ticker||'Wallet')}</td><td>${e(r.event)}</td><td>${e([r.side,r.quantity,r.price?'$'+r.price:'',r.fee?'fee $'+r.fee:'',r.reason].filter(Boolean).join(' · '))}</td></tr>`).join('')+'</tbody></table>';
 }
 async function load(){
+ void refreshWorkerRestarts();
  if(busy)return;busy=true;clearTimeout(timer);
  try{
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
   if(!result.installed){$('health').textContent='Worker initializing';loadNote('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
   if(loadError&&$('message').textContent===loadError)note('');loadError=null;
-  data=result;draw();
+  data=hydrateEventCounts(result);draw();
   // The combined Favorites matrix must not depend on opening individual cards.
   void loadFolderResearch('favorites');
   for(const folder of openFolders)if(folder!=='favorites')void loadFolderResearch(folder);
   try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{loadNote('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
  }catch(error){
   loadNote(error.message);
-  if(!data){$('health').textContent='Dashboard data unavailable';$('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>'}
+  if(!data){
+   // Legacy report aggregation can time out while the current wallet
+   // checkpoint is perfectly healthy. Keep the money visible rather than
+   // treating a delayed analytics query as missing portfolio data.
+   let currentShown=false;
+   try{
+    const snapshot=await demoCall('shadow/portfolio-snapshot');
+    if(snapshot.installed&&Array.isArray(snapshot.folders)&&snapshot.folders.length){
+     $('health').textContent='Current balances available · historical analytics delayed';
+     hydrateEventCounts(snapshot);
+     $('accountSummary').innerHTML='<p class="small">Current paper account balances and positions are shown below. Historical research details are temporarily unavailable and will retry automatically.</p>'+folderOverviewMarkup(snapshot.folders,'all');
+     $('groups').innerHTML='<p class="small">Detailed strategy tables are waiting for the historical reporting query. No balances or trade records have been reset.</p>';
+     currentShown=true;
+    }
+   }catch{}
+   if(!currentShown){
+    $('health').textContent='Dashboard data unavailable';
+    $('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>';
+   }
+  }
  }finally{busy=false;timer=setTimeout(load,10000)}
 }
 async function change(id,fields){try{const bot=data.bots.find(b=>b.id===id);await demoCall('shadow/bots/'+id,{revision:bot.revision,...fields});note('Saved. New entries follow the worker’s next verified update; existing risk management continues.');await load()}catch(error){note(error.message)}}
 $('find').oninput=()=>{if(data)draw()};$('latest').onchange=load;$('reload').onclick=load;
 for(const [id,action] of [['pauseAll','pause'],['resumeAll','resume']])$(id).onclick=async()=>{try{await demoCall('shadow/bulk',{action});await load()}catch(error){note(error.message)}};
-$('funds').onsubmit=async event=>{event.preventDefault();try{requestId=requestId||crypto.randomUUID();await demoCall('shadow/funds',{amount_cents:Math.round(Number($('fundAmount').value)*100),request_id:requestId});requestId=null;note('Virtual refill queued. It appears when the paper worker applies it; no real money moves.');await load()}catch(error){note(error.message)}};
 $('connect').onclick=()=>$('connectionDialog').showModal();
 for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>$(button.dataset.close).close();
 $('paperKeyFile').onchange=async()=>{const file=$('paperKeyFile').files[0];if(!file)return;if(file.size>12000){$('connectionMessage').textContent='Key file must be at most 12 KB.';return}$('demoPem').value=await file.text()};

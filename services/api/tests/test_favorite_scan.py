@@ -59,7 +59,7 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         suite.search_capacity.side_effect=[True,False]
         suite.enabled_profiles.side_effect=lambda category:[dict(series='KXHIGHNY')] if category=='weather_daily' else [dict(series='KXHIGHNYH')]
         suite.candidate_allowed.return_value=True
-        suite.settlement_markets.return_value={}
+        suite.settlement_markets.return_value={};suite.portfolios={}
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
         now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp()
         host.verified_data.call.return_value=dict(markets=[dict(ticker='KXHIGHNY-26NOV20-eligible',
@@ -139,7 +139,7 @@ class Revisit(unittest.TestCase):
         suite.handle('kalshi',dict(type='orderbook_snapshot',sid=1,seq=1,msg=dict(market_ticker=t,
             yes_dollars_fp=[['.85','100']],no_dollars_fp=[['.13','100']])),base+312)
         self.assertTrue(e.orders);self.assertTrue(all(o.price<=D('.95') for o in e.orders.values()))
-        self.assertTrue(all(o.quantity==D(10) for o in e.orders.values()))
+        self.assertTrue(all(o.quantity==D(1) for o in e.orders.values()))
 
     def test_completed_hourly_entry_is_not_rearmed_after_cooldown(self):
         suite,_=scope.ScopeTests().suite();e,f,_=suite.portfolios['favorites'];t='KXSOLD-done'

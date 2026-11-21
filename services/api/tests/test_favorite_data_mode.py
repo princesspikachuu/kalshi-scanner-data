@@ -1,4 +1,4 @@
-"""Paper collection uses configured size and samples weak/unknown-value states."""
+"""Paper collection uses one-contract probes and samples weak/unknown-value states."""
 import unittest,json
 from decimal import Decimal as D
 from services.api.tests import test_favorite_maker_entries as fixture
@@ -15,22 +15,22 @@ class DataMode(unittest.TestCase):
         e,b,_=fixture.MakerEntries().setup_bot()
         key=fixture.MakerEntries().seed(b,100,10);b.step()
         o=next(iter(e.orders.values()));a=b.attempts[o.ticker]
-        self.assertEqual(o.quantity,D(10));self.assertTrue(o.maker)
+        self.assertEqual(o.quantity,D(1));self.assertTrue(o.maker)
         self.assertLess(a['entry_estimate']['lower'],float(o.price))
         self.assertEqual(a['entry_policy'],'favorites-paper-data-v3')
         self.assertEqual(a['entry_key'],key)
         self.assertEqual(e.wallet.cash,D(1000));self.assertFalse(e.wallet.lots)
 
-    def test_configured_size_above_old_five_percent_cap_is_respected(self):
+    def test_configured_size_does_not_override_one_contract_research_limit(self):
         e,b,_=fixture.MakerEntries().setup_bot();b.contracts=D(100);b.step()
-        o=next(iter(e.orders.values()));self.assertEqual(o.quantity,D(100))
-        self.assertEqual(o.reserved,D(80));self.assertEqual(e.available(),D(920))
+        o=next(iter(e.orders.values()));self.assertEqual(o.quantity,D(1))
+        self.assertEqual(o.reserved,D('.80'));self.assertEqual(e.available(),D('999.20'))
 
     def test_available_cash_and_real_series_fees_still_bound_simulated_orders(self):
         e,b,_=fixture.MakerEntries().setup_bot();b.contracts=D(10000)
         e.fees[fixture.MakerEntries.ticker]=FeePolicy(D(1),D(1));b.step()
         o=next(iter(e.orders.values()))
-        self.assertGreater(o.quantity,D(1));self.assertLessEqual(o.reserved,e.wallet.cash)
+        self.assertEqual(o.quantity,D(1));self.assertLessEqual(o.reserved,e.wallet.cash)
         self.assertGreater(e.fees[o.ticker].charge(o.quantity,o.price,True),0)
 
     def test_paper_quotes_follow_current_bid_after_minimum_rest(self):
@@ -47,32 +47,34 @@ class DataMode(unittest.TestCase):
         e,b,_=fixture.MakerEntries().setup_bot();b.step();o=next(iter(e.orders.values()))
         event=[fields for kind,fields in e.audit.events if kind=='FAVORITE_ENTRY_DECISION'][-1]
         details=json.loads(event['details']);self.assertEqual(event['order_id'],o.id)
-        self.assertEqual(details['policy'],'favorites-paper-data-v3');self.assertEqual(details['quantity'],'10')
+        self.assertEqual(details['policy'],'favorites-paper-data-v3');self.assertEqual(details['quantity'],'1')
         self.assertEqual(details['estimate']['samples'],0)
 
     def test_changed_saved_size_replaces_only_after_cancel_ack(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
         old=next(iter(e.orders.values()));b.contracts=D(20);b.step();b.step()
         self.assertEqual(len(e.orders),1)
-        e.advance(202);book.at=202;b.step();new=list(e.orders.values())[-1]
-        self.assertEqual(old.status,'cancelled');self.assertEqual(new.quantity,D(20))
+        e.advance(202);book.at=202;b.step()
+        self.assertEqual(old.status,'resting')
+        self.assertEqual(old.quantity,D(1))
+        self.assertEqual(len(e.orders),1)
 
     def test_partial_fills_continue_to_requested_size_with_real_cash_accounting(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
         o=next(iter(e.orders.values()))
-        e.fill(o,D(1),o.price,'TEST');book.at=201;b.step()
-        self.assertEqual(o.status,'resting');self.assertEqual(o.remaining,D(9))
-        e.fill(o,D(3),o.price,'TEST');e.advance(202);book.at=202;b.step()
-        self.assertEqual(o.remaining,D(6));self.assertEqual(len(e.orders),1)
-        e.fill(o,D(6),o.price,'TEST');b.step()
-        self.assertEqual(o.status,'filled');self.assertEqual(e.wallet.inventory(o.ticker,'yes'),D(10))
-        self.assertEqual(e.wallet.cash,D(992));self.assertEqual(len(e.orders),1)
+        e.fill(o,D('.4'),o.price,'TEST');book.at=201;b.step()
+        self.assertEqual(o.status,'resting');self.assertEqual(o.remaining,D('.6'))
+        e.fill(o,D('.3'),o.price,'TEST');e.advance(202);book.at=202;b.step()
+        self.assertEqual(o.remaining,D('.3'));self.assertEqual(len(e.orders),1)
+        e.fill(o,D('.3'),o.price,'TEST');b.step()
+        self.assertEqual(o.status,'filled');self.assertEqual(e.wallet.inventory(o.ticker,'yes'),D(1))
+        self.assertEqual(e.wallet.cash,D('999.20'));self.assertEqual(len(e.orders),1)
 
     def test_distinct_market_price_can_create_second_paper_entry(self):
         e,b,book=fixture.MakerEntries().setup_bot()
         b.step();e.advance(201)
         first=next(iter(e.orders.values()))
-        e.fill(first,D(10),first.price,'TEST')
+        e.fill(first,D(1),first.price,'TEST')
         book.at=212;e.advance(212)
         book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
         b.step()
@@ -80,9 +82,9 @@ class DataMode(unittest.TestCase):
         self.assertEqual(len(orders),2)
         self.assertEqual(orders[-1].price,D('.83'))
         self.assertEqual(b.attempts[first.ticker]['repeat_entries'],1)
-        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(10))
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(1))
         # Once filled, an unchanged qualifying state must not create a third entry.
-        e.advance(213);e.fill(orders[-1],D(10),orders[-1].price,'TEST')
+        e.advance(213);e.fill(orders[-1],D(1),orders[-1].price,'TEST')
         e.advance(224);book.at=224;b.step()
         self.assertEqual(len(e.orders),2)
         self.assertGreater(b.attempts[first.ticker]['repeat_duplicate_suppressed'],0)
@@ -91,11 +93,11 @@ class DataMode(unittest.TestCase):
         e,b,book=fixture.MakerEntries().setup_bot()
         b.step();e.advance(201)
         first=next(iter(e.orders.values()))
-        e.fill(first,D(10),first.price,'TEST')
+        e.fill(first,D(1),first.price,'TEST')
         e.advance(212);book.at=212
         book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
         b.step();second=list(e.orders.values())[-1]
-        e.advance(213);e.fill(second,D(10),second.price,'TEST')
+        e.advance(213);e.fill(second,D(1),second.price,'TEST')
         chunks=b.attempts[first.ticker]['entry_fills']
         self.assertEqual(len(chunks),2)
         self.assertEqual({c['order_id'] for c in chunks},{first.id,second.id})
@@ -110,7 +112,7 @@ class DataMode(unittest.TestCase):
         e,b,book=maker.setup_bot(paper_exploration=False)
         maker.seed(b);b.step();e.advance(201)
         first=next(iter(e.orders.values()))
-        e.fill(first,D(10),first.price,'TEST')
+        e.fill(first,D(1),first.price,'TEST')
         e.advance(212);book.at=212
         book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
         b.step()
@@ -120,7 +122,7 @@ class DataMode(unittest.TestCase):
         e,b,book=fixture.MakerEntries().setup_bot(paper_repeat_inventory_multiplier=1)
         b.step();e.advance(201)
         first=next(iter(e.orders.values()))
-        e.fill(first,D(10),first.price,'TEST')
+        e.fill(first,D(1),first.price,'TEST')
         e.advance(212);book.at=212
         book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
         b.step()
@@ -129,6 +131,6 @@ class DataMode(unittest.TestCase):
 
     def test_partial_order_is_cancelled_when_data_or_entry_conditions_fail(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
-        o=next(iter(e.orders.values()));e.fill(o,D(1),o.price,'TEST')
+        o=next(iter(e.orders.values()));e.fill(o,D('.4'),o.price,'TEST')
         book.valid=False;b.step();e.advance(202)
-        self.assertEqual(o.status,'cancelled');self.assertEqual(e.wallet.inventory(o.ticker,'yes'),D(1))
+        self.assertEqual(o.status,'cancelled');self.assertEqual(e.wallet.inventory(o.ticker,'yes'),D('.4'))
