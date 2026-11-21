@@ -71,7 +71,8 @@ function researchTable(rows,roundTrips=false){
 // Favorites research uses the same compact price x time cell layout as the
 // top-level summary. The single folder toggle determines which buckets appear.
 function favoriteResearchGrid(rows=[],options={}){
- if(!rows.length)return '<p class="small">No verified resolved timed observations yet.</p>';
+ if(!rows.length||!rows.some(r=>Number(r.events)>0))return '<p class="small">No verified resolved timed observations yet.</p>';
+ const clockNote=rows.some(r=>r.clock==='estimated_game_end')?'<p class="small">Sports time remaining uses estimated game end.</p>':'';
  const wide=options.mode==='wide';
  const horizons=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const timeLabels=wide?(options.timeBuckets?.length?options.timeBuckets:['Early third','Middle third','Final third']):
@@ -90,7 +91,7 @@ function favoriteResearchGrid(rows=[],options={}){
   const signal=margin===null||margin===undefined?'unknown':margin>0?'realized-positive':margin<0?'realized-negative':'neutral';
   return '<td class="stat-observed '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+' · Hold P/L '+e(ret)+'</small><small>Margin '+e(c.margin)+' · error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(r.return_observations||0))+' hold-return observations. Settlement-based margin; exits excluded.</p></details></td>';
  }).join('')+'</tr>').join('');
- return '<div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+timeLabels.map(t=>'<th scope="col">'+e(t)+(wide?' left':'')+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+ return clockNote+'<div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+timeLabels.map(t=>'<th scope="col">'+e(t)+(wide?' left':'')+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
 const researchNote='<p class="small">Counts are distinct verified resolved events per price/time cohort, not contracts. Ten contracts from one event count as one observation. One event may appear in multiple cohorts. Hold-only P/L % gives each resolved event equal weight, after fees. Known outcomes assume holding to settlement, ignoring exit proceeds and exit fees. Unknown outcomes are omitted. Estimated historical returns use average entry fees/sizing; account balances retain actual trades.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set(),options={}){
