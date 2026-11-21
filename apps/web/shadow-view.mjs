@@ -160,7 +160,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     const margin=winConfidence90(x.eventWins,observations,x.purchased?x.cost/x.purchased:null)?.margin;
     const signal=margin==null?'unknown':margin>0?'realized-positive':margin<0?'realized-negative':'neutral';
     const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · win margin '+confidence.margin+' · 90% uncertainty '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
-    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Win margin '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'++'</summary><p class="small">'+e(detail)+'</p></details></td>';
+    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Win margin '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
   return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -248,7 +248,7 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
         cell.fallback_lower===null||cell.fallback_lower===undefined?'':'Fallback confidence lower bound: '+num(cell.fallback_lower*100),
         'Hold P/L unavailable without verified attribution','Level: '+cell.level.replaceAll('_',' '),fallback,
         'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
-      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>Hold P/L —</span><small>'+e(label)+'</small>'++'</summary><p class="small">'+e(detail)+'</p></details></td>';
+      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>Hold P/L —</span><small>'+e(label)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
     }).join('')+'</tr>').join('')+'</tbody></table></div></details>';
  }).join('')+'</section>';
 }
