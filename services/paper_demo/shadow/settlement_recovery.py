@@ -19,11 +19,13 @@ async def recover_once(host):
     if checks is None:
         checks = host.position_settlement_checks = {}
     held = {}
-    for engine, _, _ in host.experiments.portfolios.values():
+    held_folders = {}
+    for folder, (engine, _, _) in host.experiments.portfolios.items():
         for lot in engine.wallet.lots:
             market = engine.markets.get(lot.ticker)
             if lot.quantity > 0 and market and not market.get('paid') and observation_end(market) <= now:
                 held[lot.ticker] = market
+                held_folders.setdefault(lot.ticker, set()).add(folder)
     # Bounded, in-process diagnostics only: no extra REST calls, database writes,
     # wallet mutations, or changes to the venue's settlement requirements.
     telemetry = getattr(host, 'position_settlement_poll_telemetry', None)
@@ -73,7 +75,19 @@ async def recover_once(host):
     if now >= telemetry['next_log_at']:
         # A few oldest unconfirmed examples distinguish venue settlement delay
         # from missed requests without emitting an unbounded ticker inventory.
-        oldest = sorted(held, key=lambda t: (observation_end(held[t]), t))[:3]
+        order = lambda t: (observation_end(held[t]), t)
+        oldest = sorted(held, key=order)[:3]
+        favorites_oldest = sorted((t for t in held if 'favorites' in held_folders[t]), key=order)[:3]
+        def sample(ticker):
+            recorded = telemetry['per_ticker'].get(ticker, {})
+            return dict(ticker=ticker, expired_seconds=int(max(0, now-observation_end(held[ticker]))),
+                folders=sorted(held_folders[ticker]), attempts=recorded.get('attempts', 0),
+                last_poll_status=recorded.get('last_poll_status', 'not_checked'),
+                last_venue_status=recorded.get('last_venue_status', 'not_checked'))
+        held_by_folder = {}
+        for folder_names in held_folders.values():
+            for folder in folder_names:
+                held_by_folder[folder] = held_by_folder.get(folder, 0) + 1
         ages = [max(0, now - observation_end(market)) for market in held.values()]
         groups = dict(under_5m=0, five_to_30m=0, thirty_to_120m=0, over_120m=0)
         for age in ages:
@@ -81,14 +95,12 @@ async def recover_once(host):
                      else 'thirty_to_120m' if age < 7200 else 'over_120m')
             groups[label] += 1
         print(json.dumps(dict(event='paper_position_settlement_poll_health',
-            held_markets=len(held), oldest_expired_seconds=int(max(ages, default=0)),
+            held_markets=len(held), held_by_folder=held_by_folder,
+            oldest_expired_seconds=int(max(ages, default=0)),
             age_groups=groups, rest_calls=sum(telemetry['outcomes'].values()),
             poll_outcomes=dict(telemetry['outcomes']),
-            oldest_unresolved=[dict(ticker=t, expired_seconds=int(max(0, now-observation_end(held[t]))),
-                attempts=telemetry['per_ticker'].get(t, {}).get('attempts', 0),
-                last_poll_status=telemetry['per_ticker'].get(t, {}).get('last_poll_status', 'not_checked'),
-                last_venue_status=telemetry['per_ticker'].get(t, {}).get('last_venue_status', 'not_checked'))
-                for t in oldest],
+            oldest_unresolved=[sample(t) for t in oldest],
+            oldest_favorites=[sample(t) for t in favorites_oldest],
             real_orders_enabled=False)), flush=True)
         telemetry['outcomes'] = {}
         telemetry['next_log_at'] = now + 60
