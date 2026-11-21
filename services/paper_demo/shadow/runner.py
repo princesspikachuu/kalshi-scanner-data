@@ -20,6 +20,8 @@ from services.paper_demo.read_budget import PRODUCTION_READS
 from services.paper_demo.telemetry import measure_request,request_sent
 from services.demo.exchange import PATH,ExchangeFailure
 from .core import Audit, ConvexityStrategy, Engine, FeePolicy, StrategyFleet
+from .schedules import session_wake
+from .discovery_wake import asleep, remember, known_entry_wake
 
 LOG = logging.getLogger('shadow')
 BASE = 'https://external-api.kalshi.com/trade-api/v2'
@@ -143,8 +145,22 @@ class ForwardRun:
             except Exception as exc:
                 await self.metadata_unavailable('settlement',exc,ticker=ticker,series=series)
         now=time.time()
-        wanted={p['series']:p for p in self.profiles if p['series'] not in self.selected and
-                now>=self.discovery_retry_at.get(p['series'],0)}
+        # The hosted experiment checkpoint owns durable wake hints, including
+        # 15-minute contracts with exchange-confirmed future open timestamps.
+        # Standalone replay/forward runs use the same scheduler in memory.
+        wake_store=getattr(self,'experiments',self)
+        wanted={}
+        for p in self.profiles:
+            series=p['series']
+            if series in self.selected:continue
+            key='fifteen:'+series
+            session=session_wake(series,now)
+            if session is not None:
+                remember(wake_store,key,session,now)
+                self.discovery_retry_at[series]=session
+                continue
+            if not asleep(wake_store,key,now) and now>=self.discovery_retry_at.get(series,0):
+                wanted[series]=p
         if not wanted:return
         try:
             rows,cursor,seen=[],'',set()
@@ -160,15 +176,58 @@ class ForwardRun:
         except asyncio.CancelledError:raise
         except Exception as exc:
             await self.metadata_unavailable('discovery',exc);return
+        # Only a few new future-window catalogue reads per pass. The normal
+        # live-market query stays fast for continuously rolling crypto series.
+        # Inactive series get a verified next wake rather than 2-second polling.
+        future_read_budget=2 if hasattr(self,'experiments') else 0
+        if not hasattr(self,'discovery_future_retry_at'):
+            self.discovery_future_retry_at={}
         for series,profile in wanted.items():
             try:
                 candidates=[m for m in rows if isinstance(m,dict) and m.get('ticker','').startswith(series+'-') and
                     m.get('status')=='active' and ts(m['open_time'])<=now and
                     0<ts(m['close_time'])-now<=900 and m['ticker'] not in self.engine.markets]
                 if not candidates:
-                    # Long-inactive families wait 15 minutes. Known rolling
-                    # families retry quickly across the brief close/open boundary.
-                    self.discovery_retry_at[series]=now+(2 if series in self.known_active else 900)
+                    key='fifteen:'+series
+                    # Preserve any announced future market returned by the
+                    # current listing. It must still be active and freshly
+                    # verified when the clock reaches its opening.
+                    future=[known_entry_wake(m,'15m',now) for m in rows
+                        if isinstance(m,dict) and m.get('ticker','').startswith(series+'-')]
+                    future=[at for at in future if at is not None]
+                    # The public API has a separate unopened-market filter.
+                    # Do not guess that a commodity/index opens around the
+                    # clock; fetch known future open_time at low rate.
+                    if (not future and future_read_budget>0 and
+                            now>=self.discovery_future_retry_at.get(series,0)):
+                        future_read_budget-=1
+                        self.discovery_future_retry_at[series]=now+900
+                        try:
+                            pre=await self.api.fetch('/markets',dict(status='unopened',
+                                series_ticker=series,min_close_ts=int(now),
+                                max_close_ts=int(now+7*86400),limit=100))
+                            if not pre.get('cursor'):
+                                future=[known_entry_wake(m,'15m',now)
+                                    for m in pre.get('markets',[])
+                                    if isinstance(m,dict) and
+                                       m.get('ticker','').startswith(series+'-')]
+                                future=[at for at in future if at is not None]
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            await self.metadata_unavailable('future_listing',exc,series=series)
+                    if future:
+                        wake=min(future)
+                        remember(wake_store,key,wake,now)
+                        self.discovery_retry_at[series]=wake
+                        continue
+                    # Fast retry only during a genuinely recent 15-minute
+                    # rollover, not every two seconds during a closed session.
+                    most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
+                        if t.startswith(series+'-')),default=0)
+                    near_roll=(series in self.known_active and
+                        0<=now-most_recent_close<60)
+                    self.discovery_retry_at[series]=now+(2 if near_roll else 900)
                     continue
                 market=min(candidates,key=lambda m:ts(m['close_time']))
                 metadata,fee=await self.market_metadata(market,series)
