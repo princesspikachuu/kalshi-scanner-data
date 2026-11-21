@@ -52,6 +52,9 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         records=[json.loads(call.args[0]) for call in output.call_args_list]
         summary=next(row for row in records if row['event']=='paper_position_settlement_poll_health')
         self.assertEqual(summary['held_markets'],4)
+        self.assertEqual(summary['held_by_folder'],{'favorites':4})
+        self.assertEqual(len(summary['oldest_favorites']),3)
+        self.assertEqual(summary['oldest_unresolved'][0]['folders'],['favorites'])
         self.assertEqual(summary['rest_calls'],4)
         self.assertEqual(summary['poll_outcomes'],dict(venue_not_final=1,
             finalized_missing_result=1,ticker_mismatch=1,lookup_error=1))
@@ -107,6 +110,27 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary['age_groups']['over_120m'],7)
         self.assertNotIn('untrusted-secret-marker',json.dumps(summary))
         self.assertEqual(len(calls),4)
+        self.assertFalse(queued)
+
+    async def test_shared_ticker_counts_once_globally_but_attributes_both_folders(self):
+        results={name:dict(ticker=name,status='closed',result='')
+                 for name in ('a','b','c','z')}
+        host,calls,queued=self.host(results)
+        favorite=host.experiments.portfolios['favorites'][0]
+        favorite.wallet.lots=[lot for lot in favorite.wallet.lots if lot.ticker!='z']
+        other=S(markets={t:dict(close=10,paid=False) for t in ('b','z')},
+                wallet=S(lots=[S(ticker=t,quantity=D(1)) for t in ('b','z')]))
+        host.experiments.portfolios['other']=(other,None,None)
+        with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=1000), patch('builtins.print') as output:
+            await recover_once(host)
+        summary=next(json.loads(c.args[0]) for c in output.call_args_list
+                     if json.loads(c.args[0])['event']=='paper_position_settlement_poll_health')
+        self.assertEqual(summary['held_markets'],4)
+        self.assertEqual(summary['held_by_folder'],dict(favorites=3,other=2))
+        shared=next(row for row in summary['oldest_unresolved'] if row['ticker']=='b')
+        self.assertEqual(shared['folders'],['favorites','other'])
+        self.assertEqual([row['ticker'] for row in summary['oldest_favorites']],['a','b','c'])
+        self.assertEqual(calls,['a','b','c','z'])
         self.assertFalse(queued)
 
     async def test_actual_consumer_pays_held_experiment_once_after_legacy_rollover(self):
