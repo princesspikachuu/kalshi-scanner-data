@@ -192,10 +192,36 @@ def favorite_collector_timed_totals(folder_bots,profiles):
             market_type=row.get('market_type') or kind
             key=(kind,str(market_type),str(clock),horizon,cents)
             cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
-            merge(returns.setdefault(key,{}),row.get('return_events',{}))
+            # Only a separately confirmed event outcome can support held P/L.
+            # Orphan returns and explicit realized-exit reports are not evidence
+            # of the result we would have obtained by holding to settlement.
+            # Normalize IDs within this *read-only* rollup; source rows remain
+            # untouched, including any old/incomplete historical records.
+            observed=row.get('outcome_events')
+            verified={}
+            if isinstance(observed,dict):
+                for event,payout in observed.items():
+                    if payout not in (0,1,'0','1'):continue
+                    identity=str(event)
+                    verified[identity]=min(verified.get(identity,1),int(payout))
+            if row.get('return_policy') != 'all_executions' and isinstance(row.get('return_events'),dict):
+                eligible={}
+                for event,value in row['return_events'].items():
+                    identity=str(event)
+                    if identity not in verified or not isinstance(value,dict):continue
+                    try:
+                        cost=D(str(value.get('cost')))
+                        net=D(str(value.get('net')))
+                    except (ValueError,ArithmeticError,TypeError):
+                        continue
+                    if not cost.is_finite() or cost<=0 or not net.is_finite():continue
+                    merge(eligible,{identity:dict(cost=str(cost),net=str(net),
+                        estimated=bool(value.get('estimated')))})
+                merge(returns.setdefault(key,{}),eligible)
             if 'outcome_events' in row:
                 merged=outcomes.setdefault(key,{})
-                for event,value in row['outcome_events'].items():merged[event]=min(merged.get(event,1),int(value))
+                for event,payout in verified.items():
+                    merged[event]=min(merged.get(event,1),payout)
             for field in FAVORITE_TIMING_FIELDS:
                 if field in ('events','event_wins') and 'outcome_events' in row:continue
                 if field=='event_wins':
