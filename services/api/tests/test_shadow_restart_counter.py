@@ -31,11 +31,11 @@ class RestartCounterTests(unittest.TestCase):
     def test_unknown_is_not_misreported_as_zero_and_stale_events_age_out(self):
         self.assertIsNone(summarize(None,100000)['restarts_24h'])
         db=FakeStore()
-        db.put(KEY,dict(tracking_since=1000,last_started_at=2000,
-                        recent_restarts=[1000,1001,86401,86402]))
-        result=summarize(db.get(KEY)['progress'],86402)
+        db.put(KEY,dict(tracking_since=100,last_started_at=2000,
+                        recent_restarts=[100,101,86500,86501]))
+        result=summarize(db.get(KEY)['progress'],86502)
         self.assertEqual(result['restarts_24h'],2)
-        self.assertEqual(db.get(KEY)['progress']['recent_restarts'],[1000,1001,86401,86402])
+        self.assertEqual(db.get(KEY)['progress']['recent_restarts'],[100,101,86500,86501])
         self.assertTrue(result['full_window'])
 
     def test_extreme_restarts_preserve_bounded_row_and_mark_lower_bound(self):
