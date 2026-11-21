@@ -168,6 +168,17 @@ class RegularFavoritesProfitAuditTests(unittest.TestCase):
             self.assertEqual(view['return_observations'],1)
             self.assertEqual(D(view['average_return_pct']),25)
 
+    def test_legacy_win_counts_without_event_identity_do_not_invent_independent_trials(self):
+        row=self.row(outcomes={},returns={'not-confirmed':dict(cost='.75',net='.25')},
+            policy='all_executions')
+        row.update(events=1,event_win_rate=100,resolved='1',winners='1')
+        original=copy.deepcopy(row)
+        summary=self.aggregate([row])
+        self.assertEqual(row,original)
+        self.assertEqual(D(summary['events']),0)
+        self.assertEqual(summary['return_observations'],0)
+        self.assertIsNone(summary['average_return_pct'])
+
     def test_conservative_correlated_event_label_does_not_override_confirmed_cash_payout(self):
         # The same venue event can contain several thresholds. A conservative
         # event-level loss label must not overwrite this entry's paid side.
