@@ -1772,7 +1772,7 @@ Determine whether regular High Probability Favorites one-contract maker bids res
 ---
 
 ## MT-025 — Warn when regular Favorites recovery backup coverage is overdue
-**Status:** IN PROGRESS — isolated safety alert and regression tests  
+**Status:** DONE — merged, validated, deployed and runtime-verified  
 **Worker:** ChatGPT / regular Favorites backup freshness  
 **Claimed:** 2026-11-21 UTC  
 **Urgency:** U1 — URGENT  
@@ -1789,4 +1789,8 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 - Do not deploy until full API/PostgreSQL CI passes and no active branch conflict; verify Render live service and 75 regular Favorites / zero Statistics-Backed bots if merged.
 
 ### Completion notes
-_In progress: add testable receipt freshness classification, independent alert, and post-maintenance report. PR pending._
+- **Merged:** [PR #327](https://github.com/princesspikachuu/kalshi-scanner-data/pull/327), squash commit `b303b38ffca70835b14897dedee5ba8eb146611e` in `build/google-auth-foundation` after exact PR-head full API/PostgreSQL test suite [44945912184](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44945912184) passed. Two old tests assuming only one maintenance event/alert were corrected to preserve the original backup failure assertions alongside the independent freshness warning. Both post-merge checks [44946387575](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44946387575) (push) and [44946392147](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44946392147) (PR) passed.
+- **Files:** `services/demo/maintenance.py`, `services/api/tests/test_maintenance_failure_details.py`, `services/api/tests/test_backup_diagnostics.py`. The existing five-minute maintenance loop now reports age of last *recorded verified* backup receipt and raises/clears only the separate `backup-freshness` alert when missing/unverified/older than configured hours. No current R2 check is implied; `r2_rechecked=false` is explicit in logs. Exception text, object keys and record values are not emitted.
+- **Deployment:** Render staging worker deployed exact `b303b38` at **2026-11-21 20:32:49 UTC**, then newer descendant `fd402eeb` (includes this commit) went LIVE at **20:33:35 UTC**. Replacement worker recorded `demo_worker_ready` at **20:34:51 UTC** after exclusive lock handoff.
+- **Runtime acceptance:** `demo_backup_freshness` at **2026-11-21 20:35:52 UTC**: `state=fresh`, `recorded_verified=true`, `age_minutes=85`, `backup_interval_hours=24`, `r2_rechecked=false`. This is a fresh *recorded receipt*, not a newly uploaded or independently re-restored archive. At 20:36:02 UTC, **75** regular Favorites bots and **0** Statistics-Backed Favorites bots were running; real orders disabled. No `demo_backup_freshness_unavailable` or `demo_backup_verification_failed` in the sampled post-start window.
+- **Follow-up owned by MT-019:** Await next successful complete verified backup with `scope_sizes` and `favorites_shadow_bot_sizes` for measured, lossless cold-history storage planning. Keep `MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED=false` until actual R2 lifecycle + retained-root restore audit; no new backup schedule, deleted history, or new strategy activity.
