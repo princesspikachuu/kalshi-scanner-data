@@ -211,13 +211,27 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
 }
 
 export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode==='detailed'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button> <button class="secondary" data-favorite-table="single" aria-pressed="${mode==='single'}">Single bucket</button><p class="small">${mode==='single'?'P/L = mean held-to-settlement return across distinct events. 90% uncertainty estimates the range for the average return, not the win rate. Correlated events can make this optimistic.':'Win margin = win rate − entry cost with fees. 90% uncertainty describes the win rate, not hold P/L. Related events can be correlated.'}</p></div>`;
+// Expose the key single-bucket numbers without opening every category table.
+function favoriteSingleHeadlineMarkup(sample){
+ if(!sample)return '';
+ const valid=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+ const n=Number.isSafeInteger(Number(sample.return_observations))&&Number(sample.return_observations)>=0
+   ?Number(sample.return_observations):null;
+ const avg=valid(sample.average_return_pct)?Number(sample.average_return_pct):null;
+ const error=valid(sample.uncertainty90_pct)&&Number(sample.uncertainty90_pct)>=0
+   ?Number(sample.uncertainty90_pct):null;
+ const pnl=avg===null?'Hold P/L —':'Hold P/L '+(avg>0?'+':'')+avg.toFixed(2)+'%';
+ const uncertainty=error===null?'90% uncertainty —':'90% ±'+error.toFixed(2)+' points';
+ return '<small class="favorite-single-headline">'+e(pnl)+' · '+e(uncertainty)+
+   ' · n='+e(n===null?'—':String(n))+'</small>';
+}
 export function favoriteSingleOverviewMarkup(bots=[],summary=null,open=new Set()){
  const groups=marketTypeGroups(bots);
  const sections=groups.map(group=>{
   const key='favorites-collector-'+group.id,stat=summary?.rows?.[group.id];
   const sports=group.id==='sports'?group.bots.map(bot=>
    '<div class="favorite-single-sport"><h4>'+e(bot.name)+'</h4>'+favoriteSingleCellMarkup(summary?.by_bot?.[bot.id])+'</div>').join(''):'';
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+favoriteSingleCellMarkup(stat)+sports+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+favoriteSingleHeadlineMarkup(stat)+'</summary>'+favoriteSingleCellMarkup(stat)+sports+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview favorite-single-overview"><h3>High-Probability Favorites · single bucket</h3><p class="small">All verified event-level held returns pooled across entry prices and times, including records that cannot be placed in the 3 × 3 table. Repeated events count once per table.</p>'+sections+'</section>';
 }
