@@ -47,6 +47,10 @@ class DataMode(unittest.TestCase):
         self.assertTrue(newer.maker)
         self.assertEqual(old.status,'resting')
         self.assertFalse(any(action=='cancel' and ident==old.id for _,_,action,ident in e.pending))
+        e.advance(224);book.at=224;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual({o.status for o in e.orders.values()},{'resting'})
+        self.assertFalse(any(action=='cancel' for _,_,action,_ in e.pending))
 
     def test_decision_records_policy_size_and_order_link_for_analysis(self):
         e,b,_=fixture.MakerEntries().setup_bot();b.step();o=next(iter(e.orders.values()))
