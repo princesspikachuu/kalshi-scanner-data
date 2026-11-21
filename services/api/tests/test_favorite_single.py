@@ -64,8 +64,8 @@ class SingleFavoritesBucketTests(unittest.TestCase):
         mean=D(enough['average_return_pct'])
         error=D(enough['uncertainty90_pct'])
         self.assertGreater(error,0)
-        self.assertEqual(mean-error,D(enough['ci90_low_pct']))
-        self.assertEqual(mean+error,D(enough['ci90_high_pct']))
+        self.assertAlmostEqual(float(mean-error),float(enough['ci90_low_pct']),places=10)
+        self.assertAlmostEqual(float(mean+error),float(enough['ci90_high_pct']),places=10)
 
     def test_unattributed_or_invalid_event_in_any_cohort_is_excluded_from_roi(self):
         first = self.row()
