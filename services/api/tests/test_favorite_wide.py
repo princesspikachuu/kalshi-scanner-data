@@ -65,3 +65,8 @@ class WideBuckets(unittest.TestCase):
         result=self.summary([],series='KXUSDCADAH',asset='hourly')
         self.assertEqual(result['rows']['category'],[])
         self.assertEqual(result['coverage']['category']['time_buckets'],['0m–20m','20m–40m','40m–60m'])
+
+    def test_short_observed_windows_have_distinct_time_labels(self):
+        row=self.row(time_min=3600,time_max=3601,wide_events={'one':[[3600,'1','.75','.25'],[3601,'1','.75','.25']]})
+        labels=self.summary([row],series='SPORT',asset='sports')['coverage']['category']['time_buckets']
+        self.assertEqual(len(set(labels)),3)

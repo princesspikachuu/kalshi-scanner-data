@@ -182,8 +182,8 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set()){
  const sections=categories.map(category=>{
   const rows=summary?.rows?.[category]||[],coverage=summary?.coverage?.[category]||{};
   const times=coverage.time_buckets||[],key='favorites-wide-'+category;
-  const body=prices.map(price=>'<tr><th scope="row">'+e(price)+'</th>'+times.map(time=>{
-   const row=rows.find(r=>r.band===price&&r.horizon===time);
+  const body=prices.map(price=>'<tr><th scope="row">'+e(price)+'</th>'+times.map((time,slot)=>{
+   const row=rows.find(r=>r.band===price&&Number(r.time_slot)===slot);
    if(!row)return '<td class="stat-empty">—</td>';
    const n=Number(row.events),wins=Number(row.event_wins),entry=Number(row.cost)/Number(row.contracts);
    const c=confidenceMarkup(wins,n,entry),ret=averageReturn(row);
