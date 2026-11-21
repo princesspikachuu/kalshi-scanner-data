@@ -242,6 +242,19 @@ export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-setti
 function favoriteSingleHeadlineMarkup(sample){
  if(!sample)return '';
  const valid=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+ const n=Number.isSafeInteger(Number(sample.return_observations))&&Number(sample.return_observations)>=0
+   ?Number(sample.return_observations):null;
+ const avg=valid(sample.average_return_pct)?Number(sample.average_return_pct):null;
+ const error=valid(sample.uncertainty90_pct)&&Number(sample.uncertainty90_pct)>=0
+   ?Number(sample.uncertainty90_pct):null;
+ const pnl=avg===null?'Hold P/L —':'Hold P/L '+(avg>0?'+':'')+avg.toFixed(2)+'%';
+ const uncertainty=error===null?'90% uncertainty —':'90% ±'+error.toFixed(2)+' points';
+ return '<small class="favorite-single-headline">'+e(pnl)+' · '+e(uncertainty)+
+   ' · n='+e(n===null?'—':String(n))+'</small>';
+}
+function favoriteRegularSingleHeadlineMarkup(sample){
+ if(!sample)return '';
+ const valid=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
  const {n,min,error,provisional}=heldReturnUncertainty(sample);
  const avg=valid(sample.average_return_pct)?Number(sample.average_return_pct):null;
 
@@ -256,7 +269,7 @@ export function favoriteSingleOverviewMarkup(bots=[],summary=null,open=new Set()
   const key='favorites-collector-'+group.id,stat=summary?.rows?.[group.id];
   const sports=group.id==='sports'?group.bots.map(bot=>
    '<div class="favorite-single-sport"><h4>'+e(bot.name)+'</h4>'+favoriteSingleCellMarkup(summary?.by_bot?.[bot.id],{starScope:'market:'+bot.id,starredBuckets:stars})+'</div>').join(''):'';
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+favoriteSingleHeadlineMarkup(stat)+'</summary>'+favoriteSingleCellMarkup(stat,{starScope:'collector:'+group.id,starredBuckets:stars})+sports+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+favoriteRegularSingleHeadlineMarkup(stat)+'</summary>'+favoriteSingleCellMarkup(stat,{starScope:'collector:'+group.id,starredBuckets:stars})+sports+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview favorite-single-overview"><h3>High-Probability Favorites · single bucket</h3><p class="small">All verified event-level held returns pooled across entry prices and times, including records that cannot be placed in the 3 × 3 table. Repeated events count once per table.</p>'+sections+'</section>';
 }
@@ -294,17 +307,18 @@ export function favoriteTimingMarkup(rows,wideRows=null,options={}){
 
 function statisticsHoldEvidenceText(sample){
  const available=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
- const {n,min,error,provisional}=heldReturnUncertainty(sample);
+ const n=Number(sample?.return_observations)||0;
  const avg=available(sample?.average_return_pct)?Number(sample.average_return_pct):null;
+ const err=available(sample?.uncertainty90_pct)?Number(sample.uncertainty90_pct):null;
  const pnl=avg===null?'Hold P/L —':'Hold P/L '+(avg>0?'+':'')+avg.toFixed(2)+'%';
- return pnl+' · '+(provisional?'90% uncertainty pending '+n+'/'+min:error===null?'90% uncertainty —':'90% ±'+error.toFixed(2)+' points')+' · n='+n+' held';
+ return pnl+' · '+(err===null?'90% uncertainty —':'90% ±'+err.toFixed(2)+' points')+' · n='+n+' held';
 }
 export function favoriteStatisticsMatrixMarkup(statistics,open=new Set(),holdSummary=null,stars=new Set()){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
  const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='exploration_candidate'?'Exploration opportunity · sparse':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
- return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A numerical 90% held-P/L interval needs at least 20 distinct held-event returns, including gains and losses; this is not a guarantee of profitability. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
+ return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A 90% held-P/L interval requires independent observed gains and losses. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
    const key='favorites-stat-'+grid.market_type;
