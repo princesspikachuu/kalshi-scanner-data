@@ -1745,7 +1745,7 @@ Independently validate *actual* regular High-Probability Favorites observation c
 ---
 
 ## MT-024 — Measure regular Favorites maker-bid resting lifetime and cancellation outcomes
-**Status:** IN PROGRESS  
+**Status:** DONE — merged, post-merge CI passed, exact Render release and live diagnostic verified  
 **Worker:** ChatGPT / regular Favorites quote lifecycle  
 **Claimed:** 2026-11-21 UTC  
 **Urgency:** U2 — HIGH  
@@ -1762,7 +1762,12 @@ Determine whether regular High Probability Favorites one-contract maker bids res
 - Development base `build/google-auth-foundation`; PR draft until focused and complete CI pass; verify exact Render deploy and worker health if merged.
 
 ### Completion notes
-Pending implementation / CI / runtime verification. Record branch, PR, commit, observations, and limitations here.
+- **Implementation:** [PR #328](https://github.com/princesspikachuu/kalshi-scanner-data/pull/328), branch `feat/mt024-favorites-quote-lifecycle-20261121`, merged into `build/google-auth-foundation` as **`fd402eeb489acecc2c10430a1ac9d31f7ea4ca7e`**. Four isolated files: new `services/paper_demo/shadow/favorite_quote_lifecycle.py`; optional inert-by-default observer in `core.py`; regular-`favorites`-only hook and 30-second log in `host.py`; new `test_favorites_quote_lifecycle.py`. No strategy orders, prices, cash, fees, exposure, settlement, checkpoint, SQL/R2, real-money or other-portfolio modifications.
+- **Measured diagnostics:** 5-minute rolling ephemeral bounded tracking: max 2,048 in-memory open order references and 4,096 event tuples; unique known exchange events vs quotes; first partial fill vs repeated fill events; completed/cancelled/expired/rejected and still-resting right-censored bids; median/p90 live/resting/cancel acknowledgment ages; explicit restored, missing exchange event ID and dropped/observer error counters. A missing exchange event identity is never invented from a ticker.
+- **Testing:** Exact PR head `708a8ae46619d5a00867ff884d811a6cd40213d0` passed Favorites CI run `44945966041` and full API/PostgreSQL run `44945966100`; prior revision also passed. Post-merge exact SHA CI runs `44946457083` (push) and `44946461456` (PR) both passed. Concurrent MT-023 coverage and backup maintenance changes were preserved, no conflicting file overlap.
+- **Render:** `pocket-processing-staging` automatic deploy `dep-dc0vvlk8mias73cq5ncg` verified **live** at **2026-11-21 20:33:35 UTC** on exact merge SHA `fd402eeb...`. Replacement worker instance `x4kqm` recorded exclusive `shadow_worker_start_recorded` and `demo_worker_ready` at **20:34:51 UTC**, following `demo_lock_wait`. Prior worker continued until fenced handoff; no duplicate paper worker execution observed. At 20:35:31Z new instance reported **75 regular Favorites bots, 10 fresh books, two orders, zero Statistics-Backed bots, real_orders_enabled=false**, live worker RSS 320,835,584B (14.9% of 2GiB), backlog=0, admitting=true. Settlement polling preserved (four REST polls of six held markets, venue_not_final).
+- **New event observed:** `favorites_quote_lifecycle` emitted first at 20:35:01Z, then a populated 20:35:31Z sample with **2 bids submitted on 2 distinct events, both resting, 29.69s median rest age, 0 fills, 0 observer errors**. Neither bid is a failed trade or an independent settled observation yet. Restart-scope counters need accumulated time and repeat quote/fill samples before judging fill rates. No 24-hour memory stability or strategy edge inferred.
+- **Next owner action:** Use enough settled-event windows to compare actual maker resting times and terminal causes; MT-018 independently owns market discovery/category balancing, MT-011 owns resource growth, MT-019 backup safety, MT-023 research coverage.
 
 ---
 
