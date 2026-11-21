@@ -624,23 +624,30 @@ test('large collapsed folders defer detailed cards and render them when expanded
  assert.equal(JSON.parse(storage.get('moneytree-folder-views')).open.includes('favorites'),true);
 });
 
-test('high-probability Favorites collector table is visible directly within its folder',()=>{
+test('high-probability collector matrices display event observations not contracts',()=>{
  const d=fixture();
  d.bots.find(b=>b.id==='favorites').experiment.entry_timing=[
-  {series:'KXBTC15M',market_type:'15m_price',side:'yes',clock:'market_close',horizon:'10–15m',price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',cost:'4',net:'-.2',holding_seconds:'1200'},
-  {series:'KXBTC15M',market_type:'15m_price',side:'no',clock:'market_close',horizon:'10–15m',price:'.85',contracts:'6',closed:'5',resolved:'5',winners:'4',cost:'5',net:'.2',holding_seconds:'1500'}
+  {series:'KXBTC15M',market_type:'15m_price',side:'yes',clock:'market_close',
+   horizon:'10–15m',price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',
+   cost:'4',net:'-.2',holding_seconds:'1200',events:1,event_win_rate:100},
+  {series:'KXBTC15M',market_type:'15m_price',side:'no',clock:'market_close',
+   horizon:'10–15m',price:'.85',contracts:'6',closed:'5',resolved:'5',winners:'4',
+   cost:'5',net:'.2',holding_seconds:'1500',events:1,event_win_rate:100}
  ];
  const html=setup(d).nodes.get('groups').innerHTML;
  const root=html.indexOf('id="folder-favorites"');
  const table=html.indexOf('High-Probability Favorites · price × time matrix',root);
  const category=html.indexOf('data-market-type="favorites::crypto-15m"',root);
- assert.ok(root>=0&&table>root&&category>table,'the collected table precedes nested market cards');
- for(const phrase of ['80–84¢','85–89¢','10–15m','75.0%','80.0%','n=4 settled','n=5 settled','P/L'])
-  assert.ok(html.includes(phrase),phrase);
+ assert.ok(root>=0&&table>root&&category>table);
+ for(const phrase of ['80–84¢','85–89¢','10–15m','n=1','P/L'])assert.ok(html.includes(phrase),phrase);
+ assert.doesNotMatch(html,/n=5 settled|n=4 settled/);
 });
-test('large collector folder restores its statistics when opened, including paused history',()=>{
+
+test('large collector folder restores one observation for a multi-contract trade',()=>{
  const d=fixture(),base=d.bots.find(b=>b.id==='favorites');
- base.experiment.entry_timing=[{series:base.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'5–10m',price:'.75',contracts:'7',closed:'5',resolved:'5',winners:'4',cost:'5.25',net:'.4'}];
+ base.experiment.entry_timing=[{series:base.series,market_type:'15m_price',side:'yes',
+  clock:'market_close',horizon:'5–10m',price:'.75',contracts:'7',closed:'5',
+  resolved:'5',winners:'4',cost:'5.25',net:'.4',events:1,event_win_rate:100}];
  for(let i=0;i<24;i++)d.bots.push({...base,id:'fav-extra-'+i,name:'Favorite '+i,experiment:{...base.experiment,entry_timing:[]}});
  d.bots.find(b=>b.id==='fav-extra-3').desired='paused';
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true};
@@ -650,20 +657,22 @@ test('large collector folder restores its statistics when opened, including paus
  const html=nodes.get('groups').innerHTML;
  assert.ok(html.includes('High-Probability Favorites · price × time matrix'));
  assert.ok(html.includes('75–79¢'));
- assert.ok(html.includes('n=5 settled'), 'stored collector outcomes remain visible');
+ assert.ok(html.includes('n=1'),'seven contracts do not become seven event observations');
 });
 
-test('collector matrix does not replace existing category research and excludes unsettled outcomes',()=>{
+test('collector matrix preserves category research and does not invent pending observations',()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');
  bot.experiment.entry_timing=[
- {series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',horizon:'5–10m',price:'.70',contracts:'10',closed:'5',resolved:'5',winners:'4',cost:'7',net:'.2'},
- {series:bot.series,market_type:'15m_price',side:'no',clock:'market_close',horizon:'5–10m',price:'.72',contracts:'3',closed:'0',resolved:'0',winners:'0',cost:'2.16',net:'0'}
+  {series:bot.series,market_type:'15m_price',side:'yes',clock:'market_close',
+   horizon:'5–10m',price:'.70',contracts:'10',closed:'5',resolved:'5',winners:'4',
+   cost:'7',net:'.2',events:1,event_win_rate:100},
+  {series:bot.series,market_type:'15m_price',side:'no',clock:'market_close',
+   horizon:'5–10m',price:'.72',contracts:'3',closed:'0',resolved:'0',winners:'0',cost:'2.16',net:'0'}
  ];
  const html=setup(d).nodes.get('groups').innerHTML;
  assert.ok(html.includes('High-Probability Favorites · price × time matrix'));
- assert.ok(html.includes('Combined data · time × percentage tier'),'old research remains');
- assert.ok(html.includes('70–74¢'));assert.ok(html.includes('80.0%'));
- assert.ok(html.includes('n=5 settled'));assert.ok(html.includes('Purchased 13'));
- assert.ok(html.includes('still open/unsettled 8'));
- assert.ok(!html.includes('n=13 settled'));
+ assert.ok(html.includes('Combined data · time × percentage tier'));
+ assert.ok(html.includes('70–74¢'));
+ assert.ok(html.includes('n=1'));
+ assert.doesNotMatch(html,/Purchased 13|n=13 settled/);
 });
