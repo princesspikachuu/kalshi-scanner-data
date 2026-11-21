@@ -108,6 +108,24 @@ def _entry_amounts(row, outcomes):
             yield event, D(1), mean_unit, True
 
 
+def _settlement_payout(row, outcomes, event):
+    """Use authoritative paid-contract totals for a fully resolved one-event row.
+
+    An event identity can combine correlated threshold contracts. The event's
+    conservative binary label may be adverse even when this *particular*
+    entry side actually paid. Keep the conservative label for win statistics,
+    but never substitute it for a known cash payout.
+    """
+    if len(outcomes) == 1:
+        qty = _number(row.get('contracts'))
+        resolved = _number(row.get('resolved'))
+        winners = _number(row.get('winners'))
+        if (qty is not None and qty > 0 and resolved == qty
+                and winners in (D(0), resolved)):
+            return winners / resolved
+    return D(outcomes[event])
+
+
 def regular_favorites_held_row(row):
     """Return a new research row, with known exits treated as held trades.
 
@@ -132,7 +150,8 @@ def regular_favorites_held_row(row):
                 returns[event] = dict(cost=str(original_cost), net=str(original_net),
                     **({'estimated': True} if existing.get('estimated') else {}))
                 continue
-        returns[event] = dict(cost=str(cost), net=str(quantity * D(outcomes[event]) - cost),
+        payout = _settlement_payout(row, outcomes, event)
+        returns[event] = dict(cost=str(cost), net=str(quantity * payout - cost),
                               **({'estimated': True} if estimated else {}))
 
     # Preserve a known exact hold record even if aggregate row size metadata
@@ -164,8 +183,9 @@ def regular_favorites_held_row(row):
                     continue
                 if policy == 'all_executions':
                     # Never carry a real exit's P/L into the wide held view.
+                    payout = _settlement_payout(row, outcomes, event)
                     valid_records.append([record[0], str(q), str(cost),
-                                          str(q * D(outcomes[event]) - cost)])
+                                          str(q * payout - cost)])
                 else:
                     valid_records.append(list(record))
             if valid_records:
