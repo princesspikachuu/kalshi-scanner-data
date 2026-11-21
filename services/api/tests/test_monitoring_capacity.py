@@ -11,16 +11,29 @@ class BudgetTests(unittest.TestCase):
     def test_cold_or_stale_measurements_do_not_authorize_new_subscriptions(self):
         b=MonitoringBudget();self.assertFalse(b.limits(100)['admitting'])
         b.observe(100,0,.01,1);self.assertTrue(b.limits(100)['admitting']);self.assertFalse(b.limits(111)['admitting'])
-    def test_capacity_grows_in_stages_after_sustained_healthy_load(self):
+    def test_healthy_worker_has_no_static_market_count_limits(self):
         b=MonitoringBudget()
         for now in range(0,241,5):b.observe(now,0,.02,2)
-        self.assertEqual(b.limits(240)['total'],48);self.assertEqual(b.limits(240)['entry_candidates'],23)
-        self.assertEqual(b.limits(240)['per_category'],12)
+        stats=b.limits(240)
+        self.assertTrue(stats['admitting'])
+        self.assertEqual(stats['level'],2)
+        self.assertTrue(stats['market_count_caps_removed'])
+        self.assertIsNone(stats['total']);self.assertIsNone(stats['entry_candidates'])
+        self.assertIsNone(stats['per_category'])
     def test_backlog_lag_processing_cost_and_read_cooldown_each_pause_admission(self):
         for values in ((300,.1,2,0),(0,3,2,0),(0,.1,101,0),(0,.1,2,30)):
             with self.subTest(values=values):
                 b=MonitoringBudget();b.observe(100,*values)
                 self.assertFalse(b.limits(100)['admitting']);self.assertEqual(b.limits(100)['level'],0)
+    def test_current_memory_pressure_pauses_new_admission_without_market_count_limit(self):
+        b=MonitoringBudget()
+        b.observe(100,0,.01,.2,rss_bytes=1700,memory_limit_bytes=2000)
+        self.assertFalse(b.limits(100)['admitting'])
+        self.assertIn('memory pressure',b.limits(100)['reason'])
+        b.observe(105,0,.01,.2,rss_bytes=900,memory_limit_bytes=2000)
+        self.assertTrue(b.limits(105)['admitting'])
+        self.assertEqual(b.limits(105)['memory_pressure'],.45)
+
     def test_fast_burst_does_not_block_admission_by_count_alone(self):
         b=MonitoringBudget();b.observe(100,600,.002,.2)
         self.assertTrue(b.limits(100)['admitting']);self.assertAlmostEqual(b.limits(100)['estimated_queue_seconds'],.12)
@@ -30,8 +43,8 @@ class BudgetTests(unittest.TestCase):
         self.assertFalse(b.limits(100)['admitting'])
     def test_one_healthy_sample_after_overload_cannot_immediately_restore_expansion(self):
         b=MonitoringBudget();b.observe(0,300,.1,1);b.observe(65,0,.1,1)
-        self.assertEqual(b.limits(65)['total'],32)
-        b.observe(180,0,.1,1);self.assertEqual(b.limits(180)['total'],32)
+        self.assertEqual(b.limits(65)['level'],0)
+        b.observe(180,0,.1,1);self.assertEqual(b.limits(180)['level'],0)
 
 class AllocationTests(unittest.TestCase):
     def suite(self):return scope_tests.ScopeTests().suite()[0]
@@ -58,9 +71,9 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(stats['legacy_markets'],1)
         self.assertEqual(stats['subscribed_markets'],1)
 
-    def test_total_limit_still_blocks_admission_and_never_evicts_positions(self):
+    def test_no_fixed_subscription_ceiling_and_never_evicts_existing_positions(self):
         s=self.suite();s.host.engine.markets={str(i):dict(close=10000) for i in range(48)}
-        self.assertFalse(s.extra_capacity(['new'],100));self.assertEqual(len(s.host.engine.markets),48)
+        self.assertTrue(s.extra_capacity(['new'],100));self.assertEqual(len(s.host.engine.markets),48)
     def test_global_rotation_keeps_other_strategy_inventory_and_active_orders(self):
         s=self.suite();t='KXHIGHNY-HELD';self.add(s,t)
         seq=s.portfolios['sequential'][0];fav=s.portfolios['favorites'][0]

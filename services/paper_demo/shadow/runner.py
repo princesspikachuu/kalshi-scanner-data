@@ -20,6 +20,8 @@ from services.paper_demo.read_budget import PRODUCTION_READS
 from services.paper_demo.telemetry import measure_request,request_sent
 from services.demo.exchange import PATH,ExchangeFailure
 from .core import Audit, ConvexityStrategy, Engine, FeePolicy, StrategyFleet
+from .schedules import session_wake
+from .discovery_wake import asleep, remember, known_entry_wake
 
 LOG = logging.getLogger('shadow')
 BASE = 'https://external-api.kalshi.com/trade-api/v2'
@@ -126,6 +128,18 @@ class ForwardRun:
         await self.put('metadata_retry',dict(scope=scope,ticker=None if rate_limited else ticker,
             series=series,reason=reason,status=status,code=code or type(exc).__name__))
 
+    def legacy_discovery_required(self,series):
+        """Only active hosted legacy bots may discover additional contracts.
+
+        Selected positions are still checked for settlement separately.
+        Standalone/replay operation retains its original discovery semantics.
+        """
+        if getattr(self,'suspend_idle_feeds',False) is not True:return True
+        bots=getattr(getattr(self,'strategy',None),'bots',None)
+        if not isinstance(bots,dict):return True
+        bot=bots.get(series)
+        return bot is None or bool(getattr(bot,'enabled',True))
+
     async def discover_once(self):
         if not hasattr(self,'discovery_retry_at'):self.discovery_retry_at={}
         if not hasattr(self,'known_active'):self.known_active=set(self.selected)
@@ -143,8 +157,40 @@ class ForwardRun:
             except Exception as exc:
                 await self.metadata_unavailable('settlement',exc,ticker=ticker,series=series)
         now=time.time()
-        wanted={p['series']:p for p in self.profiles if p['series'] not in self.selected and
-                now>=self.discovery_retry_at.get(p['series'],0)}
+        # The hosted experiment checkpoint owns durable wake hints, including
+        # 15-minute contracts with exchange-confirmed future open timestamps.
+        # Standalone replay/forward runs use the same scheduler in memory.
+        wake_store=getattr(self,'experiments',self)
+        if not hasattr(self,'discovery_postwake_until'):self.discovery_postwake_until={}
+        wanted={};recent_wakes=set()
+        for p in self.profiles:
+            series=p['series']
+            if not self.legacy_discovery_required(series):
+                # No future-listing requests or stale sleep hints for disabled
+                # bots. Re-enabling immediately resumes ordinary discovery.
+                self.discovery_retry_at.pop(series,None)
+                self.discovery_postwake_until.pop(series,None)
+                remember(wake_store,'fifteen:'+series,None,now)
+                continue
+            if series in self.selected:continue
+            key='fifteen:'+series
+            session=session_wake(series,now)
+            if session is not None:
+                remember(wake_store,key,session,now)
+                self.discovery_retry_at[series]=session
+                continue
+            previous=getattr(wake_store,'discovery_wakes',{}).get(key,0)
+            # A persisted scheduled opening overrides stale generic retry
+            # backoff, including after a worker restart. Check fresh venue
+            # state at the announced time rather than waiting another cycle.
+            if isinstance(previous,(int,float)) and previous>0 and now>=previous:
+                self.discovery_retry_at.pop(series,None)
+            if not asleep(wake_store,key,now) and now>=self.discovery_retry_at.get(series,0):
+                wanted[series]=p
+                if isinstance(previous,(int,float)) and 0<=now-previous<=60:
+                    self.discovery_postwake_until[series]=previous+60
+                if now<self.discovery_postwake_until.get(series,0):
+                    recent_wakes.add(series)
         if not wanted:return
         try:
             rows,cursor,seen=[],'',set()
@@ -160,15 +206,76 @@ class ForwardRun:
         except asyncio.CancelledError:raise
         except Exception as exc:
             await self.metadata_unavailable('discovery',exc);return
+        # Only a few new future-window catalogue reads per pass. The normal
+        # live-market query stays fast for continuously rolling crypto series.
+        # Inactive series get a verified next wake rather than 2-second polling.
+        future_read_budget=1 if hasattr(self,'experiments') else 0
+        if not hasattr(self,'discovery_future_retry_at'):
+            self.discovery_future_retry_at={}
         for series,profile in wanted.items():
+            # Bot controls may change while the shared listing is in flight.
+            if not self.legacy_discovery_required(series):continue
             try:
                 candidates=[m for m in rows if isinstance(m,dict) and m.get('ticker','').startswith(series+'-') and
                     m.get('status')=='active' and ts(m['open_time'])<=now and
                     0<ts(m['close_time'])-now<=900 and m['ticker'] not in self.engine.markets]
                 if not candidates:
-                    # Long-inactive families wait 15 minutes. Known rolling
-                    # families retry quickly across the brief close/open boundary.
-                    self.discovery_retry_at[series]=now+(2 if series in self.known_active else 900)
+                    # During the minute after a known opening, a delayed
+                    # venue listing must not cause us to sleep through the
+                    # current 15-minute opportunity.
+                    most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
+                        if t.startswith(series+'-') and m.get('close',0)<=now),default=0)
+                    near_roll=(series in self.known_active and 0<=now-most_recent_close<60)
+                    if series in recent_wakes or near_roll:
+                        # The next contract can appear a few seconds after the
+                        # previous 15-minute close. Never sleep through it just
+                        # because a *later* unopened contract is already listed.
+                        self.discovery_retry_at[series]=now+2
+                        continue
+                    key='fifteen:'+series
+                    # Preserve any announced future market returned by the
+                    # current listing. It must still be active and freshly
+                    # verified when the clock reaches its opening.
+                    future=[known_entry_wake(m,'15m',now) for m in rows
+                        if isinstance(m,dict) and m.get('ticker','').startswith(series+'-')]
+                    future=[at for at in future if at is not None]
+                    # The public API has a separate unopened-market filter.
+                    # Do not guess that a commodity/index opens around the
+                    # clock; fetch known future open_time at low rate.
+                    if (not future and future_read_budget>0 and
+                            now>=self.discovery_future_retry_at.get(series,0)):
+                        future_read_budget-=1
+                        self.discovery_future_retry_at[series]=now+900
+                        try:
+                            # Search progressively wider time horizons. A
+                            # seven-day page often has hundreds of unopened
+                            # 15m windows; its first page cannot be trusted
+                            # to contain the earliest opening. Small complete
+                            # windows find the next business session cheaply.
+                            for hours in (6,36,72,120):
+                                pre=await self.api.fetch('/markets',dict(status='unopened',
+                                    series_ticker=series,min_close_ts=int(now),
+                                    max_close_ts=int(now+hours*3600),limit=100))
+                                if pre.get('cursor'):
+                                    break  # Incomplete listing is never a sleep authorization.
+                                future=[known_entry_wake(m,'15m',now)
+                                    for m in pre.get('markets',[])
+                                    if isinstance(m,dict) and
+                                       m.get('ticker','').startswith(series+'-')]
+                                future=[at for at in future if at is not None]
+                                if future:break
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            await self.metadata_unavailable('future_listing',exc,series=series)
+                    if future:
+                        wake=min(future)
+                        remember(wake_store,key,wake,now)
+                        self.discovery_retry_at[series]=wake
+                        continue
+                    # Unknown/unpublished schedules must be checked again
+                    # eventually, but not every two seconds during a closure.
+                    self.discovery_retry_at[series]=now+900
                     continue
                 market=min(candidates,key=lambda m:ts(m['close_time']))
                 metadata,fee=await self.market_metadata(market,series)

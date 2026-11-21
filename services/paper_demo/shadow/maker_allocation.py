@@ -7,8 +7,7 @@ def credited_capacity(suite,ticker,now):
     credit=suite.maker_allocation['credits'].get(ticker)
     if credit is None or credit<now:return False
     s=suite.monitoring_snapshot(now)
-    return (s['admitting'] and s['subscribed_markets']+1<=s['total'] and
-        s['entry_markets']+1<=s['entry_candidates'] and s['categories']['market_maker']+1<=10+4*s['level'])
+    return s['admitting']  # No fixed maker-slot ceiling; still fail closed under worker load.
 
 def replacement(suite,market,now):
     state=suite.maker_allocation;ranking=market.get('maker_ranking',{});score=ranking.get('execution_score',0)

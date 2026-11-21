@@ -4,6 +4,7 @@ from uuid import uuid4
 from .runner import ts
 from .storage import put
 from .discovery_budget import candidate_markets,next_profile
+from .discovery_wake import asleep,remember,daily_scan_wake,known_entry_wake
 from .hourly import favorite_bid
 from .weather_window import CITY_ZONES,entry_allowed
 from .settlement_recovery import due_for_confirmation
@@ -57,8 +58,27 @@ async def weather_once(host):
         if not choices:
             row['reason']='no_enabled_profiles'
             continue
+        awake=[]
+        for option in choices:
+            key=category+':'+option['series']
+            if category=='weather_daily':
+                # City-local day start, not exchange settlement time, determines
+                # the only safe daily entry window. No listings/fee reads until.
+                wake=daily_scan_wake(option['series'],now)
+                if wake is not None:
+                    remember(suite,key,wake,now)
+                    continue
+                remember(suite,key,None,now)
+            elif asleep(suite,key,now):
+                continue
+            awake.append(option)
+        if not awake:
+            row['reason']='known_entry_windows_sleeping'
+            row['next_entry_at']=min((v for k,v in suite.discovery_wakes.items()
+                if k.startswith(category+':') and isinstance(v,(int,float)) and v>now),default=None)
+            continue
         active=candidate_markets(suite,markets,category,now)
-        p,cursor=next_profile(suite,choices,active,suite.weather_cursor.get(category,0))
+        p,cursor=next_profile(suite,awake,active,suite.weather_cursor.get(category,0))
         if not p:
             row['reason']='each_series_already_has_candidate'
             continue
@@ -68,9 +88,23 @@ async def weather_once(host):
             min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=suite.weather_pages.get(p['series'],'')))
         suite.weather_pages[p['series']]=result.get('cursor','')
         listed=candidates(result.get('markets',[]),p['series'],now)
+        # A known future open/entry time is durable across worker restarts.
+        # If nothing is currently eligible, sleep until the earliest listed
+        # market can *possibly* pass its time gate. Resume with a fresh page.
+        if not listed:
+            future=[known_entry_wake(m,category,now) for m in result.get('markets',[])
+                    if m.get('ticker','').startswith(p['series']+'-') and m.get('status')=='active']
+            future=[when for when in future if when is not None]
+            if future:
+                wake=min(future)
+                remember(suite,category+':'+p['series'],wake,now)
+                suite.weather_pages[p['series']]=''
+                row['next_entry_at']=wake
+                row['reason']='waiting_for_known_market_entry_window'
         row['eligible']=len(listed)
         row['closing_within_hour']=sum(ts(m['close_time'])-now<3600 for m in listed)
-        row['reason']='no_active_eligible_market' if not listed else 'candidate_unavailable_or_excluded'
+        if row['reason']!='waiting_for_known_market_entry_window':
+            row['reason']='no_active_eligible_market' if not listed else 'candidate_unavailable_or_excluded'
         for m in listed:
             if m['ticker'] in markets or not suite.candidate_allowed(m['ticker'],now):continue
             fee=await host.fee_policy(m,{})

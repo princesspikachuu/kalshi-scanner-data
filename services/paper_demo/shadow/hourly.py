@@ -4,6 +4,7 @@ from decimal import Decimal as D,ROUND_FLOOR
 ZERO=D(0)
 from .runner import ts
 from .schedules import session_wake
+from .discovery_wake import asleep,remember,known_entry_wake
 from .discovery_budget import candidate_markets,next_profile
 
 
@@ -73,7 +74,9 @@ async def hourly_once(host):
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
     # series back off; stable frequency metadata is cached independently of fees.
     for _ in range(min(3,len(ps))):
-        blocked=active+[p['series']+'-cooldown' for p in ps if suite.hourly_retry_at.get(p['series'],0)>now]
+        blocked=active+[p['series']+'-cooldown' for p in ps
+            if suite.hourly_retry_at.get(p['series'],0)>now or
+               asleep(suite,'hourly:'+p['series'],now)]
         p,cursor=next_hourly_profile(ps,blocked,suite.hourly_cursor,active)
         if not p:break
         suite.hourly_cursor=cursor;series=p['series'];scan['checked_series']+=1
@@ -82,6 +85,7 @@ async def hourly_once(host):
         wake=session_wake(series,now)
         if wake is not None:
             suite.hourly_retry_at[series]=wake
+            remember(suite,'hourly:'+series,wake,now)
             suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,next_check_at=wake,
                 reason='Cash-index session closed · scheduled to resume before the next opening')
             continue
@@ -94,7 +98,7 @@ async def hourly_once(host):
             suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,reason='Series frequency '+str(metadata['frequency'])+' · excluded from hourly test')
             suite.hourly_retry_at[series]=now+900;continue
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=series,
-            min_close_ts=int(now+60),max_close_ts=int(now+3600),limit=1000,cursor=suite.hourly_pages.get(series,'')))
+            min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=suite.hourly_pages.get(series,'')))
         suite.hourly_pages[series]=result.get('cursor','')
         listed=[m for m in result.get('markets',[]) if m.get('ticker','').startswith(series+'-') and m.get('status')=='active'
                 and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=3600]
@@ -115,6 +119,20 @@ async def hourly_once(host):
             'Active qualifying market · subscribing to order book')
         suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),eligible_markets=len(rows),reason=reason)
         suite.hourly_retry_at[series]=now+(15 if listed else 60)
+        if not listed:
+            # Provider listed a future opening or an hourly market whose final
+            # hour has not begun: do not poll it again before that known time.
+            future=[known_entry_wake(m,'hourly',now) for m in result.get('markets',[])
+                    if m.get('status')=='active' and m.get('ticker','').startswith(series+'-')]
+            future=[wake for wake in future if wake is not None]
+            if future:
+                wake=min(future)
+                remember(suite,'hourly:'+series,wake,now)
+                suite.hourly_retry_at[series]=wake
+                suite.hourly_pages[series]=''
+                suite.hourly_coverage[series].update(next_check_at=wake,
+                    reason='Known next hourly entry window · sleeping until opening')
+                scan['reason']='Known future hourly market · sleeping until entry window'
         if not rows:continue
         if not capacity:
             scan['reason']='Active candidates found; admission paused by measured capacity'

@@ -99,7 +99,8 @@ class Discovery(unittest.IsolatedAsyncioTestCase):
             raise AssertionError(path)
         host.verified_data.call.side_effect=call
         with patch('services.paper_demo.shadow.sports.time.time',return_value=now):await sports_once(host)
-        self.assertEqual(host.verified_data.call.call_count,2);host.put.assert_not_awaited()
+        self.assertEqual(host.verified_data.call.call_count,1);host.put.assert_not_awaited()
+        self.assertEqual(s.discovery_wakes['sports:KXNBAGAME'],now+3300)
         host.verified_data.call.reset_mock()
         with patch('services.paper_demo.shadow.sports.time.time',return_value=now+15):await sports_once(host)
         host.verified_data.call.assert_not_called()

@@ -6,38 +6,35 @@ from services.paper_demo.shadow import maker_allocation
 from services.paper_demo.shadow.market_maker import MM_FOLDERS
 
 class MakerCoverageCapacityTests(unittest.TestCase):
-    def test_bounded_baseline_expands_from_seven_to_ten_maker_markets(self):
+    def test_maker_candidates_are_not_bounded_by_global_or_category_counts(self):
         from services.paper_demo.shadow.monitoring import maker_entry_limit, MonitoringBudget
         budget=MonitoringBudget()
         budget.observe(1000,backlog=0,lag_seconds=0.1,per_input_ms=1,
                        input_count=100)
         limits=budget.limits(1000)
-        self.assertEqual(limits['total'],32)
-        self.assertEqual(limits['entry_candidates'],15)
-        stats=dict(limits,entry_markets=13,subscribed_markets=19,
-                   categories={'market_maker':10,'hourly':3})
-        self.assertEqual(maker_entry_limit(stats),10)
-        self.assertEqual(maker_entry_limit(dict(stats,entry_markets=12,
-                   categories={'market_maker':9,'hourly':3})),10)
-        # The reserved slots are never lent to an eleventh entry.
-        self.assertEqual(maker_entry_limit(dict(stats,entry_markets=14,
-                   categories={'market_maker':10,'hourly':4})),9)
+        self.assertTrue(limits['admitting'])
+        self.assertIsNone(limits['total'])
+        self.assertIsNone(limits['entry_candidates'])
+        self.assertIsNone(limits['per_category'])
+        stats=dict(limits,entry_markets=140,subscribed_markets=190,
+                   categories={'market_maker':100,'hourly':40})
+        self.assertEqual(maker_entry_limit(stats),103)  # 3 bounded verification reads
+        self.assertEqual(maker_entry_limit(dict(stats,categories={'market_maker':9})),12)
 
-    def test_no_expansion_during_pressure_and_no_override_of_subscription_cap(self):
-        from services.paper_demo.shadow.monitoring import maker_entry_limit, MonitoringBudget
+    def test_overload_blocks_admission_without_an_artificial_subscription_ceiling(self):
+        from services.paper_demo.shadow.monitoring import MonitoringBudget
         from services.api.tests import test_maker_activity_lifecycle as fixture
         budget=MonitoringBudget()
         budget.observe(1000,backlog=4000,lag_seconds=3,per_input_ms=30,
                        input_count=100)
         self.assertFalse(budget.limits(1000)['admitting'])
         s,_=fixture.MakerActivityLifecycleTests().suite()
-        s.monitoring.limits=lambda now:dict(total=32,entry_candidates=15,
-                                             per_category=4,admitting=False,level=0)
+        s.monitoring.limits=lambda now:dict(admitting=False,level=0)
         self.assertFalse(s.search_capacity('market_maker',1000))
-        s.monitoring.limits=lambda now:dict(total=10,entry_candidates=15,
-                                             per_category=4,admitting=True,level=0)
-        s.host.engine.markets={str(i):dict(close=200000) for i in range(10)}
-        self.assertFalse(s.search_capacity('market_maker',1000))
+        s.monitoring.limits=lambda now:dict(admitting=True,level=0)
+        s.host.engine.markets={str(i):dict(close=200000) for i in range(90)}
+        self.assertTrue(s.search_capacity('market_maker',1000))
+        self.assertEqual(len(s.host.engine.markets),90)
 
 
 class MakerOpportunityRotationTests(unittest.TestCase):
@@ -56,15 +53,18 @@ class MakerOpportunityRotationTests(unittest.TestCase):
             maker_ranking=dict(execution_score=20,trades_last_hour=30)))
         return s,new
     def test_acknowledged_swap_uses_only_own_existing_slot_and_releases_capital(self):
-        s,p=self.setup();self.assertFalse(s.search_capacity('market_maker',1000))
-        self.assertTrue(s.can_replace_maker_market(p,1000));s.handle('maker_market',p,1000)
+        s,p=self.setup();self.assertTrue(s.search_capacity('market_maker',1000))
+        self.assertTrue(s.can_replace_maker_market(p,1000))
+        # Exercise explicit replacement safely even though another candidate
+        # could now be admitted without evicting the existing maker quote.
+        self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         self.assertIn('POL-X',s.feed_markets());self.assertNotIn('POL-HOT',s.feed_markets())
         for folder in MM_FOLDERS:self.assertLess(s.portfolios[folder][0].available(),1000)
         maker_allocation.finalize(s,1000.05);self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
         for folder in MM_FOLDERS:s.portfolios[folder][0].advance(1000.2)
         maker_allocation.finalize(s,1000.2)
         self.assertNotIn('POL-X',s.feed_markets());self.assertTrue(maker_allocation.credited_capacity(s,'POL-HOT',1000.2))
-        self.assertFalse(s.search_capacity('market_maker',1000.2))  # Expansion reserve still applies.
+        self.assertTrue(s.search_capacity('market_maker',1000.2))  # No count ceiling.
         s.handle('maker_market',p,1000.3)
         self.assertIn('POL-HOT',s.feed_markets());self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
         self.assertEqual(s.monitoring_snapshot(1000.3)['subscribed_markets'],32)
@@ -83,7 +83,7 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         p['market']['maker_ranking'].update(
             recent_quote_touch_count=3,recent_tape_sample_count=5)
         self.assertTrue(s.can_replace_maker_market(p,1000))
-        s.handle('maker_market',p,1000)
+        self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         self.assertIn('POL-X',s.maker_allocation['pending'])
         self.assertNotIn('POL-HOT',s.feed_markets())
         # No slot or reservation is released until cancellations acknowledge.
@@ -104,7 +104,7 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         self.assertFalse(s.maker_allocation['pending'])
 
     def test_partial_fill_during_cancellation_aborts_retirement_and_keeps_inventory(self):
-        s,p=self.setup();s.handle('maker_market',p,1000)
+        s,p=self.setup();self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         e=s.portfolios[MM_FOLDERS[0]][0];o=next(iter(e.orders.values()));e.advance(1000.05)
         e.trade('POL-X',dict(trade_id='cancel-race',taker_side='no',yes_price_dollars='.41',count_fp=str(o.ahead+1),ts_ms=1000050))
         maker_allocation.finalize(s,1000.06)
@@ -131,17 +131,28 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         self.assertFalse(s.can_replace_maker_market(p,1000))
     def test_pending_reallocation_survives_recovery_without_freeing_a_live_position(self):
         from services.api.tests.test_strategy_folders import ready_suite
-        s,p=self.setup();s.handle('maker_market',p,1000)
+        s,p=self.setup();self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         state=json.loads(json.dumps(s.state(),default=str));restored=ready_suite(s.host,s.rows,state)
         self.assertIn('POL-X',restored.maker_allocation['pending'])
         maker_allocation.finalize(restored,1001)
         self.assertNotIn('POL-X',restored.feed_markets());self.assertIn('POL-HOT',restored.maker_allocation['credits'])
-    def test_credit_cannot_oversubscribe_after_another_strategy_uses_the_released_slot(self):
-        s,p=self.setup();s.handle('maker_market',p,1000)
+    def test_reallocation_credit_does_not_override_worker_memory_or_queue_pause(self):
+        s,p=self.setup()
+        self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         for folder in MM_FOLDERS:s.portfolios[folder][0].advance(1000.2)
-        maker_allocation.finalize(s,1000.2);s.host.engine.markets['NEW-OTHER']=dict(close=200000)
+        maker_allocation.finalize(s,1000.2)
+        self.assertTrue(maker_allocation.credited_capacity(s,'POL-HOT',1000.2))
+        s.host.engine.markets['NEW-OTHER']=dict(close=200000)
+        # No static 32-market cap applies, but an explicit resource overload
+        # must still block new maker subscriptions even with an old credit.
+        s.monitoring.limits=lambda now:dict(admitting=False,level=0)
         self.assertFalse(maker_allocation.credited_capacity(s,'POL-HOT',1000.3))
-        s.handle('maker_market',p,1000.3);self.assertNotIn('POL-HOT',s.feed_markets())
+        s.handle('maker_market',p,1000.3)
+        self.assertNotIn('POL-HOT',s.feed_markets())
+        s.monitoring.limits=lambda now:dict(admitting=True,level=0)
+        s.handle('maker_market',p,1000.4)
+        self.assertIn('POL-HOT',s.feed_markets())
+        self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
     def test_overload_does_not_trigger_opportunity_cancellations(self):
         s,p=self.setup();s.monitoring.limits=lambda now:dict(total=32,entry_candidates=12,per_category=4,admitting=False,level=0)
         self.assertFalse(s.can_replace_maker_market(p,1000));s.handle('maker_market',p,1000)
