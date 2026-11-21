@@ -23,6 +23,9 @@ class BackupScopeTelemetryTests(unittest.TestCase):
     def test_complete_snapshot_reports_only_allowlisted_scope_counts_and_bytes(self):
         bot=self.row('demo/bot/one',1)
         shadow=self.row('demo/shadow/bot/two',2)
+        shadow['parameters']['folder_id']='favorites'
+        other_shadow=self.row('demo/shadow/bot/four',5)
+        other_shadow['parameters']['folder_id']='favorites_statistics'
         write=self.row('live/write/three',3)
         singleton=self.row('demo/shadow/checkpoint',4)
         pool=MagicMock()
@@ -39,7 +42,7 @@ class BackupScopeTelemetryTests(unittest.TestCase):
                 else:
                     cur.fetchall.return_value={
                         'demo/bot/':[bot],
-                        'demo/shadow/bot/':[shadow],
+                        'demo/shadow/bot/':[shadow,other_shadow],
                         'live/write/':[write],
                     }.get(args[0],[])
             return cur
@@ -52,18 +55,33 @@ class BackupScopeTelemetryTests(unittest.TestCase):
             self.assertEqual(set(scope_sizes),
                 {'demo_bots','shadow_bots','live_writes','singletons'})
             records=[('demo_bots',bot),('shadow_bots',shadow),
-                     ('live_writes',write),('singletons',singleton)]
-            for name,row in records:
-                size=len(canonical(row))+1
+                     ('shadow_bots',other_shadow),('live_writes',write),
+                     ('singletons',singleton)]
+            for name in scope_sizes:
+                group=[r for label,r in records if label==name]
+                sizes=[len(canonical(row))+1 for row in group]
                 self.assertEqual(scope_sizes[name],dict(
+                    records=len(group),bytes=sum(sizes),
+                    largest_record_bytes=max(sizes)))
+            split=staged['favorites_shadow_bot_sizes']
+            for group,row in (('regular_favorites',shadow),
+                              ('all_other_bots',other_shadow)):
+                size=len(canonical(row))+1
+                self.assertEqual(split[group],dict(
                     records=1,bytes=size,largest_record_bytes=size))
+            self.assertEqual(sum(x['bytes'] for x in split.values()),
+                             scope_sizes['shadow_bots']['bytes'])
+            self.assertEqual(sum(x['records'] for x in split.values()),
+                             scope_sizes['shadow_bots']['records'])
+            self.assertNotIn('favorites_statistics',json.dumps(split))
+            self.assertNotIn('DO_NOT_LOG',json.dumps(split))
             self.assertEqual(sum(s['bytes'] for s in scope_sizes.values()),
                              staged['staged_bytes'])
             self.assertEqual(sum(s['records'] for s in scope_sizes.values()),
                              staged['records'])
-            self.assertEqual(staged['records'],4)
+            self.assertEqual(staged['records'],5)
             self.assertEqual(staged['sha256'],
-                             digest_records([bot,shadow,write,singleton]))
+                             digest_records([bot,shadow,other_shadow,write,singleton]))
             self.assertNotIn('DO_NOT_LOG',json.dumps(scope_sizes))
             self.assertNotIn('demo/shadow/bot/two',json.dumps(scope_sizes))
         finally:
@@ -77,7 +95,10 @@ class BackupScopeTelemetryTests(unittest.TestCase):
                      staged_bytes=len(canonical(row))+1,
                      scope_sizes={'demo_bots':dict(records=1,
                          bytes=len(canonical(row))+1,
-                         largest_record_bytes=len(canonical(row))+1)})
+                         largest_record_bytes=len(canonical(row))+1)},
+                     favorites_shadow_bot_sizes={
+                         'regular_favorites':dict(records=0,bytes=0,largest_record_bytes=0),
+                         'all_other_bots':dict(records=0,bytes=0,largest_record_bytes=0)})
         refs=[dict(key='demo/backups/a',size=15,sha256='a'*64),
               dict(key='demo/backups/b',size=18,sha256='b'*64),
               dict(key='demo/backups/roots/c',size=22,sha256='c'*64)]
@@ -92,11 +113,18 @@ class BackupScopeTelemetryTests(unittest.TestCase):
             result=backup_controls(store,MagicMock(),now=101)
         self.assertTrue(result['verified'])
         self.assertEqual(result['scope_sizes'],staging['scope_sizes'])
+        self.assertEqual(result['favorites_shadow_bot_sizes'],
+                         staging['favorites_shadow_bot_sizes'])
         self.assertNotIn('scope_sizes',upload.call_args_list[1].args[2])
+        self.assertNotIn('favorites_shadow_bot_sizes',upload.call_args_list[1].args[2])
         self.assertNotIn('scope_sizes',upload.call_args_list[2].args[2])
+        self.assertNotIn('favorites_shadow_bot_sizes',upload.call_args_list[2].args[2])
         self.assertNotIn('scope_sizes',store.put.call_args.args[1])
+        self.assertNotIn('favorites_shadow_bot_sizes',store.put.call_args.args[1])
         logged=emit.call_args.args[0]
         self.assertEqual(json.loads(logged)['scope_sizes'],staging['scope_sizes'])
+        self.assertEqual(json.loads(logged)['favorites_shadow_bot_sizes'],
+                         staging['favorites_shadow_bot_sizes'])
         self.assertNotIn('private-abc',logged)
         self.assertNotIn('DO_NOT_LOG',logged)
         self.assertTrue(staging['file'].closed)
