@@ -112,7 +112,11 @@ class FavoritesStrategy(ConvexityStrategy):
         if not allow_parallel and any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):return None
         expiry=min(self.e.now+30,a['entry_deadline'])
         if expiry<=self.e.now+self.e.latency:return
-        if not a.get('first') and not a.get('data_window'):
+        if not a.get('first') and (not a.get('data_window') or not any(
+                o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')
+                for o in self.e.orders.values())):
+            # Preserve a shared verification window while parallel bids coexist,
+            # but start a fresh window after an earlier unfilled/gapped bid exits.
             a['data_window']=dict(started_at=self.e.now,valid=self.entry_ready(ticker),scope='entry-through-exit-or-close-v1')
         elif a.get('data_window',{}).get('ended_at') is not None:
             # A second opportunity may follow an earlier fully closed position.
