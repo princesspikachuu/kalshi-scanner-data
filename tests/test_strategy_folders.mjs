@@ -983,7 +983,7 @@ test('single bucket reports insufficient ROI observations without inventing unce
     return_observations:1,average_return_pct:'33.3',uncertainty90_pct:null,
     ci90_low_pct:null,ci90_high_pct:null,incomplete_events:0,estimated_return_observations:0});
   assert.match(one,/\+33\.30% Hold P\/L/);
-  assert.match(one,/fewer than 2 independent return observations/);
+  assert.match(one,/too few or identical observed event returns/);
   assert.doesNotMatch(one,/±0\.00|NaN|undefined/);
   const empty=favoriteSingleCellMarkup({resolved_events:0,event_wins:0,
     return_observations:0,average_return_pct:null,uncertainty90_pct:null,
