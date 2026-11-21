@@ -149,7 +149,7 @@ class ForwardRun:
         # 15-minute contracts with exchange-confirmed future open timestamps.
         # Standalone replay/forward runs use the same scheduler in memory.
         wake_store=getattr(self,'experiments',self)
-        wanted={}
+        wanted={};recent_wakes=set()
         for p in self.profiles:
             series=p['series']
             if series in self.selected:continue
@@ -159,8 +159,11 @@ class ForwardRun:
                 remember(wake_store,key,session,now)
                 self.discovery_retry_at[series]=session
                 continue
+            previous=getattr(wake_store,'discovery_wakes',{}).get(key,0)
             if not asleep(wake_store,key,now) and now>=self.discovery_retry_at.get(series,0):
                 wanted[series]=p
+                if isinstance(previous,(int,float)) and 0<=now-previous<=60:
+                    recent_wakes.add(series)
         if not wanted:return
         try:
             rows,cursor,seen=[],'',set()
@@ -225,7 +228,7 @@ class ForwardRun:
                     # rollover, not every two seconds during a closed session.
                     most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
                         if t.startswith(series+'-')),default=0)
-                    near_roll=(series in self.known_active and
+                    near_roll=(series in recent_wakes or series in self.known_active and
                         0<=now-most_recent_close<60)
                     self.discovery_retry_at[series]=now+(2 if near_roll else 900)
                     continue
