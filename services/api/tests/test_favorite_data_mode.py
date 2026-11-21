@@ -33,15 +33,24 @@ class DataMode(unittest.TestCase):
         self.assertEqual(o.quantity,D(1));self.assertLessEqual(o.reserved,e.wallet.cash)
         self.assertGreater(e.fees[o.ticker].charge(o.quantity,o.price,True),0)
 
-    def test_paper_quotes_follow_current_bid_after_minimum_rest(self):
+    def test_new_bucket_keeps_older_valid_maker_queue_after_minimum_rest(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
         old=next(iter(e.orders.values()));self.assertEqual(old.price,D('.80'))
-        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}};book.at=201
-        b.step();self.assertEqual(len(e.orders),1);self.assertFalse(e.pending)
-        e.advance(211);book.at=211;b.step();self.assertEqual(len(e.orders),1)
-        e.advance(212);book.at=212;b.step();new=list(e.orders.values())[-1]
-        self.assertEqual(old.status,'cancelled');self.assertEqual(new.price,D('.86'));self.assertTrue(new.maker)
-        self.assertGreater(new.price,D(b.attempts[old.ticker]['initial_ceiling']))
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        book.at=201;b.step()
+        self.assertEqual(len(e.orders),1)
+        e.advance(211);book.at=211;b.step()
+        active=[o for o in e.orders.values() if o.status in ('pending','resting')]
+        self.assertEqual(len(active),2)
+        newer=next(o for o in active if o.id!=old.id)
+        self.assertEqual(newer.price,D('.86'))
+        self.assertTrue(newer.maker)
+        self.assertEqual(old.status,'resting')
+        self.assertFalse(any(action=='cancel' and ident==old.id for _,_,action,ident in e.pending))
+        e.advance(224);book.at=224;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual({o.status for o in e.orders.values()},{'resting'})
+        self.assertFalse(any(action=='cancel' for _,_,action,_ in e.pending))
 
     def test_decision_records_policy_size_and_order_link_for_analysis(self):
         e,b,_=fixture.MakerEntries().setup_bot();b.step();o=next(iter(e.orders.values()))
@@ -49,6 +58,8 @@ class DataMode(unittest.TestCase):
         details=json.loads(event['details']);self.assertEqual(event['order_id'],o.id)
         self.assertEqual(details['policy'],'favorites-paper-data-v3');self.assertEqual(details['quantity'],'1')
         self.assertEqual(details['estimate']['samples'],0)
+        self.assertEqual(details['research_bucket'],'yes|80-84|10–15m|market_close')
+        self.assertEqual(details['event_ticker'],e.markets[o.ticker].get('event_ticker',o.ticker))
 
     def test_changed_saved_size_replaces_only_after_cancel_ack(self):
         e,b,book=fixture.MakerEntries().setup_bot();b.step();e.advance(201)
@@ -76,11 +87,11 @@ class DataMode(unittest.TestCase):
         first=next(iter(e.orders.values()))
         e.fill(first,D(1),first.price,'TEST')
         book.at=212;e.advance(212)
-        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
         b.step()
         orders=list(e.orders.values())
         self.assertEqual(len(orders),2)
-        self.assertEqual(orders[-1].price,D('.83'))
+        self.assertEqual(orders[-1].price,D('.86'))
         self.assertEqual(b.attempts[first.ticker]['repeat_entries'],1)
         self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(1))
         # Once filled, an unchanged qualifying state must not create a third entry.
@@ -95,17 +106,264 @@ class DataMode(unittest.TestCase):
         first=next(iter(e.orders.values()))
         e.fill(first,D(1),first.price,'TEST')
         e.advance(212);book.at=212
-        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
         b.step();second=list(e.orders.values())[-1]
         e.advance(213);e.fill(second,D(1),second.price,'TEST')
         chunks=b.attempts[first.ticker]['entry_fills']
         self.assertEqual(len(chunks),2)
         self.assertEqual({c['order_id'] for c in chunks},{first.id,second.id})
-        self.assertEqual({D(c['price']) for c in chunks},{D('.80'),D('.83')})
+        self.assertEqual({D(c['price']) for c in chunks},{D('.80'),D('.86')})
         e.markets[first.ticker].update(paid=True,yes_payout_confirmed='1')
         b.step()
         self.assertEqual(b.attempts[first.ticker]['timing_finalized'],True)
         self.assertTrue(all(D(c['remaining'])==0 for c in chunks))
+
+
+    def test_distinct_price_bucket_while_first_bid_rests_does_not_cancel_it(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        active=[o for o in e.orders.values() if o.status in ('pending','resting')]
+        self.assertEqual(len(active),2)
+        self.assertEqual({o.price for o in active},{D('.80'),D('.86')})
+        self.assertEqual({o.quantity for o in active},{D(1)})
+        self.assertEqual(first.status,'resting')
+        self.assertFalse(any(action=='cancel' and target==first.id for _,_,action,target in e.pending))
+        self.assertEqual(b.attempts[first.ticker]['repeat_entries'],1)
+        self.assertEqual(e.wallet.cash,D(1000))
+
+    def test_moving_inside_same_five_cent_bucket_does_not_stack_bids(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.80'):D(100)},'no':{D('.18'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(b.attempts[first.ticker].get('repeat_entries',0),0)
+
+    def test_remaining_time_bucket_transition_allows_new_bid_without_price_change(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        # Keep the original maker bid valid while its time horizon advances.
+        for now in range(220,401,20):
+            e.advance(now);book.at=now;b.step()
+            self.assertEqual(first.status,'resting')
+        e.advance(401);book.at=401;b.step()
+        active=[o for o in e.orders.values() if o.status in ('pending','resting')]
+        self.assertEqual(len(active),2)
+        self.assertEqual({o.price for o in active},{D('.80')})
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(len(set(b.attempts[first.ticker]['pending_buckets'].values())),2)
+
+    def test_pending_cancellation_ack_blocks_distinct_bucket_overlap(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.cancel(first.id)
+        # Simulate a delayed cancel acknowledgement: no fresh quote may stack.
+        e.now=212;book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertTrue(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        e.advance(213);book.at=213;b.step()
+        self.assertEqual(first.status,'cancelled')
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(list(e.orders.values())[-1].quantity,D(1))
+
+    def test_filling_one_bucket_preserves_other_resting_bid_and_cohort_identity(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        e.advance(213);second=list(e.orders.values())[-1]
+        self.assertEqual(second.status,'resting')
+        e.fill(first,D(1),first.price,'TEST')
+        self.assertEqual(second.status,'resting')
+        self.assertFalse(any(action=='cancel' and target==second.id for _,_,action,target in e.pending))
+        book.at=213;b.step()
+        e.fill(second,D(1),second.price,'TEST')
+        chunks=b.attempts[first.ticker]['entry_fills']
+        self.assertEqual(len(chunks),2)
+        self.assertEqual({c['order_id'] for c in chunks},{first.id,second.id})
+        e.markets[first.ticker].update(paid=True,yes_payout_confirmed='1')
+        b.step()
+        from services.paper_demo.shadow.favorite_entries import entry_key,estimate
+        from services.paper_demo.shadow.favorite_timing import clock
+        rows=b.exit_evidence.cells
+        keys={chunk['key'] for chunk in chunks}
+        self.assertEqual(len(keys),2)
+        self.assertTrue(all(estimate(rows,key)['samples']==1 for key in keys))
+        from services.paper_demo.shadow.favorite_collection_quality import collection_quality
+        self.assertEqual(collection_quality([b],e.now)['unique_verified_outcomes'],1)
+
+    def test_resting_orders_plus_positions_respect_five_contract_market_cap(self):
+        e,b,book=fixture.MakerEntries().setup_bot(paper_repeat_inventory_multiplier=1)
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(first.status,'resting')
+        self.assertGreater(b.attempts[first.ticker]['repeat_risk_suppressed'],0)
+
+    def test_partial_fill_in_old_bucket_can_keep_remainder_and_new_bucket(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.fill(first,D('.4'),first.price,'TEST')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(first.remaining,D('.6'))
+        active=[o for o in e.orders.values() if o.status in ('pending','resting')]
+        self.assertEqual(len(active),2)
+        self.assertEqual(sum((o.remaining for o in active),D(0)),D('1.6'))
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D('.4'))
+
+    def test_legacy_held_entry_bucket_remains_occupied_after_newer_probe_fills(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.fill(first,D(1),first.price,'TEST')
+        a=b.attempts[first.ticker]
+        a.pop('entry_fills')  # Restored held position from before fill-cohort storage.
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step();second=list(e.orders.values())[-1]
+        self.assertEqual(a['legacy_filled_bucket'],'yes|80-84|10–15m|market_close')
+        e.advance(213);e.fill(second,D(1),second.price,'TEST')
+        book.levels={'yes':{D('.79'):D(100)},'no':{D('.19'):D(100)}}
+        e.advance(224);book.at=224;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(a['legacy_filled_bucket'],'yes|80-84|10–15m|market_close')
+
+    def test_unknown_legacy_held_bucket_fails_closed(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.fill(first,D(1),first.price,'TEST')
+        a=b.attempts[first.ticker]
+        a.pop('entry_fills');a.pop('entry_key')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(a['last_repeat_suppression']['reason'],'legacy_filled_bucket_unknown')
+
+    def test_older_bid_filling_in_new_time_bucket_cancels_duplicate_rester(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        # Transition from 10-15m to 5-10m while the initial 80c bid rests.
+        for now in range(220,401,20):
+            e.advance(now);book.at=now;b.step()
+        e.advance(401);book.at=401;b.step()
+        second=list(e.orders.values())[-1]
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(second.price,first.price)
+        e.advance(402);book.at=402
+        e.fill(first,D(1),first.price,'TEST')
+        cohort=b.attempts[first.ticker]['entry_fills'][-1]
+        self.assertIn('|5–10m|',cohort['key'])
+        # Both bids would now fill in the *same* actual price/time cohort.
+        self.assertTrue(any(action=='cancel' and ident==second.id for _,_,action,ident in e.pending))
+        e.advance(403)
+        self.assertEqual(second.status,'cancelled')
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D(1))
+
+    def test_within_bucket_quote_improvement_keeps_existing_maker_queue(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        # Bid moves from 80c to 83c, but both remain in the same 80-84c cell.
+        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(first.price,D('.80'))
+        self.assertFalse(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        self.assertEqual(b.attempts[first.ticker].get('repeat_entries',0),0)
+
+    def test_new_bucket_waits_for_cancel_ack_if_old_maker_now_crosses(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        # The old 80c bid now crosses the 77c ask: cancel before new bidding.
+        book.levels={'yes':{D('.75'):D(100)},'no':{D('.23'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertTrue(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        e.advance(213);book.at=213;b.step()
+        self.assertEqual(first.status,'cancelled')
+        orders=list(e.orders.values())
+        self.assertEqual(len(orders),2)
+        self.assertEqual(orders[-1].price,D('.76'))
+        self.assertTrue(orders[-1].maker)
+
+    def test_partly_filled_old_bid_crossing_new_ask_is_cancelled_before_reentry(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.fill(first,D('.4'),first.price,'TEST')
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.75'):D(100)},'no':{D('.23'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertTrue(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D('.4'))
+        e.advance(213);book.at=213;b.step()
+        self.assertEqual(first.status,'cancelled')
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(list(e.orders.values())[-1].quantity,D(1))
+        self.assertEqual(e.wallet.inventory(first.ticker,'yes'),D('.4'))
+
+    def test_parallel_bucket_needs_unreserved_cash_without_reject_churn(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        e.wallet.cash=D('1.00')
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        self.assertEqual(e.available(),D('.20'))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(b.attempts[first.ticker]['last_repeat_suppression']['reason'],
+                         'insufficient_unreserved_cash')
+        self.assertEqual(e.wallet.stat(first.ticker).rejected_orders,0)
+        self.assertEqual(b.attempts[first.ticker].get('repeat_entries',0),0)
+        # Once collateral is truly available, the distinct bucket can be bid.
+        e.refill(D(1))
+        e.advance(223);book.at=223;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(e.orders[list(e.orders)[-1]].status,'pending')
+        self.assertEqual(e.wallet.stat(first.ticker).rejected_orders,0)
+
+    def test_cap_reduction_preserves_earliest_queued_bucket(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        second=list(e.orders.values())[-1]
+        e.advance(213)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(second.status,'resting')
+        e.fill(first,D('.4'),first.price,'TEST')
+        b.profile['paper_repeat_inventory_multiplier']=1
+        book.at=213;b.step()
+        pending_cancels={ident for _,_,action,ident in e.pending if action=='cancel'}
+        self.assertIn(second.id,pending_cancels)
+        self.assertNotIn(first.id,pending_cancels)
+        e.advance(214)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(second.status,'cancelled')
 
     def test_calibrated_favorites_stays_single_entry_per_market(self):
         maker=fixture.MakerEntries()
@@ -114,7 +372,7 @@ class DataMode(unittest.TestCase):
         first=next(iter(e.orders.values()))
         e.fill(first,D(1),first.price,'TEST')
         e.advance(212);book.at=212
-        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
         b.step()
         self.assertEqual(len(e.orders),1)
 
@@ -124,7 +382,7 @@ class DataMode(unittest.TestCase):
         first=next(iter(e.orders.values()))
         e.fill(first,D(1),first.price,'TEST')
         e.advance(212);book.at=212
-        book.levels={'yes':{D('.82'):D(100)},'no':{D('.16'):D(100)}}
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
         b.step()
         self.assertEqual(len(e.orders),1)
         self.assertGreater(b.attempts[first.ticker]['repeat_risk_suppressed'],0)

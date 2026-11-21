@@ -4,6 +4,7 @@ from decimal import Decimal as D
 from .core import ConvexityStrategy,ZERO
 from .risk import ExitEvidence,assess
 from .favorite_entries import quote,observe,entry_key
+from .favorite_statistics import price_bucket
 from . import favorite_timing,weather_window
 
 class FavoritesStrategy(ConvexityStrategy):
@@ -28,25 +29,92 @@ class FavoritesStrategy(ConvexityStrategy):
                 o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting') for o in self.e.orders.values()):
             window.setdefault('ended_at',self.e.now)
 
+    def research_bucket(self,ticker,side,price,at=None):
+        remaining,basis=favorite_timing.clock(self.e.markets[ticker],self.e.now if at is None else at)
+        return '|'.join((side,price_bucket(price),favorite_timing.horizon(remaining),basis))
+
+    def active_buckets(self,ticker,a,active=None):
+        if active is None:
+            active=[o for o in self.e.orders.values() if o.ticker==ticker and o.action=='buy'
+                    and o.status in ('pending','resting')]
+        previous=a.get('pending_buckets',{})
+        if not isinstance(previous,dict):previous={}
+        buckets={o.id:previous.get(o.id) or self.research_bucket(ticker,o.side,o.price,o.created)
+                 for o in active}
+        # Drop old order identities; the actual fill cohorts preserve historical
+        # price and time attribution through market settlement.
+        a['pending_buckets']=buckets
+        return active,buckets
+
+    def filled_buckets(self,a):
+        buckets={f"{a['side']}|{price_bucket(chunk['price'])}|"
+                 f"{favorite_timing.horizon(float(chunk.get('seconds_to_event_end',chunk.get('seconds_to_market_close',0))))}|"
+                 f"{chunk.get('clock','market_close')}"
+                 for chunk in a.get('entry_fills',[]) if D(chunk.get('quantity','0'))>0}
+        if a.get('first') and not a.get('entry_fills') and not a.get('legacy_filled_bucket'):
+            # An older restored held lot may predate fill-cohort storage.
+            # Capture its original saved bucket once, before new bids update
+            # entry_key; keep that bucket when newer recorded cohorts appear.
+            parts=str(a.get('entry_key','')).split('|')
+            if len(parts)>=6 and parts[-3].isdigit() and parts[-4] in ('yes','no'):
+                a['legacy_filled_bucket']=f"{parts[-4]}|{price_bucket(D(parts[-3])/100)}|{parts[-2]}|{parts[-1]}"
+            else:
+                a['legacy_bucket_unknown']=True
+        if a.get('legacy_filled_bucket'):buckets.add(a['legacy_filled_bucket'])
+        return buckets
+
+    def research_inventory_cap(self):
+        # Saved historical sizes cannot silently enlarge the one-contract
+        # collector's five-entry inventory guard.
+        return min(D(self.contracts),D(1))*D(str(self.profile.get('paper_repeat_inventory_multiplier',5)))
+
     def on_fill(self,order,quantity):
         a=self.attempts.get(order.ticker)
+        # Attribution remains based on actual fill price/time, never submission.
         favorite_timing.fill(self,order,quantity,entry_key)
         if a and order.action=='buy':
             a['first']=True
             if a.get('entry_policy')=='favorites-paper-data-v3':
-                for other in self.e.orders.values():
-                    if other.ticker==order.ticker and other.action=='buy' and other.id!=order.id:self.e.cancel(other.id)
+                origin=(a.get('pending_buckets') or {}).get(order.id)
+                if origin is None:origin=self.research_bucket(order.ticker,order.side,order.price,order.created)
+                # The submitted time band is not evidence of the actual fill
+                # band. An old resting order may fill after a horizon transition.
+                recent=getattr(self.e,'_recent_fills',{}).get(order.id,[])
+                fill_price=D(recent[-1]['price']) if recent else order.price
+                actual=self.research_bucket(order.ticker,order.side,fill_price)
+                active,buckets=self.active_buckets(order.ticker,a)
+                for other in active:
+                    if other.id==order.id:continue
+                    # Cancel only redundant cohort exposure: bids in different
+                    # current fill buckets may continue resting independently.
+                    if (buckets.get(other.id) in (origin,actual) or
+                            self.research_bucket(order.ticker,other.side,other.price)==actual):
+                        self.e.cancel(other.id)
                 return
         self.e.cancel_buys(order.ticker)
         if a and order.action=='sell':self.finish_data_window(order.ticker,a)
+
     def retain_partial_entry(self,ticker,m,a,lots):
-        active=[o for o in self.e.orders.values() if o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')]
+        active,_=self.active_buckets(ticker,a)
         if not active:return
-        q=self.entry_quote(ticker,a['side']) if (self.enabled and self.entry_allowed(m,self.e.now)
-            and self.entry_ready(ticker) and m['close']-self.e.now>60 and not a.get('exit_reason')) else None
-        desired=max(ZERO,D(a.get('target_inventory',str(self.contracts)))-sum((l.quantity for l in lots),ZERO))
-        if not q or any(o.price>q['price'] or o.remaining>min(desired,q['quantity']) for o in active):
-            self.e.cancel_buys(ticker);return
+        valid=(self.enabled and self.entry_allowed(m,self.e.now) and self.entry_ready(ticker)
+               and m['close']-self.e.now>60 and not a.get('exit_reason'))
+        q=self.entry_quote(ticker,a['side']) if valid else None
+        if not q:
+            self.e.cancel_buys(ticker)
+            return
+        inventory=sum((l.quantity for l in lots if l.side==a['side']),ZERO)
+        ceiling=self.research_inventory_cap()
+        permitted=ceiling-inventory
+        # Preserve older valid bucket bids through a price/time transition, but
+        # fail closed on quantity, direction, or market-cap violations.
+        for order in sorted(active,key=lambda o:(o.created,o.id)):
+            if (order.side!=a['side'] or order.remaining>D(1) or order.price>D('.95')
+                    or order.price<D('.70') or order.remaining>permitted
+                    or order.price>=self.e.books[ticker].ask(order.side)):
+                self.e.cancel(order.id)
+            else:
+                permitted-=order.remaining
         canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
         for order in active:
             if order.id not in canceling:order.expiry=min(self.e.now+30,self.entry_deadline(m,self.e.now))
@@ -58,12 +126,17 @@ class FavoritesStrategy(ConvexityStrategy):
     def cancel_entry(self,ticker,reason):
         self.e.cancel_buys(ticker)
         self.last_reason=reason
-    def submit_entry(self,ticker,a,q):
-        # Never stack a replacement on an outstanding cancellation or partial fill.
-        if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):return
+    def submit_entry(self,ticker,a,q,allow_parallel=False):
+        # Distinct-bucket paper probes may coexist; other modes still never
+        # stack an order on an outstanding cancellation or partial fill.
+        if not allow_parallel and any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):return None
         expiry=min(self.e.now+30,a['entry_deadline'])
         if expiry<=self.e.now+self.e.latency:return
-        if not a.get('first'):
+        if not a.get('first') and (not a.get('data_window') or not any(
+                o.ticker==ticker and o.action=='buy' and o.status in ('pending','resting')
+                for o in self.e.orders.values())):
+            # Preserve a shared verification window while parallel bids coexist,
+            # but start a fresh window after an earlier unfilled/gapped bid exits.
             a['data_window']=dict(started_at=self.e.now,valid=self.entry_ready(ticker),scope='entry-through-exit-or-close-v1')
         elif a.get('data_window',{}).get('ended_at') is not None:
             # A second opportunity may follow an earlier fully closed position.
@@ -78,65 +151,95 @@ class FavoritesStrategy(ConvexityStrategy):
             f"Value-qualified maker at {q['price']*100:.0f}¢ · {q['estimate']['samples']} settled events")
         ident=self.e.place(ticker,a['side'],'buy',q['quantity'],q['price'],maker=True,expiry=expiry)
         request=self.e.orders[ident]
+        bucket=self.research_bucket(ticker,a['side'],q['price'])
+        if q['mode']=='paper_exploration' and request.status in ('pending','resting'):
+            a.setdefault('pending_buckets',{})[ident]=bucket
         self.e.log('FAVORITE_ENTRY_DECISION',ticker=ticker,order_id=ident,reason=self.last_reason,details=json.dumps(dict(
-            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),estimate=q['estimate'],ceiling=q['ceiling'],execution_model=request.execution_model,
+            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),execution_status=request.status,research_bucket=bucket,
+            event_ticker=self.e.markets[ticker].get('event_ticker',ticker),estimate=q['estimate'],ceiling=q['ceiling'],execution_model=request.execution_model,
             worker_delay_ms=request.worker_delay_seconds*1000,decision_at=request.decision_at,arrival_at=request.arrives)))
+        if request.status not in ('pending','resting'):
+            # A rejected paper order is not a resting bid or collected sample.
+            return None
         if q['mode']=='paper_exploration':
             print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
-                price=str(q['price']),policy=q['policy'],maker=True,execution_model=request.execution_model,
+                price=str(q['price']),policy=q['policy'],research_bucket=bucket,
+                event_ticker=self.e.markets[ticker].get('event_ticker',ticker),maker=True,execution_model=request.execution_model,
                 worker_delay_ms=request.worker_delay_seconds*1000,arrival_at=request.arrives,real_orders_enabled=False)),flush=True)
-    def repeat_data_entry(self,ticker,m,a,lots):
-        """Collect distinct later signals in one market, without loop duplicates.
+        return ident
 
-        Re-entry is paper-exploration only. Keep one market-level attempt record
-        and its individual fill cohorts for settlement while limiting inventory
-        to five configured entries per market.
+    def offer_distinct_bucket(self,ticker,m,a,lots,q,active=None,pending=None):
+        if q['mode']!='paper_exploration':return 'duplicate'
+        bucket=self.research_bucket(ticker,a['side'],q['price'])
+        if a.get('first') and not a.get('entry_fills'):self.filled_buckets(a)
+        if a.get('legacy_bucket_unknown'):
+            a['last_repeat_suppression']=dict(reason='legacy_filled_bucket_unknown',signal=bucket,at=self.e.now)
+            return 'blocked'
+        if active is None or pending is None:active,pending=self.active_buckets(ticker,a)
+        if bucket in pending.values() or bucket in self.filled_buckets(a):
+            if bucket!=a.get('last_duplicate_bucket') or self.e.now-a.get('last_duplicate_log_at',0)>=10:
+                a['repeat_duplicate_suppressed']=a.get('repeat_duplicate_suppressed',0)+1
+                a['last_duplicate_bucket']=bucket;a['last_duplicate_log_at']=self.e.now
+            return 'duplicate'
+        if bucket!=a.get('last_qualified_bucket'):
+            a['repeat_opportunities_detected']=a.get('repeat_opportunities_detected',0)+1
+            a['last_qualified_bucket']=bucket
+        inventory=sum((l.quantity for l in lots if l.side==a['side']),ZERO)
+        exposure=inventory+sum((o.remaining for o in active),ZERO)
+        maximum=self.research_inventory_cap()
+        if exposure+q['quantity']>maximum:
+            if bucket!=a.get('last_risk_blocked_bucket'):
+                a['repeat_risk_suppressed']=a.get('repeat_risk_suppressed',0)+1
+                a['last_risk_blocked_bucket']=bucket
+            a['last_repeat_suppression']=dict(reason='inventory_plus_resting_cap',signal=bucket,at=self.e.now)
+            return 'blocked'
+        # The quote routine credits this market's resting reserves to allow
+        # replacement pricing. Distinct *additional* bids cannot spend those
+        # funds twice: only actually unreserved cash can collateralize one.
+        unreserved=self.e.available()
+        required=q['quantity']*q['price']+q['fee']
+        if required>unreserved:
+            a['last_repeat_suppression']=dict(reason='insufficient_unreserved_cash',signal=bucket,
+                at=self.e.now,available=str(unreserved),required=str(required))
+            return 'blocked'
+        if self.e.now-a.get('last_submit',0)<10:return 'blocked'
+        active_ids={order.id for order in active}
+        if any(action=='cancel' and ident in active_ids for _,_,action,ident in self.e.pending):
+            # Never create new exposure before a submitted cancellation is
+            # acknowledged, even if the next eligible bucket is different.
+            return 'blocked'
+        a['entry_deadline']=self.entry_deadline(m,self.e.now)
+        a['target_inventory']=str(exposure+q['quantity'])
+        order_id=self.submit_entry(ticker,a,q,allow_parallel=True)
+        if order_id is None:return 'blocked'
+        a['last_repeat_signal']=bucket
+        a['repeat_qualified']=True
+        a['repeat_entries']=a.get('repeat_entries',0)+1
+        self.e.log('FAVORITE_REPEAT_OPPORTUNITY',ticker=ticker,details=json.dumps(dict(
+            opportunity_key=bucket,repeat_entries=a['repeat_entries'],
+            inventory_before=str(inventory),outstanding_before=str(exposure-inventory),max_inventory=str(maximum),
+            price=str(q['price']),quantity=str(q['quantity']),entries_attempted=a['repeat_entries'],
+            opportunities_detected=a['repeat_opportunities_detected'])))
+        return 'submitted'
+
+    def repeat_data_entry(self,ticker,m,a,lots):
+        """Allow a new 5-cent / remaining-time research bucket even with older bids.
+
+        A filled cohort counts only after authoritative settlement; multiple
+        bids/positions on one event never multiply global outcome observations.
         """
         if self.profile.get('paper_exploration',True) is False or a.get('entry_policy')!='favorites-paper-data-v3':
             return
         if a.get('exit_reason') or not self.enabled or m.get('entry_parked'):
-            a['repeat_qualified']=False
-            return
+            a['repeat_qualified']=False;return
         if not self.entry_allowed(m,self.e.now) or not self.entry_ready(ticker) or m['close']-self.e.now<=60:
-            a['repeat_qualified']=False
-            return
+            a['repeat_qualified']=False;return
         if self.entry_deadline(m,self.e.now)<=self.e.now+self.e.latency:
-            a['repeat_qualified']=False
-            return
-        if any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):
-            return
+            a['repeat_qualified']=False;return
         q=self.entry_quote(ticker,a['side'])
         if not q:
-            a['repeat_qualified']=False
-            return
-        remaining,basis=favorite_timing.clock(m,self.e.now)
-        signal=entry_key(self.series,a['side'],q['price'],remaining,basis)
-        if a.get('repeat_qualified') and signal==a.get('last_repeat_signal'):
-            a['repeat_duplicate_suppressed']=a.get('repeat_duplicate_suppressed',0)+1
-            return
-        a['repeat_opportunities_detected']=a.get('repeat_opportunities_detected',0)+1
-        inventory=sum((l.quantity for l in lots if l.side==a['side']),ZERO)
-        max_inventory=self.contracts*D(str(self.profile.get('paper_repeat_inventory_multiplier',5)))
-        if inventory+q['quantity']>max_inventory:
-            a['repeat_risk_suppressed']=a.get('repeat_risk_suppressed',0)+1
-            a['last_repeat_suppression']=dict(reason='inventory_cap',signal=signal,at=self.e.now)
-            return
-        if self.e.now-a.get('last_submit',0)<10:
-            return
-        # Refresh the deadline from the currently verified market state.
-        # Sports verification may expire earlier than the original attempt.
-        a['entry_deadline']=self.entry_deadline(m,self.e.now)
-        a['target_inventory']=str(inventory+q['quantity'])
-        self.submit_entry(ticker,a,q)
-        a['last_repeat_signal']=signal
-        a['repeat_qualified']=True
-        a['repeat_entries']=a.get('repeat_entries',0)+1
-        self.e.log('FAVORITE_REPEAT_OPPORTUNITY',ticker=ticker,details=json.dumps(dict(
-            opportunity_key=signal,repeat_entries=a['repeat_entries'],
-            inventory_before=str(inventory),max_inventory=str(max_inventory),
-            price=str(q['price']),quantity=str(q['quantity']),
-            entries_attempted=a['repeat_entries'],
-            opportunities_detected=a['repeat_opportunities_detected'])))
+            a['repeat_qualified']=False;return
+        self.offer_distinct_bucket(ticker,m,a,lots,q)
 
     def entry_allowed(self,m,now):
         if self.profile.get('retired'):return False
@@ -242,15 +345,46 @@ class FavoritesStrategy(ConvexityStrategy):
                     loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
                 self.attempts[ticker]=a
             a.update(recorded=False,entry_deadline=deadline)
-            reprice_for_data=q['mode']=='paper_exploration' and now-a.get('last_submit',0)>=10
+            # A previously resting maker bid can become marketable as the book
+            # moves. Cancel crossed bids before considering another bucket; a
+            # parallel entry must not bypass the post-only safety requirement.
+            crossed=[o for o in active if o.action=='buy' and
+                     o.price>=self.e.books[ticker].ask(o.side)]
+            if crossed:
+                for order in crossed:self.e.cancel(order.id)
+                self.last_reason='Cancel crossed maker bid before renewed research entry'
+                a['retry_at']=now+1
+                continue
+            compare=active
+            if a.get('entry_policy')=='favorites-paper-data-v3' and active:
+                # Only compare the current candidate with bids in its own 5c
+                # / time bucket. Old distinct-bucket queues are not replacements.
+                _,buckets=self.active_buckets(ticker,a,active)
+                current=self.research_bucket(ticker,side,q['price'])
+                compare=[order for order in active if buckets.get(order.id)==current]
+                status=self.offer_distinct_bucket(ticker,m,a,[],q,active=active,pending=buckets)
+                if status in ('blocked','submitted'):
+                    canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
+                    for order in active:
+                        if order.id not in canceling:order.expiry=min(now+30,deadline)
+                    continue
+            # Within the same research bucket, a more competitive quote is not a
+            # new sample. Preserve the already-valid maker queue position instead
+            # of paying cancellation/reentry churn for a 2c price improvement.
+            reprice_for_data=(q['mode']=='paper_exploration' and
+                a.get('entry_policy')!='favorites-paper-data-v3' and now-a.get('last_submit',0)>=10)
             if any(o.price>q['price'] or o.quantity!=q['quantity'] or
                     (reprice_for_data and q['price']-o.price>=D('.02')) or
-                    (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in active):
-                self.cancel_entry(ticker,'Maker entry refreshed: current price, configured size or fee conditions changed')
+                    (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in compare):
+                if a.get('entry_policy')=='favorites-paper-data-v3':
+                    for order in compare:self.e.cancel(order.id)
+                    self.last_reason='Maker entry refreshed within current research bucket'
+                else:
+                    self.cancel_entry(ticker,'Maker entry refreshed: current price, configured size or fee conditions changed')
                 a['retry_at']=now+1
             elif active:
-                # Extend the safety lease only after full revalidation. Keep the
-                # original arrival/queue position and never revive a cancellation.
+                # Renew only verified, non-canceling orders while retaining their
+                # arrival timestamp and original maker queue position.
                 canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
                 for order in active:
                     if order.id not in canceling:order.expiry=min(now+30,deadline)
