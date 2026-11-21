@@ -1634,4 +1634,8 @@ Reduce avoidable paper-worker CPU, memory and database growth from paused, unexp
 - Coordinate separate legacy discovery REST scheduling with PR #314 owner; do not alter that scheduler during its active work. Keep MT-019 backup/storage and P0 PR #317 startup work untouched.
 
 ### Completion notes
-_In progress; PR, tests, deployment and runtime measurements to follow._
+- **Merged implementation:** PR [#318](https://github.com/princesspikachuu/kalshi-scanner-data/pull/318) merged into `build/google-auth-foundation` at `6d8c4057f4b9faac71ce735d665cab492b0e5d04` (2026-11-21 19:17 UTC). `legacy_health_readiness()` skips unneeded hosted idle-account fee/book scans, and `shadow_feed_health` adds `legacy_fee_checks_skipped`. Held positions/orders and standalone mode remain protected.
+- **Validation:** Focused Favorites tests, new regression tests and PR-head API/PostgreSQL passed. Post-merge workflows [44940097891](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44940097891) and [44940102515](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44940102515) were still running at 19:21 UTC.
+- **Deployment pending:** `pocket-processing-staging` is on checks-pass auto-deploy, with previous P0 `18b739ed` last seen live at 19:18:59 UTC. Baseline `shadow_feed_health` retained 9 dormant legacy selected markets and `verified_fees=9`; new skipped-fee counter was not yet visible.
+- **Safety baseline:** 75 active Favorites bots; other bot groups paused; real exchange orders disabled; one-contract Favorites maker paper entries had sampled fill fees of zero.
+- **Acceptance:** After checks pass and Render deploys code containing `6d8c4057`, verify exclusive lock, `demo_worker_ready`, new `legacy_fee_checks_skipped` and dormant `verified_fees=0` while Favorites remains active without crashes. Mark DONE only after those checks.
