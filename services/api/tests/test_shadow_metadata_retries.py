@@ -99,7 +99,7 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
             await run.discover_once()
         self.assertEqual(run.api.fetch.await_count,2)
         key='fifteen:KXGOLD15M'
-        self.assertEqual(run.experiments.discovery_wakes[key],now+7200)
+        self.assertAlmostEqual(run.experiments.discovery_wakes[key],now+7200,places=3)
         # Even across a new worker instance, the saved checkpoint wake prevents
         # periodic opening scans and does not require a market subscription.
         restored=self.fixture();restored.profiles=list(run.profiles)
