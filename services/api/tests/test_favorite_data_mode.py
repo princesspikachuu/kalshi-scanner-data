@@ -253,6 +253,48 @@ class DataMode(unittest.TestCase):
         self.assertEqual(len(e.orders),1)
         self.assertEqual(a['last_repeat_suppression']['reason'],'legacy_filled_bucket_unknown')
 
+    def test_parallel_bucket_needs_unreserved_cash_without_reject_churn(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        e.wallet.cash=D('1.00')
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        self.assertEqual(e.available(),D('.20'))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(b.attempts[first.ticker]['last_repeat_suppression']['reason'],
+                         'insufficient_unreserved_cash')
+        self.assertEqual(e.wallet.stat(first.ticker).rejected_orders,0)
+        self.assertEqual(b.attempts[first.ticker].get('repeat_entries',0),0)
+        # Once collateral is truly available, the distinct bucket can be bid.
+        e.refill(D(1))
+        e.advance(223);book.at=223;b.step()
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(e.orders[list(e.orders)[-1]].status,'pending')
+        self.assertEqual(e.wallet.stat(first.ticker).rejected_orders,0)
+
+    def test_cap_reduction_preserves_earliest_queued_bucket(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201)
+        first=next(iter(e.orders.values()))
+        e.advance(212);book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        second=list(e.orders.values())[-1]
+        e.advance(213)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(second.status,'resting')
+        b.profile['paper_repeat_inventory_multiplier']=1
+        book.at=213;b.step()
+        pending_cancels={ident for _,_,action,ident in e.pending if action=='cancel'}
+        self.assertIn(second.id,pending_cancels)
+        self.assertNotIn(first.id,pending_cancels)
+        e.advance(214)
+        self.assertEqual(first.status,'resting')
+        self.assertEqual(second.status,'cancelled')
+
     def test_calibrated_favorites_stays_single_entry_per_market(self):
         maker=fixture.MakerEntries()
         e,b,book=maker.setup_bot(paper_exploration=False)
