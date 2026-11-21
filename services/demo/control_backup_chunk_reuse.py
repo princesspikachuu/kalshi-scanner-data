@@ -16,7 +16,7 @@ CATALOG_FORMAT='control-snapshot-root-receipt-v1'
 PREFIX='demo/backups/'
 
 
-def _receipt_valid(reference):
+def _receipt_valid(reference,*,catalog=False):
     if not isinstance(reference,dict):
         return False
     digest=reference.get('sha256')
@@ -24,7 +24,7 @@ def _receipt_valid(reference):
     return (isinstance(digest,str) and len(digest)==64
             and all(c in '0123456789abcdef' for c in digest)
             and type(size) is int and 1<=size<=MAX_OBJECT
-            and reference.get('key')==PREFIX+digest+'.json.gz')
+            and reference.get('key')==(PREFIX+('roots/' if catalog else '')+digest+'.json.gz'))
 
 
 def prior_verified_chunks(store,objects,*,max_parts=100000):
@@ -42,8 +42,7 @@ def prior_verified_chunks(store,objects,*,max_parts=100000):
     catalog_reference=state.get('catalog_reference')
     if not (_receipt_valid(root_reference) and
             isinstance(catalog_reference,dict)
-            and _receipt_valid(catalog_reference)
-            and catalog_reference['key'].startswith('demo/backups/roots/')):
+            and _receipt_valid(catalog_reference,catalog=True)):
         # A valid v2 recovery root always has an independently stored receipt.
         raise ValueError('Verified backup reuse catalog unavailable')
     catalog=read_verified(objects,catalog_reference)
