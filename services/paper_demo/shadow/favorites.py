@@ -100,7 +100,7 @@ class FavoritesStrategy(ConvexityStrategy):
         permitted=ceiling-inventory
         # Preserve older valid bucket bids through a price/time transition, but
         # fail closed on quantity, direction, or market-cap violations.
-        for order in sorted(active,key=lambda o:(o.created,o.id),reverse=True):
+        for order in sorted(active,key=lambda o:(o.created,o.id)):
             if (order.side!=a['side'] or order.remaining>D(1) or order.price>D('.95')
                     or order.price<D('.70') or order.remaining>permitted):
                 self.e.cancel(order.id)
@@ -146,9 +146,12 @@ class FavoritesStrategy(ConvexityStrategy):
         if q['mode']=='paper_exploration' and request.status in ('pending','resting'):
             a.setdefault('pending_buckets',{})[ident]=bucket
         self.e.log('FAVORITE_ENTRY_DECISION',ticker=ticker,order_id=ident,reason=self.last_reason,details=json.dumps(dict(
-            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),research_bucket=bucket,
+            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),execution_status=request.status,research_bucket=bucket,
             event_ticker=self.e.markets[ticker].get('event_ticker',ticker),estimate=q['estimate'],ceiling=q['ceiling'],execution_model=request.execution_model,
             worker_delay_ms=request.worker_delay_seconds*1000,decision_at=request.decision_at,arrival_at=request.arrives)))
+        if request.status not in ('pending','resting'):
+            # A rejected paper order is not a resting bid or collected sample.
+            return None
         if q['mode']=='paper_exploration':
             print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
                 price=str(q['price']),policy=q['policy'],research_bucket=bucket,
@@ -180,6 +183,15 @@ class FavoritesStrategy(ConvexityStrategy):
                 a['repeat_risk_suppressed']=a.get('repeat_risk_suppressed',0)+1
                 a['last_risk_blocked_bucket']=bucket
             a['last_repeat_suppression']=dict(reason='inventory_plus_resting_cap',signal=bucket,at=self.e.now)
+            return 'blocked'
+        # The quote routine credits this market's resting reserves to allow
+        # replacement pricing. Distinct *additional* bids cannot spend those
+        # funds twice: only actually unreserved cash can collateralize one.
+        unreserved=self.e.available()
+        required=q['quantity']*q['price']+q['fee']
+        if required>unreserved:
+            a['last_repeat_suppression']=dict(reason='insufficient_unreserved_cash',signal=bucket,
+                at=self.e.now,available=str(unreserved),required=str(required))
             return 'blocked'
         if self.e.now-a.get('last_submit',0)<10:return 'blocked'
         active_ids={order.id for order in active}
