@@ -40,6 +40,8 @@ def fill(strategy,order,quantity,entry_key):
         row=cell(strategy.exit_evidence.cells,key,dict(key=key,series=strategy.series,market_type=market_type(strategy.profile,m),
             side=order.side,price=str(price),horizon=horizon(remaining),clock=basis))
         add(row,'contracts',quantity);add(row,'cost',cost)
+        row['time_min']=min(row.get('time_min',int(remaining)),int(remaining))
+        row['time_max']=max(row.get('time_max',int(remaining)),int(remaining))
         if not verified:add(row,'unverified',quantity)
         if order.execution_model=='worker-delay-v1':
             add(row,'latency_observed_contracts',quantity)
@@ -113,6 +115,17 @@ def settle(strategy,ticker,observe):
             cost=str(sum((D(c['cost']) for c in chunks),D(0))),
             net=str(sum((D(c['return_net']) for c in chunks),D(0))))})
         while len(returns)>500:returns.pop(next(iter(returns)))
+        if strategy.hold_only:
+            wide=cell(strategy.exit_evidence.cells,key).setdefault('wide_events',{})
+            event=m.get('event_ticker',ticker);records=wide.setdefault(event,[])
+            for chunk in chunks:
+                seconds=int(chunk.get('seconds_to_event_end',chunk.get('seconds_to_market_close',0)))
+                existing=next((record for record in records if record[0]==seconds),None)
+                if existing:
+                    existing[1]=str(D(existing[1])+D(chunk['quantity']));existing[2]=str(D(existing[2])+D(chunk['cost']))
+                    existing[3]=str(D(existing[3])+D(chunk['quantity'])*payout-D(chunk['cost']))
+                else:records.append([seconds,chunk['quantity'],chunk['cost'],str(D(chunk['quantity'])*payout-D(chunk['cost']))])
+            while len(wide)>500:wide.pop(next(iter(wide)))
     a['timing_finalized']=True
 
 def rows(cells,hold_only=False):
@@ -133,7 +146,8 @@ def rows(cells,hold_only=False):
             if (D(row.get('unverified','0'))==0 and closed==qty==D(row.get('resolved','0'))
                     and D(row.get('winners','0'))==qty*payout and cost>0 and net==qty*payout-cost):
                 attributed={next(iter(events)):dict(cost=str(cost),net=str(net))}
-        result.append(dict(row,return_events=attributed,return_policy='hold_only' if hold_only else 'all_executions',**summarize(attributed),average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
+        transport={k:v for k,v in row.items() if k not in ('return_events','hold_return_events')}
+        result.append(dict(transport,outcome_events=events,return_events=attributed,return_policy='hold_only' if hold_only else 'all_executions',**summarize(attributed),average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
             break_even=str(100*D(row['cost'])/qty) if qty else None,
             average_holding_minutes=str(D(row['holding_seconds'])/closed/60) if closed else None,
             net_per_dollar_hour=str(D(row['net'])/hours) if hours else None,

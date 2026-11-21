@@ -58,3 +58,30 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(engine.markets[ticker]['paid'])
         suite.handle('experiment_settlement',dict(ticker=ticker,status='finalized',result='yes'),301)
         self.assertEqual(engine.wallet.cash,before+D(10))
+
+    async def test_released_cash_can_fund_hourly_finance_maker_entry(self):
+        from services.api.tests import test_strategy_scope as scope_fixture
+        from services.api.tests import test_strategy_folders as folder_fixture
+        suite,_=scope_fixture.ScopeTests().suite();engine,fleet,_=suite.portfolios['favorites']
+        orphan='KXBTC15M-old';folder_fixture.market(engine,orphan,close=250)
+        engine.wallet.fill(orphan,'yes','buy',D(10),D('.8'),D(0),200,'historical')
+        engine.wallet.cash=D('.4742')
+        ticker='KXUSDCADAH-finance'
+        suite.handle('hourly_market',dict(market=dict(ticker=ticker,event_ticker='FINANCE',
+            series_ticker='KXUSDCADAH',open=100,close=2000,hourly_price=True,discovered_at=300),
+            taker_multiplier='1',maker_multiplier='0'),300)
+        book=dict(type='orderbook_snapshot',sid=7,seq=1,msg=dict(market_ticker=ticker,
+            yes_dollars_fp=[['.81','100']],no_dollars_fp=[['.17','100']]))
+        suite.handle('kalshi',book,301)
+        self.assertFalse([o for o in engine.orders.values() if o.ticker==ticker])
+        host=S(experiments=suite,verified_data=S(call=lambda *args:dict(
+            market=dict(ticker=orphan,status='settled',result='yes'))))
+        async def consume(source,payload):suite.handle(source,payload,302)
+        host.put=consume
+        with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=302):
+            await recover_once(host)
+        engine.books[ticker].at=305
+        suite.handle('clock',{},305)
+        orders=[o for o in engine.orders.values() if o.ticker==ticker and o.action=='buy']
+        self.assertTrue(orders);self.assertTrue(all(o.maker for o in orders))
+        self.assertTrue(all(o.quantity>=1 for o in orders))

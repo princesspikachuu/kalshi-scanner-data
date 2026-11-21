@@ -54,3 +54,41 @@ class HoldOnlyTests(unittest.TestCase):
         self.assertFalse(engine.books[ticker].levels['yes'])
         self.assertEqual(engine.wallet.cash,cash);self.assertEqual(engine.wallet.lots,lots)
         self.assertIn(ticker,engine.markets)
+
+    def test_paused_statistics_freezes_display_and_releases_index_until_resumed(self):
+        from services.api.tests import test_strategy_folders as folder_fixture
+        from services.paper_demo.shadow.statistics_favorites import StatisticsFavoritesStrategy
+        suite,source_rows=scope_fixture.ScopeTests().suite()
+        p=folder_fixture.profile(series='KXBTCD',id='stat-test',strategy='favorites_statistics')
+        p['folder_id']='favorites_statistics'
+        suite=folder_fixture.ready_suite(suite.host,source_rows+[dict(parameters=p,progress=dict(desired='paused'))])
+        bot=suite.portfolios['favorites_statistics'][1].bots['KXBTCD']
+        self.assertIsInstance(bot,StatisticsFavoritesStrategy)
+        with patch.object(bot,'statistics_snapshot',return_value=dict(matrix=[],evidence_refreshed_at=200)) as calculate:
+            suite.shared_statistics_cache['groups']={'large-index':{'events':{}}}
+            first=suite.snapshot(200)['favorites_statistics']['statistics']
+            second=suite.snapshot(201)['favorites_statistics']['statistics']
+            self.assertIs(first,second);self.assertEqual(calculate.call_count,1)
+            self.assertFalse(suite.shared_statistics_cache['groups'])
+            bot.enabled=True;suite.snapshot(202)
+            self.assertEqual(calculate.call_count,2)
+
+    def test_expired_untraded_markets_retire_without_inventing_settlement_or_dropping_filled_trials(self):
+        from services.api.tests import test_strategy_folders as folder_fixture
+        suite,_=scope_fixture.ScopeTests().suite();engine,fleet,_=suite.portfolios['favorites']
+        for name in ('untraded','funded','working'):
+            ticker='KXBTC15M-'+name;market(engine,ticker,close=250)
+            engine.markets[ticker].update(bot_id=fleet.owner(ticker).profile['id'],discovered_at=200)
+        engine.now=200
+        engine.wallet.fill('KXBTC15M-funded','yes','buy',D(1),D('.8'),D(0),201,'fill')
+        # Model a previously closed fill still waiting for its authoritative outcome.
+        engine.wallet.fill('KXBTC15M-funded','yes','sell',D(1),D('.7'),D(0),202,'exit')
+        order=engine.place('KXBTC15M-working','yes','buy',D(1),D('.8'),maker=True)
+        engine.now=300;cash=engine.wallet.cash
+        suite.maintain()
+        self.assertNotIn('KXBTC15M-untraded',engine.markets)
+        self.assertIn('KXBTC15M-funded',engine.markets)
+        self.assertIn('KXBTC15M-working',engine.markets)
+        self.assertEqual(engine.wallet.cash,cash)
+        self.assertFalse(engine.markets['KXBTC15M-funded'].get('paid',False))
+        self.assertIn(order,engine.orders)

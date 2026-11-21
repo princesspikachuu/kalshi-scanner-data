@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,winConfidence90,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -20,7 +20,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes};
 }
 test('Data Learning panel distinguishes active learning from diagnostics-only and operational strategies',()=>{
@@ -675,4 +675,36 @@ test('collector matrix preserves category research and does not invent pending o
  assert.ok(html.includes('70–74¢'));
  assert.ok(html.includes('n=1'));
  assert.doesNotMatch(html,/Purchased 13|n=13 settled/);
+});
+
+
+test('Favorites table setting switches views and persists across reload without changing trading controls',()=>{
+ const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
+ folder.collector_wide_summary={price_buckets:['70–<78¢','78–<86¢','86–95¢'],
+  rows:{'crypto-15m':[{band:'70–<78¢',horizon:'0m–5m',events:100,event_wins:90,contracts:'100',cost:'75',return_observations:100,return_sum:'20'}]},
+  coverage:{'crypto-15m':{time_buckets:['0m–5m','5m–10m','10m–15m'],time_basis:'market_duration'}},by_bot:{}};
+ const button={dataset:{favoriteTable:'wide'}},storage=new Map();
+ const {nodes}=setup(d,{storage,queries:{'[data-favorite-table]':[button]}});
+ assert.match(nodes.get('groups').innerHTML,/Table settings/);
+ button.onclick();assert.equal(storage.get('moneytree-favorite-table-mode'),'wide');
+ assert.match(nodes.get('groups').innerHTML,/wider 3 × 3/);
+ assert.match(nodes.get('groups').innerHTML,/70–&lt;78¢/);
+ assert.match(nodes.get('groups').innerHTML,/90% win-rate interval/);
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/NaN|undefined/);
+ assert.match(setup(d,{storage}).nodes.get('groups').innerHTML,/wider 3 × 3/);
+ button.dataset.favoriteTable='detailed';button.onclick();
+ assert.equal(storage.get('moneytree-favorite-table-mode'),'detailed');
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/<h3>High-Probability Favorites · wider/);
+});
+
+test('90 percent Wilson uncertainty remains nonzero at perfect accuracy and decreases with independent sample size',()=>{
+ assert.equal(winConfidence90(0,0,.8),null);
+ const c=winConfidence90(90,100,.8),larger=winConfidence90(360,400,.8);
+ assert.ok(c.low<.9&&c.high>.9);assert.ok(c.error>larger.error);
+ assert.ok(Math.abs(c.margin-.1)<1e-12);
+ const perfect=winConfidence90(10,10,.9);assert.ok(perfect.error>0&&perfect.low<1);
+ const html=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto',bots:[{experiment:{entry_timing:[{
+  series:'KXBTC15M',market_type:'15m_price',price:'.8',horizon:'5–10m',clock:'market_close',
+  contracts:100,cost:80,closed:100,net:10,events:100,event_win_rate:90}]}}]});
+ assert.match(html,/90% margin of error/);assert.match(html,/\+10\.0 pp/);
 });
