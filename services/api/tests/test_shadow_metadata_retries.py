@@ -134,6 +134,49 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('fifteen:KXBTC15M',run.experiments.discovery_wakes)
         self.assertEqual(run.discovery_retry_at['KXBTC15M'],now+2)
 
+    async def test_15m_weekend_uses_complete_nearest_announced_opening_page(self):
+        run=self.fixture();run.profiles=[dict(series='KXGOLD15M')]
+        run.experiments=SimpleNamespace(discovery_wakes={})
+        now=datetime(2026,11,20,23,tzinfo=timezone.utc).timestamp()
+        opening=datetime(2026,11,22,23,tzinfo=timezone.utc).timestamp()
+        iso=lambda seconds:datetime.fromtimestamp(seconds,timezone.utc).isoformat()
+        future=dict(ticker='KXGOLD15M-SUNDAY',event_ticker='GOLD-SUNDAY',
+            status='initialized',open_time=iso(opening),close_time=iso(opening+900))
+        seen=[]
+        async def fetch(path,params=None):
+            self.assertEqual(path,'/markets')
+            seen.append((params.get('status'),params.get('max_close_ts')))
+            if params.get('status')=='unopened' and params['max_close_ts']>=opening+900:
+                return dict(markets=[future],cursor='')
+            return dict(markets=[],cursor='')
+        run.api.fetch=AsyncMock(side_effect=fetch)
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        self.assertEqual([status for status,_ in seen],
+                         ['open','unopened','unopened','unopened'])
+        self.assertEqual(run.experiments.discovery_wakes['fifteen:KXGOLD15M'],opening)
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+3600):
+            await run.discover_once()
+        self.assertEqual(len(seen),4)
+
+    async def test_incomplete_unopened_page_cannot_authorize_long_market_sleep(self):
+        run=self.fixture();run.profiles=[dict(series='KXGOLD15M')]
+        run.experiments=SimpleNamespace(discovery_wakes={})
+        now=time.time()
+        iso=lambda seconds:datetime.fromtimestamp(seconds,timezone.utc).isoformat()
+        future=dict(ticker='KXGOLD15M-LATER',event_ticker='GOLD-LATER',
+            status='initialized',open_time=iso(now+3600),close_time=iso(now+4500))
+        async def fetch(path,params=None):
+            if params['status']=='unopened':
+                return dict(markets=[future],cursor='more')
+            return dict(markets=[],cursor='')
+        run.api.fetch=AsyncMock(side_effect=fetch)
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        self.assertEqual(run.api.fetch.await_count,2)
+        self.assertNotIn('fifteen:KXGOLD15M',run.experiments.discovery_wakes)
+        self.assertEqual(run.discovery_retry_at['KXGOLD15M'],now+900)
+
     async def test_index_15m_weekend_uses_session_hint_without_exchange_reads(self):
         run=self.fixture();run.profiles=[dict(series='KXINX15M')]
         run.experiments=SimpleNamespace(discovery_wakes={})
