@@ -293,7 +293,7 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set(),holdSum
       const enough=cell.samples>=min,capable=['evidence_candidate','fallback_candidate'].includes(cell.eligibility);
       // Kept independent of realized account exits and trading eligibility.
       const held=holdSummary?.by_cell?.[grid.market_type]?.[price+'|'+time];
-      const heldText=statisticsHoldEvidenceText(held);
+      const heldText=holdSummary?statisticsHoldEvidenceText(held):'Hold P/L —';
       const signal='unknown';
       const label=status(cell);
       const fallback=cell.fallback_level!==cell.level&&cell.fallback_level!=='insufficient_samples'?
