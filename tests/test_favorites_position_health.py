@@ -30,8 +30,8 @@ class PositionSettlementHealthTests(unittest.TestCase):
         engine.wallet.cash = before_cash
         snapshot = position_settlement_health(engine, 100)
         self.assertEqual(snapshot["still_open"], {"lots": 1, "contracts": "2", "markets": 1})
-        self.assertEqual(snapshot["expired_not_ws_settled"], {"lots": 2, "contracts": "5.0", "markets": 1})
-        self.assertEqual(snapshot["expired_ws_settled"], {"lots": 1, "contracts": "4", "markets": 1})
+        self.assertEqual(snapshot["expired_no_recorded_settlement"], {"lots": 2, "contracts": "5.0", "markets": 1})
+        self.assertEqual(snapshot["expired_settlement_recorded"], {"lots": 1, "contracts": "4", "markets": 1})
         self.assertEqual(snapshot["expired_already_paid"], {"lots": 1, "contracts": "5", "markets": 1})
         self.assertEqual(snapshot["unknown_market"], {"lots": 1, "contracts": "6", "markets": 1})
         self.assertEqual(engine.wallet.cash, before_cash)
