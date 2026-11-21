@@ -4,6 +4,7 @@ from uuid import uuid4
 from .runner import ts
 from .storage import put
 from .discovery_budget import candidate_markets,next_profile
+from .hourly import favorite_bid
 from services.research.reports import SERIES
 
 WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets with evidence-based exits. Favorite bias remains a hypothesis.'
@@ -36,9 +37,7 @@ def candidates(rows,series,now):
            and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=86400]
     # Prefer usable favorites, then nearest close and executable-looking volume.
     def rank(m):
-        bids=[float(m.get(k) or 0) for k in ('yes_bid_dollars','no_bid_dollars')]
-        if not any(bids):bids=[float(m.get(k) or 0)/100 for k in ('yes_bid','no_bid')]
-        return (not any(.69<=b<=.95 for b in bids),ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0),m['ticker'])
+        return (favorite_bid(m) is None,ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0),m['ticker'])
     return sorted(found,key=rank)
 
 async def weather_once(host):

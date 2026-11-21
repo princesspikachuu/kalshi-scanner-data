@@ -37,3 +37,24 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             await recover_once(host)
         self.assertEqual(len(calls),7)
         self.assertEqual([p['ticker'] for _,p in queued],['6'])
+
+    async def test_actual_consumer_pays_held_experiment_once_after_legacy_rollover(self):
+        from services.api.tests.test_strategy_scope import ScopeTests
+        from services.api.tests.test_strategy_folders import market
+        suite,_=ScopeTests().suite()
+        engine=suite.portfolios['favorites'][0]
+        ticker='KXBTC15M-orphan'
+        market(engine,ticker,close=250)
+        engine.wallet.fill(ticker,'yes','buy',D(10),D('.8'),D('.1'),201,'fill')
+        before=engine.wallet.cash
+        host=S(experiments=suite,verified_data=S(call=lambda *args:dict(
+            market=dict(ticker=ticker,status='finalized',result='yes'))))
+        async def consume(source,payload):suite.handle(source,payload,300)
+        host.put=consume
+        with patch('services.paper_demo.shadow.settlement_recovery.time.time',return_value=300):
+            await recover_once(host);await recover_once(host)
+        self.assertEqual(engine.wallet.cash,before+D(10))
+        self.assertFalse(engine.wallet.lots)
+        self.assertTrue(engine.markets[ticker]['paid'])
+        suite.handle('experiment_settlement',dict(ticker=ticker,status='finalized',result='yes'),301)
+        self.assertEqual(engine.wallet.cash,before+D(10))

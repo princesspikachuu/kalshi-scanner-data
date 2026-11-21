@@ -40,3 +40,5 @@ const sameEvent=favoriteCategoryResearchMarkup({...group,bots:[{...group.bots[0]
  {...entry,price:'.81',return_events:{same:{cost:'9',net:'-1'}}} ]}}]});
 assert.match(sameEvent,/0\.00%/); // One event across prices, after combined cost and net.
 assert.match(favoriteCategoryResearchMarkup(group),/Average P\/L %/);
+
+assert.match(returns,/class=\"profit-positive\"/);
