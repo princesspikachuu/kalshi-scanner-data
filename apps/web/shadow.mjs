@@ -143,6 +143,7 @@ function draw(){
  $('events').innerHTML='<table><thead><tr><th>Time</th><th>Strategy</th><th>Market</th><th>Event</th><th>Details</th></tr></thead><tbody>'+events.map(r=>`<tr><td>${e(new Date(r.time*1000).toLocaleString())}</td><td>${e(data.folders?.find(f=>f.id===(r.folder_id||'convexity'))?.name||'Convexity')}</td><td>${e(data.bots.find(b=>r.ticker?.startsWith(b.series+'-'))?.name||r.ticker||'Wallet')}</td><td>${e(r.event)}</td><td>${e([r.side,r.quantity,r.price?'$'+r.price:'',r.fee?'fee $'+r.fee:'',r.reason].filter(Boolean).join(' · '))}</td></tr>`).join('')+'</tbody></table>';
 }
 async function load(){
+ void refreshWorkerRestarts();
  if(busy)return;busy=true;clearTimeout(timer);
  try{
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
