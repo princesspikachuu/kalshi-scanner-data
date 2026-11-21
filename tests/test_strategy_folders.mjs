@@ -841,7 +841,7 @@ test('statistics-backed Favorites shows distinct event hold ROI and 90% uncertai
   const html=favoriteStatisticsMatrixMarkup(stats,new Set(),hold);
   const summary=html.slice(html.indexOf('<summary>'),html.indexOf('</summary>'));
   assert.match(summary,/Hold P\/L \+12\.35%/);
-  assert.match(summary,/90% P\/L uncertainty pending 12\/20/);
+  assert.match(summary,/90% ±4\.57 points/);
   assert.match(summary,/n=12/);
   assert.match(html,/n=20/,'settled outcome sample stays intact');
   assert.match(html,/n=12 held/,'hold return sample remains separate');
@@ -852,7 +852,7 @@ test('statistics-backed Favorites shows distinct event hold ROI and 90% uncertai
   assert.doesNotMatch(html,/Hold P\/L -90|Hold P\/L \+400|NaN|undefined/);
   assert.doesNotMatch(html,/profit-positive|profit-negative/,
     'statistics trading eligibility colors must not be overwritten by held ROI');
-  assert.match(html,/Hold P\/L — · 90% uncertainty pending 0\/20 · n=0 held/);
+  assert.match(html,/Hold P\/L — · 90% uncertainty — · n=0 held/);
 });
 
 test('statistics-backed Favorites does not invent ROI when only realized exits or outcomes exist',()=>{
@@ -870,7 +870,7 @@ test('statistics-backed Favorites does not invent ROI when only realized exits o
       average_return_pct:'-20',uncertainty90_pct:null}}}};
   const html=favoriteStatisticsMatrixMarkup(stats,new Set(),sparse);
   assert.match(html,/Hold P\/L -20\.00%/);
-  assert.match(html,/90% uncertainty pending 1\/20/);
+  assert.match(html,/90% uncertainty —/);
   assert.doesNotMatch(html,/90% ±0\.00/);
 });
 
