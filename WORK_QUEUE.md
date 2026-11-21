@@ -2,6 +2,19 @@
 
 This file is the coordination source of truth for ChatGPT/Codex implementation chats working on this repository.
 
+
+## ACTIVE PROJECT-WIDE SCOPE — regular High-Probability Favorites ONLY (2026-11-21)
+
+**User directive: ALL development, debugging, analysis, performance, storage, deployment, and operational work must be directly relevant to the REGULAR High-Probability Favorites strategy. This is the sole current project priority until the user explicitly changes it.**
+
+- **IN SCOPE:** regular High-Probability Favorites trading behavior, opportunities and fills, its own data collection and research, observation-level outcome/uncertainty tables and dashboard, and fixes required to keep its paper trades, data, settlements, backups, and worker services operating safely and reliably. Shared infrastructure work is allowed **only when demonstrably needed** for regular Favorites or to prevent loss/corruption of its existing records.
+- **OUT OF SCOPE:** **Statistics-Backed Favorites (even though it shares the Favorites name)**; Market Maker; Convexity; Sequential Spread; Complete Set; Volatility Scalper; and all other strategies, new strategy experiments, and unrelated features. Do not implement, optimize, analyze, revive, schedule, or resume these.
+- **IMMEDIATE WORKFLOW RULE:** Before starting **or continuing** any task, including one already claimed `IN PROGRESS`, check that its next actions directly serve regular High-Probability Favorites. If not, safely checkpoint and mark the task `PAUSED — out of current Favorites scope` or leave a clear pause note for its owner; do not keep working merely because the task was already claimed or has a U0/U1 label. Exception: minimum essential action to prevent imminent data loss/security failure, with no expansion into other strategy work.
+- **QUEUE RULE:** Only claim or advance tasks directly relevant to regular High-Probability Favorites. Other `READY` tasks are *not actionable* under the present scope, regardless of urgency. The scope directive overrides prior queue ordering and older handoff language; leave old task details and historical evidence intact.
+- **SAFETY:** Keep all other strategies paused. Never enable Statistics-Backed Favorites, other bots, or LIVE real orders. Preserve existing histories, positions, financial ledgers, and verified backups.
+- **COORDINATION:** Every parallel ChatGPT/Codex development chat should read this directive from `WORK_QUEUE.md` on `main` before acting, even when its application code lives on `build/google-auth-foundation`. Any work handoff, new issue, or PR must state how it serves **regular** High-Probability Favorites. This directive remains in effect until explicitly revoked by the user.
+
+
 ## How implementation chats must use this file
 
 When the user says **"continue"** and the current chat has finished its assigned work:
@@ -29,7 +42,7 @@ When the user says **"continue"** and the current chat has finished its assigned
 - `U4 — BACKLOG` — useful but deferrable work.
 
 ### Queue ordering rule
-When choosing new work, sort first by urgency (U0 → U4), then by dependency/readiness, then by the existing Priority text. A lower-urgency task already `IN PROGRESS` may finish unless a U0 issue requires the same files/infrastructure or the user explicitly redirects it.
+**First enforce the ACTIVE PROJECT-WIDE SCOPE directive above: only regular High-Probability Favorites work is eligible.** Among *eligible* tasks, sort by urgency (U0 → U4), then by dependency/readiness, then by the existing Priority text. Previously claimed unrelated work must be checkpointed and paused rather than finished under its old claim.
 
 ### Status values
 - `READY` — available for any chat to claim.
@@ -45,7 +58,7 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 - Do not reduce useful monitoring/trading activity merely to save worker resources.
 - Favor instrumentation that lets us measure whether a change actually increased trade opportunities, fills, data volume, and P/L.
 - If a task changes shared strategy infrastructure, verify it does not silently break the other active strategies.
-- **Current user intent (2026-11-21): High Probability Favorites data-collection research is the ONLY active paper-trading strategy.** Latest verified runtime: 75 Favorites bots, zero running bots in Market Maker, Statistics-Backed Favorites, scalpers, legacy Convexity and all other portfolios; real exchange orders disabled. Do NOT resume any paused strategy or enable live orders without explicit user instruction. Preserve historical research, held-risk settlement and existing paper orders.
+- **Current user intent (2026-11-21): REGULAR High-Probability Favorites is the ONLY strategy to work on, not merely the only active paper-trading strategy. Statistics-Backed Favorites is expressly EXCLUDED.** The top-of-file ACTIVE PROJECT-WIDE SCOPE directive governs all ongoing development chats. Latest verified runtime sample: 75 Favorites bots, zero running bots in other portfolios, real orders disabled. Do not resume any paused strategy or enable live orders. Preserve historical research, held-risk settlement and existing paper orders.
 
 ---
 
