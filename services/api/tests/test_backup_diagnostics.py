@@ -33,9 +33,16 @@ class BackupDiagnosticsTests(unittest.TestCase):
              patch('services.demo.maintenance.backup',side_effect=ValueError('Backup chunk capacity reached')),\
              patch('services.demo.maintenance.emails'),contextlib.redirect_stdout(output):
             maintenance(store,{},Mock())
-        event=json.loads(output.getvalue().splitlines()[-1])
-        self.assertEqual(event['stage'],'backup');self.assertEqual(event['reason_code'],'backup_capacity')
-        self.assertTrue(event['original_records_retained']);objects.client.close.assert_called_once()
+        events=[json.loads(line) for line in output.getvalue().splitlines()]
+        failures=[event for event in events if event.get('event')=='demo_backup_verification_failed']
+        self.assertEqual(len(failures),1)
+        failure=failures[0]
+        self.assertEqual(failure['stage'],'backup');self.assertEqual(failure['reason_code'],'backup_capacity')
+        self.assertTrue(failure['original_records_retained']);objects.client.close.assert_called_once()
+        freshness=[event for event in events if event.get('event')=='demo_backup_freshness']
+        self.assertEqual(len(freshness),1)
+        self.assertEqual(freshness[0]['state'],'missing')
+        self.assertFalse(freshness[0]['r2_rechecked'])
         store.clear_alert.assert_called_once_with('storage')
 
     def test_archive_failure_does_not_suppress_control_backup(self):
@@ -47,7 +54,9 @@ class BackupDiagnosticsTests(unittest.TestCase):
              patch('services.demo.maintenance.backup') as backup,\
              patch('services.demo.maintenance.emails'),contextlib.redirect_stdout(io.StringIO()):
             maintenance(store,{'MT_LEGACY_EVENT_ARCHIVE_V2_ENABLED':'true'},Mock())
-        backup.assert_called_once();store.alert.assert_called_once()
+        backup.assert_called_once()
+        self.assertEqual([call.args[0] for call in store.alert.call_args_list],
+                         ['backup','backup-freshness'])
 
     def test_failed_object_verification_cannot_advance_archive_cursor(self):
         from datetime import datetime,timezone
