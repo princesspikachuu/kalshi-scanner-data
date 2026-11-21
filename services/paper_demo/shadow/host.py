@@ -32,6 +32,7 @@ from .position_health import position_settlement_health
 from .settlement_recovery import recover_positions
 
 LOG=logging.getLogger('shadow-host')
+FEE_REFRESH_AFTER=50  # schedule() remains fail-closed after 60 seconds.
 
 def book_conflation_interval(experiments):
     """Use the fastest book feed only while a latency-sensitive scalper is enabled."""
@@ -258,7 +259,7 @@ class HostedRun(ForwardRun):
                 await asyncio.sleep(min(5,remaining));continue
             now=time.time()
             due=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and
-                 t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
+                 t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>FEE_REFRESH_AFTER]
             if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
             await asyncio.sleep(1)
 
