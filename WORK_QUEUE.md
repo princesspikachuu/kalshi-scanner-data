@@ -45,7 +45,7 @@ When choosing new work, sort first by urgency (U0 → U4), then by dependency/re
 - Do not reduce useful monitoring/trading activity merely to save worker resources.
 - Favor instrumentation that lets us measure whether a change actually increased trade opportunities, fills, data volume, and P/L.
 - If a task changes shared strategy infrastructure, verify it does not silently break the other active strategies.
-- Current user intent: **Market Maker and Favorites are active; volatility strategies are paused.** Paused markets/strategies should remain paused unless explicitly re-enabled.
+- **Current user intent (2026-11-21): High Probability Favorites data-collection research is the ONLY active paper-trading strategy.** Latest verified runtime: 75 Favorites bots, zero running bots in Market Maker, Statistics-Backed Favorites, scalpers, legacy Convexity and all other portfolios; real exchange orders disabled. Do NOT resume any paused strategy or enable live orders without explicit user instruction. Preserve historical research, held-risk settlement and existing paper orders.
 
 ---
 
