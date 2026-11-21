@@ -349,7 +349,11 @@ class FavoritesStrategy(ConvexityStrategy):
                     for order in active:
                         if order.id not in canceling:order.expiry=min(now+30,deadline)
                     continue
-            reprice_for_data=q['mode']=='paper_exploration' and now-a.get('last_submit',0)>=10
+            # Within the same research bucket, a more competitive quote is not a
+            # new sample. Preserve the already-valid maker queue position instead
+            # of paying cancellation/reentry churn for a 2c price improvement.
+            reprice_for_data=(q['mode']=='paper_exploration' and
+                a.get('entry_policy')!='favorites-paper-data-v3' and now-a.get('last_submit',0)>=10)
             if any(o.price>q['price'] or o.quantity!=q['quantity'] or
                     (reprice_for_data and q['price']-o.price>=D('.02')) or
                     (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in compare):
