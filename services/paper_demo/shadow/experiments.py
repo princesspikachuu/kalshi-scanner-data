@@ -802,7 +802,7 @@ class ExperimentSuite:
         self.models[folder].cells={}
         self.summary.pop(folder,None)
         self.comparison.pop(folder,None)
-        e.wallet=Wallet(D(1000));e.orders={};e.pending=[];e.closed_reports=set();e.trade_ids=set()
+        e.wallet=Wallet(D(1000));e.orders={};e.pending=[];e.closed_reports=set();e.clear_trade_ids()
         for b in f.bots.values():
             b.attempts={};b.history={} if hasattr(b,'history') else None
             if hasattr(b,'decisions'):b.decisions={}
