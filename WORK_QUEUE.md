@@ -74,6 +74,13 @@ When the user says **"continue"** and the current chat has finished its assigned
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
 
+### MT-019 progress — 2026-11-21 regular Favorites safety, two backup PRs integrated
+
+- **PR #321 merged `a91ea4f`, exact CI passed and Render worker deployed live** at 19:53:39 UTC. New worker recorded exclusive startup and readiness at 19:55:45 UTC; at 19:56:02 UTC, 75 regular High-Probability Favorites bots ran, **0 Statistics-Backed Favorites**, paper fills continued and real orders were disabled. The optional `MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED` remains **OFF**. Keep it off pending audit of actual R2 bucket lifecycle rules and restore tests for older shared chunks.
+- **PR #325 merged `05f7508`** after exact-head API/PostgreSQL CI passed. Adds verified-backup-only `favorites_shadow_bot_sizes`: fixed, nonsensitive regular-Favorites vs all-other-bots counts/bytes/largest row, reconciling to `scope_sizes.shadow_bots`. No new SQL, any bot activity, source data deletion, manifest change or stored health change. Postmerge CI and Render verification were still pending at the checkpoint; do not treat merge as deployment.
+- **Next measurement:** first successful backup after both #320 and #325 should expose `scope_sizes` and `favorites_shadow_bot_sizes`; reconcile total bytes, identify which source contributes growth, and design *lossless* cold-history segments with full verified reconstruction. Last verified 19:13:19 UTC Nov 21: 9,719 records, 300 chunks, 605,951,586 staged bytes; the 1 GiB staged budget is temporary. Preserve all history and never delete verified R2 roots/chunks.
+- **Scope override:** only **regular** High-Probability Favorites and infrastructure directly protecting its paper research/ledger. Do not develop/resume Statistics-Backed Favorites or any other strategy; do not enable LIVE orders.
+
 ### MT-019 update — 2026-11-21: regular Favorites backup safety
 
 **Only regular High-Probability Favorites is in active development scope; Statistics-Backed Favorites and every other strategy are excluded.** Backup/recovery work here is allowed only to protect or improve regular Favorites and its existing financial/research records; do not reactivate other strategies.
