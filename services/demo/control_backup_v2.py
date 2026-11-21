@@ -16,6 +16,7 @@ from psycopg_pool import ConnectionPool
 
 from services.demo.control_backup_capacity_audit import PREFIX_SCOPES, SINGLETONS
 from services.demo.maintenance import object_store, put_verified, read_verified
+from services.demo.backup_limit import BackupSnapshotLimit
 from services.demo.store import DemoStore
 from services.demo.shadow_prefix_boundary_guard import (
     _bounded_collation, BOUNDED_ABOVE_UPPER_SQL,
@@ -112,11 +113,7 @@ def collect_snapshot(pool):
                     if len(page)<PAGE_SIZE:break
             singletons=connection.execute(SINGLETON_QUERY,(list(SINGLETONS),)).fetchall()
             for record in singletons:append(record)
-            assert_no_hidden_control_tail(connection)
-    return records
-
-
-def collect_snapshot_spooled(pool):
+            assedef collect_snapshot_spooled(pool):
     """Stage a whole consistent snapshot into one unlinked local temporary file.
 
     Only one <=2MiB chunk is held in Python memory. PostgreSQL's repeatable
@@ -132,6 +129,7 @@ def collect_snapshot_spooled(pool):
     disk_budget=min(MAX_STAGED_BYTES,available-MIN_FREE_DISK_RESERVE)
     file=tempfile.TemporaryFile(mode='w+b')
     seen=set();current=[];chunk_bytes=0;total_bytes=0;count=0;parts=0
+    scope='singletons'
     aggregate=hashlib.sha256()
 
     def flush():
@@ -159,8 +157,10 @@ def collect_snapshot_spooled(pool):
         raw=canonical(row);size=len(raw)+1
         if size>MAX_SINGLE_ROW_BYTES:
             raise ValueError('Single control record exceeds safe archive size')
-        if count>=MAX_STAGED_ROWS or total_bytes+size>disk_budget:
-            raise ValueError('Spool size budget exceeded; no partial backup published')
+        if count>=MAX_STAGED_ROWS:
+            raise BackupSnapshotLimit('rows',scope,count,total_bytes,MAX_STAGED_ROWS)
+        if total_bytes+size>disk_budget:
+            raise BackupSnapshotLimit('bytes',scope,count,total_bytes,disk_budget)
         if current and (len(current)>=MAX_CHUNK_ROWS or chunk_bytes+size>MAX_CHUNK_BYTES):
             flush()
         current.append(row);chunk_bytes+=size;count+=1;total_bytes+=size
@@ -172,7 +172,8 @@ def collect_snapshot_spooled(pool):
             with connection.transaction():
                 connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
                 connection.execute('SET LOCAL statement_timeout=5000')
-                for _,prefix,predicate in PREFIX_SCOPES:
+                for name,prefix,predicate in PREFIX_SCOPES:
+                    scope=name
                     cursor=None;query=select_prefix_query(predicate)
                     while True:
                         page=connection.execute(query,(
@@ -181,6 +182,7 @@ def collect_snapshot_spooled(pool):
                         for record in page:add(record)
                         cursor=page[-1]['idempotency_key']
                         if len(page)<PAGE_SIZE:break
+                scope='singletons'
                 for record in connection.execute(
                         SINGLETON_QUERY,(list(SINGLETONS),)).fetchall():
                     add(record)
@@ -190,6 +192,11 @@ def collect_snapshot_spooled(pool):
         flush();file.seek(0)
         return dict(file=file,records=count,parts=parts,sha256=aggregate.hexdigest(),
                     staged_bytes=total_bytes)
+    except Exception:
+        file.close()
+        raise
+
+
     except Exception:
         file.close()
         raise
