@@ -561,7 +561,7 @@ def install_shadow(app,auth,mutate,pool):
         mutate(request);query(request)
         if not store.get('shadow/installed'):raise HTTPException(409,'Shadow engine is initializing')
         folder=body.folder_id or 'convexity'
-        if folder not in ('convexity','complete_set','favorites','favorites_statistics',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or not store.get('shadow/folder/'+folder):
+        if folder not in ('convexity','complete_set','favorites','favorites_statistics',*SEQUENTIAL_FOLDERS,*SCALPER_FOLDERS,*MM_FOLDERS) or (body.folder_id is not None and not store.get('shadow/folder/'+folder)):
             raise HTTPException(404,'Bot folder not found')
         command=(dict(amount_cents=body.amount_cents,folder_id=folder,action='refill')
                  if body.folder_id is not None else dict(amount_cents=body.amount_cents))

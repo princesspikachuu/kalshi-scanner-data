@@ -121,6 +121,17 @@ class HostedPostgres(unittest.TestCase):
         full=self.client.get('/demo/shadow/workspace?version=full').json()
         self.assertEqual(D(next(b for b in full['bots'] if b['id']=='btc')['metrics']['all']['net_realized_pnl']),D('1.9'))
 
+    def test_legacy_refill_without_folder_metadata_is_accepted(self):
+        # Older Convexity-only installations never created strategy folder rows.
+        self.seed()
+        self.assertIsNone(self.demo.get('shadow/folder/convexity'))
+        request=dict(amount_cents=5000,request_id='legacy-unscoped-refill-123')
+        response=self.client.post('/demo/shadow/funds',json=request)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['folder_id'],'convexity')
+        self.assertEqual(self.demo.get('shadow/command/'+request['request_id'])['parameters'],
+                         dict(amount_cents=5000))
+
     def test_refill_request_is_deduplicated_and_atomic_with_checkpoint(self):
         self.seed();request=dict(amount_cents=5000,request_id='test-refill-request-123')
         for _ in range(2):self.assertEqual(self.client.post('/demo/shadow/funds',json=request).status_code,200)
