@@ -111,3 +111,47 @@ def summarize_single(folder_bots, profiles, category_for):
         per_bot[str(bot_id)] = _report(bot_events)
     return dict(rows={kind: _report(events) for kind, events in categories.items()},
                 by_bot=per_bot)
+
+
+def summarize_statistics_holds(sources, profiles):
+    """Read-only Favorites/statistics ROI evidence, separate from trade decisions.
+
+    Resolve each event once in an exact five-cent/entry-time cohort and once
+    across all cohorts of its market type. Only explicit hold-only return
+    attribution qualifies for ROI; old realized exit P/L is never substituted.
+    An outcome with incomplete return attribution remains visible as missing
+    evidence rather than becoming a win, loss, or invented zero return.
+    """
+    from .favorite_statistics import PRICE_BUCKETS, TIME_BUCKETS, price_bucket
+
+    category_events, cells = {}, {}
+    for folder_bots in sources:
+        if not isinstance(folder_bots, dict):
+            continue
+        for bot_id, bot in folder_bots.items():
+            if not isinstance(bot, dict) or not isinstance(profiles.get(str(bot_id)), dict):
+                continue
+            for row in bot.get('entry_timing') or []:
+                if not isinstance(row, dict):
+                    continue
+                market_type = row.get('market_type')
+                time = row.get('horizon')
+                price = _finite_decimal(row.get('price'))
+                if not isinstance(market_type, str) or not market_type or time not in TIME_BUCKETS:
+                    continue
+                if price is None or not D('.70') <= price <= D('.95'):
+                    continue
+                bucket = price_bucket(price)
+                if bucket not in PRICE_BUCKETS:
+                    continue
+                # Not all old "return_events" are settlement-based. Never use
+                # those exit-altered values as evidence for a held trade.
+                eligible = row if row.get('return_policy') == 'hold_only' else dict(row, return_events={})
+                _collect(category_events.setdefault(market_type, {}), eligible)
+                _collect(cells.setdefault((market_type, bucket, time), {}), eligible)
+
+    by_cell = {}
+    for (market_type, bucket, time), events in cells.items():
+        by_cell.setdefault(market_type, {})[bucket + '|' + time] = _report(events)
+    return dict(by_market_type={key: _report(events) for key, events in category_events.items()},
+                by_cell=by_cell, basis='verified_hold_only', confidence=90)
