@@ -53,15 +53,18 @@ class MakerOpportunityRotationTests(unittest.TestCase):
             maker_ranking=dict(execution_score=20,trades_last_hour=30)))
         return s,new
     def test_acknowledged_swap_uses_only_own_existing_slot_and_releases_capital(self):
-        s,p=self.setup();self.assertFalse(s.search_capacity('market_maker',1000))
-        self.assertTrue(s.can_replace_maker_market(p,1000));s.handle('maker_market',p,1000)
+        s,p=self.setup();self.assertTrue(s.search_capacity('market_maker',1000))
+        self.assertTrue(s.can_replace_maker_market(p,1000))
+        # Exercise explicit replacement safely even though another candidate
+        # could now be admitted without evicting the existing maker quote.
+        self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         self.assertIn('POL-X',s.feed_markets());self.assertNotIn('POL-HOT',s.feed_markets())
         for folder in MM_FOLDERS:self.assertLess(s.portfolios[folder][0].available(),1000)
         maker_allocation.finalize(s,1000.05);self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
         for folder in MM_FOLDERS:s.portfolios[folder][0].advance(1000.2)
         maker_allocation.finalize(s,1000.2)
         self.assertNotIn('POL-X',s.feed_markets());self.assertTrue(maker_allocation.credited_capacity(s,'POL-HOT',1000.2))
-        self.assertFalse(s.search_capacity('market_maker',1000.2))  # Expansion reserve still applies.
+        self.assertTrue(s.search_capacity('market_maker',1000.2))  # No count ceiling.
         s.handle('maker_market',p,1000.3)
         self.assertIn('POL-HOT',s.feed_markets());self.assertNotIn('POL-HOT',s.maker_allocation['credits'])
         self.assertEqual(s.monitoring_snapshot(1000.3)['subscribed_markets'],32)
@@ -80,7 +83,7 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         p['market']['maker_ranking'].update(
             recent_quote_touch_count=3,recent_tape_sample_count=5)
         self.assertTrue(s.can_replace_maker_market(p,1000))
-        s.handle('maker_market',p,1000)
+        self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         self.assertIn('POL-X',s.maker_allocation['pending'])
         self.assertNotIn('POL-HOT',s.feed_markets())
         # No slot or reservation is released until cancellations acknowledge.
@@ -101,7 +104,7 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         self.assertFalse(s.maker_allocation['pending'])
 
     def test_partial_fill_during_cancellation_aborts_retirement_and_keeps_inventory(self):
-        s,p=self.setup();s.handle('maker_market',p,1000)
+        s,p=self.setup();self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         e=s.portfolios[MM_FOLDERS[0]][0];o=next(iter(e.orders.values()));e.advance(1000.05)
         e.trade('POL-X',dict(trade_id='cancel-race',taker_side='no',yes_price_dollars='.41',count_fp=str(o.ahead+1),ts_ms=1000050))
         maker_allocation.finalize(s,1000.06)
@@ -128,7 +131,7 @@ class MakerOpportunityRotationTests(unittest.TestCase):
         self.assertFalse(s.can_replace_maker_market(p,1000))
     def test_pending_reallocation_survives_recovery_without_freeing_a_live_position(self):
         from services.api.tests.test_strategy_folders import ready_suite
-        s,p=self.setup();s.handle('maker_market',p,1000)
+        s,p=self.setup();self.assertTrue(maker_allocation.begin(s,p['market'],1000))
         state=json.loads(json.dumps(s.state(),default=str));restored=ready_suite(s.host,s.rows,state)
         self.assertIn('POL-X',restored.maker_allocation['pending'])
         maker_allocation.finalize(restored,1001)
