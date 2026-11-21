@@ -28,6 +28,7 @@ from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 from .favorite_statistics_install import initialize_statistics_favorites
 from .favorite_collection_quality import collection_quality
+from .position_health import position_settlement_health
 
 LOG=logging.getLogger('shadow-host')
 
@@ -544,6 +545,7 @@ class HostedRun(ForwardRun):
                             available_cash=str(fe.available()),
                             cash=str(fe.wallet.cash),
                             open_contracts=str(sum((lot.quantity for lot in fe.wallet.lots),D(0))),
+                            position_settlement=position_settlement_health(fe,now),
                             active_markets=len(eligible),
                             fresh_active_books=sum(fe.book_fresh(t) for t in eligible),
                             orders=sum(o.status in ('pending','resting') for o in fe.orders.values()),
