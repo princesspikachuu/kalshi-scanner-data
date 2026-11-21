@@ -131,7 +131,25 @@ async function load(){
   try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{loadNote('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
  }catch(error){
   loadNote(error.message);
-  if(!data){$('health').textContent='Dashboard data unavailable';$('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>'}
+  if(!data){
+   // Legacy report aggregation can time out while the current wallet
+   // checkpoint is perfectly healthy. Keep the money visible rather than
+   // treating a delayed analytics query as missing portfolio data.
+   let currentShown=false;
+   try{
+    const snapshot=await demoCall('shadow/portfolio-snapshot');
+    if(snapshot.installed&&Array.isArray(snapshot.folders)&&snapshot.folders.length){
+     $('health').textContent='Current balances available · historical analytics delayed';
+     $('accountSummary').innerHTML='<p class="small">Current paper account balances and positions are shown below. Historical research details are temporarily unavailable and will retry automatically.</p>'+folderOverviewMarkup(snapshot.folders,'all');
+     $('groups').innerHTML='<p class="small">Detailed strategy tables are waiting for the historical reporting query. No balances or trade records have been reset.</p>';
+     currentShown=true;
+    }
+   }catch{}
+   if(!currentShown){
+    $('health').textContent='Dashboard data unavailable';
+    $('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>';
+   }
+  }
  }finally{busy=false;timer=setTimeout(load,10000)}
 }
 async function change(id,fields){try{const bot=data.bots.find(b=>b.id===id);await demoCall('shadow/bots/'+id,{revision:bot.revision,...fields});note('Saved. New entries follow the worker’s next verified update; existing risk management continues.');await load()}catch(error){note(error.message)}}
