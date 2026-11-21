@@ -1594,7 +1594,7 @@ _Fill in when done._
 ---
 
 ## MT-020 — Stop paused-strategy discovery and repeated reporting waste
-**Status:** IN PROGRESS  
+**Status:** DONE — deployed and verified on the processing worker  
 **Worker:** ChatGPT / paused-strategy resource optimization  
 **Claimed:** 2026-11-21 18:42 UTC  
 **Urgency:** U2 — HIGH  
@@ -1611,4 +1611,9 @@ Reduce avoidable paper-worker CPU, memory and database growth from paused, unexp
 - Do not change ongoing MT-011 checkpoint implementation or MT-019 archive/backup worker.
 
 ### Completion notes
-_In progress; implementation branch/PR and tests to be recorded._
+- **Implementation:** PR [#313](https://github.com/princesspikachuu/kalshi-scanner-data/pull/313), head `31cf0a1901431bd218be62f07c70bc52d5fa6239`, merged on 2026-11-21 as `5bfc69d36ff6a5816fce2c5f07cefc693f765a59` into `build/google-auth-foundation`.
+- **Files:** `services/paper_demo/shadow/experiments.py` and new `services/api/tests/test_paused_market_discovery.py` (eight regression tests). Paused/unexposed portfolios skip new shared, legacy, Maker, and external discovery market allocation; held lots/working orders remain eligible. Resume backfills known active markets, with books invalid until a fresh snapshot. Reuse derived Favorites timing rows for idle paused portfolios (30-second maximum) without changing canonical observations/wallet/checkpoint.
+- **Validation:** Exact PR head full API/PostgreSQL and Node validations passed, GitHub run `44937640567`; merge commit API/PostgreSQL validations `44938105762` and `44938101739` both passed. Existing fee restrictions, position/settlement operations and unrelated strategy behavior remain tested.
+- **Deployment:** Render `pocket-processing-staging`, service `srv-dbhcqr0473hc739kj4pg`, deployed merge commit `5bfc69d3` at 2026-11-21 19:00:11 UTC. New instance `9kd8n` acquired exclusive paper lock and emitted `demo_worker_ready` at 19:02:17 UTC. No runtime crash observed in sampled events or post-handoff logs.
+- **Measured live first cycle:** `paper_monitoring_capacity` at 19:02:43 UTC reported `paused_new_market_copies_skipped=13`, `paused_new_market_discoveries_skipped=0`, `backlog=0` and 11 subscriptions (9 protected, 2 new-entry). `shadow_pipeline_cost` counted 12 idle clock passes skipped. `paper_strategy_health` retained 75 enabled Favorites bots, zero enabled Scalper/Maker/Statistics bots. Four one-contract Favorites paper entries followed the handoff; real orders remain disabled.
+- **Limits:** Existing paused-strategy research/checkpoint history and database/archive storage retained intentionally, so do not claim immediate RAM/CPU savings beyond these observed skipped-work counts. No backup/archive/R2, MT-019 or MT-011 logic changed; outstanding backup capacity investigation belongs to existing MT-019 owner.
