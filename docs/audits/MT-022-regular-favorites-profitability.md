@@ -22,9 +22,9 @@ A single event with multiple thresholds, fills or price/time observations contri
 
 ## Confirmed and fixed reporting defect
 
-The Detailed rollup previously accepted **any** `return_events` entry (even if the same source row had no verified `outcome_events` for that event) and accepted explicitly `return_policy=all_executions` historical returns. These can inflate held-P/L observations or substitute exit-based returns for settlement-based returns. Historical nonfinite or zero-cost values could also poison the aggregate.
+The Detailed rollup previously accepted **any** `return_events` entry, including returns without a verified outcome and old `return_policy=all_executions` cash records containing early exits. This could inflate held P/L and suppress useful known-outcome exits, or break on invalid costs.
 
-PR #323 filters the **derived, read-only** regular Favorites Detailed rollup to events with a valid binary outcome in that same cohort; preserves the original event-level fee/cost/net when valid; omits explicit all-executions historical returns from held ROI; and avoids nonfinite/invalid event amounts. It normalizes event IDs without editing source maps. No existing records are deleted, reset or rewritten. Actual realized `net` remains separate.
+PR #323 reconstructs *hypothetical held* returns in a **read-only derived view** for every regular Favorites table and research detail endpoint. When a confirmed outcome exists, it uses original entry quantity and entry cost including entry fees, **ignoring historical exit proceeds and exit fees**. Exact historical per-event fills are preferred. When only aggregate entry sizing remains, per-event quantity is conservatively estimated and the return is labeled `estimated`; malformed original costs are excluded. Unknown outcomes never enter the P/L or uncertainty denominators. Correlated/repeated fills are deduplicated and incomplete cohorts do not generate a falsely complete ROI. Source records are never deleted, reset or rewritten; actual realized `net` remains separate.
 
 ## Statistical interpretation and remaining limitations
 
@@ -37,6 +37,6 @@ PR #323 filters the **derived, read-only** regular Favorites Detailed rollup to 
 
 ## Regression coverage
 
-`services/api/tests/test_regular_favorites_profit_audit.py` checks fee-inclusive partial fills and event-equal ROI, duplicate event deduplication, orphan/unknown outcomes, excluding explicit old exit-based returns, rejecting invalid historical values, stable event identity and non-mutating source behavior.
+`services/api/tests/test_regular_favorites_profit_audit.py` checks fee-inclusive partial fills and event-equal ROI, deduplication, known winning exits, known losing exits, exact older entries, estimated multi-event old entries, missing outcomes, wider/single/detailed held consistency, malformed source values, stable identities and nonmutating source behavior.
 
 **Release rule:** Full exact-head GitHub API/PostgreSQL and frontend CI must pass before merging or deploying PR #323. Any runtime validation should inspect only derived dashboard research; keep live orders disabled and all nonregular strategies paused.
