@@ -39,7 +39,7 @@ class VerifiedStatisticsHoldResearch(unittest.TestCase):
             # Event A is one cost-weighted observation: (2-1)/(8+1).
             expected=(D(1)/D(9)+D(1)/D(9))*D(100)/2
             self.assertEqual(D(report['average_return_pct']),expected)
-            self.assertEqual(D(report['uncertainty90_pct']),D(0))
+            self.assertIsNone(report['uncertainty90_pct'])
         self.assertEqual(result['basis'],'verified_hold_only')
 
     def test_one_event_in_multiple_cells_does_not_inflate_single_bucket(self):
