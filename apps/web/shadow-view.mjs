@@ -103,7 +103,7 @@ export function favoriteSingleCellMarkup(sample){
  const low=finitePercent(sample.ci90_low_pct)?Number(sample.ci90_low_pct):null;
  const high=finitePercent(sample.ci90_high_pct)?Number(sample.ci90_high_pct):null;
  const result=mean===null?'—':(mean>0?'+':'')+mean.toFixed(2)+'%';
- const uncertainty=error===null?'Not available · fewer than 2 independent return observations':'±'+error.toFixed(2)+' percentage points';
+ const uncertainty=error===null?'Not available · too few or identical observed event returns':'±'+error.toFixed(2)+' percentage points';
  const interval=low===null||high===null?'':(' · 90% interval '+low.toFixed(2)+'% to '+high.toFixed(2)+'%');
  const signal=mean===null?'':mean>0?'profit-positive':mean<0?'profit-negative':'';
  const win=resolved>0?eventAccuracy(Number(sample.event_wins)||0,resolved):'—';
