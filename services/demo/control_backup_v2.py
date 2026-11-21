@@ -302,11 +302,26 @@ def restore_verified_snapshot(objects, reference, *, max_records=MAX_STAGED_ROWS
     return records
 
 
-def backup_controls(store,objects,*,now=None):
+def backup_controls(store,objects,*,now=None,reuse_previous=False):
     now=time.time() if now is None else now
     staging=collect_snapshot_spooled(store.pool)
     try:
-        chunks=[];total_compressed=0
+        # Optional optimization only. A bad/missing previous catalog must
+        # NEVER prevent creation of a fresh, independent complete snapshot.
+        reuse_candidates={};reuse_unavailable=False
+        if reuse_previous:
+            from services.demo.control_backup_chunk_reuse import (
+                prior_verified_chunks,matching_reference,
+            )
+            try:
+                reuse_candidates=prior_verified_chunks(
+                    store,objects,max_parts=MAX_STAGED_ROWS)
+            except Exception:
+                reuse_unavailable=True
+                print(json.dumps(dict(event='demo_backup_reuse_unavailable',
+                     fallback='complete_snapshot',real_orders_enabled=False)),
+                     flush=True)
+        chunks=[];total_compressed=0;reused_chunks=0;reused_bytes=0
         for _ in range(staging['parts']):
             length_bytes=staging['file'].read(4)
             if len(length_bytes)!=4:
@@ -318,7 +333,12 @@ def backup_controls(store,objects,*,now=None):
             if len(blob)!=size:
                 raise ValueError('Truncated local control backup spool')
             part=json.loads(blob)
-            receipt=put_verified(objects,'backups',part)
+            receipt=(matching_reference(part,reuse_candidates)
+                     if reuse_previous and reuse_candidates else None)
+            if receipt is not None:
+                reused_chunks+=1;reused_bytes+=receipt['size']
+            else:
+                receipt=put_verified(objects,'backups',part)
             chunks.append(dict(reference=receipt,count=part['count']))
             total_compressed+=receipt['size']
         if staging['file'].read(1):
@@ -350,6 +370,11 @@ def backup_controls(store,objects,*,now=None):
             catalog_stored=True,staged_bytes=staging['staged_bytes'],
             compressed_bytes=total_compressed+root_ref['size']+catalog_ref['size'],
             verified=True,scope_sizes=staging.get('scope_sizes',{}))
+        if reuse_previous:
+            # Only after all old and new parts passed complete R2 readback.
+            result.update(reused_chunks=reused_chunks,reused_bytes=reused_bytes,
+                new_chunks=len(chunks)-reused_chunks,
+                reuse_source_unavailable=reuse_unavailable)
         print(json.dumps(result,sort_keys=True),flush=True)
         return result
     finally:

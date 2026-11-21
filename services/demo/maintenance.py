@@ -214,7 +214,12 @@ def maintenance(store,env,stop):
                     # Opt-in only after a verified paused-worker trial.
                     # Source records are preserved and never deleted here.
                     from services.demo.control_backup_v2 import backup_controls
-                    backup_controls(store,objects)
+                    if env.get('MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED','false')=='true':
+                        # Safely reuse immutable identical R2 parts, but only
+                        # after full new-snapshot readback verifies every part.
+                        backup_controls(store,objects,reuse_previous=True)
+                    else:
+                        backup_controls(store,objects)
                 else:
                     backup(store,objects)
         try:
