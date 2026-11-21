@@ -6,6 +6,11 @@ wallet accounting or the existing detailed/wide research summaries.
 """
 from decimal import Decimal as D, InvalidOperation
 
+# This is a minimum for displaying the approximate held-ROI Student-t interval,
+# NOT a claim that 20 events are enough to establish profitability. The 90%
+# Wilson win-rate interval is computed separately for the bucket matrices.
+MIN_HOLD_RETURN_UNCERTAINTY_EVENTS = 20
+
 # Two-sided 90% Student t critical values for small samples (df 1..30).
 T90 = (
     '6.3138', '2.9200', '2.3534', '2.1318', '2.0150', '1.9432',
@@ -63,7 +68,7 @@ def _collect(target, row):
         result['estimated'] |= bool(value.get('estimated'))
 
 
-def _report(events):
+def _report(events, min_uncertainty_samples=2):
     resolved = len(events)
     return_events = [event for event in events.values()
                      if not event['missing'] and event['cost'] > 0]
@@ -78,11 +83,13 @@ def _report(events):
         average_return_pct=None, uncertainty90_pct=None,
         ci90_low_pct=None, ci90_high_pct=None,
     )
+    if min_uncertainty_samples > 2:
+        result['uncertainty_min_samples'] = min_uncertainty_samples
     if not n:
         return result
     mean = sum(returns, D(0)) / D(n)
     result['average_return_pct'] = str(100 * mean)
-    if n > 1:
+    if n >= min_uncertainty_samples:
         sample_var = sum(((value - mean) ** 2 for value in returns), D(0)) / D(n - 1)
         # A zero sample variance is not zero future uncertainty: identical
         # binary-event returns can still be followed by the opposite outcome.
@@ -115,8 +122,8 @@ def summarize_single(folder_bots, profiles, category_for):
                 continue
             _collect(category_events, row)
             _collect(bot_events, row)
-        per_bot[str(bot_id)] = _report(bot_events)
-    return dict(rows={kind: _report(events) for kind, events in categories.items()},
+        per_bot[str(bot_id)] = _report(bot_events, MIN_HOLD_RETURN_UNCERTAINTY_EVENTS)
+    return dict(rows={kind: _report(events, MIN_HOLD_RETURN_UNCERTAINTY_EVENTS) for kind, events in categories.items()},
                 by_bot=per_bot)
 
 
