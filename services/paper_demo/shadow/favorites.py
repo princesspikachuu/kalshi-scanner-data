@@ -102,7 +102,8 @@ class FavoritesStrategy(ConvexityStrategy):
         # fail closed on quantity, direction, or market-cap violations.
         for order in sorted(active,key=lambda o:(o.created,o.id)):
             if (order.side!=a['side'] or order.remaining>D(1) or order.price>D('.95')
-                    or order.price<D('.70') or order.remaining>permitted):
+                    or order.price<D('.70') or order.remaining>permitted
+                    or order.price>=self.e.books[ticker].ask(order.side)):
                 self.e.cancel(order.id)
             else:
                 permitted-=order.remaining
@@ -336,6 +337,16 @@ class FavoritesStrategy(ConvexityStrategy):
                     loss_budget=str(min(D(5),self.e.wallet.cash*D('.01'))))
                 self.attempts[ticker]=a
             a.update(recorded=False,entry_deadline=deadline)
+            # A previously resting maker bid can become marketable as the book
+            # moves. Cancel crossed bids before considering another bucket; a
+            # parallel entry must not bypass the post-only safety requirement.
+            crossed=[o for o in active if o.action=='buy' and
+                     o.price>=self.e.books[ticker].ask(o.side)]
+            if crossed:
+                for order in crossed:self.e.cancel(order.id)
+                self.last_reason='Cancel crossed maker bid before renewed research entry'
+                a['retry_at']=now+1
+                continue
             compare=active
             if a.get('entry_policy')=='favorites-paper-data-v3' and active:
                 # Only compare the current candidate with bids in its own 5c
