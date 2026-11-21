@@ -30,6 +30,7 @@ from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 from .favorite_statistics_install import initialize_statistics_favorites
 from .favorite_collection_quality import collection_quality
+from .favorite_quote_lifecycle import FavoriteQuoteLifecycle
 from .position_health import position_settlement_health
 from .settlement_recovery import recover_positions
 
@@ -170,6 +171,14 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.suspend_idle_feeds=True
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        # A bounded restart-local observer on REGULAR Favorites only.
+        # The statistics portfolio and all other engines stay untouched.
+        self.favorite_quote_lifecycle=FavoriteQuoteLifecycle()
+        collector=self.experiments.portfolios.get('favorites')
+        if collector:
+            engine=collector[0]
+            self.favorite_quote_lifecycle.seed_restored(engine.orders.values(),engine.markets)
+            engine._favorite_quote_lifecycle=self.favorite_quote_lifecycle
         for engine in [self.engine]+[e for e,_,_ in self.experiments.portfolios.values()]:
             engine.require_zero_maker_fee_entries=True
             # Checkpoints are not fee authority after restart. A fresh provider
@@ -661,6 +670,12 @@ class HostedRun(ForwardRun):
                                 for b in ff.bots.values()),
                             top_reasons=sorted(reason_counts.items(),key=lambda pair:(-pair[1],pair[0]))[:5],
                             real_orders_enabled=False)),flush=True)
+                        if favorites_folder=='favorites':
+                            # No raw IDs, no DB reads, no derived observation counts.
+                            print(json.dumps(dict(event='favorites_quote_lifecycle',
+                                **self.favorite_quote_lifecycle.snapshot(now,
+                                    getattr(fe,'_favorite_quote_lifecycle_errors',0)),
+                                real_orders_enabled=False)),flush=True)
                     collector=self.experiments.portfolios.get('favorites')
                     if collector:
                         quality=collection_quality(collector[1].bots.values(),now)
@@ -783,7 +798,14 @@ class HostedRun(ForwardRun):
             self.engine.wallet=Wallet(D(1000));self.engine.orders={};self.engine.pending=[]
             self.strategy.halted.update(t for t,m in self.engine.markets.items() if not m.get('paid'))
             self.engine.log('SESSION_RESET',reason='Fresh $1,000 paper session; previous results archived')
-        else:self.experiments.reset(folder)
+        else:
+            self.experiments.reset(folder)
+            if folder=='favorites':
+                # The reset archives the prior account. Reset only ephemeral
+                # quote telemetry; it must not blend different paper sessions.
+                self.favorite_quote_lifecycle=FavoriteQuoteLifecycle()
+                self.experiments.portfolios['favorites'][0]._favorite_quote_lifecycle=self.favorite_quote_lifecycle
+                self.experiments.portfolios['favorites'][0]._favorite_quote_lifecycle_errors=0
         self.audit.flush()
 
     async def run(self):
