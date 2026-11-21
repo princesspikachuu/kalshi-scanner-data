@@ -18,7 +18,7 @@ class DelayAndWindows(unittest.TestCase):
         self.assertEqual(o.execution_model,'worker-delay-v1')
         e.advance(201);self.assertEqual(o.status,'pending');self.assertFalse(e.wallet.lots)
         book.at=205;e.advance(205.15);self.assertEqual(o.status,'resting')
-        e.fill(o,D(10),o.price,'TEST')
+        e.fill(o,D(1),o.price,'TEST')
         chunk=b.attempts[o.ticker]['entry_fills'][0]
         self.assertEqual(chunk['worker_delay_seconds'],5)
         self.assertEqual(rows(b.exit_evidence.cells)[0]['average_worker_delay_ms'],'5000')
@@ -48,7 +48,7 @@ class DelayAndWindows(unittest.TestCase):
         e,b,book=self.bot();b.hold_only=False;e.data_gap(fixture.MakerEntries.ticker,'earlier missing data')
         book.valid=True;book.at=200;book.snapshot_at=200
         b.step();o=next(iter(e.orders.values()));e.advance(201);book.at=201
-        e.fill(o,D(10),o.price,'TEST');a=b.attempts[o.ticker];a['risk_observations']={'risk-bucket':True}
+        e.fill(o,D(1),o.price,'TEST');a=b.attempts[o.ticker];a['risk_observations']={'risk-bucket':True}
         self.settle(e,b)
         self.assertFalse(e.wallet.stat(o.ticker).valid)
         self.assertTrue(a['data_window']['valid']);self.assertEqual(b.exit_evidence.cells['risk-bucket']['n'],1)
@@ -57,17 +57,17 @@ class DelayAndWindows(unittest.TestCase):
         self.assertTrue(json.loads(event['details'])['execution_window_valid'])
     def test_mid_trial_gap_excludes_execution_learning_but_keeps_verified_forecast(self):
         e,b,book=self.bot();b.step();o=next(iter(e.orders.values()));e.advance(201);book.at=201
-        e.fill(o,D(10),o.price,'TEST');a=b.attempts[o.ticker];a['risk_observations']={'risk-bucket':True}
+        e.fill(o,D(1),o.price,'TEST');a=b.attempts[o.ticker];a['risk_observations']={'risk-bucket':True}
         e.data_gap(o.ticker,'missing while holding');book.valid=True;book.at=202;book.snapshot_at=202
         self.settle(e,b)
         self.assertFalse(a['data_window']['valid']);self.assertNotIn('risk-bucket',b.exit_evidence.cells)
         result=rows(b.exit_evidence.cells)[0]
-        self.assertEqual(result['events'],1);self.assertEqual(result['execution_unverified_contracts'],'10')
+        self.assertEqual(result['events'],1);self.assertEqual(result['execution_unverified_contracts'],'1')
         self.assertEqual(D(result['net']),e.wallet.stat(o.ticker).gross-e.wallet.stat(o.ticker).realized_fees)
     def test_gap_after_full_exit_does_not_invalidate_completed_window(self):
         e,b,book=self.bot();b.hold_only=False;b.step();o=next(iter(e.orders.values()));e.advance(201);book.at=201
-        e.fill(o,D(10),o.price,'TEST');a=b.attempts[o.ticker]
-        sell=e.place(o.ticker,'yes','sell',D(10),D('.01'),maker=False)
+        e.fill(o,D(1),o.price,'TEST');a=b.attempts[o.ticker]
+        sell=e.place(o.ticker,'yes','sell',D(1),D('.01'),maker=False)
         e.advance(201.2);self.assertFalse(e.wallet.lots);self.assertIn('ended_at',a['data_window'])
         e.data_gap(o.ticker,'later gap after execution ended')
         self.assertTrue(a['data_window']['valid'])

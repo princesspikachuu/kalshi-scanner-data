@@ -10,12 +10,12 @@ from services.paper_demo.shadow.core import Engine
 from services.paper_demo.shadow.favorites import FavoritesStrategy
 
 class RestoreBehavior(unittest.TestCase):
-    def test_unretired_fifteen_minute_favorite_can_place_configured_size(self):
+    def test_unretired_fifteen_minute_favorite_uses_one_research_contract(self):
         e=Engine(fixture.QuietAudit(),cash='1000');e.advance(200)
         b=FavoritesStrategy(e,fixture.profile(strategy='favorites'))
         fixture.market(e,'KXBTC15M-current',yes='.79',no='.19')
         b.step();o=next(iter(e.orders.values()))
-        self.assertTrue(o.maker);self.assertEqual(o.quantity,D(10));self.assertEqual(o.price,D('.80'))
+        self.assertTrue(o.maker);self.assertEqual(o.quantity,D(1));self.assertEqual(o.price,D('.80'))
 
     def test_join_existing_legacy_feed_keeps_wallets_and_waits_for_snapshot(self):
         suite,_=fixture.SuiteTests().suite();legacy=Engine(fixture.QuietAudit());legacy.advance(200)
@@ -28,7 +28,7 @@ class RestoreBehavior(unittest.TestCase):
         f.step();self.assertFalse(e.orders)
         suite.handle('kalshi',dict(type='orderbook_snapshot',sid=1,seq=1,msg=dict(market_ticker=t,
             yes_dollars_fp=[['.79','100']],no_dollars_fp=[['.19','100']])),201)
-        self.assertTrue(e.orders);self.assertEqual(next(iter(e.orders.values())).quantity,D(10))
+        self.assertTrue(e.orders);self.assertEqual(next(iter(e.orders.values())).quantity,D(1))
 
 @unittest.skipUnless(pg.URL,'Disposable PostgreSQL required')
 class RestoreMigration(unittest.TestCase):
