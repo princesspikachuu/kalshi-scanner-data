@@ -91,17 +91,12 @@ async def sports_once(host):
     choices=suite.enabled_profiles('sports')
     if not choices:return
     active=candidate_markets(suite,markets,'sports',now)
-    # A league can have several simultaneous games. One candidate per league
-    # stranded other verified live events; allow a second distinct event inside
-    # the unchanged global sports/monitoring limits.
-    present=[t for t,m in markets.items() if m.get('sports') and not m.get('paid')
-             and m['close']>now and not m.get('entry_parked')]
-    full_series={t.split('-')[0] for t in present if sum(
-        other.split('-')[0]==t.split('-')[0] for other in present)>=2}
+    # Every distinct game remains discoverable, including simultaneous games
+    # in one league. Serialized admission still enforces the total feed budget.
     active_events={markets[t].get('event_ticker') for t in markets
                    if markets[t].get('sports') and not markets[t].get('paid')
                    and markets[t]['close']>now and not markets[t].get('entry_parked')}
-    blocked=[series+'-full' for series in full_series]+[series+'-sleep' for series,c in suite.sports_schedule.items() if c.get('retry_at',0)>now]
+    blocked=[series+'-sleep' for series,c in suite.sports_schedule.items() if c.get('retry_at',0)>now]
     p,cursor=next_profile(suite,choices,blocked,suite.sports_cursor)
     if not p:return
     suite.sports_cursor=cursor;series=p['series']

@@ -104,7 +104,7 @@ class SportsDiscovery(unittest.IsolatedAsyncioTestCase):
         self.assertLess(cache['retry_at'],now+2)
         self.assertEqual(seen.count('/milestones'),1)
 
-    async def test_second_distinct_live_game_in_same_league_can_be_admitted(self):
+    async def test_every_distinct_live_game_in_same_league_remains_discoverable(self):
         host,now,seen=self.batch_host(3)
         await sports_once(host)
         source,payload=host.put.await_args.args
@@ -118,7 +118,9 @@ class SportsDiscovery(unittest.IsolatedAsyncioTestCase):
         host.experiments.handle('sports_market',second,now)
         host.put.reset_mock()
         await sports_once(host)
-        host.put.assert_not_awaited()
+        host.put.assert_awaited_once()
+        self.assertNotIn(host.put.await_args.args[1]['market']['event_ticker'],
+                         {payload['market']['event_ticker'],second['market']['event_ticker']})
 
     async def test_three_event_budget_leaves_unvisited_events_ready_without_aborting_scan(self):
         host,now,seen=self.batch_host(5,scheduled=True)

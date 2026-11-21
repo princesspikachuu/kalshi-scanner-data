@@ -41,7 +41,7 @@ LEARNING_PROFILES={
         minimum='Uses only supported empirical cells; sparse cells remain exploratory',
         fallback='bounded paper exploration rather than inventing a probability'),
     'favorites':dict(classification='data_learning',state='using_statistics_now',
-        decisions='Entry value ceiling and evidence-based risk/exit behavior',
+        decisions='Maker entry data collection; hold positions to authoritative settlement',
         features=['market type','side','entry price','time remaining','maker fill','settled outcome','fees','realized P/L'],
         segments='market series/type × purchased side × 5¢ price tier × time-to-expiration bucket',
         minimum='Sparse cells collect paper data; calibrated/value-qualified entries require settled evidence',
