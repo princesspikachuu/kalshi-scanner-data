@@ -140,6 +140,10 @@ def collect_snapshot_spooled(pool):
     scope='singletons'
     # Fixed category counters only: no keys, rows, bot IDs, or source values.
     scope_sizes={}
+    # Split the already-read shadow-bot scope into regular Favorites versus
+    # other stored bot controls, without an extra query or logging identities.
+    favorites_shadow_bot_sizes={group:dict(records=0,bytes=0,largest_record_bytes=0)
+        for group in ('regular_favorites','all_other_bots')}
     aggregate=hashlib.sha256()
 
     def flush():
@@ -177,6 +181,12 @@ def collect_snapshot_spooled(pool):
         totals=scope_sizes.setdefault(scope,dict(records=0,bytes=0,largest_record_bytes=0))
         totals['records']+=1;totals['bytes']+=size
         totals['largest_record_bytes']=max(totals['largest_record_bytes'],size)
+        if scope=='shadow_bots':
+            group=('regular_favorites' if row['parameters'].get('folder_id')=='favorites'
+                   else 'all_other_bots')
+            detail=favorites_shadow_bot_sizes[group]
+            detail['records']+=1;detail['bytes']+=size
+            detail['largest_record_bytes']=max(detail['largest_record_bytes'],size)
         aggregate.update(raw);aggregate.update(b'\n')
         seen.add(key)
 
@@ -204,7 +214,8 @@ def collect_snapshot_spooled(pool):
             raise ValueError('No controls found; refusing empty recovery backup')
         flush();file.seek(0)
         return dict(file=file,records=count,parts=parts,sha256=aggregate.hexdigest(),
-                    staged_bytes=total_bytes,scope_sizes=scope_sizes)
+                    staged_bytes=total_bytes,scope_sizes=scope_sizes,
+                    favorites_shadow_bot_sizes=favorites_shadow_bot_sizes)
     except Exception:
         file.close()
         raise
@@ -369,7 +380,8 @@ def backup_controls(store,objects,*,now=None,reuse_previous=False):
             records=staging['records'],chunks=len(chunks),
             catalog_stored=True,staged_bytes=staging['staged_bytes'],
             compressed_bytes=total_compressed+root_ref['size']+catalog_ref['size'],
-            verified=True,scope_sizes=staging.get('scope_sizes',{}))
+            verified=True,scope_sizes=staging.get('scope_sizes',{}),
+            favorites_shadow_bot_sizes=staging.get('favorites_shadow_bot_sizes',{}))
         if reuse_previous:
             # Only after all old and new parts passed complete R2 readback.
             result.update(reused_chunks=reused_chunks,reused_bytes=reused_bytes,
