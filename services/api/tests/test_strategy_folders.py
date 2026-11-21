@@ -406,3 +406,80 @@ class SequentialTimingTests(unittest.TestCase):
         b.step();o=next(iter(e.orders.values()))
         self.assertEqual(o.action,'buy');self.assertEqual(o.side,'no');self.assertFalse(o.maker)
         self.assertEqual(o.price,D('.40'))
+
+class OneContractFavoritesResearchTests(unittest.TestCase):
+    """One observation per fill opportunity; preserve previously funded positions."""
+
+    def engine(self):
+        e=Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
+        e.advance(200)
+        e.add_market(dict(ticker='KXTEST15M-sample',event_ticker='KXTEST-EVENT',
+            close=1000,open=100),FeePolicy())
+        book=e.books['KXTEST15M-sample']
+        book.levels={'yes':{D('.75'):D(100)},'no':{D('.20'):D(100)}}
+        book.valid=True;book.at=e.now
+        return e
+
+    def test_collector_quote_is_one_contract_even_when_saved_setting_is_ten(self):
+        from services.paper_demo.shadow.favorite_entries import quote
+        e=self.engine()
+        result=quote(e,dict(series='KXTEST15M',paper_exploration=True),
+                     D(10),'KXTEST15M-sample','yes',{})
+        self.assertIsNotNone(result)
+        self.assertEqual(result['quantity'],D(1))
+        self.assertEqual(result['mode'],'paper_exploration')
+        self.assertEqual(e.wallet.cash,D(1000))
+        self.assertEqual(e.wallet.deposits,D(1000))
+
+    def test_calibrated_collector_quote_has_same_one_contract_ceiling(self):
+        from services.paper_demo.shadow.favorite_entries import quote,entry_key
+        from services.paper_demo.shadow.favorite_timing import clock
+        e=self.engine();remaining,basis=clock(e.markets['KXTEST15M-sample'],e.now)
+        key=entry_key('KXTEST15M','yes',D('.76'),remaining,basis)
+        samples={str(n):1 for n in range(40)}
+        result=quote(e,dict(series='KXTEST15M',paper_exploration=False),
+                     D(10),'KXTEST15M-sample','yes',{key:dict(events=samples)})
+        self.assertIsNotNone(result)
+        self.assertEqual(result['quantity'],D(1))
+        self.assertEqual(result['mode'],'calibrated_maker')
+
+    def test_one_time_migration_selects_only_primary_favorites_without_wallet_changes(self):
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        from services.paper_demo.shadow.scope import initialize_one_contract_favorites
+        executed=[]
+        class Conn:
+            def execute(self,sql,args=None):
+                executed.append((sql,args))
+                return self
+            def fetchone(self):return None
+            def fetchall(self):return [(1,), (2,)]
+        class Pool:
+            @contextmanager
+            def connection(self):
+                yield Conn()
+        class Store:
+            pool=Pool()
+            def get(self,key):return None
+        with patch('services.paper_demo.shadow.scope.put') as save:
+            initialize_one_contract_favorites(Store(),lambda:None)
+        sql=next(query for query,args in executed if 'UPDATE research_job' in query)
+        self.assertIn("parameters->>'folder_id'='favorites'",sql)
+        self.assertIn("parameters->>'strategy'='favorites'",sql)
+        self.assertIn("parameters->>'contracts' IS DISTINCT FROM '1'",sql)
+        self.assertIn("'revision',coalesce",sql)
+        self.assertNotIn('UPDATE wallet',sql)
+        self.assertEqual(save.call_count,1)
+        self.assertEqual(save.call_args.args[1],'demo/shadow/favorites-one-contract-research-v1')
+        self.assertEqual(save.call_args.args[3]['bots_updated'],2)
+
+    def test_migration_is_idempotent_after_marker(self):
+        from unittest.mock import patch
+        from services.paper_demo.shadow.scope import initialize_one_contract_favorites
+        class Store:
+            def get(self,key):return {'at':1}
+        with patch('services.paper_demo.shadow.scope.put') as save:
+            initialize_one_contract_favorites(Store(),lambda:
+                self.fail('guard should not run for completed migration'))
+        save.assert_not_called()
+
