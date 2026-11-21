@@ -1,13 +1,25 @@
 """Bounded admission for new candidates; existing exposure is never evicted."""
 from collections import deque
+from pathlib import Path
+import os
+
+def process_memory():
+    """Current process RSS and cgroup limit, when available; no extra worker task."""
+    try:
+        rss=int(Path('/proc/self/statm').read_text().split()[1])*os.sysconf('SC_PAGE_SIZE')
+    except (OSError, ValueError, IndexError):
+        rss=None
+    try:
+        value=Path('/sys/fs/cgroup/memory.max').read_text().strip()
+        limit=int(value) if value.isdecimal() else None
+    except (OSError, ValueError):
+        limit=None
+    return rss,limit
 
 def maker_entry_limit(stats):
+    """Not a total market cap: a small per-scan verification batch target."""
     own=stats['categories'].get('market_maker',0)
-    # Permit up to ten baseline Maker candidates, but keep two discovery\n    # slots and the total subscription cap available to other strategies.
-    other_entries=max(0,stats['entry_markets']-own)
-    other_subscriptions=max(0,stats['subscribed_markets']-own)
-    return max(0,min(10+4*stats['level'],stats['entry_candidates']-other_entries-2,
-        stats['total']-other_subscriptions-2))
+    return own+(3 if stats.get('admitting',False) else 0)
 
 def category(m):
     return 'market_maker' if m.get('market_maker') else m.get('weather_category') or ('sports' if m.get('sports') else 'hourly' if m.get('hourly_price') else 'complete_set')
@@ -15,7 +27,8 @@ def category(m):
 class MonitoringBudget:
     def __init__(self):
         self.samples=deque(maxlen=600);self.service_samples=deque(maxlen=600);self.healthy_since=None;self.level=0;self.last_at=None
-    def observe(self,now,backlog,lag_seconds,per_input_ms,cooldown=0,input_count=None):
+    def observe(self,now,backlog,lag_seconds,per_input_ms,cooldown=0,input_count=None,
+                rss_bytes=None,memory_limit_bytes=None):
         if self.last_at is None or now-self.last_at>10:
             self.healthy_since=None;self.level=0
         self.samples.append((now,max(0,lag_seconds),max(0,per_input_ms)))
@@ -40,7 +53,18 @@ class MonitoringBudget:
             self.service_ms=max(recent_cost,long_cost)
             self.queue_cost_basis='committed burst throughput; slower of 5s and 60s'
         self.queue_seconds=backlog*self.service_ms/1000
-        overloaded=backlog>2000 or self.queue_seconds>.5 or self.lag_p95>2 or self.processing_p95>100 or cooldown>0
+        measured_rss,measured_limit=process_memory()
+        self.rss_bytes=measured_rss if rss_bytes is None else rss_bytes
+        self.memory_limit_bytes=measured_limit if memory_limit_bytes is None else memory_limit_bytes
+        self.memory_pressure=(self.rss_bytes/self.memory_limit_bytes
+                              if self.rss_bytes is not None and self.memory_limit_bytes and self.memory_limit_bytes>0
+                              else None)
+        # Instead of fixed market-count ceilings, deny *new* subscriptions if
+        # RAM approaches the worker's real allocation. Existing positions,
+        # pending orders and settlement continue to be serviced unchanged.
+        self.memory_guard=(self.memory_pressure is not None and self.memory_pressure>=.75)
+        overloaded=(backlog>2000 or self.queue_seconds>.5 or self.lag_p95>2
+                    or self.processing_p95>100 or cooldown>0 or self.memory_guard)
         # Promotion should follow measured drain time, not raw queue length. A
         # few hundred conflated frames are harmless when fresh committed-burst
         # evidence says they drain in <=250ms. Without enough service evidence,
@@ -56,9 +80,15 @@ class MonitoringBudget:
     def limits(self,now):
         fresh=self.last_at is not None and 0<=now-self.last_at<=10
         level=self.level if fresh else 0
-        return dict(total=32+8*level,entry_candidates=15+4*level,per_category=4+4*level,
+        return dict(total=None,entry_candidates=None,per_category=None,market_count_caps_removed=True,
             admitting=fresh and not self.overloaded,telemetry_fresh=fresh,level=level,
-            reason='Waiting for current load measurements' if not fresh else 'Discovery paused: processing lag or read cooldown' if self.overloaded else 'Measured capacity available',
+            reason=('Waiting for current load measurements' if not fresh else
+                'Discovery paused: worker memory pressure' if getattr(self,'memory_guard',False) else
+                'Discovery paused: processing lag or read cooldown' if self.overloaded else
+                'Measured capacity available · no fixed market count limit'),
+            rss_bytes=getattr(self,'rss_bytes',None),
+            memory_limit_bytes=getattr(self,'memory_limit_bytes',None),
+            memory_pressure=getattr(self,'memory_pressure',None),
             backlog=getattr(self,'backlog',0),estimated_queue_seconds=getattr(self,'queue_seconds',None),lag_p95_seconds=getattr(self,'lag_p95',None),
             queue_cost_basis=getattr(self,'queue_cost_basis',None),queue_service_ms=getattr(self,'service_ms',None),service_sample_inputs=getattr(self,'service_inputs',0),
             processing_p95_ms=getattr(self,'processing_p95',None),read_cooldown_seconds=getattr(self,'cooldown',0))
