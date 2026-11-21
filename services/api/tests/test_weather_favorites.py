@@ -76,14 +76,59 @@ class WeatherDiscovery(unittest.IsolatedAsyncioTestCase):
         for b in f.bots.values():b.enabled=False
         market(e,'KXHIGHNY-DUE',close=time.time()-10);e.markets['KXHIGHNY-DUE']['weather_category']='weather_daily'
         host.verified_data.call.return_value=dict(market=dict(ticker='KXHIGHNY-DUE',status='closed',result='yes'))
-        await weather_once(host);host.put.assert_not_awaited()
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=time.time()):
+            await weather_once(host)
+        host.put.assert_not_awaited()
         host.verified_data.call.return_value=dict(market=dict(ticker='KXHIGHNY-DUE',status='settled',result='yes'))
-        await weather_once(host);host.put.assert_awaited_once()
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=time.time()+31):
+            await weather_once(host)
+        host.put.assert_awaited_once()
     async def test_inventory_rejects_wrong_series_future_and_long_horizon(self):
         now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp();date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
         row=dict(ticker='KXHIGHNY-26NOV20-OK',status='active',open_time=date(now-10),close_time=date(now+3600))
         bad=[dict(row,ticker='OTHER-X'),dict(row,open_time=date(now+10)),dict(row,close_time=date(now+90000)),dict(row,status='settled')]
         self.assertEqual(candidates([row]+bad,'KXHIGHNY',now),[row])
+
+
+    async def test_weather_settlement_rotates_older_unfinalized_markets_with_bounded_reads(self):
+        from types import SimpleNamespace as S
+        now=2000
+        markets={str(i):dict(ticker=str(i),weather_category='weather_daily',close=100,paid=False) for i in range(7)}
+        suite=Mock();suite.feed_markets.return_value={};suite.search_capacity.return_value=False
+        suite.settlement_markets.return_value=markets;suite.weather_scan_log_at=now+10000
+        suite.portfolios={'favorites':(S(wallet=S(lots=[])),None,None)}
+        host=Mock(experiments=suite);host.put=AsyncMock()
+        observed=[]
+        def call(method,path):
+            ticker=path.rsplit('/',1)[-1];observed.append(ticker)
+            if ticker=='0':raise RuntimeError('temporary lookup failure')
+            return dict(market=dict(ticker=ticker,status='closed',result=''))
+        host.verified_data.call.side_effect=call
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now):
+            await weather_once(host)
+            await weather_once(host)
+        self.assertEqual(observed,['0','1','2','3','4','5','6'])
+        host.put.assert_not_awaited()
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now+31):
+            await weather_once(host)
+        self.assertEqual(observed[7:11],['0','1','2','3'])
+        self.assertEqual(len(observed),11)
+
+    async def test_weather_skips_held_positions_for_separate_recovery_loop(self):
+        from types import SimpleNamespace as S
+        now=2000
+        markets={t:dict(ticker=t,weather_category='weather_daily',close=100,paid=False)
+                 for t in ('held','unheld')}
+        suite=Mock();suite.feed_markets.return_value={};suite.search_capacity.return_value=False
+        suite.settlement_markets.return_value=markets;suite.weather_scan_log_at=now+10000
+        suite.portfolios={'favorites':(S(wallet=S(lots=[S(ticker='held',quantity=D(1))])),None,None)}
+        host=Mock(experiments=suite);host.put=AsyncMock()
+        host.verified_data.call.return_value=dict(market=dict(ticker='unheld',status='settled',result='yes'))
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now):
+            await weather_once(host)
+        self.assertEqual([c.args[1] for c in host.verified_data.call.call_args_list],['/markets/unheld'])
+        host.put.assert_awaited_once_with('experiment_settlement',
+            dict(ticker='unheld',status='settled',result='yes'))
 
 @unittest.skipUnless(__import__('services.api.tests.test_demo_postgres',fromlist=['URL']).URL,'Disposable PostgreSQL required')
 class WeatherMigration(unittest.TestCase):
