@@ -310,7 +310,7 @@ test('older worker snapshots derive visible event counts without a backend deplo
 test('event hydration respects true provider counts, removes invalid zero guesses, and uses current snapshot fallback',()=>{
  const d=fixture(),f=d.folders.find(x=>x.id==='favorites');
  f.accounting.portfolio={unfilled_bids:'3',active_cost:'0',pending_cost:'5',unfilled_bid_events:9};
- f.accounting.orders=[{ticker:'KXTEMP-26NOV21-70',bot_id:'favorites',action:'buy',status:'resting'}];
+ f.accounting.orders=[{ticker:'KXTEMP-26NOV21-70',bot_id:'favorites',side:'yes',quantity:1,price:'.7',reserved:'.7',maker:true,action:'buy',status:'resting'}];
  const {context}=setup(d);
  context.hydrateEventCounts(d);
  assert.equal(f.accounting.portfolio.unfilled_bid_events,9);
