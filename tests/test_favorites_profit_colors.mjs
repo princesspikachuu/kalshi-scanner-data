@@ -8,15 +8,24 @@ assert.equal(favoriteProfitSignal({purchased:10,settled:0,winners:0,cost:8,close
 assert.equal(favoriteProfitSignal({purchased:10,settled:10,winners:9,cost:8,closed:10,net:0}),'neutral');
 assert.equal(favoriteProfitSignal({purchased:10,settled:0,winners:0,cost:8,closed:3,net:-2}),'realized-negative');
 assert.equal(favoriteProfitSignal({purchased:10,settled:0,winners:0,cost:8,closed:3,net:2}),'realized-positive');
-const entry={series:'KXBTC15M',market_type:'crypto_15m',price:'0.8',clock:'market_close',horizon:'10–15m',contracts:10,closed:10,resolved:10,winners:9,profitable_closed:6,profit_classified_closed:10,cost:8,net:-1,holding_seconds:600};
+const entry={series:'KXBTC15M',market_type:'crypto_15m',price:'0.8',clock:'market_close',horizon:'10–15m',contracts:10,closed:10,resolved:10,winners:9,profitable_closed:6,profit_classified_closed:10,cost:8,net:-1,holding_seconds:600,events:1,event_win_rate:100};
 const group={id:'crypto_15m',label:'Crypto 15m',bots:[{id:'x',series:'KXBTC15M',experiment:{entry_timing:[entry]}}]};
 assert.ok(favoriteCategoryResearchMarkup(group).includes('Exit/fee drag'));
+assert.match(favoriteCategoryResearchMarkup(group),/>1<\/td>/);
+assert.doesNotMatch(favoriteCategoryResearchMarkup(group),/Purchased<\/th>/);
 assert.doesNotMatch(favoriteCategoryResearchMarkup(group),/Colors:/);
 assert.match(favoriteProfitLegendMarkup(),/Win rate beats break-even/);
 assert.match(favoriteCategoryResearchMarkup(group),/class=\"profit-exit-drag\"/);
 const overview=favoriteCollectorOverviewMarkup(group.bots,new Set(),{timedSummary:{rows:{crypto_15m:[entry]}}});
 assert.match(overview,/class=\"stat-observed profit-exit-drag\"/);
 assert.doesNotMatch(overview,/Colors:/);
+const scalper=favoriteCategoryResearchMarkup({
+ id:'crypto-15m',label:'Crypto 15m',research_kind:'round_trips',
+ bots:[{id:'scalper',series:'KXBTC15M',experiment:{entry_timing:[{...entry,
+  events:1,event_wins:1,contracts:10,closed:10,resolved:10,winners:10,net:1}]}}]});
+assert.match(scalper,/Completed cycles/);
+assert.match(scalper,/>1<\/td>/);
+assert.doesNotMatch(scalper,/Completed contracts/);
 const stat=favoriteStatisticsMatrixMarkup({min_samples:20,matrix:[{market_type:'crypto_15m',price_buckets:['80-84'],time_buckets:['10–15m'],cells:[{price_bucket:'80-84',horizon:'10–15m',samples:25,win_rate:.91,realized_roi:-.07,realized_net:'-8',eligibility:'evidence_rejected',lower:.76,level:'exact',fallback_level:'exact',fallback_samples:25}]}]});
 assert.match(stat,/class=\"stat-rejected profit-exit-drag\"/);
 assert.doesNotMatch(stat,/Colors:/);

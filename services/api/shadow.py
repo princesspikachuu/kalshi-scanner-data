@@ -132,7 +132,7 @@ def learning_diagnostics(folder_id,experiment):
 
 
 FAVORITE_TIME_BUCKETS=frozenset(('<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'))
-FAVORITE_TIMING_FIELDS=('contracts','closed','resolved','winners','profitable_closed','profit_classified_closed','cost','net','unverified','holding_seconds','dollar_hours')
+FAVORITE_TIMING_FIELDS=('contracts','closed','resolved','winners','profitable_closed','profit_classified_closed','cost','net','unverified','holding_seconds','dollar_hours','events','event_wins')
 
 def favorite_timing_category(profile):
     """Mirror the Favorites market-type grouping in apps/web/shadow-view.mjs."""
@@ -187,7 +187,15 @@ def favorite_collector_timed_totals(folder_bots,profiles):
             market_type=row.get('market_type') or kind
             key=(kind,str(market_type),str(clock),horizon,cents)
             cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
-            for field in FAVORITE_TIMING_FIELDS:cell[field]+=decimal(row.get(field))
+            for field in FAVORITE_TIMING_FIELDS:
+                if field=='event_wins':
+                    # An event is one resolved observation regardless of filled
+                    # contract quantity. Existing rows expose a percent, not
+                    # individual event outcomes; never derive count from contracts.
+                    rate=row.get('event_win_rate')
+                    if rate is not None:
+                        cell[field]+=decimal(row.get('events'))*decimal(rate)/100
+                else:cell[field]+=decimal(row.get(field))
     rows={}
     for (kind,market_type,clock,horizon,cents),value in totals.items():
         rows.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
