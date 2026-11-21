@@ -30,3 +30,15 @@ const stat=favoriteStatisticsMatrixMarkup({min_samples:20,matrix:[{market_type:'
 assert.match(stat,/class=\"stat-rejected profit-exit-drag\"/);
 assert.doesNotMatch(stat,/Colors:/);
 console.log('Favorites profit signal tests passed');
+const unequal=[{...entry,return_events:{small:{cost:'1',net:'1'}}},
+ {...entry,price:'.81',return_events:{large:{cost:'100',net:'-10'}}}];
+const returns=favoriteCategoryResearchMarkup({...group,bots:[{...group.bots[0],experiment:{entry_timing:unequal}}]});
+assert.match(returns,/45\.00%/); // (100% - 10%) / 2, not pooled dollar ROI.
+assert.doesNotMatch(returns,/\$9\.00/);
+const sameEvent=favoriteCategoryResearchMarkup({...group,bots:[{...group.bots[0],experiment:{entry_timing:[
+ {...entry,return_events:{same:{cost:'1',net:'1'}}},
+ {...entry,price:'.81',return_events:{same:{cost:'9',net:'-1'}}} ]}}]});
+assert.match(sameEvent,/0\.00%/); // One event across prices, after combined cost and net.
+assert.match(favoriteCategoryResearchMarkup(group),/Average P\/L %/);
+
+assert.match(returns,/class=\"profit-positive\"/);

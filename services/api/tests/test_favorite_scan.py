@@ -5,7 +5,7 @@ from decimal import Decimal as D
 from unittest.mock import Mock,AsyncMock,patch
 from services.api.tests import test_strategy_scope as scope
 from services.api.tests.test_strategy_folders import market
-from services.paper_demo.shadow.hourly import hourly_once,balanced_hourly_profiles
+from services.paper_demo.shadow.hourly import hourly_once,balanced_hourly_profiles,next_hourly_profile
 from services.paper_demo.shadow.weather import candidates as weather_candidates,weather_once
 from services.paper_demo.shadow.experiments import ExperimentSuite
 
@@ -25,6 +25,21 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(order),len(profiles))
         self.assertEqual(len({p['series'] for p in order}),len(profiles))
         self.assertEqual([p['series'] for p in order[:3]],['KXBTCD','KXGOLDH','KXUSDCADAH'])
+
+    def test_free_hourly_slot_prioritizes_unrepresented_finance_then_falls_back_on_cooldown(self):
+        profiles=[dict(series=s) for s in ('KXETHD','KXUSDCADAH','KXGOLDH')]
+        active=['KXBTCD-live','KXSOLD-live','KXSILVERH-live']
+        p,_=next_hourly_profile(profiles,active,0,active)
+        self.assertEqual(p['series'],'KXUSDCADAH')
+        p,_=next_hourly_profile(profiles,active+['KXUSDCADAH-cooldown'],0,active)
+        self.assertEqual(p['series'],'KXGOLDH')
+
+    def test_weather_usable_maker_book_ranks_ahead_of_one_sided_extreme(self):
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        base=dict(status='active',open_time=date(100),close_time=date(1600))
+        rows=[dict(base,ticker='KXHIGHNY-one',yes_bid_dollars='.90',no_bid_dollars='0'),
+              dict(base,ticker='KXHIGHNY-two',yes_bid_dollars='.80',no_bid_dollars='.18')]
+        self.assertEqual(weather_candidates(rows,'KXHIGHNY',1000)[0]['ticker'],'KXHIGHNY-two')
 
     def test_daily_weather_favorites_with_less_than_an_hour_are_candidates(self):
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()

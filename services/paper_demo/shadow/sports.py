@@ -3,6 +3,7 @@ import asyncio,json,time,math,traceback
 from uuid import uuid4
 from .runner import ts
 from .discovery_budget import candidate_markets,next_profile
+from .hourly import favorite_bid
 from .storage import put
 from services.research.reports import SERIES
 
@@ -90,7 +91,17 @@ async def sports_once(host):
     choices=suite.enabled_profiles('sports')
     if not choices:return
     active=candidate_markets(suite,markets,'sports',now)
-    blocked=active+[series+'-sleep' for series,c in suite.sports_schedule.items() if c.get('retry_at',0)>now]
+    # A league can have several simultaneous games. One candidate per league
+    # stranded other verified live events; allow a second distinct event inside
+    # the unchanged global sports/monitoring limits.
+    present=[t for t,m in markets.items() if m.get('sports') and not m.get('paid')
+             and m['close']>now and not m.get('entry_parked')]
+    full_series={t.split('-')[0] for t in present if sum(
+        other.split('-')[0]==t.split('-')[0] for other in present)>=2}
+    active_events={markets[t].get('event_ticker') for t in markets
+                   if markets[t].get('sports') and not markets[t].get('paid')
+                   and markets[t]['close']>now and not markets[t].get('entry_parked')}
+    blocked=[series+'-full' for series in full_series]+[series+'-sleep' for series,c in suite.sports_schedule.items() if c.get('retry_at',0)>now]
     p,cursor=next_profile(suite,choices,blocked,suite.sports_cursor)
     if not p:return
     suite.sports_cursor=cursor;series=p['series']
@@ -103,7 +114,7 @@ async def sports_once(host):
         rows.update({r['ticker']:r for r in result.get('markets',[])})
         cache.update(rows=list(rows.values()),refresh_at=now+(10 if result.get('cursor') else 300))
     rows=[r for r in cache.get('rows',[]) if r.get('ticker','').startswith(series+'-') and r.get('status')=='active'
-          and ts(r['open_time'])<=now and r['ticker'] not in markets and suite.candidate_allowed(r['ticker'],now)
+          and ts(r['open_time'])<=now and r['ticker'] not in markets and r.get('event_ticker') not in active_events and suite.candidate_allowed(r['ticker'],now)
           and expected_end(r) is not None and -21600<expected_end(r)-now<=86400]
     events={}
     for r in rows:events.setdefault(r['event_ticker'],[]).append(r)
@@ -114,7 +125,7 @@ async def sports_once(host):
         if state.get('retry_at',0)>now:continue
         if scan['checked_events']>=3:break
         scan['checked_events']+=1;state['retry_at']=now+60
-        raw=events[event][0]
+        raw=min(events[event],key=lambda r:(favorite_bid(r) is None,-float(r.get('volume_fp') or r.get('volume') or 0),r['ticker']))
         if now>=state.get('refresh_at',0):
             result=await asyncio.to_thread(host.verified_data.call,'GET','/milestones',dict(related_event_ticker=event,limit=20))
             state.update(milestones=result.get('milestones',[]),refresh_at=now+1800)

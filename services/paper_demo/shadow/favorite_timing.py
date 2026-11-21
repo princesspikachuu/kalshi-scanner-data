@@ -5,6 +5,7 @@ entry observation and authoritative outcome. Partial fills are not independent
 events. Earlier observations are never relabeled with later submission metadata.
 """
 from decimal import Decimal as D
+from .observation_returns import merge, summarize
 
 BANDS=((180,'<3m'),(300,'3–5m'),(600,'5–10m'),(900,'10–15m'),(1800,'15–30m'),(3600,'30–60m'),(7200,'1–2h'))
 METRICS='timing-metrics|'
@@ -52,7 +53,7 @@ def fill(strategy,order,quantity,entry_key):
             previous.update(quantity=str(old_q+quantity),remaining=str(old_q+quantity),cost=str(old_cost+cost),remaining_cost=str(old_cost+cost))
             return
         a['entry_fills'].append(dict(key=key,at=e.now,cost_at=e.now,price=str(price),quantity=str(quantity),remaining=str(quantity),
-            cost=str(cost),remaining_cost=str(cost),seconds_to_market_close=max(0,m['close']-e.now),
+            cost=str(cost),remaining_cost=str(cost),return_net='0',return_closed='0',seconds_to_market_close=max(0,m['close']-e.now),
             seconds_to_event_end=remaining,clock=basis,verified=verified,order_id=order.id,
             execution_model=order.execution_model,worker_delay_seconds=order.worker_delay_seconds,
             decision_at=order.decision_at,arrival_at=order.arrives))
@@ -73,6 +74,11 @@ def close(strategy,a,quantity,price,fee,now):
         add(row,'closed',take);add(row,'closed_cost',cost)
         net=take*price-fee*take/quantity-cost
         add(row,'net',net)
+        # Older partly closed chunks lack the necessary exit attribution.
+        # Only complete tracked histories can contribute to average event ROI.
+        if 'return_net' in chunk or available==D(chunk['quantity']):
+            chunk['return_net']=str(D(chunk.get('return_net','0'))+net)
+            chunk['return_closed']=str(D(chunk.get('return_closed','0'))+take)
         # Count realized profitable closures, not the eventual contract outcome.
         # Each fill cohort carries its exact entry cost including fees; a
         # partial exit is classified only after its exit fee is allocated.
@@ -95,6 +101,16 @@ def settle(strategy,ticker,observe):
         add(row,'resolved',q);add(row,'winners',q*payout)
         if not strategy.trial_valid(ticker,a):add(row,'execution_unverified_contracts',q)
         if chunk['verified']:observe(strategy.exit_evidence.cells,chunk['key'],m.get('event_ticker',ticker),payout,observed_at=strategy.e.now)
+    grouped={}
+    for chunk in a.get('entry_fills',[]):
+        grouped.setdefault(chunk['key'],[]).append(chunk)
+    for key,chunks in grouped.items():
+        if not all(c['verified'] and D(c.get('return_closed','0'))==D(c['quantity']) for c in chunks):continue
+        returns=cell(strategy.exit_evidence.cells,key).setdefault('return_events',{})
+        merge(returns,{m.get('event_ticker',ticker):dict(
+            cost=str(sum((D(c['cost']) for c in chunks),D(0))),
+            net=str(sum((D(c['return_net']) for c in chunks),D(0))))})
+        while len(returns)>500:returns.pop(next(iter(returns)))
     a['timing_finalized']=True
 
 def rows(cells):
@@ -104,7 +120,7 @@ def rows(cells):
         events=cells.get(row['key'],{}).get('events',{})
         closed=D(row['closed']);hours=D(row['dollar_hours']);qty=D(row['contracts'])
         measured=D(row.get('latency_observed_contracts','0'))
-        result.append(dict(row,average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
+        result.append(dict(row,**summarize(row.get('return_events',{})),average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
             break_even=str(100*D(row['cost'])/qty) if qty else None,
             average_holding_minutes=str(D(row['holding_seconds'])/closed/60) if closed else None,
             net_per_dollar_hour=str(D(row['net'])/hours) if hours else None,

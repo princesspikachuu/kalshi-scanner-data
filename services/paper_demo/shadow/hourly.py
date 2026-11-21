@@ -48,6 +48,20 @@ def balanced_hourly_profiles(profiles):
     return ordered
 
 
+def next_hourly_profile(profiles, blocked, cursor, active):
+    """Give the next free slot to the least represented hourly category."""
+    counts={kind:sum(hourly_category(t.split('-')[0])==kind for t in active)
+            for kind in ('finance','commodities','crypto_or_other')}
+    choices=[]
+    for offset in range(len(profiles)):
+        index=(cursor+offset)%len(profiles);profile=profiles[index]
+        if any(t.startswith(profile['series']+'-') for t in blocked):continue
+        choices.append((counts[hourly_category(profile['series'])],offset,index,profile))
+    if not choices:return None,cursor
+    _,_,index,profile=min(choices,key=lambda choice:choice[:2])
+    return profile,index+1
+
+
 async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     if not hasattr(suite,'hourly_metadata'):suite.hourly_metadata={};suite.hourly_retry_at={}
@@ -60,7 +74,7 @@ async def hourly_once(host):
     # series back off; stable frequency metadata is cached independently of fees.
     for _ in range(min(3,len(ps))):
         blocked=active+[p['series']+'-cooldown' for p in ps if suite.hourly_retry_at.get(p['series'],0)>now]
-        p,cursor=next_profile(suite,ps,blocked,suite.hourly_cursor)
+        p,cursor=next_hourly_profile(ps,blocked,suite.hourly_cursor,active)
         if not p:break
         suite.hourly_cursor=cursor;series=p['series'];scan['checked_series']+=1
         category=scan['by_category'].setdefault(hourly_category(series),dict(checked=0,eligible=0,subscribed=0,capacity_blocked=0))
