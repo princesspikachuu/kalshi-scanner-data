@@ -198,6 +198,58 @@ test('experiment bot time selection changes its summary without opening its mark
  assert.ok(nodes.get('groups').innerHTML.includes('Last 6h'));assert.ok(nodes.get('groups').innerHTML.includes('$3.00'));
  assert.ok(nodes.get('groups').innerHTML.includes('data-market="favorites" ><summary'));
 });
+test('expanded account, diagnostics and market panels survive redraw and stay scoped',()=>{
+  const panels=[
+    {dataset:{uiPanel:'market:favorites:money'},open:true},
+    {dataset:{uiPanel:'market:sequential:money'},open:false},
+    {dataset:{uiPanel:'folder:favorites:research'},open:true},
+    {dataset:{uiPanel:'global:diagnostics'},open:true},
+    {dataset:{uiPanel:'market:favorites:timing'},open:true}
+  ];
+  const {context}=setup(fixture(),{queries:{'details[data-ui-panel]':panels}});
+  const expanded=vm.runInContext('expandedDashboardPanels()',context);
+  assert.equal(expanded.size,4);
+  context.savedExpandedPanels=expanded;
+  panels.forEach(p=>p.open=false);
+  vm.runInContext('restoreDashboardPanels(savedExpandedPanels)',context);
+  assert.equal(panels[0].open,true);
+  assert.equal(panels[1].open,false,'another market stays closed');
+  assert.equal(panels[2].open,true);
+  assert.equal(panels[3].open,true);
+  assert.equal(panels[4].open,true);
+  vm.runInContext('draw()',context);
+  assert.equal(panels[4].open,true);
+});
+
+test('all key second-level panels have stable market and folder identities',()=>{
+  const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
+  for(const key of ['folder:favorites:account','folder:favorites:research',
+   'folder:favorites:diagnostics','market:favorites:money',
+   'market:favorites:stats','market:favorites:lots',
+   'market:favorites:timing','market:sequential:money']){
+    assert.ok(html.includes('data-ui-panel="'+key+'"'),key);
+  }
+  assert.ok(nodes.get('diagnostics').innerHTML.includes('data-ui-panel="global:diagnostics"'));
+});
+
+test('all three Favorites modes retain the market timing panel identity',()=>{
+  const sample={resolved_events:2,event_wins:1,return_observations:2,
+    average_return_pct:'4',uncertainty90_pct:'1',ci90_low_pct:'3',
+    ci90_high_pct:'5',incomplete_events:0};
+  const rows=[{series:'KXBTC15M',market_type:'15m_price',clock:'market_close',
+    price:'.8',horizon:'5–10m',events:2,event_wins:1,
+    contracts:2,cost:1.6,return_sum:.08,return_observations:2}];
+  const wideRows=[{...rows[0],band:'78–<86¢',time_slot:1}];
+  for(const mode of ['detailed','wide','single']){
+    const html=favoriteTimingMarkup(rows,mode==='wide'?wideRows:null,
+      {mode,single:sample,panelKey:'market:btc:timing'});
+    assert.match(html,/data-ui-panel="market:btc:timing"/);
+    if(mode==='single')assert.match(html,/favorite-single-matrix/);
+    else assert.match(html,/favorite-stat-matrix/);
+  }
+  const escaped=favoriteTimingMarkup(rows,null,{panelKey:'bad" onfocus="x'});
+  assert.doesNotMatch(escaped,/data-ui-panel="bad" onfocus/);
+});
 test('individual market state persists across polling and refresh, independently of its folder',()=>{
  const storage=new Map(),card={dataset:{market:'sequential'},open:true,isConnected:true};
  const {context}=setup(fixture(),{storage,queries:{'details[data-market]':[card]}});
