@@ -98,7 +98,9 @@ function favoriteDetailedMatrixMarkup(rows,label,emptyAsNote=false){
  const HORIZONS=['<3m','3–5m','5–10m','10–15m','15–30m','30–60m','1–2h','>=2h'];
  const PRICES=[70,75,80,85,90,95];
   const cells=new Map();
-  const aggregated=favoriteCategoryRows(rows,true);
+  // Category and bot renderers may already supply normalized tier rows.
+  // Do not re-group them: normalized rows contain low/band, not price.
+  const aggregated=rows.length&&rows.every(r=>Number.isInteger(r.low)&&typeof r.band==='string')?rows:favoriteCategoryRows(rows,true);
   if(emptyAsNote&&!aggregated.some(r=>Number(r.events)>0))return '<p class="small">No timed observations yet.</p>';
   // Do not silently drop valid collected tiers that fall outside the strategy's
   // usual 70-95 cent bidding range. The per-market tables already show them.
