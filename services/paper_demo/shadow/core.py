@@ -710,6 +710,14 @@ class Engine:
         if abs(self.now-print_time) > self.stale_seconds:
             self.data_gap(ticker, 'stale/future trade print')
             return
+        # A print with no resting paper order cannot contribute to any
+        # fill: a new order cannot arrive retroactively before this print.
+        # Still validate the feed/book first so bad market data is not hidden.
+        # In the collector this avoids retaining thousands of trade IDs when
+        # funds are exhausted or a candidate has no maker bid in the book.
+        if not any(order.ticker == ticker and order.status == 'resting'
+                   for order in self.orders.values()):
+            return
         # Invalid, blocked, or stale prints do not consume dedup capacity.
         # At exceptional quote bursts fail closed rather than forgetting an
         # ID that could still be replayed and double-fill a maker bid.
