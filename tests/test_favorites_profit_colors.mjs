@@ -19,6 +19,13 @@ assert.match(favoriteCategoryResearchMarkup(group),/class=\"profit-exit-drag\"/)
 const overview=favoriteCollectorOverviewMarkup(group.bots,new Set(),{timedSummary:{rows:{crypto_15m:[entry]}}});
 assert.match(overview,/class=\"stat-observed profit-exit-drag\"/);
 assert.doesNotMatch(overview,/Colors:/);
+const scalper=favoriteCategoryResearchMarkup({
+ id:'crypto-15m',label:'Crypto 15m',research_kind:'round_trips',
+ bots:[{id:'scalper',series:'KXBTC15M',experiment:{entry_timing:[{...entry,
+  events:1,event_wins:1,contracts:10,closed:10,resolved:10,winners:10,net:1}]}}]});
+assert.match(scalper,/Completed cycles/);
+assert.match(scalper,/>1<\/td>/);
+assert.doesNotMatch(scalper,/Completed contracts/);
 const stat=favoriteStatisticsMatrixMarkup({min_samples:20,matrix:[{market_type:'crypto_15m',price_buckets:['80-84'],time_buckets:['10–15m'],cells:[{price_bucket:'80-84',horizon:'10–15m',samples:25,win_rate:.91,realized_roi:-.07,realized_net:'-8',eligibility:'evidence_rejected',lower:.76,level:'exact',fallback_level:'exact',fallback_samples:25}]}]});
 assert.match(stat,/class=\"stat-rejected profit-exit-drag\"/);
 assert.doesNotMatch(stat,/Colors:/);
