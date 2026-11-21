@@ -111,7 +111,7 @@ class FavoritesStrategy(ConvexityStrategy):
         if not allow_parallel and any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):return None
         expiry=min(self.e.now+30,a['entry_deadline'])
         if expiry<=self.e.now+self.e.latency:return
-        if not a.get('first'):
+        if not a.get('first') and not a.get('data_window'):
             a['data_window']=dict(started_at=self.e.now,valid=self.entry_ready(ticker),scope='entry-through-exit-or-close-v1')
         elif a.get('data_window',{}).get('ended_at') is not None:
             # A second opportunity may follow an earlier fully closed position.
@@ -159,6 +159,11 @@ class FavoritesStrategy(ConvexityStrategy):
             a['last_repeat_suppression']=dict(reason='inventory_plus_resting_cap',signal=bucket,at=self.e.now)
             return 'blocked'
         if self.e.now-a.get('last_submit',0)<10:return 'blocked'
+        active_ids={order.id for order in active}
+        if any(action=='cancel' and ident in active_ids for _,_,action,ident in self.e.pending):
+            # Never create new exposure before a submitted cancellation is
+            # acknowledged, even if the next eligible bucket is different.
+            return 'blocked'
         a['entry_deadline']=self.entry_deadline(m,self.e.now)
         a['target_inventory']=str(exposure+q['quantity'])
         order_id=self.submit_entry(ticker,a,q,allow_parallel=True)
