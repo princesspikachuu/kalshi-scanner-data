@@ -45,6 +45,25 @@ class FleetClockDispatchTests(unittest.TestCase):
 
 class StrategyTests(unittest.TestCase):
     def engine(self):return Engine(QuietAudit(),cash='1000',latency_ms=150,toxic_fill_probability=0)
+    def test_independent_experiment_refill_does_not_change_other_wallets_or_profit(self):
+        class Host:
+            def __init__(self):
+                self.audit=QuietAudit()
+                self.engine=Engine(self.audit,cash='1000')
+                self.model_worker_latency=False
+        host=Host()
+        suite=ExperimentSuite(host,[dict(parameters=profile(),progress=dict(desired='paused')),
+            dict(parameters=profile('KXBTC15M','fav_btc','favorites'),progress=dict(desired='paused'))])
+        target=suite.portfolios['favorites'][0]
+        other=suite.portfolios['sequential'][0]
+        before=other.wallet.cash
+        target.refill(D('25'))
+        self.assertEqual(target.wallet.cash,D('1025'))
+        self.assertEqual(target.wallet.deposits,D('1025'))
+        self.assertEqual(other.wallet.cash,before)
+        self.assertEqual(host.engine.wallet.cash,D('1000'))
+        self.assertEqual(target.wallet.cash-target.wallet.deposits,D('0'))
+
     def test_fresh_model_does_not_invent_probabilities(self):
         self.assertIsNone(PairModel().estimate('unseen')['completion_probability'])
     def test_completion_probability_is_conditional_on_first_fill(self):
