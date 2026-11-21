@@ -364,7 +364,8 @@ class HostedRun(ForwardRun):
         print(json.dumps(dict(event='shadow_pipeline_cost',**totals,backlog=self.queue.qsize(),
             process=self.process_metrics.sample(),rest=REQUESTS.drain(),
             strategy_processing=strategies,
-            legacy_trade_ids_retained=len(self.engine.trade_ids),
+            legacy_trade_ids_retained=(len(self.engine.trade_ids)
+                if isinstance(getattr(self.engine,'trade_ids',None),set) else None),
             audit_commits_total=getattr(self.audit,'commits',0) if isinstance(self.audit,HostedAudit) else None,
             audit_rows_written_total=getattr(self.audit,'rows_written',0) if isinstance(self.audit,HostedAudit) else None,
             event_loop_lag_max_seconds=getattr(self,'loop_lag_max',0),
