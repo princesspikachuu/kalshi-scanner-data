@@ -104,6 +104,9 @@ class PausedMarketDiscoveryTests(unittest.TestCase):
         suite, rows = self.suite()
         now = time.time()
         t = 'KXBTC15M-26NOV21-MT020'
+        # ScopeTests uses a mock host; install a real legacy engine for this
+        # explicit feed-backfill integration check.
+        suite.host.engine = Engine(QuietAudit(), cash='1000')
         suite.host.engine.add_market(
             dict(ticker=t, event_ticker='KXBTC15M-26NOV21', open=now - 30, close=now + 900),
             FeePolicy(),
