@@ -74,6 +74,9 @@ When the user says **"continue"** and the current chat has finished its assigned
 **Full historical record, preserved byte-for-byte:** [MT-019 investigation and checkpoints](docs/audits/MT-019-work-queue-history-2026-11-12.md). This externalized 148,170 characters of previous MT-019 checkpoints and findings without deleting the investigation or touching trading data. For up-to-date state, follow this shorter active checkpoint, not older historical statuses.
 
 
+### MT-023 read-only settlement observation for MT-019 owner (2026-11-21)
+Regular-Favorites-only `favorites_trading_diagnostics` stayed at 22 expired lots / 7 markets under `expired_no_recorded_settlement` in consecutive 20:13–20:16 UTC snapshots, with 37 still-open lots and no unknown-market lots. These are lots, **not independent event counts**; no conclusion about authoritative venue finality. MT-019 owner should check actual finalized markets and audited settlement path, preserving cash, source and storage. MT-023 will not modify payout processing.
+
 ### MT-019 progress — 2026-11-21 regular Favorites safety, two backup PRs integrated
 
 - **PR #321 merged `a91ea4f`, exact CI passed and Render worker deployed live** at 19:53:39 UTC. New worker recorded exclusive startup and readiness at 19:55:45 UTC; at 19:56:02 UTC, 75 regular High-Probability Favorites bots ran, **0 Statistics-Backed Favorites**, paper fills continued and real orders were disabled. The optional `MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED` remains **OFF**. Keep it off pending audit of actual R2 bucket lifecycle rules and restore tests for older shared chunks.
@@ -1729,7 +1732,11 @@ Independently validate *actual* regular High-Probability Favorites observation c
 - Record observed counts and limitations without publishing private financial data or raw user account/contract identifiers in this shared queue.
 
 ### Completion notes
-_In progress: source discovery, evidence reconciliation, coverage/uncertainty analysis, findings and next safe work items._
+- **Source access:** Hosted Render PostgreSQL explicitly disallows external MCP SQL when its IP allowlist is empty. Do **not** change networking or external access for this audit. API/worker logs from the authenticated service confirm rollup data; private source records remain untouched.
+- **Current baseline (API `favorites_timed_rollup`, 2026-11-21 ~20:09–20:12 UTC):** 75 regular Favorites bots, 53 with timing rows. By category: crypto-15m 9/9, commodities-15m 8/8, finance-15m 10/11, crypto-hourly 7/9, commodities-hourly 4/5, **finance-hourly 0/11**, weather-hourly 4/8, weather-daily 7/7, sports 4/7. These are **bots with cohort records**, not independent settled observations, win rates or profit. Timed rollup reports no unclassified purchased quantity, but that does not validate event-level completeness. MT-018 owns follow-up on sparse hourly finance/other collection.
+- **Settlement gap, read-only (worker `favorites_trading_diagnostics`, 2026-11-21 20:13–20:16 UTC):** Regular Favorites kept 75 bots active, 0 other bots, real orders off. At least six consecutive samples reported **22 expired lots across 7 markets with no recorded settlement**, alongside 37 still-open lots and no unknown-market lots. **Do not equate lots to 22 independent observations or assume the venue had finalized each market.** MT-019 already owns held settlement acceptance, venue confirmation, and risk-ledger reconciliation; don't book payouts or alter history in MT-023.
+- **Evidence telemetry in draft [PR #326](https://github.com/princesspikachuu/kalshi-scanner-data/pull/326):** Adds a bounded read-only `research_evidence` field to the existing once-per-minute `favorites_timed_rollup` log, reusing the same current snapshot's Detailed/Wider/Single calculations. It reports per-category unique verified settled events and hold-return counts; exact vs estimated/incomplete attribution; 50-event remaining count and numerical nominal P/L CI when available; cohort-vs-independent distinctions; unplaced Wider records; most-sampled price/time buckets; and legacy cohort counters without event IDs. No raw tickers, events, account values, extra SQL, schema or trading changes. Four regression tests included.
+- **Next:** Await exact-head API/PostgreSQL CI. After a safe API deployment, collect actual numerical independent event counts and candidate bucket P/L from the new aggregated log; reconcile with the 53/75 coverage baseline, document limitations, coordinate priorities without changing MT-018/MT-019 code.
 
 ---
 
