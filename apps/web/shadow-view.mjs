@@ -31,26 +31,17 @@ export function favoriteCategoryRows(rows=[],combineSeries=false){
  }
  return [...groups.values()].sort((a,b)=>a.series.localeCompare(b.series)||String(a.clock).localeCompare(String(b.clock))||a.low-b.low||bands.indexOf(a.horizon)-bands.indexOf(b.horizon));
 }
-// Outcome accuracy is not realized trade profitability. This comparison is a
-// screening proxy: average entry cost spans all purchased contracts, whereas
-// settlement outcomes may cover only a subset. Never call it a proven edge.
-export function favoriteProfitSignal({purchased,settled,winners,cost,closed,net}){
- const values=[purchased,settled,winners,cost,closed,net].map(Number);
- if(values.some(v=>!Number.isFinite(v)))return 'unknown';
- const [qty,resolved,winning,entryCost,finished,realized]=values;
- if(finished<=0)return 'unknown';
- const hasOutcome=qty>0&&resolved>0;
- const aboveBreakEven=hasOutcome&&winning/resolved>entryCost/qty;
- if(realized<0&&aboveBreakEven)return 'exit-drag';
- if(realized>0)return 'realized-positive';
- if(realized<0)return 'realized-negative';
- return 'neutral';
+// Favorites colors use verifiable hold-to-settlement returns, never historic exits.
+// Missing/ambiguous hold-return evidence stays uncolored rather than inferred.
+export function favoriteProfitSignal({return_observations,return_sum}){
+ const n=Number(return_observations),total=Number(return_sum);
+ if(!(n>0)||!Number.isFinite(n)||!Number.isFinite(total))return 'unknown';
+ return total>0?'realized-positive':total<0?'realized-negative':'neutral';
 }
 const favoriteProfitClass=signal=>({
- 'exit-drag':'profit-exit-drag','realized-positive':'profit-positive','realized-negative':'profit-negative'
+ 'realized-positive':'profit-positive','realized-negative':'profit-negative'
 })[signal]||'';
-const favoriteProfitLabel=signal=>signal==='exit-drag'?'⚠ Exit/fee drag':'';
-export const favoriteProfitLegendMarkup=()=>'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Profit · 🔴 Loss · 🟠 Win rate beats break-even, but exits/fees cause a loss</p>';
+export const favoriteProfitLegendMarkup=()=>'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Held profit · 🔴 Held loss · no color when held return is unknown</p>';
 const observationCount=n=>Number.isInteger(Number(n))?String(Number(n)):'—';
 const averageReturn=r=>r.return_observations>0?(100*r.return_sum/r.return_observations).toFixed(2)+'%':'—';
 const eventAccuracy=(wins,n)=>n>0?(100*wins/n).toFixed(1)+'%':'—';
@@ -69,12 +60,12 @@ const confidenceMarkup=(wins,n,cost)=>{
 function researchTable(rows,roundTrips=false){
  if(!roundTrips)rows=rows.filter(r=>Number(r.events)>0);
  if(!rows.length)return '<p class="small">No timed observations yet.</p>';
- return `<div class="table-scroll"><table><thead><tr><th>Entry price</th><th>Time remaining</th><th>${roundTrips?'Completed cycles':'Resolved observations'}</th><th>${roundTrips?'Profitable cycles':'Outcome win rate'}</th><th>Average entry · with fees</th>${roundTrips?'':'<th>Above break-even</th><th>Uncertainty · 90%</th>'}<th>${roundTrips?'Realized P/L':'Average P/L %'}</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>{
+ return `<div class="table-scroll"><table><thead><tr><th>Entry price</th><th>Time remaining</th><th>${roundTrips?'Completed cycles':'Resolved observations'}</th><th>${roundTrips?'Profitable cycles':'Outcome win rate'}</th><th>Average entry · with fees</th>${roundTrips?'':'<th>Margin</th><th>Uncertainty · 90%</th>'}<th>${roundTrips?'Realized P/L':'Average P/L %'}</th><th>Average holding time</th></tr></thead><tbody>${rows.map(r=>{
   const n=Number(r.events)||0,wins=Number(r.event_wins)||0;
   const confidence=confidenceMarkup(wins,n,r.contracts>0?r.cost/r.contracts:null);
-  const displayNet=!roundTrips&&r.return_observations>0?r.return_sum:r.net;
-  const signal=roundTrips?(r.closed>0?(r.net>0?'realized-positive':r.net<0?'realized-negative':'neutral'):'unknown'):favoriteProfitSignal({purchased:r.contracts,settled:n,winners:wins,cost:r.cost,closed:r.closed,net:displayNet});
-  return `<tr class="${favoriteProfitClass(signal)}"><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${observationCount(n)}</td><td>${eventAccuracy(wins,n)}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td>${roundTrips?'':`<td>${e(confidence.margin)}</td><td>${e(confidence.error)}<small>CI ${e(confidence.interval)}</small></td>`}<td class="${pnlClass(displayNet)}">${e(roundTrips?(r.closed>0?dollars(r.net):'—'):averageReturn(r))}${!roundTrips&&r.return_observations>0?'<small>'+r.return_observations+' return observations'+(r.estimated_return_observations>0?' · '+r.estimated_return_observations+' estimated':'')+'</small>':''}${favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':''}</td><td>${r.closed>0&&finite(r.holding_seconds)?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`}).join('')}</tbody></table></div>`;
+  const displayNet=roundTrips?r.net:r.return_observations>0?r.return_sum:null;
+  const signal=roundTrips?(r.closed>0?(r.net>0?'realized-positive':r.net<0?'realized-negative':'neutral'):'unknown'):favoriteProfitSignal({return_observations:r.return_observations,return_sum:r.return_sum});
+  return `<tr class="${favoriteProfitClass(signal)}"><td>${e(r.band)}</td><td>${e(r.horizon)} left${r.clock==='estimated_game_end'?' · estimated game end':''}</td><td>${observationCount(n)}</td><td>${eventAccuracy(wins,n)}</td><td>${r.contracts>0?(100*r.cost/r.contracts).toFixed(2)+'%':'—'}</td>${roundTrips?'':`<td>${e(confidence.margin)}</td><td>${e(confidence.error)}<small>CI ${e(confidence.interval)}</small></td>`}<td class="${pnlClass(displayNet)}">${e(roundTrips?(r.closed>0?dollars(r.net):'—'):averageReturn(r))}${!roundTrips&&r.return_observations>0?'<small>'+r.return_observations+' return observations'+(r.estimated_return_observations>0?' · '+r.estimated_return_observations+' estimated':'')+'</small>':''}</td><td>${r.closed>0&&finite(r.holding_seconds)?(r.holding_seconds/r.closed/60).toFixed(2)+' min':'—'}</td></tr>`}).join('')}</tbody></table></div>`;
 }
 const researchNote='<p class="small">Counts are distinct verified resolved events per price/time cohort, not contracts. Ten contracts from one event count as one observation. One event may appear in multiple cohorts. Hold-only P/L % gives each resolved event equal weight, after fees. Known outcomes assume holding to settlement, ignoring exit proceeds and exit fees. Unknown outcomes are omitted. Estimated historical returns use average entry fees/sizing; account balances retain actual trades.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set(),options={}){
@@ -144,9 +135,9 @@ function favoriteDetailedMatrixMarkup(rows,label,emptyAsNote=false){
     const outcome=eventAccuracy(x.eventWins,observations);
     const pnl=averageReturn(x);
     const confidence=confidenceMarkup(x.eventWins,observations,x.purchased?x.cost/x.purchased:null);
-    const signal=favoriteProfitSignal({purchased:x.purchased,settled:observations,winners:x.eventWins,cost:x.cost,closed:x.closed,net:x.return_observations>0?x.return_sum:x.net});
-    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · above break-even '+confidence.margin+' · 90% uncertainty '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
-    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Above cost '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+    const signal=favoriteProfitSignal({return_observations:x.return_observations,return_sum:x.return_sum});
+    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · margin '+confidence.margin+' · 90% uncertainty '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
+    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(observationCount(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Margin '+e(confidence.margin)+' · uncertainty '+e(confidence.error)+'</small>'++'</summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
   return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -184,7 +175,7 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  sections+'</section>';
 }
 
-export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode!=='wide'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button><p class="small">Above break-even = win rate − entry cost with fees. Example: 90% wins − 85% cost = +5 percentage points. Uncertainty shows how far the win rate could vary at 90% confidence; compare it with the advantage. Related events can be correlated.</p></div>`;
+export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode!=='wide'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button><p class="small">Margin = win rate − average entry cost with fees. Example: 90% wins − 85% cost = +5 percentage points. Uncertainty shows how far the win rate could vary at 90% confidence; compare it with the advantage. Related events can be correlated.</p></div>`;
 function favoriteWideMatrixMarkup(rows,coverage={},prices=['70–<78¢','78–<86¢','86–95¢'],label=''){
  const times=coverage.time_buckets||[];
  const body=prices.map(price=>'<tr><th scope="row">'+e(price)+'</th>'+times.map((time,slot)=>{
@@ -192,8 +183,8 @@ function favoriteWideMatrixMarkup(rows,coverage={},prices=['70–<78¢','78–<8
   if(!row||!(Number(row.events)>0))return '<td class="stat-empty">—</td>';
   const n=Number(row.events),wins=Number(row.event_wins),entry=Number(row.cost)/Number(row.contracts);
   const c=confidenceMarkup(wins,n,Number.isFinite(entry)?entry:null),ret=averageReturn(row);
-  const signal=Number(row.return_observations)>0?(Number(row.return_sum)>0?'realized-positive':Number(row.return_sum)<0?'realized-negative':'neutral'):'unknown';
-  return '<td class="stat-observed '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Above cost '+e(c.margin)+'</small><small>Uncertainty '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
+  const signal=favoriteProfitSignal({return_observations:row.return_observations,return_sum:row.return_sum});
+  return '<td class="stat-observed '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Margin '+e(c.margin)+'</small><small>Uncertainty '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
  }).join('')+'</tr>').join('');
  const excluded=Number(coverage.excluded_legacy_observations)||0;
  const note=(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
@@ -233,11 +224,8 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
       const cell=byCell.get(price+'|'+time);
       if(!cell||!cell.samples)return '<td class="stat-empty"><span class="small">No settled events</span></td>';
       const enough=cell.samples>=min,capable=['evidence_candidate','fallback_candidate'].includes(cell.eligibility);
-      const conservativeEntryCeiling=(Number(price.split('-')[0])+5)/100;
-      const realized=Number(cell.realized_roi);
-      const signal=cell.realized_roi==null||!Number.isFinite(realized)?'unknown':
-       realized<0&&Number(cell.win_rate)>conservativeEntryCeiling?'exit-drag':
-       realized>0?'realized-positive':realized<0?'realized-negative':'neutral';
+      // Legacy statistics ROI can reflect early exits; it is not a verified hold return.
+      const signal='unknown';
       const label=status(cell);
       const fallback=cell.fallback_level!==cell.level&&cell.fallback_level!=='insufficient_samples'?
         'Fallback available: '+cell.fallback_level.replaceAll('_',' ')+' · n='+cell.fallback_samples:
@@ -246,7 +234,7 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
         cell.fallback_lower===null||cell.fallback_lower===undefined?'':'Fallback confidence lower bound: '+num(cell.fallback_lower*100),
         'Net P/L: '+dollars(cell.realized_net),'Level: '+cell.level.replaceAll('_',' '),fallback,
         'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
-      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small>'+(favoriteProfitLabel(signal)?'<small class="profit-warning">'+e(favoriteProfitLabel(signal))+'</small>':'')+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>ROI '+e(num(cell.realized_roi===null?null:cell.realized_roi*100))+'</span><small>'+e(label)+'</small>'++'</summary><p class="small">'+e(detail)+'</p></details></td>';
     }).join('')+'</tr>').join('')+'</tbody></table></div></details>';
  }).join('')+'</section>';
 }
