@@ -285,169 +285,169 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                     rows=experiment.get(key)
                     if isinstance(rows,list) and len(rows)<=8:
                         try:
-                                encoded=json.dumps(rows,default=str,separators=(',',':'),
-                                    ensure_ascii=False,allow_nan=False).encode('utf-8')
-                                if len(encoded)<=2048:compact_experiment[key]=rows
-                            except (TypeError,ValueError):
-                                # The normal JSON response still validates retained
-                                # fields. Never leak a non-serializable research blob.
-                                pass
-                if experiment.get('scalper') is not None:
-                    research=experiment['scalper']
-                    compact_experiment['scalper']={k:v for k,v in research.items()
-                        if k not in ('cells',)}
-                bot['experiment']=compact_experiment
-                for field in ('metrics','financial_metrics'):
-                    if field in bot:
-                        bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
-                            for period,metric in bot[field].items()}
-            # Keep the initial card payload bounded even if a strategy later adds
-            # another large research field we did not know about yet. The full
-            # experiment remains durable and is available through detail endpoints.
-            try:bot_bytes=len(json.dumps(bot,default=str,separators=(',',':')).encode('utf-8'))
-            except Exception:bot_bytes=0
-            if bot_bytes>12000 and bot.get('experiment') is not None:
-                experiment=bot['experiment']
-                keep=('message','attempts','completed','unmatched','decision','scanner','state','mode')
-                slim={k:experiment[k] for k in keep if k in experiment}
-                if isinstance(experiment.get('scalper'),dict):
-                    research=experiment['scalper']
-                    slim['scalper']={k:research[k] for k in ('totals','config','periods') if k in research}
-                bot['experiment']=slim
-            bots.append(bot)
-        response_payload=dict(payload,status=status,folders=folders,bots=bots)
-        result=JSONResponse(response_payload)
-        raw=result.body
-        digest=hashlib.sha256(raw).hexdigest()
-        if compressed:
-            if len(raw)>8388608:
-                # Log approximate section weights before rejecting the transport so
-                # future growth has an actionable source instead of a generic size
-                # failure. Durable records remain untouched.
-                section_bytes={}
-                for key,value in response_payload.items():
-                    try:section_bytes[key]=len(json.dumps(value,default=str,separators=(',',':')).encode('utf-8'))
-                    except Exception:section_bytes[key]=-1
-                print(json.dumps(dict(event='dashboard_snapshot_oversize',decoded_bytes=len(raw),
-                    limit_bytes=8388608,section_bytes=section_bytes,
-                    bots=len(bots),folders=len(folders))),flush=True)
-                raise HTTPException(503,'Dashboard snapshot exceeds its supported size')
-            # Self-contained ASCII envelope: compressed data is far smaller and its
-            # checksum describes the decoded JSON, independent of HTTP transforms.
-            result=JSONResponse(dict(transport='workspace-gzip-v1',sha256=digest,bytes=len(raw),
-                data=base64.b64encode(gzip.compress(raw,compresslevel=3,mtime=0)).decode('ascii')))
-            result.headers['x-pocket-workspace-encoding']='gzip-base64-v1'
-            print(json.dumps(dict(event='dashboard_transport',encoding='gzip-base64-v1',
-                decoded_bytes=len(raw),wire_bytes=len(result.body),serialization_ms=(time.monotonic()-started)*1000,
-                request_ms=(time.monotonic()-request_started)*1000 if request_started is not None else None)),flush=True)
-        result.headers['x-pocket-workspace-contract']='demo-v1'
-        result.headers['x-pocket-workspace-sha256']=digest
-        result.headers['x-pocket-workspace-bytes']=str(len(raw))
-        result.headers['cache-control']='no-store, no-transform'
-        return result
+                            encoded=json.dumps(rows,default=str,separators=(',',':'),
+                                ensure_ascii=False,allow_nan=False).encode('utf-8')
+                            if len(encoded)<=2048:compact_experiment[key]=rows
+                        except (TypeError,ValueError):
+                            # The normal JSON response still validates retained
+                            # fields. Never leak a non-serializable research blob.
+                            pass
+            if experiment.get('scalper') is not None:
+                research=experiment['scalper']
+                compact_experiment['scalper']={k:v for k,v in research.items()
+                    if k not in ('cells',)}
+            bot['experiment']=compact_experiment
+            for field in ('metrics','financial_metrics'):
+                if field in bot:
+                    bot[field]={period:{k:v for k,v in metric.items() if k in metric_fields}
+                        for period,metric in bot[field].items()}
+        # Keep the initial card payload bounded even if a strategy later adds
+        # another large research field we did not know about yet. The full
+        # experiment remains durable and is available through detail endpoints.
+        try:bot_bytes=len(json.dumps(bot,default=str,separators=(',',':')).encode('utf-8'))
+        except Exception:bot_bytes=0
+        if bot_bytes>12000 and bot.get('experiment') is not None:
+            experiment=bot['experiment']
+            keep=('message','attempts','completed','unmatched','decision','scanner','state','mode')
+            slim={k:experiment[k] for k in keep if k in experiment}
+            if isinstance(experiment.get('scalper'),dict):
+                research=experiment['scalper']
+                slim['scalper']={k:research[k] for k in ('totals','config','periods') if k in research}
+            bot['experiment']=slim
+        bots.append(bot)
+    response_payload=dict(payload,status=status,folders=folders,bots=bots)
+    result=JSONResponse(response_payload)
+    raw=result.body
+    digest=hashlib.sha256(raw).hexdigest()
+    if compressed:
+        if len(raw)>8388608:
+            # Log approximate section weights before rejecting the transport so
+            # future growth has an actionable source instead of a generic size
+            # failure. Durable records remain untouched.
+            section_bytes={}
+            for key,value in response_payload.items():
+                try:section_bytes[key]=len(json.dumps(value,default=str,separators=(',',':')).encode('utf-8'))
+                except Exception:section_bytes[key]=-1
+            print(json.dumps(dict(event='dashboard_snapshot_oversize',decoded_bytes=len(raw),
+                limit_bytes=8388608,section_bytes=section_bytes,
+                bots=len(bots),folders=len(folders))),flush=True)
+            raise HTTPException(503,'Dashboard snapshot exceeds its supported size')
+        # Self-contained ASCII envelope: compressed data is far smaller and its
+        # checksum describes the decoded JSON, independent of HTTP transforms.
+        result=JSONResponse(dict(transport='workspace-gzip-v1',sha256=digest,bytes=len(raw),
+            data=base64.b64encode(gzip.compress(raw,compresslevel=3,mtime=0)).decode('ascii')))
+        result.headers['x-pocket-workspace-encoding']='gzip-base64-v1'
+        print(json.dumps(dict(event='dashboard_transport',encoding='gzip-base64-v1',
+            decoded_bytes=len(raw),wire_bytes=len(result.body),serialization_ms=(time.monotonic()-started)*1000,
+            request_ms=(time.monotonic()-request_started)*1000 if request_started is not None else None)),flush=True)
+    result.headers['x-pocket-workspace-contract']='demo-v1'
+    result.headers['x-pocket-workspace-sha256']=digest
+    result.headers['x-pocket-workspace-bytes']=str(len(raw))
+    result.headers['cache-control']='no-store, no-transform'
+    return result
 
 
-    def aggregate(reports):
-        excluded=sum(not r.get('data_valid',False) for r in reports)
-        reports=[r for r in reports if r.get('data_valid',False)]
-        closed=sum((D(r.get('closed_contracts','0')) for r in reports),D(0))
-        won=sum((D(r.get('winning_contracts','0')) for r in reports),D(0))
-        return dict(gross_profit=str(sum((D(r['gross_profit']) for r in reports),D(0))),
-            fees=str(sum((D(r['total_fees_paid']) for r in reports),D(0))),
-            net_realized_pnl=str(sum((D(r['net_realized_pnl']) for r in reports),D(0))),
-            win_rate=str(won/closed*100) if closed else None,
-            cycles=len(reports),excluded_cycles=excluded)
+def aggregate(reports):
+    excluded=sum(not r.get('data_valid',False) for r in reports)
+    reports=[r for r in reports if r.get('data_valid',False)]
+    closed=sum((D(r.get('closed_contracts','0')) for r in reports),D(0))
+    won=sum((D(r.get('winning_contracts','0')) for r in reports),D(0))
+    return dict(gross_profit=str(sum((D(r['gross_profit']) for r in reports),D(0))),
+        fees=str(sum((D(r['total_fees_paid']) for r in reports),D(0))),
+        net_realized_pnl=str(sum((D(r['net_realized_pnl']) for r in reports),D(0))),
+        win_rate=str(won/closed*100) if closed else None,
+        cycles=len(reports),excluded_cycles=excluded)
 
 
-    def install_shadow(app,auth,mutate,pool):
-        store=DemoStore(pool)
-        def query(request,allowed=()):
-            if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):
-                raise HTTPException(422,'Invalid filters')
-        @app.get('/demo/shadow/restarts')
-        def worker_restarts(request:Request):
-            """Small, independent 24-hour worker restart read, even if workspace lags."""
-            auth(request);query(request)
-            from services.demo.worker_restarts import KEY,summarize
-            row=store.get(KEY)
-            return summarize(row['progress'] if row else None)
+def install_shadow(app,auth,mutate,pool):
+    store=DemoStore(pool)
+    def query(request,allowed=()):
+        if any(k not in allowed or len(request.query_params.getlist(k))!=1 for k in request.query_params):
+            raise HTTPException(422,'Invalid filters')
+    @app.get('/demo/shadow/restarts')
+    def worker_restarts(request:Request):
+        """Small, independent 24-hour worker restart read, even if workspace lags."""
+        auth(request);query(request)
+        from services.demo.worker_restarts import KEY,summarize
+        row=store.get(KEY)
+        return summarize(row['progress'] if row else None)
 
-        @app.get('/demo/shadow/portfolio-snapshot')
-        def portfolio_snapshot(request:Request):
-            """Current financial snapshot even when optional historical SQL is slow.
+    @app.get('/demo/shadow/portfolio-snapshot')
+    def portfolio_snapshot(request:Request):
+        """Current financial snapshot even when optional historical SQL is slow.
 
-            Never infer missing history as zero profit. No research report scans,
-            writes, money changes, or trading controls are performed here.
-            """
-            auth(request);query(request)
-            if not store.get('shadow/installed'):
-                return dict(contract='demo-v1',installed=False,real_orders_enabled=False)
-            row=store.get('shadow/status')
-            if not row:raise HTTPException(503,'Current portfolio snapshot not yet available')
-            status=row['progress']
-            money=status.get('accounting')
-            experiments=status.get('experiments') or {}
-            folders=[]
-            for record in store.indexed_control_rows('shadow/folder/',24):
-                folder=dict(record['parameters'],**record['progress'])
-                identifier=folder['id']
-                experiment=experiments.get(identifier) or {}
-                account=(money if identifier=='convexity' else experiment.get('accounting'))
-                if account:
-                    # Keep current cash, marked positions and true session P/L,
-                    # but omit bulky per-bot history and cycle reports.
-                    folder['accounting']={k:v for k,v in account.items()
-                        if k not in ('bots','current_cycles')}
-                folders.append(folder)
-            folders.sort(key=lambda f:f.get('order',999))
-            return dict(contract='demo-v1',installed=True,history_delayed=True,
-                at=status.get('at'),folders=folders,real_orders_enabled=False)
+        Never infer missing history as zero profit. No research report scans,
+        writes, money changes, or trading controls are performed here.
+        """
+        auth(request);query(request)
+        if not store.get('shadow/installed'):
+            return dict(contract='demo-v1',installed=False,real_orders_enabled=False)
+        row=store.get('shadow/status')
+        if not row:raise HTTPException(503,'Current portfolio snapshot not yet available')
+        status=row['progress']
+        money=status.get('accounting')
+        experiments=status.get('experiments') or {}
+        folders=[]
+        for record in store.indexed_control_rows('shadow/folder/',24):
+            folder=dict(record['parameters'],**record['progress'])
+            identifier=folder['id']
+            experiment=experiments.get(identifier) or {}
+            account=(money if identifier=='convexity' else experiment.get('accounting'))
+            if account:
+                # Keep current cash, marked positions and true session P/L,
+                # but omit bulky per-bot history and cycle reports.
+                folder['accounting']={k:v for k,v in account.items()
+                    if k not in ('bots','current_cycles')}
+            folders.append(folder)
+        folders.sort(key=lambda f:f.get('order',999))
+        return dict(contract='demo-v1',installed=True,history_delayed=True,
+            at=status.get('at'),folders=folders,real_orders_enabled=False)
 
-        @app.get('/demo/shadow/workspace')
-        def workspace(request:Request,response:Response):
-            global ACCOUNTING_LOG_AT,SHADOW_HISTORY_RETRY_AFTER
-            request_started=time.monotonic()
-            auth(request);query(request,('version',))
-            latest=request.query_params.get('version','latest')
-            if latest not in ('latest','full'):raise HTTPException(422,'Invalid version')
-            response.headers['x-pocket-workspace-contract']='demo-v1'
-            marker=store.get('shadow/installed')
-            if not marker:return dict(contract='demo-v1',installed=False,bots=[],real_orders_enabled=False)
-            health=store.get('health');status=store.get('shadow/status')
-            status=status['progress'] if status else dict(virtual_cash='1000',available_cash='1000',positions=[],orders=[],market_states={})
-            money=status.get('accounting')
-            status=dict(status);status.pop('accounting',None)
-            current=money.get('current_cycles',{}) if money else {}
-            snapshot_at=money['at'] if money else status.get('at',time.time())
-            from psycopg.types.json import Jsonb
-            try:all_profiles=load_bots(store)
-            except BotCatalogCapacityError:
-                raise HTTPException(503,'Bot catalog is temporarily unavailable') from None
-            for row in all_profiles:
-                p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
-            all_profiles.sort(key=lambda r:r['parameters']['name'])
-            profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
-            folder_rows=store.indexed_control_rows('shadow/folder/',24)
-            reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
-            revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
-            now=time.time()
-            scope="(progress->>'at')::numeric>=%s AND (%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
-            # Stage-labelled diagnostic on *failed* SQL too; a total elapsed-time
-            # log alone cannot tell which historical scan crossed the 5s limit.
-            def historical_read(connection,stage,statement,params):
-                started=time.monotonic()
-                try:
-                    return connection.execute(statement,params)
-                except Exception as exc:
-                    print(json.dumps(dict(event='shadow_workspace_query_failure',
-                        stage=stage,error_type=type(exc).__name__,
-                        sqlstate=getattr(exc,'sqlstate',None),
-                        elapsed_ms=round((time.monotonic()-started)*1000,1))),flush=True)
-                    raise
-            financial=[]
-            historical_metrics_delayed=time.monotonic()<SHADOW_HISTORY_RETRY_AFTER
-            if not historical_metrics_delayed:
-                try:
+    @app.get('/demo/shadow/workspace')
+    def workspace(request:Request,response:Response):
+        global ACCOUNTING_LOG_AT,SHADOW_HISTORY_RETRY_AFTER
+        request_started=time.monotonic()
+        auth(request);query(request,('version',))
+        latest=request.query_params.get('version','latest')
+        if latest not in ('latest','full'):raise HTTPException(422,'Invalid version')
+        response.headers['x-pocket-workspace-contract']='demo-v1'
+        marker=store.get('shadow/installed')
+        if not marker:return dict(contract='demo-v1',installed=False,bots=[],real_orders_enabled=False)
+        health=store.get('health');status=store.get('shadow/status')
+        status=status['progress'] if status else dict(virtual_cash='1000',available_cash='1000',positions=[],orders=[],market_states={})
+        money=status.get('accounting')
+        status=dict(status);status.pop('accounting',None)
+        current=money.get('current_cycles',{}) if money else {}
+        snapshot_at=money['at'] if money else status.get('at',time.time())
+        from psycopg.types.json import Jsonb
+        try:all_profiles=load_bots(store)
+        except BotCatalogCapacityError:
+            raise HTTPException(503,'Bot catalog is temporarily unavailable') from None
+        for row in all_profiles:
+            p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
+        all_profiles.sort(key=lambda r:r['parameters']['name'])
+        profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
+        folder_rows=store.indexed_control_rows('shadow/folder/',24)
+        reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
+        revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
+        now=time.time()
+        scope="(progress->>'at')::numeric>=%s AND (%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
+        # Stage-labelled diagnostic on *failed* SQL too; a total elapsed-time
+        # log alone cannot tell which historical scan crossed the 5s limit.
+        def historical_read(connection,stage,statement,params):
+            started=time.monotonic()
+            try:
+                return connection.execute(statement,params)
+            except Exception as exc:
+                print(json.dumps(dict(event='shadow_workspace_query_failure',
+                    stage=stage,error_type=type(exc).__name__,
+                    sqlstate=getattr(exc,'sqlstate',None),
+                    elapsed_ms=round((time.monotonic()-started)*1000,1))),flush=True)
+                raise
+        financial=[]
+        historical_metrics_delayed=time.monotonic()<SHADOW_HISTORY_RETRY_AFTER
+        if not historical_metrics_delayed:
+            try:
                 historical_sql_started=time.monotonic()
                 with pool.connection() as c:
                     # This DISTINCT ON historical scan was repeatedly canceled at 5s.
