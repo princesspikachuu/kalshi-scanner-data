@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+from .weather_window import observation_end
 
 
 async def recover_once(host):
@@ -13,7 +14,7 @@ async def recover_once(host):
     for engine, _, _ in host.experiments.portfolios.values():
         for lot in engine.wallet.lots:
             market = engine.markets.get(lot.ticker)
-            if lot.quantity > 0 and market and not market.get('paid') and market['close'] <= now:
+            if lot.quantity > 0 and market and not market.get('paid') and observation_end(market) <= now:
                 held[lot.ticker] = market
     # Least-recently checked first: unresolved/failed markets cannot starve others.
     due = sorted((ticker for ticker in held if now - checks.get(ticker, 0) >= 30),

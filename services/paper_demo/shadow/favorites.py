@@ -4,7 +4,7 @@ from decimal import Decimal as D
 from .core import ConvexityStrategy,ZERO
 from .risk import ExitEvidence,assess
 from .favorite_entries import quote,observe,entry_key
-from . import favorite_timing
+from . import favorite_timing,weather_window
 
 class FavoritesStrategy(ConvexityStrategy):
     recover_fresh_entries=True
@@ -140,13 +140,23 @@ class FavoritesStrategy(ConvexityStrategy):
 
     def entry_allowed(self,m,now):
         if self.profile.get('retired'):return False
+        if weather_window.is_daily(m) or self.profile.get('asset')=='weather_daily':
+            return weather_window.entry_allowed(m,now)
         return not m.get('sports') or (m.get('sports_live') is True and
             m.get('sports_start',float('inf'))<=now<m.get('sports_verified_until',0) and
             60<m.get('sports_expected_end',0)-now<=self.profile.get('late_game_hours',2)*3600)
     def entry_deadline(self,m,now):
         deadline=m['close']-60
+        if weather_window.is_daily(m):
+            end=weather_window.entry_end(m)
+            if end is None:return now
+            deadline=min(deadline,end-60)
         if m.get('sports'):deadline=min(deadline,m.get('sports_verified_until',now),m.get('sports_expected_end',now)-60)
         return deadline
+    def entry_order_allowed(self,order):
+        m=self.e.markets[order.ticker]
+        return not weather_window.is_daily(m) or weather_window.entry_allowed(m,self.e.now)
+
     def entry_ready(self,ticker):
         book=self.e.books[ticker];m=self.e.markets[ticker]
         if not self.e.book_fresh(ticker):return False
@@ -162,6 +172,9 @@ class FavoritesStrategy(ConvexityStrategy):
         for ticker,m in markets:
             if not ticker.startswith(self.series+'-'):continue
             a=self.attempts.get(ticker);now=self.e.now
+            if weather_window.is_daily(m) and not weather_window.entry_allowed(m,now):
+                self.e.cancel_buys(ticker)
+                self.last_reason='Daily weather: entries only in the city’s final two hours; official settlement may follow later'
             if self.hold_only:
                 for order in self.e.orders.values():
                     if order.ticker==ticker and order.action=='sell' and order.status in ('pending','resting'):

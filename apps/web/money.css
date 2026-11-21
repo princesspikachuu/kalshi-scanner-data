@@ -142,3 +142,16 @@
 .shadow-workspace .table-scroll table tbody tr.profit-exit-drag > td{border-style:solid;border-width:1px}
 .favorite-profit-legend{margin:14px 0 10px;padding:7px 0}
 .profit-warning{display:block;color:#ffdb9e;font-size:11px;font-weight:700}
+
+/* The wider research view has exactly three time columns; fit a phone. */
+.favorite-stat-matrix.favorite-wide-matrix{min-width:0;table-layout:fixed;border-spacing:2px}
+.favorite-wide-matrix th:first-child{width:72px}
+.favorite-stat-matrix.favorite-wide-matrix th{white-space:normal;overflow-wrap:anywhere;padding:6px 3px}
+.favorite-stat-matrix.favorite-wide-matrix td{min-width:0;padding:5px;overflow-wrap:anywhere}
+.favorite-wide-matrix td summary{gap:3px}
+@media(max-width:650px){
+ .favorite-stat-matrix.favorite-wide-matrix{font-size:11px}
+ .favorite-wide-matrix th:first-child{width:54px}
+ .favorite-stat-matrix.favorite-wide-matrix td{padding:4px 3px}
+ .favorite-wide-matrix small{font-size:10px;line-height:1.3}
+}

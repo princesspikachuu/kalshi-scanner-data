@@ -20,16 +20,16 @@ class WeatherSuite(unittest.TestCase):
         self.assertEqual(sum(p['asset']=='weather' for p in ps),8)
         self.assertEqual(sum(p['asset']=='weather_daily' for p in ps),7)
     def test_weather_market_routes_only_to_favorites_and_can_enter_both_thresholds(self):
-        suite,rows=self.suite();e,f,ps=suite.portfolios['favorites']
-        for ticker in ('KXHIGHNY-TEST-B80','KXHIGHNY-TEST-B82'):
-            suite.handle('weather_market',dict(market=dict(ticker=ticker,event_ticker='SAME',open=100,close=80000,weather_category='weather_daily',discovered_at=200),taker_multiplier='1',maker_multiplier='0'),200)
-            e.books[ticker].levels={'yes':{D('.79'):D(100)},'no':{D('.19'):D(100)}};e.books[ticker].valid=True;e.books[ticker].at=200
+        suite,rows=self.suite();e,f,ps=suite.portfolios['favorites'];now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp();e.advance(now)
+        for ticker in ('KXHIGHNY-26NOV20-B80','KXHIGHNY-26NOV20-B82'):
+            suite.handle('weather_market',dict(market=dict(ticker=ticker,event_ticker='KXHIGHNY-26NOV20',open=now-100,close=now+7200,weather_category='weather_daily',discovered_at=now),taker_multiplier='1',maker_multiplier='0'),now)
+            e.books[ticker].levels={'yes':{D('.79'):D(100)},'no':{D('.19'):D(100)}};e.books[ticker].valid=True;e.books[ticker].at=now
         f.step()
         self.assertEqual(len(e.orders),2)
         self.assertTrue(all(o.side=='yes' and o.maker for o in e.orders.values()))
         self.assertFalse(suite.portfolios['sequential'][0].markets)
         self.assertFalse(suite.portfolios['complete_set'][0].markets)
-        self.assertEqual(e.markets['KXHIGHNY-TEST-B80']['bot_id'],'fav_kxhighny')
+        self.assertEqual(e.markets['KXHIGHNY-26NOV20-B80']['bot_id'],'fav_kxhighny')
     def test_rotation_keeps_filled_weather_and_shared_basket_subscription(self):
         suite,rows=self.suite();e,f,ps=suite.portfolios['favorites'];e.now=1000
         for suffix,filled in (('EMPTY',False),('HELD',True)):
@@ -57,13 +57,13 @@ class WeatherDiscovery(unittest.IsolatedAsyncioTestCase):
     async def test_discovers_each_category_with_24h_filter_and_verified_fees(self):
         suite,rows=WeatherSuite().suite();host=Mock();host.experiments=suite;host.engine.markets={}
         host.put=AsyncMock();host.fee_policy=AsyncMock(return_value=Mock(taker_multiplier=D(1),maker_multiplier=D(0)))
-        now=time.time()
+        now=datetime(2026,11,21,5,tzinfo=timezone.utc).timestamp()
         def call(method,path,query):
-            series=query['series_ticker'];t=series+'-TEST'
+            series=query['series_ticker'];t=series+'-26NOV20-TEST'
             date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
-            return dict(markets=[dict(ticker=t,event_ticker=series+'-EVENT',status='active',open_time=date(now-100),close_time=date(now+7200),yes_bid=80)])
+            return dict(markets=[dict(ticker=t,event_ticker=series+'-26NOV20',status='active',open_time=date(now-100),close_time=date(now+7200),yes_bid=80)])
         host.verified_data.call.side_effect=call
-        await weather_once(host)
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now):await weather_once(host)
         self.assertEqual(host.put.await_count,2);self.assertEqual(host.fee_policy.await_count,2)
         categories={c.args[1]['market']['weather_category'] for c in host.put.await_args_list}
         self.assertEqual(categories,{'weather','weather_daily'})
@@ -80,8 +80,8 @@ class WeatherDiscovery(unittest.IsolatedAsyncioTestCase):
         host.verified_data.call.return_value=dict(market=dict(ticker='KXHIGHNY-DUE',status='settled',result='yes'))
         await weather_once(host);host.put.assert_awaited_once()
     async def test_inventory_rejects_wrong_series_future_and_long_horizon(self):
-        now=time.time();date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
-        row=dict(ticker='KXHIGHNY-OK',status='active',open_time=date(now-10),close_time=date(now+3600))
+        now=datetime(2026,11,21,4,tzinfo=timezone.utc).timestamp();date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        row=dict(ticker='KXHIGHNY-26NOV20-OK',status='active',open_time=date(now-10),close_time=date(now+3600))
         bad=[dict(row,ticker='OTHER-X'),dict(row,open_time=date(now+10)),dict(row,close_time=date(now+90000)),dict(row,status='settled')]
         self.assertEqual(candidates([row]+bad,'KXHIGHNY',now),[row])
 

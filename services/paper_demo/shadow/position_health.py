@@ -4,6 +4,7 @@ This does not verify an exchange result, infer a payout or mutate a wallet.
 The recorded marker may originate from a verified WS event or approved REST recovery.
 """
 from decimal import Decimal
+from .weather_window import observation_end
 
 
 def position_settlement_health(engine, now):
@@ -24,8 +25,8 @@ def position_settlement_health(engine, now):
         if not market or market.get("close") is None:
             label = "unknown_market"
         elif market.get("paid"):
-            label = "expired_already_paid" if market["close"] <= now else "still_open"
-        elif market["close"] > now:
+            label = "expired_already_paid" if observation_end(market) <= now else "still_open"
+        elif observation_end(market) > now:
             label = "still_open"
         elif lot.ticker in engine.settled:
             label = "expired_settlement_recorded"
