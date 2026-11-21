@@ -1,5 +1,6 @@
 """One fenced, durable 28-market paper executor hosted by the existing worker."""
 import asyncio,json,time,logging,math
+from psycopg.errors import QueryCanceled
 from types import SimpleNamespace
 from decimal import Decimal as D
 from services.paper_demo.exchange import credentials,ProductionData,Fees
@@ -20,6 +21,7 @@ from .sports import initialize_sports,discover_sports
 from .scope import initialize_scope,initialize_restored_favorites,initialize_one_contract_favorites
 from .sequential_comparison import initialize_comparison
 from .bot_catalog import load_bots
+from .control_read_safety import suspend_new_entries,restore_prior_entries
 from .hourly import discover_hourly
 from .scalper_install import initialize_scalper,initialize_scalper_upgrade,apply_requested_volatility_pause
 from .scalper import SCALPER_FOLDERS
@@ -486,14 +488,38 @@ class HostedRun(ForwardRun):
             # Read-only configuration fetches may overlap the execution commit.
             # Command consumption remains inside the state lock to prevent a
             # prefetched refill from being applied twice across that commit.
-            mode_row,all_rows=await asyncio.gather(
-                self.audit.durable_io(read_mode,self.store.pool),
-                self.audit.durable_io(load_bots,self.store))
+            try:
+                mode_row,all_rows=await asyncio.gather(
+                    self.audit.durable_io(read_mode,self.store.pool),
+                    self.audit.durable_io(load_bots,self.store))
+            except QueryCanceled:
+                # This is an OPTIONAL read, not a checkpoint, wallet operation,
+                # or financial fence. A statement timeout must not destroy
+                # subscribed books and delay held-position settlements.
+                # Avoid stale-config trades: suspend new entries under the same
+                # mutex used by input simulation, then retry a complete read.
+                async with self.state_mutex():
+                    blocked=suspend_new_entries(self)
+                if time.monotonic()>=getattr(self,'control_read_warning_at',0):
+                    self.control_read_warning_at=time.monotonic()+30
+                    print(json.dumps(dict(event='shadow_control_read_deferred',
+                        reason='statement_timeout',new_entries_blocked=True,
+                        running_bots_suspended=blocked,retry_seconds=2,
+                        real_orders_enabled=False)),flush=True)
+                await asyncio.sleep(2)
+                continue
             mode=mode_row.get('mode','demo')
             history_sample=None
             async with self.state_mutex():
                 control_started=time.monotonic()
                 await self.audit.durable_io(self.guard)
+                was_suspended=getattr(self,'_suspended_entry_bots',None) is not None
+                restored=restore_prior_entries(self)
+                if was_suspended:
+                    print(json.dumps(dict(event='shadow_control_read_restored',
+                        running_bots_restored=restored,real_orders_enabled=False)),flush=True)
+                # Restore the PREVIOUS enabled flags before applying the fresh
+                # catalog; normal pause transitions must still cancel maker buys.
                 self.experiments.control(all_rows,mode)
                 self.experiments.maintain()
                 self.book_update_interval_ms=book_conflation_interval(self.experiments)
