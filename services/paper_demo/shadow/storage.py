@@ -44,11 +44,32 @@ class HostedAudit:
     def checkpoint_snapshot(self):
         # Serialize the hot state once, without a full JSON decode/re-encode
         # before psycopg. Audit events and this payload still commit together.
+        started=time.monotonic()
         data=encode(self.engine,self.fleet)
+        engine_ms=(time.monotonic()-started)*1000
+        experiments_started=time.monotonic()
         if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
+        experiments_ms=(time.monotonic()-experiments_started)*1000
         if hasattr(self,'_frozen_discovery'):data['experiments']['_maker_discovery']=self._frozen_discovery
         if not hasattr(self,'checkpoint_segments'):self.checkpoint_segments=CheckpointSegments()
+        packing_started=time.monotonic()
         payload=pack_checkpoint(data,binary=True,segments=self.checkpoint_segments)
+        packing_ms=(time.monotonic()-packing_started)*1000
+        if not hasattr(self,'checkpoint_stage_profile'):self.checkpoint_stage_profile=Counter()
+        stages=self.checkpoint_stage_profile
+        stages['samples']+=1
+        stages['engine_state_ms']+=engine_ms
+        stages['experiment_state_ms']+=experiments_ms
+        stages['packing_ms']+=packing_ms
+        stages['total_ms']+=(time.monotonic()-started)*1000
+        stages['peak_packing_ms']=max(stages['peak_packing_ms'],packing_ms)
+        stages['peak_state_ms']=max(stages['peak_state_ms'],engine_ms+experiments_ms)
+        if time.monotonic()>=getattr(self,'checkpoint_stage_log_at',0):
+            self.checkpoint_stage_log_at=time.monotonic()+30
+            print(json.dumps(dict(event='shadow_checkpoint_stage_cost',**stages,
+                encoded_bytes=payload.get('bytes'),stored_bytes=len(payload.get('data','')),
+                real_orders_enabled=False)),flush=True)
+            self.checkpoint_stage_profile=Counter()
         if payload.get('checkpoint_encoding') and time.monotonic()>=getattr(self,'codec_log_at',0):
             self.codec_log_at=time.monotonic()+30
             print(json.dumps(dict(event='shadow_checkpoint_size',encoding=payload['checkpoint_encoding'],
