@@ -1617,3 +1617,21 @@ Reduce avoidable paper-worker CPU, memory and database growth from paused, unexp
 - **Deployment:** Render `pocket-processing-staging`, service `srv-dbhcqr0473hc739kj4pg`, deployed merge commit `5bfc69d3` at 2026-11-21 19:00:11 UTC. New instance `9kd8n` acquired exclusive paper lock and emitted `demo_worker_ready` at 19:02:17 UTC. No runtime crash observed in sampled events or post-handoff logs.
 - **Measured live first cycle:** `paper_monitoring_capacity` at 19:02:43 UTC reported `paused_new_market_copies_skipped=13`, `paused_new_market_discoveries_skipped=0`, `backlog=0` and 11 subscriptions (9 protected, 2 new-entry). `shadow_pipeline_cost` counted 12 idle clock passes skipped. `paper_strategy_health` retained 75 enabled Favorites bots, zero enabled Scalper/Maker/Statistics bots. Four one-contract Favorites paper entries followed the handoff; real orders remain disabled.
 - **Limits:** Existing paused-strategy research/checkpoint history and database/archive storage retained intentionally, so do not claim immediate RAM/CPU savings beyond these observed skipped-work counts. No backup/archive/R2, MT-019 or MT-011 logic changed; outstanding backup capacity investigation belongs to existing MT-019 owner.
+
+---
+
+## MT-021 — Avoid dormant legacy fee-readiness and monitoring work
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / inactive legacy fee scope  
+**Claimed:** 2026-11-21 19:09 UTC  
+**Urgency:** U2 — HIGH  
+**Priority:** User-requested follow-up after MT-020; High Probability Favorites remains the only enabled strategy
+
+### Scope
+- In the hosted paper-worker control/health pass, limit per-second legacy book and fee readiness calculations to selected legacy markets genuinely needed for enabled bots, existing positions or outstanding orders; leave Favorites fee verifications and subscription logic untouched.
+- Preserve settlement polling and accounting even when a legacy portfolio is paused; preserve the disabled-scope behavior for standalone/simulation mode.
+- Verify idle, resumed, held-position and resting-order cases with deterministic tests; measure and log the number of skipped legacy fee-readiness calculations.
+- Coordinate separate legacy discovery REST scheduling with PR #314 owner; do not alter that scheduler during its active work. Keep MT-019 backup/storage and P0 PR #317 startup work untouched.
+
+### Completion notes
+_In progress; PR, tests, deployment and runtime measurements to follow._
