@@ -84,7 +84,7 @@ class SingleFavoritesBucketTests(unittest.TestCase):
             self.row('a'),self.row('b',cost='7.5',net='2.5'),
         ]),'empty':dict(entry_timing=[])}
         result = self.summary(bots)
-        self.assertEqual(D(result['by_bot']['btc']['uncertainty90_pct']),D(0))
+        self.assertIsNone(result['by_bot']['btc']['uncertainty90_pct'])
         self.assertEqual(result['by_bot']['empty']['return_observations'],0)
         self.assertIsNone(result['by_bot']['empty']['uncertainty90_pct'])
 
