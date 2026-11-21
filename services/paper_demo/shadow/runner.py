@@ -161,6 +161,11 @@ class ForwardRun:
                 self.discovery_retry_at[series]=session
                 continue
             previous=getattr(wake_store,'discovery_wakes',{}).get(key,0)
+            # A persisted scheduled opening overrides stale generic retry
+            # backoff, including after a worker restart. Check fresh venue
+            # state at the announced time rather than waiting another cycle.
+            if isinstance(previous,(int,float)) and previous>0 and now>=previous:
+                self.discovery_retry_at.pop(series,None)
             if not asleep(wake_store,key,now) and now>=self.discovery_retry_at.get(series,0):
                 wanted[series]=p
                 if isinstance(previous,(int,float)) and 0<=now-previous<=60:
@@ -198,7 +203,7 @@ class ForwardRun:
                     # venue listing must not cause us to sleep through the
                     # current 15-minute opportunity.
                     most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
-                        if t.startswith(series+'-')),default=0)
+                        if t.startswith(series+'-') and m.get('close',0)<=now),default=0)
                     near_roll=(series in self.known_active and 0<=now-most_recent_close<60)
                     if series in recent_wakes or near_roll:
                         # The next contract can appear a few seconds after the
