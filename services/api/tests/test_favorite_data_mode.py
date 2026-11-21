@@ -157,6 +157,21 @@ class DataMode(unittest.TestCase):
         self.assertEqual(first.status,'resting')
         self.assertEqual(len(set(b.attempts[first.ticker]['pending_buckets'].values())),2)
 
+    def test_pending_cancellation_ack_blocks_distinct_bucket_overlap(self):
+        e,b,book=fixture.MakerEntries().setup_bot()
+        b.step();e.advance(201);first=next(iter(e.orders.values()))
+        e.cancel(first.id)
+        # Simulate a delayed cancel acknowledgement: no fresh quote may stack.
+        e.now=212;book.at=212
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.13'):D(100)}}
+        b.step()
+        self.assertEqual(len(e.orders),1)
+        self.assertTrue(any(action=='cancel' and ident==first.id for _,_,action,ident in e.pending))
+        e.advance(213);book.at=213;b.step()
+        self.assertEqual(first.status,'cancelled')
+        self.assertEqual(len(e.orders),2)
+        self.assertEqual(list(e.orders.values())[-1].quantity,D(1))
+
     def test_filling_one_bucket_preserves_other_resting_bid_and_cohort_identity(self):
         e,b,book=fixture.MakerEntries().setup_bot()
         b.step();e.advance(201);first=next(iter(e.orders.values()))
