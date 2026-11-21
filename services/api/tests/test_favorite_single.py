@@ -42,10 +42,30 @@ class SingleFavoritesBucketTests(unittest.TestCase):
         self.assertEqual(result['event_wins'], 2)
         self.assertEqual(result['estimated_return_observations'], 1)
         self.assertAlmostEqual(float(result['average_return_pct']), -33.33333333333333)
-        self.assertGreater(float(result['uncertainty90_pct']), 0)
-        avg = float(result['average_return_pct'])
-        self.assertAlmostEqual(avg-float(result['ci90_low_pct']),float(result['uncertainty90_pct']))
-        self.assertAlmostEqual(float(result['ci90_high_pct'])-avg,float(result['uncertainty90_pct']))
+        self.assertEqual(result['uncertainty_min_samples'], 20)
+        self.assertIsNone(result['uncertainty90_pct'])
+        self.assertIsNone(result['ci90_low_pct'])
+        self.assertIsNone(result['ci90_high_pct'])
+
+    def test_twenty_distinct_returns_are_required_but_not_sufficient_for_a_numeric_interval(self):
+        # A small number of mixed winners/losers can yield misleadingly
+        # confident Student-t intervals; keep their observed mean visible.
+        rows=[self.row('win-'+str(i),cost='8',net='2') for i in range(18)]
+        rows.append(self.row('loss-a',cost='8',net='-8',outcome=0))
+        early=self.summary({'btc':dict(entry_timing=rows)})['rows']['crypto-15m']
+        self.assertEqual(early['return_observations'],19)
+        self.assertGreater(D(early['average_return_pct']),0)
+        self.assertIsNone(early['uncertainty90_pct'])
+        rows.append(self.row('loss-b',cost='8',net='-8',outcome=0))
+        enough=self.summary({'btc':dict(entry_timing=rows)})['rows']['crypto-15m']
+        self.assertEqual(enough['return_observations'],20)
+        self.assertEqual(enough['uncertainty_min_samples'],20)
+        self.assertIsNotNone(enough['uncertainty90_pct'])
+        mean=D(enough['average_return_pct'])
+        error=D(enough['uncertainty90_pct'])
+        self.assertGreater(error,0)
+        self.assertEqual(mean-error,D(enough['ci90_low_pct']))
+        self.assertEqual(mean+error,D(enough['ci90_high_pct']))
 
     def test_unattributed_or_invalid_event_in_any_cohort_is_excluded_from_roi(self):
         first = self.row()
