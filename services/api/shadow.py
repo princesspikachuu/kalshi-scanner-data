@@ -157,7 +157,7 @@ def favorite_collector_timed_totals(folder_bots,profiles):
     Individual sports bot rows are provided separately, not double-counted.
     """
     from services.paper_demo.shadow.observation_returns import merge, summarize
-    totals={};coverage={};per_bot={};returns={}
+    totals={};coverage={};per_bot={};returns={};outcomes={}
     def decimal(value):
         try:
             n=D(str(value if value is not None else 0))
@@ -189,7 +189,11 @@ def favorite_collector_timed_totals(folder_bots,profiles):
             key=(kind,str(market_type),str(clock),horizon,cents)
             cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
             merge(returns.setdefault(key,{}),row.get('return_events',{}))
+            if 'outcome_events' in row:
+                merged=outcomes.setdefault(key,{})
+                for event,value in row['outcome_events'].items():merged[event]=min(merged.get(event,1),int(value))
             for field in FAVORITE_TIMING_FIELDS:
+                if field in ('events','event_wins') and 'outcome_events' in row:continue
                 if field=='event_wins':
                     # An event is one resolved observation regardless of filled
                     # contract quantity. Existing rows expose a percent, not
@@ -200,6 +204,8 @@ def favorite_collector_timed_totals(folder_bots,profiles):
                 else:cell[field]+=decimal(row.get(field))
     rows={}
     for (kind,market_type,clock,horizon,cents),value in totals.items():
+        known=outcomes.get((kind,market_type,clock,horizon,cents),{})
+        value['events']+=len(known);value['event_wins']+=sum(known.values())
         rows.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
             horizon=horizon,price=str(D(cents)/100),
             **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS},
@@ -224,6 +230,8 @@ def workspace_response(payload,*,compressed=False,request_started=None):
         if folder.get('id')=='favorites':
             aggregate=favorite_collector_timed_totals(folder.get('bots') or {},profiles)
             folder['collector_timed_summary']=aggregate
+            from services.paper_demo.shadow.favorite_wide import summarize_wide
+            folder['collector_wide_summary']=summarize_wide(folder.get('bots') or {},profiles,favorite_timing_category)
             if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
                 FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
                 print(json.dumps(dict(event='favorites_timed_rollup',

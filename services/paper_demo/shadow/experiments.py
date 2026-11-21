@@ -728,7 +728,24 @@ class ExperimentSuite:
                     if b:
                         for mapping in (b.attempts,b.history,b.last_eval):mapping.pop(t,None)
                         b.last_signature={key:v for key,v in b.last_signature.items() if key[0]!=t}
-            retired=[t for t,m in e.markets.items() if m.get('paid') and not any(l.ticker==t for l in e.wallet.lots)]
+            held={lot.ticker for lot in e.wallet.lots}
+            working={order.ticker for order in e.orders.values() if order.status in ('pending','resting')}
+            retired=[];cold_untraded=0
+            for t,m in e.markets.items():
+                if t in held:continue
+                if m.get('paid'):retired.append(t);continue
+                if folder=='complete_set' or m['close']>e.now or t in working:continue
+                owner=f.owner(t);attempt=owner.attempts.get(t,{}) if owner else {}
+                stat=e.wallet.stats.get(t)
+                # Missing venue settlement must never pin an expired market
+                # which had no fills in this portfolio. Preserve every funded
+                # trial, model, cumulative counter and durable original audit.
+                if attempt.get('first') or attempt.get('entry_fills'):continue
+                if stat and any(getattr(stat,key,ZERO) for key in
+                    ('gross','fees_paid','realized_fees','closed','maker_filled','taker_quantity','profit_contracts')):continue
+                retired.append(t);cold_untraded+=1
+            if cold_untraded:
+                print(json.dumps(dict(event='paper_untraded_markets_released',folder=folder,markets=cold_untraded,real_orders_enabled=False)),flush=True)
             if folder=='complete_set':
                 owner=next(iter(f.bots.values()))
                 # Rotate untraded candidates so a small fee-verification budget
