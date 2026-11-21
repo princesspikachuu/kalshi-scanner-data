@@ -86,9 +86,11 @@ def _report(events):
         sample_var = sum(((value - mean) ** 2 for value in returns), D(0)) / D(n - 1)
         # A zero sample variance is not zero future uncertainty: identical
         # binary-event returns can still be followed by the opposite outcome.
-        # A Student-t interval is uninformative at that boundary. Keep the
+        # Even price-varying all-winner returns do not show the risk of a
+        # losing event. Only estimate t uncertainty after both gains and
+        # losses have been observed. Keep the
         # P/L observed mean, but do not present a fabricated ±0% error bar.
-        if sample_var > 0:
+        if sample_var > 0 and any(value > 0 for value in returns) and any(value < 0 for value in returns):
             error = _critical90(n - 1) * (sample_var / D(n)).sqrt()
             result.update(
                 uncertainty90_pct=str(100 * error),
