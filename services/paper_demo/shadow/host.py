@@ -91,6 +91,37 @@ def book_ingest_age_bucket(sending_ts_ms,received_at):
     return 'over_10s'
 
 
+class ShadowStartupStopped(Exception):
+    """The service was stopped before a complete startup catalog could load."""
+
+
+def load_startup_controls(store,stop):
+    """Retry only a read-only statement timeout; never start with partial bots.
+
+    Called after acquiring the existing worker fence, before constructing the
+    simulator or admitting new paper orders. No database writes or exchanges
+    occur during the retry loop.
+    """
+    attempts=0;notice_at=0
+    while True:
+        try:
+            rows=load_bots(store)
+        except QueryCanceled:
+            attempts+=1
+            now=time.monotonic()
+            if now>=notice_at:
+                notice_at=now+30
+                print(json.dumps(dict(event='shadow_startup_control_read_deferred',
+                    reason='statement_timeout',new_entries_blocked=True,
+                    retry_seconds=2,real_orders_enabled=False)),flush=True)
+            if stop.wait(2):raise ShadowStartupStopped()
+        else:
+            if attempts:
+                print(json.dumps(dict(event='shadow_startup_control_read_restored',
+                    retries=attempts,real_orders_enabled=False)),flush=True)
+            return rows
+
+
 class HostedRun(ForwardRun):
     # Kalshi's 100 ms server-side conflation preserves exact net L2 changes and
     # contiguous subscription sequence while collapsing repeated price-level churn.
@@ -113,7 +144,7 @@ class HostedRun(ForwardRun):
         initialize_quote_policy(store,guard)
         # Saved collector settings need a one-time migration, not just a new default.
         initialize_one_contract_favorites(store,guard)
-        all_rows=load_bots(store)
+        all_rows=load_startup_controls(store,stop)
         rows=[r for r in all_rows if r['parameters'].get('strategy','convexity')=='convexity']
         self.profiles=[r['parameters'] for r in rows]
         self.engine=Engine(self.audit,cash='1000',latency_ms=150,seed=7,toxic_fill_probability=.35)
@@ -767,7 +798,9 @@ def run(stop,store,guard,env):
         guard()
         signer=credentials(store,env)
         if signer:
-            asyncio.run(HostedRun(store,guard,stop,signer).run());return
+            try: hosted=HostedRun(store,guard,stop,signer)
+            except ShadowStartupStopped:return
+            asyncio.run(hosted.run());return
         store.put('health',dict(state='connection_required',message='28 shadow bots ready. Connect a production Read key for market data; no real orders are enabled.',at=time.time(),features=['paper_strategy_folders_v1'],real_orders_enabled=False))
         print(json.dumps(dict(event='shadow_connection_required',bots=28,real_orders_enabled=False)),flush=True)
         if time.time()>=maintenance_at:
