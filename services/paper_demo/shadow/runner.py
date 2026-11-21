@@ -172,6 +172,14 @@ class ForwardRun:
                     continue
                 market=min(candidates,key=lambda m:ts(m['close_time']))
                 metadata,fee=await self.market_metadata(market,series)
+                # The hosted path verifies event overrides and scheduled changes
+                # through close. Non-hosted simulations at least reject a known
+                # nonzero maker fee instead of treating maker as automatically free.
+                verifier=getattr(self,'verified_fees',None)
+                if fee.maker_multiplier!=0 or verifier is not None and not verifier.zero_maker_fees_until(
+                        market['ticker'],now,ts(market['close_time'])):
+                    self.discovery_retry_at[series]=now+60
+                    continue
                 normalized=dict(ticker=market['ticker'],close=ts(market['close_time']),
                     open=ts(market['open_time']),event_ticker=market['event_ticker'],
                     bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile['version'],

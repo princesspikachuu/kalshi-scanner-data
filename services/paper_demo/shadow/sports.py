@@ -140,6 +140,10 @@ async def sports_once(host):
                 continue
             scan['live_events']+=1;state['retry_at']=now+15
             fee=await host.fee_policy(raw,{})
+            if fee.maker_multiplier!=0 or not host.verified_fees.zero_maker_fees_until(
+                    raw['ticker'],now,ts(raw['close_time'])):
+                state['retry_at']=now+120
+                continue
             await host.put('sports_market',dict(market=dict(ticker=raw['ticker'],event_ticker=event,series_ticker=series,
                 open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,**gate),
                 taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))

@@ -73,6 +73,10 @@ async def weather_once(host):
         for m in listed:
             if m['ticker'] in markets or not suite.candidate_allowed(m['ticker'],now):continue
             fee=await host.fee_policy(m,{})
+            if fee.maker_multiplier!=0 or not host.verified_fees.zero_maker_fees_until(
+                    m['ticker'],now,ts(m['close_time'])):
+                row['reason']='nonzero_or_unverified_maker_fee'
+                break
             await host.put('weather_market',dict(market=dict(ticker=m['ticker'],event_ticker=m['event_ticker'],
                 series_ticker=p['series'],close=ts(m['close_time']),open=ts(m['open_time']),discovered_at=now,weather_category=category),
                 taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))

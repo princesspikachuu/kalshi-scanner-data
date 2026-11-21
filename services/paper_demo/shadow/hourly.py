@@ -122,6 +122,11 @@ async def hourly_once(host):
             continue
         raw=min(rows,key=lambda m:(ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0)))
         fee=await host.fee_policy(raw,{})
+        if fee.maker_multiplier!=0 or not host.verified_fees.zero_maker_fees_until(
+                raw['ticker'],now,ts(raw['close_time'])):
+            category['fee_blocked']=category.get('fee_blocked',0)+1
+            scan['reason']='Nonzero or unverified maker fee; not admitted'
+            continue
         await host.put('hourly_market',dict(market=dict(ticker=raw['ticker'],event_ticker=raw['event_ticker'],series_ticker=series,
             open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,hourly_price=True),
             taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
