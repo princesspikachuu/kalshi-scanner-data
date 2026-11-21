@@ -33,9 +33,10 @@ class FavoritesStrategy(ConvexityStrategy):
         remaining,basis=favorite_timing.clock(self.e.markets[ticker],self.e.now if at is None else at)
         return '|'.join((side,price_bucket(price),favorite_timing.horizon(remaining),basis))
 
-    def active_buckets(self,ticker,a):
-        active=[o for o in self.e.orders.values() if o.ticker==ticker and o.action=='buy'
-                and o.status in ('pending','resting')]
+    def active_buckets(self,ticker,a,active=None):
+        if active is None:
+            active=[o for o in self.e.orders.values() if o.ticker==ticker and o.action=='buy'
+                    and o.status in ('pending','resting')]
         previous=a.get('pending_buckets',{})
         if not isinstance(previous,dict):previous={}
         buckets={o.id:previous.get(o.id) or self.research_bucket(ticker,o.side,o.price,o.created)
@@ -137,10 +138,10 @@ class FavoritesStrategy(ConvexityStrategy):
                 worker_delay_ms=request.worker_delay_seconds*1000,arrival_at=request.arrives,real_orders_enabled=False)),flush=True)
         return ident
 
-    def offer_distinct_bucket(self,ticker,m,a,lots,q):
+    def offer_distinct_bucket(self,ticker,m,a,lots,q,active=None,pending=None):
         if q['mode']!='paper_exploration':return 'duplicate'
         bucket=self.research_bucket(ticker,a['side'],q['price'])
-        active,pending=self.active_buckets(ticker,a)
+        if active is None or pending is None:active,pending=self.active_buckets(ticker,a)
         if bucket in pending.values() or bucket in self.filled_buckets(a):
             if bucket!=a.get('last_duplicate_bucket') or self.e.now-a.get('last_duplicate_log_at',0)>=10:
                 a['repeat_duplicate_suppressed']=a.get('repeat_duplicate_suppressed',0)+1
@@ -305,10 +306,10 @@ class FavoritesStrategy(ConvexityStrategy):
             if a.get('entry_policy')=='favorites-paper-data-v3' and active:
                 # Only compare the current candidate with bids in its own 5c
                 # / time bucket. Old distinct-bucket queues are not replacements.
-                _,buckets=self.active_buckets(ticker,a)
+                _,buckets=self.active_buckets(ticker,a,active)
                 current=self.research_bucket(ticker,side,q['price'])
                 compare=[order for order in active if buckets.get(order.id)==current]
-                status=self.offer_distinct_bucket(ticker,m,a,[],q)
+                status=self.offer_distinct_bucket(ticker,m,a,[],q,active=active,pending=buckets)
                 if status in ('blocked','submitted'):
                     canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
                     for order in active:
