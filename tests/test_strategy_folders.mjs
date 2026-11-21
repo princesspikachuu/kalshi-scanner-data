@@ -198,6 +198,37 @@ test('experiment bot time selection changes its summary without opening its mark
  assert.ok(nodes.get('groups').innerHTML.includes('Last 6h'));assert.ok(nodes.get('groups').innerHTML.includes('$3.00'));
  assert.ok(nodes.get('groups').innerHTML.includes('data-market="favorites" ><summary'));
 });
+test('expanded second-level dashboard panels survive redraw and remain scoped to their market',()=>{
+  const panels=[
+    {dataset:{uiPanel:'market:favorites:money'},open:true},
+    {dataset:{uiPanel:'market:sequential:money'},open:false},
+    {dataset:{uiPanel:'folder:favorites:research'},open:true},
+    {dataset:{uiPanel:'global:diagnostics'},open:true}
+  ];
+  const {context}=setup(fixture(),{queries:{'details[data-ui-panel]':panels}});
+  const expanded=vm.runInContext('expandedDashboardPanels()',context);
+  assert.equal(expanded.size,3);
+  panels.forEach(panel=>{panel.open=false});
+  vm.runInContext('restoreDashboardPanels(expanded)',context);
+  assert.equal(panels[0].open,true);
+  assert.equal(panels[1].open,false,'a different market must stay closed');
+  assert.equal(panels[2].open,true);
+  assert.equal(panels[3].open,true);
+  vm.runInContext('draw()',context);
+  assert.equal(panels[0].open,true);
+  assert.equal(panels[1].open,false);
+});
+
+test('critical account, research, diagnostics and market drilldowns have stable panel identities',()=>{
+  const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
+  for(const key of ['folder:favorites:account','folder:favorites:research',
+    'folder:favorites:diagnostics','market:favorites:money',
+    'market:favorites:stats','market:favorites:lots','market:sequential:money']){
+    assert.ok(html.includes('data-ui-panel="'+key+'"'),key);
+  }
+  assert.ok(nodes.get('diagnostics').innerHTML.includes('data-ui-panel="global:diagnostics"'));
+});
+
 test('individual market state persists across polling and refresh, independently of its folder',()=>{
  const storage=new Map(),card={dataset:{market:'sequential'},open:true,isConnected:true};
  const {context}=setup(fixture(),{storage,queries:{'details[data-market]':[card]}});
