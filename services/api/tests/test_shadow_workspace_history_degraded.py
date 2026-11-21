@@ -87,7 +87,8 @@ class HistoryDelayedWorkspaceTests(unittest.TestCase):
         self.assertEqual(favorite['accounting']['portfolio']['cash'],'999')
         research=favorite['collector_timed_summary']['rows']['crypto-15m']
         self.assertEqual(research[0]['events'],1)
-        self.assertEqual(result['bots'][1]['experiment']['completed'],1)
+        fav_bot=next(x for x in result['bots'] if x['id']=='fav')
+        self.assertEqual(fav_bot['experiment']['completed'],1)
         self.assertEqual(self.conn.execute.call_count,1)
         self.mocks[2].assert_not_called()
         self.mocks[3].assert_not_called()
