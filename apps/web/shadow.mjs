@@ -247,8 +247,14 @@ async function load(){
  try{
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
   if(!result.installed){$('health').textContent='Worker initializing';loadNote('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
-  if(loadError&&$('message').textContent===loadError)note('');loadError=null;
+  if(result.historical_metrics_delayed){
+   loadNote('Current portfolio balances and Favorites research are available. Optional historical reports are delayed and will retry automatically.');
+  }else{
+   if(loadError&&$('message').textContent===loadError)note('');
+   loadError=null;
+  }
   data=hydrateEventCounts(result);draw();
+  if(result.historical_metrics_delayed)$('health').textContent+=' · historical reports delayed';
   // The combined Favorites matrix must not depend on opening individual cards.
   void loadFolderResearch('favorites');
   for(const folder of openFolders)if(folder!=='favorites')void loadFolderResearch(folder);
