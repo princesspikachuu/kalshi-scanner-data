@@ -266,23 +266,34 @@ export function favoriteTimingMarkup(rows,wideRows=null,options={}){
  return `<details class="favorite-timing"${panelKey}><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${favoriteResearchGrid(favoriteCategoryRows(rows))}</details>`;
 }
 
-export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
+function statisticsHoldEvidenceText(sample){
+ const available=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+ const n=Number(sample?.return_observations)||0;
+ const avg=available(sample?.average_return_pct)?Number(sample.average_return_pct):null;
+ const err=available(sample?.uncertainty90_pct)?Number(sample.uncertainty90_pct):null;
+ const pnl=avg===null?'Hold P/L —':'Hold P/L '+(avg>0?'+':'')+avg.toFixed(2)+'%';
+ return pnl+' · '+(err===null?'90% uncertainty —':'90% ±'+err.toFixed(2)+' points')+' · n='+n+' held';
+}
+export function favoriteStatisticsMatrixMarkup(statistics,open=new Set(),holdSummary=null){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
  const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='exploration_candidate'?'Exploration opportunity · sparse':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
- return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Legacy realized ROI may reflect exits, so hold P/L is unavailable here until verified hold-return attribution exists. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
+ return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A 90% P/L interval requires at least two independent held returns. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
    const key='favorites-stat-'+grid.market_type;
-   return '<details class="favorite-stat-market" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(grid.market_type)+'</summary><div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+
+   const combined=holdSummary?.by_market_type?.[grid.market_type];
+   return '<details class="favorite-stat-market" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(grid.market_type)+(holdSummary?favoriteSingleHeadlineMarkup(combined||{return_observations:0}):'')+'</summary><div class="table-scroll"><table class="favorite-stat-matrix"><thead><tr><th scope="col">Entry price</th>'+
    (grid.time_buckets||[]).map(time=>'<th scope="col">'+e(time)+'</th>').join('')+'</tr></thead><tbody>'+
    (grid.price_buckets||[]).map(price=>'<tr><th scope="row">'+e(price.replace('-', '–'))+'¢</th>'+
     (grid.time_buckets||[]).map(time=>{
       const cell=byCell.get(price+'|'+time);
       if(!cell||!cell.samples)return '<td class="stat-empty"><span class="small">No settled events</span></td>';
       const enough=cell.samples>=min,capable=['evidence_candidate','fallback_candidate'].includes(cell.eligibility);
-      // Statistics ROI is legacy exit-altered data; do not infer hold margin.
+      // Kept independent of realized account exits and trading eligibility.
+      const held=holdSummary?.by_cell?.[grid.market_type]?.[price+'|'+time];
+      const heldText=statisticsHoldEvidenceText(held);
       const signal='unknown';
       const label=status(cell);
       const fallback=cell.fallback_level!==cell.level&&cell.fallback_level!=='insufficient_samples'?
@@ -290,9 +301,12 @@ export function favoriteStatisticsMatrixMarkup(statistics,open=new Set()){
         cell.fallback_level==='insufficient_samples'?'No reliable fallback':'Exact category/time evidence';
       const detail=['Exact-cell confidence lower bound: '+num(cell.lower===null?null:cell.lower*100),
         cell.fallback_lower===null||cell.fallback_lower===undefined?'':'Fallback confidence lower bound: '+num(cell.fallback_lower*100),
-        'Hold P/L unavailable without verified attribution','Level: '+cell.level.replaceAll('_',' '),fallback,
+        'Verified held returns: '+heldText,
+        (Number(held?.estimated_return_observations)>0?held.estimated_return_observations+' historical returns estimated from entry cost':''),
+        (Number(held?.incomplete_events)>0?held.incomplete_events+' resolved events without complete held return attribution':''),
+        'Level: '+cell.level.replaceAll('_',' '),fallback,
         'Evidence is not a guarantee of maker execution; live fees and risk can still reject orders'].join(' · ');
-      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><span>Hold P/L —</span><small>'+e(label)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+      return '<td class="'+(enough?(capable?'stat-candidate':'stat-rejected'):'stat-sparse')+' '+favoriteProfitClass(signal)+'"><details><summary><strong>n='+e(String(cell.samples))+'</strong><span>Outcome wins '+e(num(cell.win_rate===null?null:cell.win_rate*100))+'</span><small class="favorite-stat-hold-return">'+e(heldText)+'</small><small>'+e(label)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
     }).join('')+'</tr>').join('')+'</tbody></table></div></details>';
  }).join('')+'</section>';
 }
