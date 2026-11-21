@@ -12,6 +12,17 @@ from .audit_bulk import persist_audit_rows
 from .diagnostic_batches import compact_diagnostic_rows, BATCH_PREFIX
 
 KEY='demo/shadow/checkpoint'
+
+def current_rss_bytes():
+    """Sample Linux resident memory only when a diagnostic log is due."""
+    try:
+        with open('/proc/self/statm') as f:
+            pages=int(f.readline().split()[1])
+        return pages*os.sysconf('SC_PAGE_SIZE')
+    except (OSError, ValueError, IndexError):
+        # Metrics must not interrupt a durable trading write.
+        return None
+
 # Byte-identical state is already durably committed. Elapsed time does not
 # invalidate it. Every new process/changed state still writes a checkpoint;
 # standalone startup/shutdown checkpoints remain explicit recovery boundaries.
@@ -44,11 +55,44 @@ class HostedAudit:
     def checkpoint_snapshot(self):
         # Serialize the hot state once, without a full JSON decode/re-encode
         # before psycopg. Audit events and this payload still commit together.
+        started=time.monotonic()
+        rss_due=started>=getattr(self,'checkpoint_stage_log_at',0)
+        rss_before=current_rss_bytes() if rss_due else None
         data=encode(self.engine,self.fleet)
+        engine_ms=(time.monotonic()-started)*1000
+        experiments_started=time.monotonic()
         if getattr(self,'experiments',None):data['experiments']=self.experiments.state()
+        experiments_ms=(time.monotonic()-experiments_started)*1000
+        rss_after_capture=current_rss_bytes() if rss_due else None
         if hasattr(self,'_frozen_discovery'):data['experiments']['_maker_discovery']=self._frozen_discovery
         if not hasattr(self,'checkpoint_segments'):self.checkpoint_segments=CheckpointSegments()
+        packing_started=time.monotonic()
         payload=pack_checkpoint(data,binary=True,segments=self.checkpoint_segments)
+        packing_ms=(time.monotonic()-packing_started)*1000
+        rss_after_pack=current_rss_bytes() if rss_due else None
+        if not hasattr(self,'checkpoint_stage_profile'):self.checkpoint_stage_profile=Counter()
+        stages=self.checkpoint_stage_profile
+        stages['samples']+=1
+        stages['engine_state_ms']+=engine_ms
+        stages['experiment_state_ms']+=experiments_ms
+        stages['packing_ms']+=packing_ms
+        stages['total_ms']+=(time.monotonic()-started)*1000
+        stages['peak_packing_ms']=max(stages['peak_packing_ms'],packing_ms)
+        stages['peak_state_ms']=max(stages['peak_state_ms'],engine_ms+experiments_ms)
+        if time.monotonic()>=getattr(self,'checkpoint_stage_log_at',0):
+            self.checkpoint_stage_log_at=time.monotonic()+30
+            print(json.dumps(dict(event='shadow_checkpoint_stage_cost',**stages,
+                encoded_bytes=payload.get('bytes'),stored_bytes=len(payload.get('data','')),
+                rss_before_bytes=rss_before,rss_after_state_bytes=rss_after_capture,
+                rss_after_pack_bytes=rss_after_pack,
+                # These are resident-byte *deltas*, not a retained object heap
+                # breakdown; allocator reuse can mask transient allocations.
+                rss_capture_delta_bytes=(rss_after_capture-rss_before
+                    if rss_before is not None and rss_after_capture is not None else None),
+                rss_pack_delta_bytes=(rss_after_pack-rss_after_capture
+                    if rss_after_capture is not None and rss_after_pack is not None else None),
+                real_orders_enabled=False)),flush=True)
+            self.checkpoint_stage_profile=Counter()
         if payload.get('checkpoint_encoding') and time.monotonic()>=getattr(self,'codec_log_at',0):
             self.codec_log_at=time.monotonic()+30
             print(json.dumps(dict(event='shadow_checkpoint_size',encoding=payload['checkpoint_encoding'],
