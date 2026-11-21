@@ -131,14 +131,17 @@ class FavoritesStrategy(ConvexityStrategy):
             f"Value-qualified maker at {q['price']*100:.0f}¢ · {q['estimate']['samples']} settled events")
         ident=self.e.place(ticker,a['side'],'buy',q['quantity'],q['price'],maker=True,expiry=expiry)
         request=self.e.orders[ident]
+        bucket=self.research_bucket(ticker,a['side'],q['price'])
         if q['mode']=='paper_exploration' and request.status in ('pending','resting'):
-            a.setdefault('pending_buckets',{})[ident]=self.research_bucket(ticker,a['side'],q['price'])
+            a.setdefault('pending_buckets',{})[ident]=bucket
         self.e.log('FAVORITE_ENTRY_DECISION',ticker=ticker,order_id=ident,reason=self.last_reason,details=json.dumps(dict(
-            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),estimate=q['estimate'],ceiling=q['ceiling'],execution_model=request.execution_model,
+            mode=q['mode'],policy=q['policy'],quantity=str(q['quantity']),price=str(q['price']),research_bucket=bucket,
+            event_ticker=self.e.markets[ticker].get('event_ticker',ticker),estimate=q['estimate'],ceiling=q['ceiling'],execution_model=request.execution_model,
             worker_delay_ms=request.worker_delay_seconds*1000,decision_at=request.decision_at,arrival_at=request.arrives)))
         if q['mode']=='paper_exploration':
             print(json.dumps(dict(event='favorite_paper_entry',ticker=ticker,order_id=ident,quantity=str(q['quantity']),
-                price=str(q['price']),policy=q['policy'],maker=True,execution_model=request.execution_model,
+                price=str(q['price']),policy=q['policy'],research_bucket=bucket,
+                event_ticker=self.e.markets[ticker].get('event_ticker',ticker),maker=True,execution_model=request.execution_model,
                 worker_delay_ms=request.worker_delay_seconds*1000,arrival_at=request.arrives,real_orders_enabled=False)),flush=True)
         return ident
 
