@@ -107,23 +107,34 @@ function favoriteResearchGrid(rows=[],options={}){
  }).join('')+'</tr>').join('');
  return clockNote+'<div class="table-scroll"><table class="'+(wide?'favorite-stat-matrix favorite-wide-matrix':'favorite-stat-matrix')+'"><thead><tr><th scope="col">Entry price</th>'+timeLabels.map(t=>'<th scope="col">'+e(t)+(wide?' left':'')+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
+// A minimum sample count is a display safeguard for skewed, binary held
+// returns, not proof of statistical independence or a profitable edge.
+const MIN_FAVORITES_HOLD_UNCERTAINTY=20;
+function heldReturnUncertainty(sample){
+ const count=Number(sample?.return_observations);
+ const n=Number.isSafeInteger(count)&&count>=0?count:0;
+ const configured=Number(sample?.uncertainty_min_samples);
+ const min=Number.isSafeInteger(configured)&&configured>=2?configured:MIN_FAVORITES_HOLD_UNCERTAINTY;
+ const raw=sample?.uncertainty90_pct;
+ const error=n>=min&&raw!==null&&raw!==undefined&&Number.isFinite(Number(raw))&&Number(raw)>=0?Number(raw):null;
+ return {n,min,error,provisional:n<min};
+}
 // Single bucket uses event-level backend evidence, never sums overlapping 3x3 cells.
 export function favoriteSingleCellMarkup(sample,options={}){
  const star=favoriteBucketStarMarkup(options.starScope,'single','all','all',options.starredBuckets);
  const finitePercent=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
  if(!sample)return '<div class="favorite-star-empty">'+star+'<p class="small">Event-level combined evidence is not available yet. Refresh after the API update; existing tables are unchanged.</p></div>';
- const n=Number(sample.return_observations)||0,resolved=Number(sample.resolved_events)||0;
+ const {n,min,error,provisional}=heldReturnUncertainty(sample),resolved=Number(sample.resolved_events)||0;
  const mean=finitePercent(sample.average_return_pct)?Number(sample.average_return_pct):null;
- const error=finitePercent(sample.uncertainty90_pct)?Number(sample.uncertainty90_pct):null;
- const low=finitePercent(sample.ci90_low_pct)?Number(sample.ci90_low_pct):null;
- const high=finitePercent(sample.ci90_high_pct)?Number(sample.ci90_high_pct):null;
+ const low=error!==null&&finitePercent(sample.ci90_low_pct)?Number(sample.ci90_low_pct):null;
+ const high=error!==null&&finitePercent(sample.ci90_high_pct)?Number(sample.ci90_high_pct):null;
  const result=mean===null?'—':(mean>0?'+':'')+mean.toFixed(2)+'%';
- const uncertainty=error===null?'Not available · need observed gains and losses':'±'+error.toFixed(2)+' percentage points';
+ const uncertainty=provisional?'Pending · '+n+'/'+min+' held-event returns':error===null?'Not available · need observed gains and losses':'±'+error.toFixed(2)+' percentage points';
  const interval=low===null||high===null?'':(' · 90% interval '+low.toFixed(2)+'% to '+high.toFixed(2)+'%');
  const signal=mean===null?'':mean>0?'profit-positive':mean<0?'profit-negative':'';
  const win=resolved>0?eventAccuracy(Number(sample.event_wins)||0,resolved):'—';
  const missing=Number(sample.incomplete_events)||0,estimated=Number(sample.estimated_return_observations)||0;
- return '<div class="table-scroll"><table class="favorite-stat-matrix favorite-single-matrix"><thead><tr><th scope="col">All entry prices × all times</th></tr></thead><tbody><tr><td class="stat-observed '+signal+'">'+star+'<strong>'+e(result)+' Hold P/L</strong><small>90% P/L uncertainty: '+e(uncertainty)+'</small><small>n='+e(String(n))+' distinct event returns · outcome win rate '+e(win)+(resolved!==n?' ('+e(String(resolved))+' resolved)':'')+'</small><details><summary>Evidence details</summary><p class="small">'+e(interval?interval.slice(3):'90% interval unavailable until at least 2 independent returns.')+' · '+e(String(estimated))+' estimated return observations · '+e(String(missing))+' resolved events without complete hold returns. A repeated event across entry buckets contributes one cost-weighted hold return. Returns ignore early exits and include entry fees.</p></details></td></tr></tbody></table></div>';
+ return '<div class="table-scroll"><table class="favorite-stat-matrix favorite-single-matrix"><thead><tr><th scope="col">All entry prices × all times</th></tr></thead><tbody><tr><td class="stat-observed '+signal+'">'+star+'<strong>'+e(result)+' Hold P/L</strong><small>90% P/L uncertainty: '+e(uncertainty)+'</small><small>n='+e(String(n))+' distinct event returns · outcome win rate '+e(win)+(resolved!==n?' ('+e(String(resolved))+' resolved)':'')+'</small><details><summary>Evidence details</summary><p class="small">'+e(interval?interval.slice(3):'90% interval requires at least '+min+' distinct held-event returns with gains and losses; it does not guarantee a profitable strategy.')+' · '+e(String(estimated))+' estimated return observations · '+e(String(missing))+' resolved events without complete hold returns. A repeated event across entry buckets contributes one cost-weighted hold return. Returns ignore early exits and include entry fees.</p></details></td></tr></tbody></table></div>';
 }
 const researchNote='<p class="small">Counts are distinct verified resolved events per price/time cohort, not contracts. Ten contracts from one event count as one observation. One event may appear in multiple cohorts. Hold-only P/L % gives each resolved event equal weight, after fees. Known outcomes assume holding to settlement, ignoring exit proceeds and exit fees. Unknown outcomes are omitted. Estimated historical returns use average entry fees/sizing; account balances retain actual trades.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set(),options={}){
@@ -226,18 +237,16 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  sections+'</section>';
 }
 
-export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode==='detailed'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button> <button class="secondary" data-favorite-table="single" aria-pressed="${mode==='single'}">Single bucket</button><p class="small">${mode==='single'?'P/L = mean held-to-settlement return across distinct events. 90% uncertainty estimates the range for the average return, not the win rate. Correlated events can make this optimistic.':'Win margin = win rate − entry cost with fees. 90% uncertainty describes the win rate, not hold P/L. Related events can be correlated.'}</p></div>`;
+export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode==='detailed'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button> <button class="secondary" data-favorite-table="single" aria-pressed="${mode==='single'}">Single bucket</button><p class="small">${mode==='single'?'P/L is the mean held return. Numerical 90% P/L uncertainty needs at least 20 distinct event returns with gains and losses; correlation may still make it optimistic.':'Win margin = win rate − entry cost with fees. 90% uncertainty is in win-rate points, NOT P/L. Under 20 events is preliminary; related events may be correlated.'}</p></div>`;
 // Expose the key single-bucket numbers without opening every category table.
 function favoriteSingleHeadlineMarkup(sample){
  if(!sample)return '';
  const valid=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
- const n=Number.isSafeInteger(Number(sample.return_observations))&&Number(sample.return_observations)>=0
-   ?Number(sample.return_observations):null;
+ const {n,min,error,provisional}=heldReturnUncertainty(sample);
  const avg=valid(sample.average_return_pct)?Number(sample.average_return_pct):null;
- const error=valid(sample.uncertainty90_pct)&&Number(sample.uncertainty90_pct)>=0
-   ?Number(sample.uncertainty90_pct):null;
+
  const pnl=avg===null?'Hold P/L —':'Hold P/L '+(avg>0?'+':'')+avg.toFixed(2)+'%';
- const uncertainty=error===null?'90% uncertainty —':'90% ±'+error.toFixed(2)+' points';
+ const uncertainty=provisional?'90% P/L uncertainty pending '+n+'/'+min:error===null?'90% uncertainty —':'90% ±'+error.toFixed(2)+' points';
  return '<small class="favorite-single-headline">'+e(pnl)+' · '+e(uncertainty)+
    ' · n='+e(n===null?'—':String(n))+'</small>';
 }
@@ -285,18 +294,17 @@ export function favoriteTimingMarkup(rows,wideRows=null,options={}){
 
 function statisticsHoldEvidenceText(sample){
  const available=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
- const n=Number(sample?.return_observations)||0;
+ const {n,min,error,provisional}=heldReturnUncertainty(sample);
  const avg=available(sample?.average_return_pct)?Number(sample.average_return_pct):null;
- const err=available(sample?.uncertainty90_pct)?Number(sample.uncertainty90_pct):null;
  const pnl=avg===null?'Hold P/L —':'Hold P/L '+(avg>0?'+':'')+avg.toFixed(2)+'%';
- return pnl+' · '+(err===null?'90% uncertainty —':'90% ±'+err.toFixed(2)+' points')+' · n='+n+' held';
+ return pnl+' · '+(provisional?'90% uncertainty pending '+n+'/'+min:error===null?'90% uncertainty —':'90% ±'+error.toFixed(2)+' points')+' · n='+n+' held';
 }
 export function favoriteStatisticsMatrixMarkup(statistics,open=new Set(),holdSummary=null,stars=new Set()){
  const grids=statistics?.matrix||[],min=Number(statistics?.min_samples||20);
  if(!grids.length)return '<p class="small">Statistics matrix will populate when verified, settled Favorites observations are available. No missing outcome is treated as a loss or a win.</p>';
  const num=n=>n===null||n===undefined?'—':Number(n).toFixed(1)+'%';
  const status=cell=>cell.eligibility==='evidence_candidate'?'Evidence candidate':cell.eligibility==='fallback_candidate'?'Fallback candidate · sparse cell':cell.eligibility==='exploration_candidate'?'Exploration opportunity · sparse':cell.eligibility==='insufficient_samples'?'Under-sampled':'Evidence rejected';
- return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A 90% held-P/L interval requires independent observed gains and losses. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
+ return '<section class="statistics-matrices" aria-label="Statistics-backed Favorites evidence"><h3>Statistics-Backed Favorites · entry price × time</h3><p class="small">Each table pools verified, settled outcomes from Data-Collection Favorites and the statistical paper portfolio (shared event IDs count once). Sparse cells can be explored with separately capped paper trades; exploration does not imply profitability. Five-cent price tiers; original time resolution. Sample count is distinct resolved events, not contracts. Hold P/L uses only verified settlement returns after entry fees, excluding unknown outcomes and realized exits. The held-return sample n can be smaller than total resolved observations. A numerical 90% held-P/L interval needs at least 20 distinct held-event returns, including gains and losses; this is not a guarantee of profitability. Evidence candidates still require live maker fill, fees, slippage, and risk checks before an order. Unfilled maker bids are not assumed filled.</p>'+
  grids.map(grid=>{
    const byCell=new Map((grid.cells||[]).map(cell=>[cell.price_bucket+'|'+cell.horizon,cell]));
    const key='favorites-stat-'+grid.market_type;
