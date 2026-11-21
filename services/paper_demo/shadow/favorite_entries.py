@@ -47,6 +47,9 @@ def estimate(cells, key):
 
 
 def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
+    # The primary Favorites portfolio collects independent outcomes, not volume.
+    # This does not affect the separate Statistics-Backed Favorites quote path.
+    contracts = min(D(contracts), D(1))
     book = engine.books[ticker]
     bid, ask = book.bid(side), book.ask(side)
     if bid is None or ask is None or bid >= ask:
@@ -64,10 +67,7 @@ def quote(engine, profile, contracts, ticker, side, cells, max_price=None):
         # Collect execution/outcome data, including weak or unknown estimates.
         # A post-only bid improves the public bid by one tick when spread permits.
         price = min(bid+TICK, ask-TICK, ceiling)
-        # Research needs independent event outcomes, not large positions in each event.
-        # One filled contract is enough to record an observation; historical fills
-        # and the separate Statistics-Backed Favorites strategy are unchanged.
-        quantity = min(D(contracts), D(1))
+        quantity = contracts
         mode = 'paper_exploration'
     else:
         price=min(bid+TICK,ask-TICK,ceiling).quantize(TICK,rounding=ROUND_FLOOR)
