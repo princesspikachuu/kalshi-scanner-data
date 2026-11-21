@@ -26,6 +26,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
 }
 test('historical query degradation still renders Favorites portfolio and research notice',async()=>{
  const d=fixture();
+ d.installed=true;
  d.historical_metrics_delayed=true;
  d.health={message:'Current worker ready'};
  const {context,nodes}=setup(d);
