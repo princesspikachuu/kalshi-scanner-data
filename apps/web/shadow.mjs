@@ -4,6 +4,30 @@ import {createAuthClient} from './auth-client.mjs';
 import {dollars,pnlClass,accountMarkup,exposureMarkup,accountPnl,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,favoriteTimingMarkup,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,learningDiagnosticsMarkup,marketTypeGroups,marketTypeSummaryMarkup} from './shadow-view.mjs';
 const $=id=>document.getElementById(id),periods=botSummaryPeriodPreferences(undefined,true);
 let loadError=null;
+let lastRestartRefresh=0,restartRequestPending=false;
+async function refreshWorkerRestarts(){
+ if(restartRequestPending || (Date.now()-lastRestartRefresh<15000))return;
+ restartRequestPending=true;
+ try{
+  const status=await demoCall('shadow/restarts');
+  const count=$('workerRestartCount'),note=$('workerRestartNote'),box=$('workerRestarts');
+  box.classList.remove('attention');
+  if(!status.tracked){
+   count.textContent='—';note.textContent='Tracking starts after the next worker startup';
+  }else{
+   const n=Number(status.restarts_24h);
+   count.textContent=Number.isSafeInteger(n)&&n>=0?String(n):'—';
+   box.classList.toggle('attention',n>0||status.lower_bound);
+   note.textContent=status.lower_bound?'At least this many · unusually high restart volume'
+    :status.full_window?'Rolling 24h · includes deployments':'Recording history · first 24h incomplete';
+  }
+  lastRestartRefresh=Date.now();
+ }catch{
+  $('workerRestartCount').textContent='—';
+  $('workerRestartNote').textContent='Restart count unavailable';
+  lastRestartRefresh=Date.now();
+ }finally{restartRequestPending=false}
+}
 let data,events=[],timer,busy=false,requestId=null,resetFolder=null,resetRequest=null,refillFolder=null,refillRequest=null;
 let favoriteTableMode='detailed';try{if(localStorage.getItem('moneytree-favorite-table-mode')==='wide')favoriteTableMode='wide'}catch{}
 let folderPeriod='all';try{folderPeriod=localStorage.getItem('moneytree-folder-period')||'all'}catch{}
@@ -189,6 +213,7 @@ function draw(){
  $('events').innerHTML='<table><thead><tr><th>Time</th><th>Strategy</th><th>Market</th><th>Event</th><th>Details</th></tr></thead><tbody>'+events.map(r=>`<tr><td>${e(new Date(r.time*1000).toLocaleString())}</td><td>${e(data.folders?.find(f=>f.id===(r.folder_id||'convexity'))?.name||'Convexity')}</td><td>${e(data.bots.find(b=>r.ticker?.startsWith(b.series+'-'))?.name||r.ticker||'Wallet')}</td><td>${e(r.event)}</td><td>${e([r.side,r.quantity,r.price?'$'+r.price:'',r.fee?'fee $'+r.fee:'',r.reason].filter(Boolean).join(' · '))}</td></tr>`).join('')+'</tbody></table>';
 }
 async function load(){
+ void refreshWorkerRestarts();
  if(busy)return;busy=true;clearTimeout(timer);
  try{
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
