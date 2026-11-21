@@ -1730,3 +1730,25 @@ Independently validate *actual* regular High-Probability Favorites observation c
 
 ### Completion notes
 _In progress: source discovery, evidence reconciliation, coverage/uncertainty analysis, findings and next safe work items._
+
+---
+
+## MT-024 — Measure regular Favorites maker-bid resting lifetime and cancellation outcomes
+**Status:** IN PROGRESS  
+**Worker:** ChatGPT / regular Favorites quote lifecycle  
+**Claimed:** 2026-11-21 UTC  
+**Urgency:** U2 — HIGH  
+**Priority:** Follow-up to issue #278 after uncapped discovery PR #314
+
+### Goal
+Determine whether regular High Probability Favorites one-contract maker bids rest long enough to fill, and distinguish orders submitted, fee/post-only rejected, canceled before any fill, canceled after partial fills, expired, still resting, and filled. Count unique ticker and event identities separately from bids/contracts; do not equate bids, fills or contracts with independent settled outcomes.
+
+### Exclusive scope and safety
+- Implement **bounded, read-only, in-memory** per-order lifecycle telemetry and a periodic compact log for the **regular `favorites` portfolio only**. No order, fee, expiry, cash, quote, cancel, price, exposure, data-retention, SQL/R2, or real-money changes.
+- Do not instrument or enable `favorites_statistics` or other bots. Any generic observer must be inert by default and cannot change simulation or audit events.
+- MT-018 owns weather/hourly/sports discovery and opportunity-category balancing; MT-019 owns backup; MT-011 owns general worker efficiency; MT-022/023 own settled-bucket attribution and research coverage. This task must not edit their claimed discovery/reporting code.
+- Track order IDs, filled-once versus fill events, terminal outcomes, resting age and right-censored still-open orders. Preserve event identity, handle partial fills, cancellation latency and restarts; use bounded state with explicit telemetry coverage labels.
+- Development base `build/google-auth-foundation`; PR draft until focused and complete CI pass; verify exact Render deploy and worker health if merged.
+
+### Completion notes
+Pending implementation / CI / runtime verification. Record branch, PR, commit, observations, and limitations here.
