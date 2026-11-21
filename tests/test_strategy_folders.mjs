@@ -952,6 +952,31 @@ test('single bucket can appear in combined category, sports market and market re
   assert.match(bot,/favorite-single-matrix/);
 });
 
+test('single bucket displays P/L, 90% uncertainty and event n directly on collapsed category headers',()=>{
+  const bots=[{id:'btc',name:'Bitcoin',series:'KXBTC15M',asset:'crypto',
+    experiment:{entry_timing:[]}}];
+  const summary={rows:{'crypto-15m':{
+    resolved_events:12,event_wins:10,return_observations:11,
+    average_return_pct:'3.456',uncertainty90_pct:'2.345',
+    ci90_low_pct:'1.111',ci90_high_pct:'5.801',incomplete_events:1
+  }},by_bot:{}};
+  const html=favoriteSingleOverviewMarkup(bots,summary);
+  const head=html.slice(html.indexOf('<summary>'),html.indexOf('</summary>')+10);
+  assert.match(head,/favorite-single-headline/);
+  assert.match(head,/Hold P\/L \+3\.46%/);
+  assert.match(head,/90% ±2\.35 points/);
+  assert.match(head,/n=11/);
+  assert.doesNotMatch(head,/NaN|undefined/);
+  assert.match(html,/favorite-single-matrix/,'full evidence remains available when expanded');
+  const sparse=favoriteSingleOverviewMarkup(bots,{rows:{'crypto-15m':{
+    resolved_events:1,return_observations:1,average_return_pct:'-10',
+    uncertainty90_pct:null
+  }}});
+  assert.match(sparse,/Hold P\/L -10\.00%/);
+  assert.match(sparse,/90% uncertainty —/);
+  assert.doesNotMatch(sparse,/90% ±0\.00 points/);
+});
+
 test('90 percent Wilson uncertainty remains nonzero at perfect accuracy and decreases with independent sample size',()=>{
  assert.equal(winConfidence90(0,0,.8),null);
  const c=winConfidence90(90,100,.8),larger=winConfidence90(360,400,.8);
