@@ -66,7 +66,15 @@ class CheckpointStageCosts(unittest.TestCase):
             for _ in range(3):
                 audit.checkpoint_snapshot()
         self.assertEqual(audit.checkpoint_stage_profile['samples'], 3)
-        self.assertLessEqual(len(audit.checkpoint_stage_profile), 7)
+        # This remains a fixed, bounded set even with codec substage timers.
+        # Tiny inline checkpoints may only report segment traversal; larger
+        # compressed payloads include hash, compression and Base64 phases.
+        expected={'samples','engine_state_ms','experiment_state_ms',
+                  'packing_ms','total_ms','peak_packing_ms','peak_state_ms',
+                  'segment_pack_ms','cold_member_compression_ms',
+                  'checksum_ms','hot_compress_join_ms','base64_ms'}
+        self.assertTrue(set(audit.checkpoint_stage_profile).issubset(expected))
+        self.assertLessEqual(len(audit.checkpoint_stage_profile), len(expected))
         audit.checkpoint_stage_log_at = 0
         with patch('builtins.print'):
             audit.checkpoint_snapshot()

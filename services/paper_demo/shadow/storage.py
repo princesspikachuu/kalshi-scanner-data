@@ -67,7 +67,9 @@ class HostedAudit:
         if hasattr(self,'_frozen_discovery'):data['experiments']['_maker_discovery']=self._frozen_discovery
         if not hasattr(self,'checkpoint_segments'):self.checkpoint_segments=CheckpointSegments()
         packing_started=time.monotonic()
-        payload=pack_checkpoint(data,binary=True,segments=self.checkpoint_segments)
+        pack_profile={}
+        payload=pack_checkpoint(data,binary=True,segments=self.checkpoint_segments,
+                                profile=pack_profile)
         packing_ms=(time.monotonic()-packing_started)*1000
         rss_after_pack=current_rss_bytes() if rss_due else None
         if not hasattr(self,'checkpoint_stage_profile'):self.checkpoint_stage_profile=Counter()
@@ -76,6 +78,10 @@ class HostedAudit:
         stages['engine_state_ms']+=engine_ms
         stages['experiment_state_ms']+=experiments_ms
         stages['packing_ms']+=packing_ms
+        for name,elapsed_ms in pack_profile.items():
+            # Bounded numeric timing aggregates only; no market identifiers,
+            # orders, checkpoint values or raw evidence in operator logs.
+            stages[name]+=elapsed_ms
         stages['total_ms']+=(time.monotonic()-started)*1000
         stages['peak_packing_ms']=max(stages['peak_packing_ms'],packing_ms)
         stages['peak_state_ms']=max(stages['peak_state_ms'],engine_ms+experiments_ms)
