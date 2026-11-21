@@ -16,7 +16,6 @@ from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
 from .monitoring import MonitoringBudget,protected,maker_entry_limit,category as market_category
-from .discovery_budget import CATEGORY_LIMITS
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
 
@@ -163,11 +162,16 @@ class ExperimentSuite:
                 bot._shared_statistics_groups=shared_groups
                 bot._shared_statistics_last_refresh=lambda: shared['at']
         self.weather_cursor={};self.weather_pages={};self.sports_cursor=0;self.sports_pages={};self.hourly_cursor=0;self.hourly_pages={}
+        # Persist only verified future entry wake hints. Unknown/unsupported
+        # schedules are never assumed and continue provider-driven discovery.
+        saved=(previous or {}).get('_discovery_wakes') or {}
+        self.discovery_wakes={key:float(at) for key,at in saved.items()
+            if isinstance(key,str) and len(key)<128 and isinstance(at,(int,float)) and 0<at<4102444800} if isinstance(saved,dict) else {}
         self.maker_allocation=deepcopy((previous or {}).get('_maker_allocation') or dict(pending={},credits={},next_at=0))
         self.control(rows)
         if isinstance((previous or {}).get('_maker_discovery'),dict):self.maker_discovery=deepcopy(previous['_maker_discovery'])
     def state(self):
-        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_maker_allocation=self.maker_allocation,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
+        return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_discovery_wakes=self.discovery_wakes,_maker_allocation=self.maker_allocation,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
             strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
@@ -265,17 +269,15 @@ class ExperimentSuite:
     def can_replace_maker_market(self,payload,now):
         return maker_allocation.credited_capacity(self,payload['market']['ticker'],now) or maker_allocation.replacement(self,payload['market'],now) is not None
     def search_capacity(self,category,now,slots=1):
-        stats=self.monitoring_snapshot(now)
-        limit=maker_entry_limit(stats) if category=='market_maker' else (4 if category=='complete_set' else min(CATEGORY_LIMITS.get(category,stats['per_category']),stats['per_category']))
-        return (stats['admitting'] and stats['categories'].get(category,0)+slots<=limit and
-            stats['entry_markets']+slots<=stats['entry_candidates'] and stats['subscribed_markets']+slots<=stats['total'])
+        # No static global, per-category, or candidate count ceilings. A fixed
+        # count does not reflect actual CPU, worker memory or entry windows.
+        # Admission still fails closed on stale/overloaded worker telemetry.
+        return slots>0 and self.monitoring_snapshot(now)['admitting']
     def extra_capacity(self,tickers,now):
         additions=set(tickers)-set(self.extra)
         if not additions:return True
-        stats=self.monitoring_snapshot(now)
-        return (stats['admitting'] and all(self.candidate_allowed(t,now) for t in additions) and
-            stats['subscribed_markets']+len(additions)<=stats['total'] and
-            stats['entry_markets']+len(additions)<=stats['entry_candidates'])
+        return (self.monitoring_snapshot(now)['admitting'] and
+            all(self.candidate_allowed(t,now) for t in additions))
     def reclaim_idle_candidate(self,now):
         # Runs on the serialized engine path. Never revoke a live order or lot
         # merely to admit a new game, including pending transport arrivals.
