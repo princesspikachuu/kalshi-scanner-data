@@ -8,10 +8,11 @@ from . import favorite_timing
 
 class FavoritesStrategy(ConvexityStrategy):
     recover_fresh_entries=True
+    hold_only=True
     def __init__(self,engine,profile):
         super().__init__(engine,profile['contracts'],False,profile['series'],profile['name'])
         self.profile=profile;self.attempts={};self.decisions={};self.exit_evidence=ExitEvidence();self.exit_at={}
-        self.last_reason=('Waiting for verified live sport · final two estimated hours' if profile.get('asset')=='sports' else 'Waiting for a 70–95¢ favorite · maker entry with evidence-based risk exits')
+        self.last_reason=('Waiting for verified live sport · final two estimated hours' if profile.get('asset')=='sports' else 'Waiting for a 70–95¢ favorite · maker entry · hold to settlement')
     def on_data_gap(self,ticker,reason):
         a=self.attempts.get(ticker);window=a.get('data_window') if a else None
         if window and window.get('valid') and not window.get('ended_at') and self.e.now<self.e.markets[ticker]['close']:
@@ -50,7 +51,7 @@ class FavoritesStrategy(ConvexityStrategy):
         for order in active:
             if order.id not in canceling:order.expiry=min(self.e.now+30,self.entry_deadline(m,self.e.now))
     def safety_cancel(self,ticker):pass
-    def exit_allowed(self,order):return self.e.now<self.e.markets[order.ticker]['close']
+    def exit_allowed(self,order):return not self.hold_only and self.e.now<self.e.markets[order.ticker]['close']
     def entry_quote(self,ticker,side,max_price=None):
         return quote(self.e,self.profile,self.contracts,ticker,side,self.exit_evidence.cells,
             None if self.profile.get('paper_exploration',True) is not False else max_price)
@@ -161,6 +162,12 @@ class FavoritesStrategy(ConvexityStrategy):
         for ticker,m in markets:
             if not ticker.startswith(self.series+'-'):continue
             a=self.attempts.get(ticker);now=self.e.now
+            if self.hold_only:
+                for order in self.e.orders.values():
+                    if order.ticker==ticker and order.action=='sell' and order.status in ('pending','resting'):
+                        self.e.cancel(order.id)
+                if a and a.get('exit_reason'):
+                    a['legacy_exit_reason']=a.pop('exit_reason')
             if m.get('paid'):
                 if not a or a.get('recorded'):continue
                 s=self.e.wallet.stat(ticker)
@@ -168,7 +175,8 @@ class FavoritesStrategy(ConvexityStrategy):
                 trial_valid=self.trial_valid(ticker,a)
                 if trial_valid and a['first'] and m.get('yes_payout_confirmed') in ('0','1'):
                     payout=int(m['yes_payout_confirmed']==('1' if a['side']=='yes' else '0'))
-                    for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
+                    if not self.hold_only:
+                        for key in a.get('risk_observations',{}):self.exit_evidence.observe(key,payout)
                     if a.get('entry_key') and not a.get('entry_fills'):observe(self.exit_evidence.cells,a['entry_key'],m.get('event_ticker',ticker),payout,observed_at=self.e.now)
                 self.e.log('FAVORITE_TRIAL_QUALITY',ticker=ticker,details=json.dumps(dict(
                     cycle_valid=s.valid,execution_window_valid=trial_valid,window=a.get('data_window'),
@@ -181,7 +189,7 @@ class FavoritesStrategy(ConvexityStrategy):
                 lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
                 if a.get('entry_policy')=='favorites-paper-data-v3':self.retain_partial_entry(ticker,m,a,lots)
                 else:self.e.cancel_buys(ticker)
-                if lots and self.e.book_fresh(ticker):
+                if not self.hold_only and lots and self.e.book_fresh(ticker):
                     reason=assess(self.e,ticker,lots,a,self.exit_evidence)
                     if reason:a['exit_reason']=reason;self.e.cancel_buys(ticker)
                     if a.get('exit_reason') and now-self.exit_at.get(ticker,0)>=1 and not any(o.ticker==ticker and o.status in ('pending','resting') for o in self.e.orders.values()):

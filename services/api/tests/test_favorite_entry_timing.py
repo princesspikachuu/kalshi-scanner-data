@@ -7,7 +7,7 @@ from services.paper_demo.shadow.core import FeePolicy
 
 class EntryTiming(unittest.TestCase):
     def setup_bot(self,close=3800,fees=False):
-        e,b,book=fixture.MakerEntries().setup_bot()
+        e,b,book=fixture.MakerEntries().setup_bot();b.hold_only=False
         t=fixture.MakerEntries.ticker;e.markets[t]['close']=close
         book.levels={'yes':{D('.89'):D(100)},'no':{D('.09'):D(100)}}
         if fees:e.fees[t]=FeePolicy(D(1),D(1))

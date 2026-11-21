@@ -94,6 +94,7 @@ def settle(strategy,ticker,observe):
     a=strategy.attempts[ticker];m=strategy.e.markets[ticker]
     if a.get('timing_finalized') or m.get('yes_payout_confirmed') not in ('0','1'):return
     payout=int(m['yes_payout_confirmed']==('1' if a['side']=='yes' else '0'))
+    hold_eligible=all(D(c['remaining'])==D(c['quantity']) for c in a.get('entry_fills',[])) and not a.get('legacy_exit_reason')
     quantity=sum((D(c['remaining']) for c in a.get('entry_fills',[])),D(0))
     if quantity:close(strategy,a,quantity,D(payout),D(0),strategy.e.now)
     for chunk in a.get('entry_fills',[]):
@@ -105,22 +106,34 @@ def settle(strategy,ticker,observe):
     for chunk in a.get('entry_fills',[]):
         grouped.setdefault(chunk['key'],[]).append(chunk)
     for key,chunks in grouped.items():
+        if strategy.hold_only and not hold_eligible:continue
         if not all(c['verified'] and D(c.get('return_closed','0'))==D(c['quantity']) for c in chunks):continue
-        returns=cell(strategy.exit_evidence.cells,key).setdefault('return_events',{})
+        returns=cell(strategy.exit_evidence.cells,key).setdefault('hold_return_events' if strategy.hold_only else 'return_events',{})
         merge(returns,{m.get('event_ticker',ticker):dict(
             cost=str(sum((D(c['cost']) for c in chunks),D(0))),
             net=str(sum((D(c['return_net']) for c in chunks),D(0))))})
         while len(returns)>500:returns.pop(next(iter(returns)))
     a['timing_finalized']=True
 
-def rows(cells):
+def rows(cells,hold_only=False):
     result=[]
     for key,row in cells.items():
         if not key.startswith(METRICS):continue
         events=cells.get(row['key'],{}).get('events',{})
         closed=D(row['closed']);hours=D(row['dollar_hours']);qty=D(row['contracts'])
         measured=D(row.get('latency_observed_contracts','0'))
-        result.append(dict(row,**summarize(row.get('return_events',{})),average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
+        attributed=row.get('hold_return_events' if hold_only else 'return_events',{})
+        # A singleton historical event can be reconstructed exactly when its
+        # entire verified cohort resolved/closed and proceeds match holding to
+        # the binary payout, including fees. Exit-altered/mixed-event rows are
+        # excluded, rather than dividing aggregate dollars by event count.
+        if hold_only and not attributed and len(events)==1 and qty>0:
+            payout=D(next(iter(events.values())))
+            cost=D(row.get('closed_cost','0'));net=D(row.get('net','0'))
+            if (D(row.get('unverified','0'))==0 and closed==qty==D(row.get('resolved','0'))
+                    and D(row.get('winners','0'))==qty*payout and cost>0 and net==qty*payout-cost):
+                attributed={next(iter(events)):dict(cost=str(cost),net=str(net))}
+        result.append(dict(row,return_events=attributed,return_policy='hold_only' if hold_only else 'all_executions',**summarize(attributed),average_worker_delay_ms=str(1000*D(row.get('worker_delay_seconds','0'))/measured) if measured else None,events=len(events),event_win_rate=100*sum(events.values())/len(events) if events else None,
             break_even=str(100*D(row['cost'])/qty) if qty else None,
             average_holding_minutes=str(D(row['holding_seconds'])/closed/60) if closed else None,
             net_per_dollar_hour=str(D(row['net'])/hours) if hours else None,

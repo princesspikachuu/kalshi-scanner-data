@@ -3,7 +3,7 @@ import json,time
 from copy import deepcopy
 from decimal import Decimal as D
 from dataclasses import asdict
-from .core import Engine,StrategyFleet,FeePolicy,Wallet,ZERO
+from .core import Engine,StrategyFleet,FeePolicy,Wallet,ZERO,Book
 from .state import encode,restore
 from .accounting import snapshot
 from .sequential import SequentialStrategy,PairModel
@@ -109,6 +109,7 @@ class ExperimentSuite:
                 return cells
             from .favorite_statistics import aggregate
             shared=dict(at=-1e9,groups={})
+            self.shared_statistics_cache=shared
             stats_bots=self.portfolios['favorites_statistics'][1].bots
             def shared_groups(now):
                 if now-shared['at']>=30:
@@ -649,10 +650,20 @@ class ExperimentSuite:
                     scalper=b.research_snapshot() if isinstance(b,VolatilityScalper) else None,
                     scans=getattr(b,'scans',None),calibration=calibration,
                     statistics=dict(min_samples=int(b.profile.get('statistics_min_samples',20)),latest_decisions=list(b.decisions.values())[-20:]) if isinstance(b,StatisticsFavoritesStrategy) else None,
-                    entry_timing=favorite_timing_rows(b.exit_evidence.cells) if folder in ('favorites','favorites_statistics') else [])
+                    entry_timing=favorite_timing_rows(b.exit_evidence.cells,hold_only=b.hold_only) if folder in ('favorites','favorites_statistics') else [])
                 if isinstance(b,VolatilityScalper):
                     retained=b.research['totals'];bots[p['id']].update(completed=retained['completed'],attempts=max(retained['submitted'],retained['attempted']))
-            stats_matrix=next((b.statistics_snapshot() for b in f.bots.values() if isinstance(b,StatisticsFavoritesStrategy)),None)
+            stats_bot=next((b for b in f.bots.values() if isinstance(b,StatisticsFavoritesStrategy)),None)
+            if stats_bot:
+                active=any(b.enabled for b in f.bots.values())
+                if active or not hasattr(self,'paused_statistics_snapshot'):
+                    self.paused_statistics_snapshot=stats_bot.statistics_snapshot()
+                stats_matrix=self.paused_statistics_snapshot
+                if not active:
+                    # Freeze the displayed paused research, retain its timestamp,
+                    # and release the much larger six-level event-index cache.
+                    self.shared_statistics_cache.update(at=-1e9,groups={})
+            else:stats_matrix=None
             result[folder]=dict(accounting=money,bots=bots,statistics=stats_matrix,comparison=self.comparison_snapshot(folder,e,f,money,now),scanner=self.scanner_state if folder=='complete_set' else {k:v for k,v in getattr(self,'maker_discovery',{}).items() if k in ('state','ranked','reads')} if folder in MM_FOLDERS else None,
                 assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
                     execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
@@ -662,6 +673,17 @@ class ExperimentSuite:
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
         # execution state plus constant-size cumulative totals.
         self.rotate_candidates(max((e.now for e,_,_ in self.portfolios.values()),default=0))
+        # Expired depth cannot execute. It is intentionally absent from durable
+        # engine checkpoints already; release it while settlement is pending.
+        # Keep lots, fees, event evidence and audit records intact.
+        released=0
+        for engine in [self.host.engine,*[e for e,_,_ in self.portfolios.values()]]:
+            for ticker,market in engine.markets.items():
+                book=engine.books.get(ticker)
+                if market['close']<=engine.now and book and any(book.levels.values()):
+                    engine.books[ticker]=Book();released+=1
+        if released:
+            print(json.dumps(dict(event='paper_expired_depth_released',books=released,real_orders_enabled=False)),flush=True)
         for folder,(e,f,ps) in self.portfolios.items():
             if folder in ('favorites','favorites_statistics',*SEQUENTIAL_FOLDERS):
                 for t,m in list(e.markets.items()):

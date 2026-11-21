@@ -56,12 +56,12 @@ class ScopeTests(unittest.TestCase):
             fav=FavoritesStrategy(e,dict(fixture.profile('KXNBAGAME',strategy='favorites'),asset='sports'))
             self.assertTrue(seq.entry_allowed(gate,10000));self.assertFalse(fav.entry_allowed(gate,10000))
             gate['sports_live']=False;self.assertFalse(seq.entry_allowed(gate,10000))
-    def test_retired_favorites_block_entries_but_keep_risk_exit_permissions(self):
+    def test_retired_favorites_block_entries_and_hold_positions_to_settlement(self):
         e=fixture.Engine(fixture.QuietAudit());e.now=200
         b=FavoritesStrategy(e,dict(fixture.profile(strategy='favorites'),retired=True))
         t='KXBTC15M-TEST';fixture.market(e,t,yes='.79',no='.19')
         b.step();self.assertFalse(e.orders)
-        self.assertTrue(b.exit_allowed(Mock(ticker=t)))
+        self.assertFalse(b.exit_allowed(Mock(ticker=t)))
     def test_pausing_one_profile_does_not_cancel_another_profiles_entries(self):
         s,rows=self.suite();e,f,ps=s.portfolios['sequential'];e.advance(200)
         t='KXHIGHNY-TEST';fixture.market(e,t);e.place(t,'yes','buy',D(1),D('.45'));e.advance(201)
