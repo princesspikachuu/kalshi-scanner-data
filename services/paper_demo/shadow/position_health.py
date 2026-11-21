@@ -1,6 +1,7 @@
 """Read-only, bounded paper Favorites position/settlement health summary.
 
-This does not verify an exchange result, infer a payout or mutate a wallet.\nThe recorded marker may originate from a verified WS event or approved REST recovery.
+This does not verify an exchange result, infer a payout or mutate a wallet.
+The recorded marker may originate from a verified WS event or approved REST recovery.
 """
 from decimal import Decimal
 
