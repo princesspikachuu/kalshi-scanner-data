@@ -40,6 +40,7 @@ class BaseEngineTradeDedupTests(unittest.TestCase):
             self.print('invalid', 1000.3, quantity='-1')
         self.assertEqual(len(self.engine.trade_ids), 0)
         self.engine.advance(1005)
+        self.engine.books['TEST'].at = 1005  # The book is current; only the print is stale.
         # A print that was valid long ago cannot change an order now.
         with patch.object(self.engine, 'data_gap') as gap:
             self.engine.trade('TEST', dict(trade_id='old', taker_side='no',
