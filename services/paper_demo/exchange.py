@@ -107,6 +107,27 @@ class Fees:
                            min((t for t in times if t>at),default=float('inf')),kind,multiplier)
         return kind,multiplier
 
+    def zero_maker_fees_until(self,ticker,at,close):
+        """Fail closed unless a fresh series + event schedule is maker-free until close.
+
+        Event overrides and future fee changes matter just as much as today's
+        series fee type; this uses the existing verified cache, not extra REST.
+        """
+        saved=self.cache.get(ticker)
+        if not saved or close<=at or time.time()-saved['at']>60:return False
+        try:
+            checkpoints={at}
+            for row in saved['changes']+saved['events']:
+                change_at=datetime.fromisoformat(row['scheduled_ts'].replace('Z','+00:00')).timestamp()
+                if at<change_at<close:checkpoints.add(change_at)
+            for when in sorted(checkpoints):
+                kind,multiplier=self.schedule(ticker,when)
+                value=D(str(multiplier))
+                if kind!='quadratic' or not value.is_finite() or value<0:return False
+            return True
+        except (ExchangeFailure,KeyError,TypeError,ValueError,ArithmeticError):
+            return False
+
 class PaperExchange:
     paper=True;ws_root=WS
     def __init__(self,store,signer,guard=lambda:None,client=None):

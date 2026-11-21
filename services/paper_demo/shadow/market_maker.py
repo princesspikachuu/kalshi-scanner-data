@@ -302,6 +302,10 @@ async def maker_once(host):
         if not any(quotable(bids,p.get('config',{})) for p in ps):
             row['reason']='current_price_or_spread_not_eligible';continue
         fee=await host.fee_policy(raw,{});schedule=row.get('scheduled_events',[])
+        if fee.maker_multiplier!=0 or not host.verified_fees.zero_maker_fees_until(
+                ticker,now,ts(raw['close_time'])):
+            row['reason']='nonzero_or_unverified_maker_fee'
+            continue
         economics=turnover_score(prints,now,bids,ps,fee,raw)
         if economics is None:row['reason']='execution_economics';continue
         row.update(economics)

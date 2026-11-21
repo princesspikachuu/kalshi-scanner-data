@@ -50,9 +50,14 @@ async def discover_sets(host):
                     prepared=[]
                     for m in markets:
                         fee=await host.fee_policy(m,{})
+                        if fee.maker_multiplier!=0 or not host.verified_fees.zero_maker_fees_until(
+                                m['ticker'],now,ts(m['close_time'])):
+                            prepared=[]
+                            break
                         prepared.append(dict(market=dict(ticker=m['ticker'],event_ticker=event_id,
                             close=ts(m['close_time']),open=ts(m['open_time']),discovered_at=now,series_ticker=event['series_ticker']),
                             taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
+                    if not prepared:continue
                     await host.put('set_markets',dict(event=dict(event_ticker=event_id,mutually_exclusive=True),markets=prepared))
                     accepted+=1;set_count+=len(markets)
                     if accepted>=2:break

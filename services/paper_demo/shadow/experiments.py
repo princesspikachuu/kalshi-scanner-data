@@ -316,7 +316,10 @@ class ExperimentSuite:
             try:
                 kind,m=self.host.verified_fees.schedule(ticker,now)
                 e.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else ZERO)
+                e.set_zero_maker_fee_verified(ticker,
+                    self.host.verified_fees.zero_maker_fees_until(ticker,now,e.markets[ticker]['close']))
             except Exception:
+                e.set_zero_maker_fee_verified(ticker,False)
                 if e.books[ticker].valid:e.data_gap(ticker,'current fee schedule unverified')
                 if source=='kalshi' and payload.get('msg',{}).get('market_ticker')==ticker:return dict(payload,type='fee_blocked')
         return payload

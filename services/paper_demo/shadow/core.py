@@ -444,6 +444,25 @@ class Engine:
         self.safety_until = 0.0
         self.book_feed_at = {}
         self.wall_clock = None
+        # Opt-in for the hosted paper executor. Generic simulations retain
+        # their existing explicit fee models for historical comparisons.
+        self.require_zero_maker_fee_entries = False
+
+    def zero_maker_entry_allowed(self,ticker):
+        return (not self.require_zero_maker_fee_entries or
+                self.markets[ticker].get('zero_maker_fee_verified') is True and
+                self.fees[ticker].maker_multiplier == ZERO)
+
+    def set_zero_maker_fee_verified(self,ticker,verified):
+        market=self.markets[ticker]
+        previous=market.get('zero_maker_fee_verified')
+        market['zero_maker_fee_verified']=bool(verified)
+        # Immediately retire already pending/resting paper buys if a verified
+        # schedule changes or becomes unknown. Existing inventory and exits stay.
+        if self.require_zero_maker_fee_entries and not verified and previous is not False:
+            for order in self.orders.values():
+                if order.ticker==ticker and order.action=='buy' and order.status in ('pending','resting'):
+                    self.entry_order_allowed(order)
 
     def book_fresh(self,ticker):
         book=self.books[ticker]
@@ -502,7 +521,11 @@ class Engine:
         stat.execution_orders+=1
         if maker:stat.maker_requested+=quantity
         else:stat.taker_requested+=quantity
-        if action == 'buy':
+        fee_blocked = action == 'buy' and not self.zero_maker_entry_allowed(ticker)
+        if fee_blocked:
+            order.status,order.reserved='rejected',ZERO
+            stat.rejected_orders+=1
+        elif action == 'buy':
             order.reserved = quantity*price+self.fees[ticker].charge(quantity, price, maker)
             if order.reserved > self.available():
                 order.status, order.reserved = 'rejected', ZERO
@@ -511,7 +534,7 @@ class Engine:
         if order.status == 'pending':
             heapq.heappush(self.pending, (order.arrives, self.serial, 'arrive', ident))
         self.log('ORDER_SUBMITTED' if order.status == 'pending' else 'ORDER_REJECTED', order,
-                 quantity=quantity, price=price, reference=reference, reason='latency scheduled',details=json.dumps(timing))
+                 quantity=quantity, price=price, reference=reference, reason='maker fee nonzero or unverified' if fee_blocked else 'latency scheduled',details=json.dumps(timing))
         return ident
 
     def cancel(self, ident: str):
@@ -563,6 +586,10 @@ class Engine:
                 self.log('EXPIRED', order)
 
     def entry_order_allowed(self,order):
+        if order.action=='buy' and not self.zero_maker_entry_allowed(order.ticker):
+            order.status,order.reserved='cancelled',ZERO
+            self.log('CANCELLED',order,reason='Maker entry fee nonzero or unverified')
+            return False
         guard=getattr(self.strategy,'entry_order_allowed',None)
         if order.action!='buy' or guard is None or guard(order):return True
         order.status,order.reserved='cancelled',ZERO

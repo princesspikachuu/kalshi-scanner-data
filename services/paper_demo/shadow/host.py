@@ -137,6 +137,11 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.suspend_idle_feeds=True
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        for engine in [self.engine]+[e for e,_,_ in self.experiments.portfolios.values()]:
+            engine.require_zero_maker_fee_entries=True
+            # Checkpoints are not fee authority after restart. A fresh provider
+            # verification must re-enable entries before any book input.
+            for market in engine.markets.values():market.pop('zero_maker_fee_verified',None)
         self.book_update_interval_ms=book_conflation_interval(self.experiments)
         self.experiments.share_external_markets()
         self.experiments.share_legacy_markets()
@@ -323,7 +328,10 @@ class HostedRun(ForwardRun):
             try:
                 kind,m=self.verified_fees.schedule(ticker,now)
                 self.engine.fees[ticker]=FeePolicy(D(str(m)),D(str(m)) if kind=='quadratic_with_maker_fees' else D(0))
+                self.engine.set_zero_maker_fee_verified(ticker,
+                    self.verified_fees.zero_maker_fees_until(ticker,now,self.engine.markets[ticker]['close']))
             except Exception:
+                self.engine.set_zero_maker_fee_verified(ticker,False)
                 blocked.add(ticker)
                 if self.engine.books[ticker].valid:
                     self.engine.data_gap(ticker,'current fee schedule unverified')
