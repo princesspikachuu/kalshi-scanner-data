@@ -455,155 +455,127 @@ test('Favorites collector and statistics category tables respect persisted close
  assert.match(favoriteStatisticsMatrixMarkup(stats,new Set(['favorites-stat-weather_daily'])),/data-research="favorites-stat-weather_daily" open/);
 });
 
-test('all Favorites combined categories use saved rollups; Sports retain per-market detail',()=>{
+test('Favorites rollups show observations across categories and per-sport breakdowns',()=>{
  const bot=(id,series,asset)=>({id,name:id,series,asset,experiment:{entry_timing:[]}});
  const bots=[bot('sport1','KXNBAGAME','sports'),bot('sport2','KXMLBGAME','sports'),
   bot('weather','KXHIGHNY','weather'),bot('daily','KXHIGHTEMP','weather_daily'),
-  bot('oil','KXWTIH','hourly'),bot('gold','KXGOLD15M','commodity'),
-  bot('fx','KXUSDCAD15M','finance')];
- const row=(n,kind)=>({series:'combined',market_type:kind,clock:'market_close',
-  horizon:'5–10m',price:'.80',contracts:String(n),closed:String(n),resolved:String(n),
-  winners:String(n),cost:'1',net:'0.2'});
- const counts=(n)=>({bots_total:n,bots_with_rows:n,purchased:String(n)});
- const timedSummary={
-  rows:{sports:[row(7,'sports')],'weather-hourly':[row(2,'weather')],
-   'weather-daily':[row(3,'weather_daily')],
-   'commodities-hourly':[row(4,'hourly_price')],
-   'commodities-15m':[row(5,'15m_price')],
-   'finance-15m':[row(6,'15m_price')]},
-  coverage:{sports:{...counts(2),purchased:'7'},
-   'weather-hourly':counts(2),'weather-daily':counts(3),
-   'commodities-hourly':counts(4),'commodities-15m':counts(5),
-   'finance-15m':counts(6)},
-  sports_by_bot:{sport1:[row(3,'sports')],sport2:[row(4,'sports')]}
- };
- const html=favoriteCollectorOverviewMarkup(bots,new Set(),{timedSummary});
- for(const n of [2,3,4,5,6,7])assert.match(html,new RegExp('Purchased '+n+' · settled '+n));
- assert.match(html,/Purchased 3 · settled 3/);
- assert.match(html,/Purchased 4 · settled 4/);
- assert.match(html,/Sports/);
+  bot('oil','KXWTIH','hourly'),bot('gold','KXGOLD15M','commodity'),bot('fx','KXUSDCAD15M','finance')];
+ const row=(contracts,kind,events=1)=>({series:'combined',market_type:kind,clock:'market_close',
+  horizon:'5–10m',price:'.80',contracts:String(contracts),closed:String(contracts),
+  resolved:String(contracts),winners:String(contracts),cost:'1',net:'0.2',events,event_wins:events});
+ const summary={rows:{sports:[row(7,'sports',2)],'weather-hourly':[row(2,'weather')],
+  'weather-daily':[row(3,'weather_daily')],'commodities-hourly':[row(4,'hourly_price')],
+  'commodities-15m':[row(5,'15m_price')],'finance-15m':[row(6,'15m_price')]},
+  coverage:{sports:{bots_total:2,bots_with_rows:2}},
+  sports_by_bot:{sport1:[row(3,'sports')],sport2:[row(4,'sports')]}};
+ const html=favoriteCollectorOverviewMarkup(bots,new Set(),{timedSummary:summary});
+ for(const label of ['Sports','Hourly weather','Daily weather','Commodities','Finance'])assert.ok(html.includes(label),label);
+ assert.match(html,/n=2/);assert.match(html,/n=1/);
+ assert.doesNotMatch(html,/Purchased 7 · settled 7/);
  const category=favoriteCategoryResearchMarkup({id:'sports',label:'Sports',bots:bots.slice(0,2),
-  aggregated_entry_timing:timedSummary.rows.sports});
- assert.ok(category.includes('>7</td>'));
+   aggregated_entry_timing:summary.rows.sports});
+ assert.match(category,/Resolved observations/);
+ assert.match(category,/>2<\/td>/);
 });
 
-test('Favorites category rollups preserve timed crypto cohorts, including retired history',()=>{
+test('Favorites preserves 15-minute versus hourly event observations and retired history',()=>{
  const observation=(series,contracts,retired=false)=>({
   id:series,name:series,series,asset:series.endsWith('15M')?'15m':'hourly',retired,
-  experiment:{entry_timing:[{series,market_type:'crypto',clock:'market_close',horizon:'5–10m',price:'.80',contracts:String(contracts),closed:String(contracts),resolved:String(contracts),winners:String(contracts),cost:String(contracts*.8),net:String(contracts*.2)}]}
- });
+  experiment:{entry_timing:[{series,market_type:'crypto',clock:'market_close',horizon:'5–10m',
+    price:'.80',contracts:String(contracts),closed:String(contracts),resolved:String(contracts),
+    winners:String(contracts),cost:String(contracts*.8),net:String(contracts*.2),events:1,event_win_rate:100}]}});
  const bots=[observation('KXBTC15M',2),observation('KXBTCH',3),observation('KXETH15M',4,true)];
  const html=favoriteCollectorOverviewMarkup(bots,new Set(['favorites-collector-crypto-15m']));
  assert.match(html,/data-research="favorites-collector-crypto-15m" open/);
  assert.match(html,/data-research="favorites-collector-crypto-hourly"/);
- assert.match(html,/Crypto · 15 minutes/);
- assert.match(html,/Crypto · 1 hour/);
- assert.match(html,/Purchased 6 · settled 6/);
- assert.match(html,/Purchased 3 · settled 3/);
- assert.doesNotMatch(html,/Purchased 9 · settled 9/);
- assert.equal((html.match(/Purchased 6 · settled 6/g)||[]).length,1);
- const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',bots:bots.filter(b=>b.series.endsWith('15M'))});
- assert.match(category,/Purchased<\/th>/);
- assert.match(category,/>6<\/td>/);
+ assert.match(html,/Verified resolved event observations: 2/);
+ assert.match(html,/Verified resolved event observations: 1/);
+ assert.match(html,/n=2/);
+ assert.doesNotMatch(html,/Purchased 6 · settled 6/);
+ const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',
+  bots:bots.filter(b=>b.series.endsWith('15M'))});
+ assert.match(category,/Resolved observations/);
+ assert.match(category,/>2<\/td>/);
 });
 
-test('timed Favorites totals retain all observed price tiers without mixing 15m and hourly',()=>{
+test('Favorites price tiers show independent samples without importing hourly cohorts',()=>{
  const make=(id,series,price,contracts)=>({
   id,series,name:id,asset:series.endsWith('15M')?'15m':'hourly',
   experiment:{entry_timing:[{series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',
-   price:String(price),contracts:String(contracts),closed:String(contracts),
-   resolved:String(contracts),winners:String(contracts),net:'0',cost:'0'}]}
- });
- const bots=[
-  make('btc','KXBTC15M',.80,2),
-  make('eth','KXETH15M',.65,7),
-  make('sol','KXSOL15M',.95,3),
-  make('hour','KXBTCD',.65,4)
- ];
+    price:String(price),contracts:String(contracts),closed:String(contracts),
+    resolved:String(contracts),winners:String(contracts),net:'0',cost:'0',events:1,event_win_rate:100}]}});
+ const bots=[make('btc','KXBTC15M',.80,2),make('eth','KXETH15M',.65,7),
+  make('sol','KXSOL15M',.95,3),make('hour','KXBTCD',.65,4)];
  const html=favoriteCollectorOverviewMarkup(bots);
  const fifteen=html.split('data-research="favorites-collector-crypto-15m"')[1].split('data-research="favorites-collector-crypto-hourly"')[0];
  const hourly=html.split('data-research="favorites-collector-crypto-hourly"')[1];
- assert.match(fifteen,/60–64¢|65–69¢/);
- assert.match(fifteen,/Purchased 7 · settled 7/);
- assert.match(fifteen,/Purchased 2 · settled 2/);
- assert.match(fifteen,/Purchased 3 · settled 3/);
- assert.doesNotMatch(fifteen,/Purchased 4 · settled 4/);
- assert.match(hourly,/Purchased 4 · settled 4/);
- assert.doesNotMatch(hourly,/Purchased 7 · settled 7/);
+ assert.match(fifteen,/65–69¢/);assert.match(fifteen,/90–95¢|95–95¢/);
+ assert.match(fifteen,/Verified resolved event observations: 3/);
+ assert.match(hourly,/Verified resolved event observations: 1/);
+ assert.doesNotMatch(fifteen,/Purchased 7 · settled 7/);
 });
 
-test('Favorites grids report loaded timed-fill coverage per crypto timeframe',()=>{
+test('Favorites pending-only cohorts never turn contract quantity into fake observations',()=>{
  const bot=(id,series,count)=>({id,name:id,series,experiment:{entry_timing:count?[{
   price:'.80',horizon:'5–10m',clock:'market_close',market_type:'15m_price',
   contracts:String(count),closed:'0',resolved:'0',winners:'0'
  }]:[]}});
- const html=favoriteCollectorOverviewMarkup([
-  bot('btc','KXBTC15M',4),bot('eth','KXETH15M',0),
-  bot('hour','KXBTCD',2)
- ],new Set(),{loaded:true});
- assert.match(html,/Timed entry-fill source: 1 of 2 market bots with observations · 4 purchased contracts/);
- assert.match(html,/Timed entry-fill source: 1 of 1 market bots with observations · 2 purchased contracts/);
- assert.doesNotMatch(html,/Combined tables may be incomplete/);
+ const html=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',10),bot('eth','KXETH15M',0),
+  bot('hour','KXBTCD',2)],new Set(),{loaded:true});
+ assert.match(html,/Verified resolved event observations: 0/);
+ assert.doesNotMatch(html,/n=10/);
  const unavailable=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',0)],new Set(),{error:'Research unavailable'});
  assert.match(unavailable,/Favorites research could not load: Research unavailable/);
  const loading=favoriteCollectorOverviewMarkup([bot('btc','KXBTC15M',0)],new Set(),{loading:true});
  assert.match(loading,/Detailed Favorites research is loading/);
 });
 
-test('workspace Crypto timed totals display without loading individual currency research',()=>{
+test('workspace rollup event samples are visible without loading per-currency research',()=>{
  const bot=(id,series,asset)=>({id,name:id,series,asset,experiment:{entry_timing:[]}});
  const bots=[bot('btc','KXBTC15M','crypto'),bot('eth','KXETH15M','crypto'),bot('hour','KXBTCD','hourly')];
- const row=(n,m)=>({series:'combined',market_type:m,clock:'market_close',horizon:'5–10m',
-  price:'.80',contracts:String(n),closed:String(n),resolved:String(n),winners:String(n),
-  cost:'1',net:'.2'});
- const timedSummary={rows:{'crypto-15m':[row(6,'15m_price')],'crypto-hourly':[row(3,'hourly_price')]},
-  coverage:{'crypto-15m':{bots_total:2,bots_with_rows:2,purchased:'6'},
-   'crypto-hourly':{bots_total:1,bots_with_rows:1,purchased:'3'}}};
+ const row=(contracts,kind,events)=>({series:'combined',market_type:kind,clock:'market_close',
+  horizon:'5–10m',price:'.80',contracts:String(contracts),closed:String(contracts),
+  resolved:String(contracts),winners:String(contracts),cost:'1',net:'.2',events,event_wins:events});
+ const timedSummary={rows:{'crypto-15m':[row(6,'15m_price',2)],'crypto-hourly':[row(3,'hourly_price',1)]},
+  coverage:{'crypto-15m':{bots_total:2,bots_with_rows:2},'crypto-hourly':{bots_total:1,bots_with_rows:1}}};
  const html=favoriteCollectorOverviewMarkup(bots,new Set(),{timedSummary});
- assert.match(html,/Timed entry-fill source: 2 of 2 market bots with observations · 6 purchased contracts/);
- assert.match(html,/Timed entry-fill source: 1 of 1 market bots with observations · 3 purchased contracts/);
- assert.match(html,/Purchased 6 · settled 6/);
- assert.match(html,/Purchased 3 · settled 3/);
- assert.doesNotMatch(html,/Purchased 9 · settled 9/);
+ assert.match(html,/Verified resolved event observations: 2/);
+ assert.match(html,/Verified resolved event observations: 1/);
+ assert.doesNotMatch(html,/n=6/);assert.doesNotMatch(html,/n=3/);
  assert.match(html,/calculated from the complete saved Favorites evidence/);
  const category=favoriteCategoryResearchMarkup({id:'crypto-15m',label:'Crypto · 15 minutes',
   bots:bots.slice(0,2),aggregated_entry_timing:timedSummary.rows['crypto-15m']});
- assert.match(category,/>6<\/td>/);
+ assert.match(category,/>2<\/td>/);
 });
 
-test('Favorites matrices reveal populated late windows even when first mobile columns are empty',()=>{
+test('Favorites shows populated late time windows using event observations',()=>{
  const rows=[{series:'KXBTC15M',market_type:'15m_price',clock:'market_close',
-   horizon:'10–15m',price:'.80',contracts:'7',closed:'4',resolved:'3',
-   winners:'2',cost:'5.6',net:'.2'}];
+  horizon:'10–15m',price:'.80',contracts:'7',closed:'4',resolved:'3',
+  winners:'2',cost:'5.6',net:'.2',events:1,event_win_rate:100}];
  const bot={id:'btc',series:'KXBTC15M',name:'Bitcoin',experiment:{entry_timing:rows}};
  const html=favoriteCollectorOverviewMarkup([bot]);
- assert.match(html,/Observed time windows: 10–15m \(7 purchased\)/);
+ assert.match(html,/Observed time windows: 10–15m/);
+ assert.match(html,/resolved observations/);
+ assert.match(html,/n=1/);
+ assert.doesNotMatch(html,/7 purchased/);
  assert.match(html,/Scroll the table horizontally for the other time columns/);
- assert.match(html,/Purchased 7 · settled 3/);
- assert.match(html,/data-research="favorites-collector-crypto-15m"/);
- assert.doesNotMatch(html,/Observed time windows: <3m/);
 });
 
-test('opening Favorites lazily restores full research without bloating initial workspace',async()=>{
+test('opening Favorites lazily restores event-based research without bloating initial workspace',async()=>{
  const d=fixture(),bot=d.bots.find(b=>b.id==='favorites');bot.experiment.entry_timing=[];
  const detail={dataset:{folder:'favorites'},open:false,isConnected:true},storage=new Map();
  const {context,nodes}=setup(d,{storage,queries:{'details[data-folder]':[detail]}});
- let calls=0;
- context.demoCall=async path=>{
-  if(path==='shadow/research-folder/favorites'){
-   calls++;
-   return {contract:'demo-v1',folder_id:'favorites',at:123,bots:{favorites:{entry_timing:[
-    {series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',cost:'4',net:'.2'}
-   ]}}};
-  }
+ let calls=0;context.demoCall=async path=>{
+  if(path==='shadow/research-folder/favorites'){calls++;return {contract:'demo-v1',folder_id:'favorites',at:123,bots:{favorites:{entry_timing:[
+   {series:bot.series,market_type:'15m_price',clock:'market_close',horizon:'5–10m',
+    price:'.80',contracts:'5',closed:'4',resolved:'4',winners:'3',cost:'4',net:'.2',events:1,event_win_rate:100}
+  ]}}};}
   return {};
  };
- detail.open=true;detail.ontoggle();
- await new Promise(resolve=>setImmediate(resolve));
+ detail.open=true;detail.ontoggle();await new Promise(resolve=>setImmediate(resolve));
  assert.equal(calls,1);
  const html=nodes.get('groups').innerHTML;
- assert.ok(html.includes('80–84¢'));
- assert.ok(html.includes('n=4 settled'));
+ assert.ok(html.includes('80–84¢'));assert.ok(html.includes('n=1'));
  assert.ok(html.includes('High-Probability Favorites · price × time matrix'));
 });
 
