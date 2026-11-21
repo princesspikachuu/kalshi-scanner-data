@@ -232,6 +232,8 @@ def workspace_response(payload,*,compressed=False,request_started=None):
             folder['collector_timed_summary']=aggregate
             from services.paper_demo.shadow.favorite_wide import summarize_wide
             folder['collector_wide_summary']=summarize_wide(folder.get('bots') or {},profiles,favorite_timing_category)
+            from services.paper_demo.shadow.favorite_single import summarize_single
+            folder['collector_single_summary']=summarize_single(folder.get('bots') or {},profiles,favorite_timing_category)
             if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
                 FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
                 print(json.dumps(dict(event='favorites_timed_rollup',
