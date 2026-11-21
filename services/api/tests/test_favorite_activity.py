@@ -74,19 +74,19 @@ class Discovery(unittest.TestCase):
         suite.extra[t]=t;suite.maintain()
         self.assertNotIn(t,e.markets)
 
-    def test_discovery_budget_expands_but_remains_bounded(self):
+    def test_discovery_admits_without_fixed_counts_but_stops_on_processing_load(self):
         suite,_=weather_fixture.WeatherSuite().suite();suite.monitoring=MonitoringBudget()
         # Operational telemetry uses wall time; market timestamps below stay
         # deterministic so this also exercises the two independent clocks.
         started=time.time()-240
         for elapsed in range(0,241,5):suite.monitoring.observe(started+elapsed,0,.01,1)
-        self.assertEqual(suite.monitoring_snapshot(240)['total'],48)
+        self.assertIsNone(suite.monitoring_snapshot(240)['total'])
         e=suite.portfolios['favorites'][0]
         for i in range(22):
             t='KXHIGHNY-'+str(i);market(e,t,close=1000)
             e.markets[t]['weather_category']='weather_daily';suite.extra[t]=t
         self.assertTrue(suite.extra_capacity(['last'],240))
-        self.assertFalse(suite.extra_capacity(['last','overflow'],240))
+        self.assertTrue(suite.extra_capacity(['last','overflow'],240))
         suite.monitoring.observe(time.time(),600,.01,1)
         self.assertFalse(suite.extra_capacity(['last'],245))
 
