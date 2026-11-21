@@ -39,6 +39,7 @@ test('Data Learning panel distinguishes active learning from diagnostics-only an
 
 test('paper dashboard renders four strategy folders, isolated reset buttons and favorites calibration',()=>{
  const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
+ assert.equal((html.match(/class="small favorite-profit-legend"/g)||[]).length,1);
  for(const name of ['Complete-Set Arbitrage','Sequential Spread Trading','High-Probability Favorites','Convexity · Paused'])assert.ok(html.includes(name));
  assert.equal((html.match(/data-folder-reset=/g)||[]).length,4);
  assert.ok(html.includes('Outcome win rate'));assert.ok(html.includes('Current session'));
