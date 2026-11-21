@@ -41,7 +41,7 @@ export function favoriteProfitSignal({purchased,settled,winners,cost}){
 const favoriteProfitClass=signal=>({
  'realized-positive':'profit-positive','realized-negative':'profit-negative'
 })[signal]||'';
-export const favoriteProfitLegendMarkup=()=>'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Positive win margin · 🔴 Negative win margin · blank when margin is unavailable</p>';
+export const favoriteProfitLegendMarkup=(mode='detailed')=>mode==='single'?'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Positive hold P/L · 🔴 Negative hold P/L</p>':'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Positive win margin · 🔴 Negative win margin · blank when margin is unavailable</p>';
 const observationCount=n=>Number.isInteger(Number(n))?String(Number(n)):'—';
 const averageReturn=r=>Number(r.return_observations)>0&&Number.isFinite(Number(r.return_sum))?(100*Number(r.return_sum)/Number(r.return_observations)).toFixed(2)+'%':'—';
 const eventAccuracy=(wins,n)=>n>0?(100*wins/n).toFixed(1)+'%':'—';
@@ -93,17 +93,34 @@ function favoriteResearchGrid(rows=[],options={}){
  }).join('')+'</tr>').join('');
  return clockNote+'<div class="table-scroll"><table class="'+(wide?'favorite-stat-matrix favorite-wide-matrix':'favorite-stat-matrix')+'"><thead><tr><th scope="col">Entry price</th>'+timeLabels.map(t=>'<th scope="col">'+e(t)+(wide?' left':'')+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
+// Single bucket uses event-level backend evidence, never sums overlapping 3x3 cells.
+export function favoriteSingleCellMarkup(sample){
+ const finitePercent=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+ if(!sample)return '<p class="small">Event-level combined evidence is not available yet. Refresh after the API update; existing tables are unchanged.</p>';
+ const n=Number(sample.return_observations)||0,resolved=Number(sample.resolved_events)||0;
+ const mean=finitePercent(sample.average_return_pct)?Number(sample.average_return_pct):null;
+ const error=finitePercent(sample.uncertainty90_pct)?Number(sample.uncertainty90_pct):null;
+ const low=finitePercent(sample.ci90_low_pct)?Number(sample.ci90_low_pct):null;
+ const high=finitePercent(sample.ci90_high_pct)?Number(sample.ci90_high_pct):null;
+ const result=mean===null?'—':(mean>0?'+':'')+mean.toFixed(2)+'%';
+ const uncertainty=error===null?'Not available · fewer than 2 independent return observations':'±'+error.toFixed(2)+' percentage points';
+ const interval=low===null||high===null?'':(' · 90% interval '+low.toFixed(2)+'% to '+high.toFixed(2)+'%');
+ const signal=mean===null?'':mean>0?'profit-positive':mean<0?'profit-negative':'';
+ const win=resolved>0?eventAccuracy(Number(sample.event_wins)||0,resolved):'—';
+ const missing=Number(sample.incomplete_events)||0,estimated=Number(sample.estimated_return_observations)||0;
+ return '<div class="table-scroll"><table class="favorite-stat-matrix favorite-single-matrix"><thead><tr><th scope="col">All entry prices × all times</th></tr></thead><tbody><tr><td class="stat-observed '+signal+'"><strong>'+e(result)+' Hold P/L</strong><small>90% P/L uncertainty: '+e(uncertainty)+'</small><small>n='+e(String(n))+' distinct event returns · outcome win rate '+e(win)+(resolved!==n?' ('+e(String(resolved))+' resolved)':'')+'</small><details><summary>Evidence details</summary><p class="small">'+e(interval?interval.slice(3):'90% interval unavailable until at least 2 independent returns.')+' · '+e(String(estimated))+' estimated return observations · '+e(String(missing))+' resolved events without complete hold returns. A repeated event across entry buckets contributes one cost-weighted hold return. Returns ignore early exits and include entry fees.</p></details></td></tr></tbody></table></div>';
+}
 const researchNote='<p class="small">Counts are distinct verified resolved events per price/time cohort, not contracts. Ten contracts from one event count as one observation. One event may appear in multiple cohorts. Hold-only P/L % gives each resolved event equal weight, after fees. Known outcomes assume holding to settlement, ignoring exit proceeds and exit fees. Unknown outcomes are omitted. Estimated historical returns use average entry fees/sizing; account balances retain actual trades.</p>';
 export function favoriteCategoryResearchMarkup(group,open=new Set(),options={}){
  const rows=options.mode==='wide'?(options.summary?.rows?.[group.id]||[]):favoriteCategoryRows(Array.isArray(group.aggregated_entry_timing)?group.aggregated_entry_timing:group.bots.flatMap(b=>b.experiment?.entry_timing||[]),true);
  const key='favorites-category-'+group.id;
- return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${group.research_kind==='round_trips'?'<p class="small">Both contract directions are combined by entry percentage and time. Win rate measures profitable completed trades, including fees; it is not event prediction accuracy. Data includes all collected history.</p>':researchNote}${group.research_kind==='round_trips'?researchTable(rows,true):favoriteResearchGrid(rows,{mode:options.mode,timeBuckets:options.summary?.coverage?.[group.id]?.time_buckets})}</details>`;
+ return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>Combined data · time × percentage tier · ${e(group.label)}</summary><p class="small">Combined across ${group.bots.length} bots in this category.</p>${group.research_kind==='round_trips'?'<p class="small">Both contract directions are combined by entry percentage and time. Win rate measures profitable completed trades, including fees; it is not event prediction accuracy. Data includes all collected history.</p>':researchNote}${group.research_kind==='round_trips'?researchTable(rows,true):options.mode==='single'?favoriteSingleCellMarkup(options.singleSummary?.rows?.[group.id]):favoriteResearchGrid(rows,{mode:options.mode,timeBuckets:options.summary?.coverage?.[group.id]?.time_buckets})}</details>`;
 }
 export function favoriteResearchMarkup(bots,open=new Set(),options={}){
  const contents=bots.map(bot=>{
   const rows=options.mode==='wide'?(options.summary?.by_bot?.[bot.id]?.rows||[]):favoriteCategoryRows(bot.experiment?.entry_timing);
   const key='favorites-research-'+bot.id;
-  return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed tiers</summary>${favoriteResearchGrid(rows,{mode:options.mode,timeBuckets:options.summary?.coverage?.[marketTypeGroups([bot])[0]?.id]?.time_buckets})}</details>`;
+  return `<details class="favorite-research" data-research="${e(key)}" ${open.has(key)?'open':''}><summary>${e(bot.name)} · ${e(bot.series)} · ${rows.length} observed tiers</summary>${options.mode==='single'?favoriteSingleCellMarkup(options.singleSummary?.by_bot?.[bot.id]):favoriteResearchGrid(rows,{mode:options.mode,timeBuckets:options.summary?.coverage?.[marketTypeGroups([bot])[0]?.id]?.time_buckets})}</details>`;
  }).join('');
  return `<div class="favorite-research">${researchNote}${contents}</div>`;
 }
@@ -193,7 +210,17 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  sections+'</section>';
 }
 
-export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode!=='wide'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button><p class="small">Win margin = win rate − entry cost with fees. Example: 90% wins − 85% cost = +5 percentage points. Uncertainty shows how far the win rate could vary at 90% confidence; compare it with the advantage. Related events can be correlated.</p></div>`;
+export const favoriteTableSettingsMarkup=mode=>`<div class="favorite-table-settings" role="group" aria-label="Favorites table settings"><strong>Table settings</strong> <button class="secondary" data-favorite-table="detailed" aria-pressed="${mode==='detailed'}">Detailed</button> <button class="secondary" data-favorite-table="wide" aria-pressed="${mode==='wide'}">Wider · 3 × 3</button> <button class="secondary" data-favorite-table="single" aria-pressed="${mode==='single'}">Single bucket</button><p class="small">${mode==='single'?'P/L = mean held-to-settlement return across distinct events. 90% uncertainty estimates the range for the average return, not the win rate. Correlated events can make this optimistic.':'Win margin = win rate − entry cost with fees. 90% uncertainty describes the win rate, not hold P/L. Related events can be correlated.'}</p></div>`;
+export function favoriteSingleOverviewMarkup(bots=[],summary=null,open=new Set()){
+ const groups=marketTypeGroups(bots);
+ const sections=groups.map(group=>{
+  const key='favorites-collector-'+group.id,stat=summary?.rows?.[group.id];
+  const sports=group.id==='sports'?group.bots.map(bot=>
+   '<div class="favorite-single-sport"><h4>'+e(bot.name)+'</h4>'+favoriteSingleCellMarkup(summary?.by_bot?.[bot.id])+'</div>').join(''):'';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(group.label)+'</summary>'+favoriteSingleCellMarkup(stat)+sports+'</details>';
+ }).join('');
+ return '<section class="favorite-collector-overview favorite-single-overview"><h3>High-Probability Favorites · single bucket</h3><p class="small">All verified event-level held returns pooled across entry prices and times, including records that cannot be placed in the 3 × 3 table. Repeated events count once per table.</p>'+sections+'</section>';
+}
 export function favoriteWideOverviewMarkup(bots,summary,open=new Set()){
  const labels=new Map(marketTypeGroups(bots).map(g=>[g.id,g.label]));
  const categories=[...new Set([...labels.keys(),...Object.keys(summary?.rows||{})])];
@@ -217,7 +244,8 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set()){
  return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · wider 3 × 3</h3><p class="small">Distinct resolved events · hold-only return after fees · 90% confidence intervals. Wider bins pool different entry states.</p>'+sections+'</section>';
 }
 
-export function favoriteTimingMarkup(rows,wideRows=null){
+export function favoriteTimingMarkup(rows,wideRows=null,options={}){
+ if(options.mode==='single')return '<details class="favorite-timing"><summary>All entries · single bucket</summary>'+favoriteSingleCellMarkup(options.single)+'</details>';
  if(wideRows!==null)return `<details class="favorite-timing"><summary>Wider entry price × time thirds</summary>${favoriteResearchGrid(wideRows,{mode:'wide'})}</details>`;
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
  return `<details class="favorite-timing"><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${favoriteResearchGrid(favoriteCategoryRows(rows))}</details>`;
