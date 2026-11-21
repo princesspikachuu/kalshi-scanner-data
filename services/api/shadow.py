@@ -375,11 +375,12 @@ def install_shadow(app,auth,mutate,pool):
             p=row['parameters'];row['parameters']=dict(p,name=p.get('name') or p.get('series') or p.get('id') or 'Unnamed bot')
         all_profiles.sort(key=lambda r:r['parameters']['name'])
         profiles=[r for r in all_profiles if r['parameters'].get('strategy','convexity')=='convexity']
-        folder_rows=store.rows('shadow/folder/',24)
+        folder_rows=store.indexed_control_rows('shadow/folder/',24)
         reset_at=next((r['progress'].get('reset_at',0) for r in folder_rows if r['parameters']['id']=='convexity'),0)
         revisions={r['parameters']['id']:r['parameters']['revision'] for r in profiles}
         now=time.time()
         scope="(progress->>'at')::numeric>=%s AND (%s OR (progress->>'bot_revision')::integer=coalesce((%s::jsonb->>(progress->>'bot_id'))::integer,-1))"
+        historical_sql_started=time.monotonic()
         with pool.connection() as c:
             latest_rows=c.execute("SELECT DISTINCT ON (progress->>'bot_id') progress FROM research_job WHERE idempotency_key>='demo/shadow/report/' AND idempotency_key<'demo/shadow/report/zzzz' AND "+scope+" ORDER BY progress->>'bot_id',(progress->>'at')::numeric DESC",(reset_at,latest=='full',Jsonb(revisions))).fetchall()
             metrics=c.execute("""WITH r AS (
@@ -417,6 +418,9 @@ def install_shadow(app,auth,mutate,pool):
                 WHERE (full_history OR %s OR (p->>'bot_revision')::integer=coalesce((%s::jsonb->>(p->>'bot_id'))::integer,-1))
                 AND (seconds IS NULL OR (p->>'at')::numeric>=%s-seconds)
                 GROUP BY p->>'bot_id',period""",(list(current),snapshot_at,reset_at,Jsonb(current),latest=='full',Jsonb(revisions),snapshot_at)).fetchall()
+        historical_sql_ms=(time.monotonic()-historical_sql_started)*1000
+        if historical_sql_ms>1000:
+            print(json.dumps(dict(event='shadow_workspace_query_cost',historical_sql_ms=round(historical_sql_ms,1),source='legacy_report_history')),flush=True)
         mapped={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in metrics}
         actual={(m['bot'],m['period']):{k:v for k,v in m.items() if k not in ('bot','period')} for m in financial}
         reports={r['progress'].get('bot_id'):r['progress'] for r in latest_rows}
@@ -469,9 +473,14 @@ def install_shadow(app,auth,mutate,pool):
             elif f['id']=='convexity':f['accounting']=money
             f['learning']=learning_diagnostics(f['id'],exp)
             folders.append(f)
+        performance_started=time.monotonic()
         folder_performance(pool,folders,snapshot_at)
+        folder_ms=(time.monotonic()-performance_started)*1000
         bot_performance(pool,bots,folders,snapshot_at,status.get('positions',[]))
-        commands=store.rows('shadow/command/',100)
+        bot_ms=(time.monotonic()-performance_started)*1000-folder_ms
+        if max(folder_ms,bot_ms)>1000:
+            print(json.dumps(dict(event='shadow_workspace_query_cost',folder_performance_ms=round(folder_ms,1),bot_performance_ms=round(bot_ms,1))),flush=True)
+        commands=store.indexed_control_rows('shadow/command/',100)
         return workspace_response(dict(contract='demo-v1',environment='demo',installed=True,real_orders_enabled=False,
             engine=marker['progress'],bots=bots,status=status,folders=folders,
             accounting={k:money[k] for k in ('schema','at','portfolio','quality')} if money else None,version=latest,
