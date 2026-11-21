@@ -26,6 +26,26 @@ class DemoPostgres(unittest.TestCase):
         challenge=self.client.get('/auth/challenge').json();self.client.post('/auth/google',json=dict(credential='opaque',nonce=challenge['nonce'],csrf_token=challenge['csrf_token']))
         self.client.headers['x-csrf-token']=self.client.cookies[CSRF]
     def tearDown(self):self.client.close()
+    def test_indexed_folder_and_command_catalogs_preserve_all_control_rows(self):
+        from uuid import uuid4
+        # The live database is history-heavy; indexed lookups must still return
+        # the complete, stable namespace without depending on UUID ordering.
+        for n in range(5):
+            self.demo.put('shadow/folder/f'+str(n),dict(order=n),
+                          parameters=dict(id='f'+str(n),order=n))
+            self.demo.put('shadow/command/'+str(n).zfill(2),
+                          dict(done=False),parameters=dict(amount_cents=n+1))
+        self.demo.put('shadow/report/unrelated',dict(net=0))
+        folders=self.demo.indexed_control_rows('shadow/folder/',24)
+        commands=self.demo.indexed_control_rows('shadow/command/',100)
+        self.assertEqual([r['parameters']['id'] for r in folders],
+                         ['f0','f1','f2','f3','f4'])
+        self.assertEqual([r['parameters']['amount_cents'] for r in commands],
+                         [1,2,3,4,5])
+        self.assertEqual(len(self.demo.indexed_control_rows('shadow/folder/',2)),2)
+        with self.assertRaises(ValueError):
+            self.demo.indexed_control_rows('shadow/event/',10)
+
     def test_owner_can_inspect_shadow_archive_without_r2_data_or_writes(self):
         from uuid import uuid4
         from psycopg.types.json import Jsonb
