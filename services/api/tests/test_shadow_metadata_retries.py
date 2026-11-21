@@ -118,6 +118,21 @@ class MetadataRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.api.fetch.await_count,2)
         self.assertFalse(restored.records)
 
+    async def test_crypto_15m_roll_checks_current_contract_before_future_sleep(self):
+        run=self.fixture();run.profiles=[dict(series='KXBTC15M')]
+        run.experiments=SimpleNamespace(discovery_wakes={})
+        run.known_active={'KXBTC15M'}
+        now=time.time()
+        run.engine.markets['KXBTC15M-prior']=dict(close=now-1)
+        run.api.fetch=AsyncMock(return_value=dict(markets=[]))
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        # At a live rolling boundary, do not spend extra reads or sleep for
+        # a later prelisted slot while the current slot may still appear.
+        run.api.fetch.assert_awaited_once()
+        self.assertNotIn('fifteen:KXBTC15M',run.experiments.discovery_wakes)
+        self.assertEqual(run.discovery_retry_at['KXBTC15M'],now+2)
+
     async def test_index_15m_weekend_uses_session_hint_without_exchange_reads(self):
         run=self.fixture();run.profiles=[dict(series='KXINX15M')]
         run.experiments=SimpleNamespace(discovery_wakes={})
