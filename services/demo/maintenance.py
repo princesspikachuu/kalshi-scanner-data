@@ -6,6 +6,7 @@ from tempfile import TemporaryFile
 from uuid import uuid4
 from psycopg.types.json import Jsonb
 from services.api.demo_models import Policy
+from services.demo.backup_limit import BackupSnapshotLimit
 
 MAX_OBJECT=4*1024*1024
 
@@ -58,6 +59,14 @@ def failure_details(error,stage):
                 'PreconditionFailed','RequestTimeout','InternalError'):result['provider_code']=code
     state=getattr(error,'sqlstate',None)
     if isinstance(state,str) and len(state)==5 and state.isalnum():result['sqlstate']=state
+    if stage=='backup' and isinstance(error,BackupSnapshotLimit):
+        # The constructor enforces static scope names and integer counters.
+        # Report only aggregate capacity, never user rows or any SQL text.
+        result.update(reason_code=('backup_row_capacity' if error.kind=='rows'
+                                   else 'backup_byte_capacity'),
+                      backup_scope=error.scope,staged_records=error.records,
+                      staged_bytes=error.staged_bytes,
+                      capacity_unit=error.kind,capacity_limit=error.limit)
     return result
 
 def storage_measurement(size,policy,env,now,previous=None):
