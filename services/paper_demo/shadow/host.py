@@ -29,6 +29,7 @@ from .maker_quote_policy import initialize_quote_policy
 from .favorite_statistics_install import initialize_statistics_favorites
 from .favorite_collection_quality import collection_quality
 from .position_health import position_settlement_health
+from .settlement_recovery import recover_positions
 
 LOG=logging.getLogger('shadow-host')
 
@@ -689,7 +690,7 @@ class HostedRun(ForwardRun):
         from .loop_monitor import LoopMonitor
         self.loop_monitor=LoopMonitor();self.loop_monitor.start()
         coroutines=[self.loop_monitor.heartbeat(),scoped('discovery',self.discover()),self.kalshi(),self.spot(),self.clock(),self.consume(),self.control(),scoped('fees',self.fee_maintenance())]
-        if hasattr(self,'experiments'):coroutines.extend([scoped('complete_set',discover_sets(self)),scoped('weather',discover_weather(self)),scoped('sports',discover_sports(self)),scoped('hourly',discover_hourly(self)),scoped('market_maker',discover_maker(self))])
+        if hasattr(self,'experiments'):coroutines.extend([scoped('position_settlement',recover_positions(self)),scoped('complete_set',discover_sets(self)),scoped('weather',discover_weather(self)),scoped('sports',discover_sports(self)),scoped('hourly',discover_hourly(self)),scoped('market_maker',discover_maker(self))])
         workers=[asyncio.create_task(c) for c in coroutines]
         waiter=asyncio.create_task(self.done.wait())
         clean_stop=False

@@ -156,7 +156,8 @@ def favorite_collector_timed_totals(folder_bots,profiles):
     Retain source market groups, contract accounting and missing-outcome status.
     Individual sports bot rows are provided separately, not double-counted.
     """
-    totals={};coverage={};per_bot={}
+    from services.paper_demo.shadow.observation_returns import merge, summarize
+    totals={};coverage={};per_bot={};returns={}
     def decimal(value):
         try:
             n=D(str(value if value is not None else 0))
@@ -187,6 +188,7 @@ def favorite_collector_timed_totals(folder_bots,profiles):
             market_type=row.get('market_type') or kind
             key=(kind,str(market_type),str(clock),horizon,cents)
             cell=totals.setdefault(key,{field:D(0) for field in FAVORITE_TIMING_FIELDS})
+            merge(returns.setdefault(key,{}),row.get('return_events',{}))
             for field in FAVORITE_TIMING_FIELDS:
                 if field=='event_wins':
                     # An event is one resolved observation regardless of filled
@@ -200,7 +202,8 @@ def favorite_collector_timed_totals(folder_bots,profiles):
     for (kind,market_type,clock,horizon,cents),value in totals.items():
         rows.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
             horizon=horizon,price=str(D(cents)/100),
-            **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS}))
+            **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS},
+            **summarize(returns.get((kind,market_type,clock,horizon,cents),{}))))
     for items in rows.values():items.sort(key=lambda r:(D(r['price']),r['horizon'],r['clock']))
     return dict(rows=rows,coverage={kind:dict(bots_total=cov['bots_total'],
         bots_with_rows=cov['bots_with_rows'],purchased=str(cov['purchased']),

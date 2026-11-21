@@ -85,3 +85,25 @@ class EntryTiming(unittest.TestCase):
         sell=e.place(o.ticker,'yes','sell',D(5),D('.01'),maker=False)
         e.fill(e.orders[sell],D(5),D('.90'),'TEST')
         self.assertEqual(D(rows(b.exit_evidence.cells)[0]['holding_seconds']),D(5)*99)
+
+    def test_return_attribution_includes_partial_exit_fees_and_survives_serialization(self):
+        e,b,book,o=self.setup_bot(close=1000,fees=True)
+        e.fill(o,D(10),o.price,'TEST')
+        book.levels={'yes':{D('.85'):D(100)},'no':{D('.14'):D(100)}}
+        e.place(o.ticker,'yes','sell',D(4),D('.01'),maker=False)
+        e.advance(202);book.at=202
+        self.assertEqual(rows(b.exit_evidence.cells)[0]['return_observations'],0)
+        self.settle(e,b,1001)
+        result=rows(b.exit_evidence.cells)[0]
+        self.assertEqual(result['return_observations'],1)
+        self.assertEqual(D(result['average_return_pct']),100*D(result['net'])/D(result['closed_cost']))
+        self.assertEqual(rows(json.loads(json.dumps(b.exit_evidence.cells))),rows(b.exit_evidence.cells))
+
+    def test_legacy_partly_closed_chunk_does_not_invent_missing_return(self):
+        e,b,book,o=self.setup_bot(close=1000)
+        e.fill(o,D(10),o.price,'TEST')
+        chunk=b.attempts[o.ticker]['entry_fills'][0]
+        chunk.update(remaining='6',remaining_cost='5.4')
+        chunk.pop('return_net');chunk.pop('return_closed')
+        self.settle(e,b,1001)
+        self.assertEqual(rows(b.exit_evidence.cells)[0]['return_observations'],0)
