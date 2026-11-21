@@ -506,7 +506,16 @@ class HostedRun(ForwardRun):
                     self.audit.command_key=row['idempotency_key']
                     if command.get('action')=='reset':
                         self.reset_folder(command['folder_id'])
-                    else:self.engine.refill(D(command['amount_cents'])/100)
+                    elif command.get('action') in (None,'refill'):
+                        # Legacy commands without a folder target Convexity.
+                        # Other wallets are independent: this never rewrites
+                        # their orders, balances, models, or P/L history.
+                        folder=command.get('folder_id','convexity')
+                        target=(self.engine if folder=='convexity'
+                                else self.experiments.portfolios[folder][0])
+                        target.refill(D(command['amount_cents'])/100)
+                    else:
+                        raise ValueError('Unsupported shadow wallet command')
                     self.audit.command_key=None
                 now=time.time()
                 active=[t for t in self.selected.values() if t in self.engine.markets and self.engine.markets[t]['close']>now]
