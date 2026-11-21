@@ -113,7 +113,11 @@ def collect_snapshot(pool):
                     if len(page)<PAGE_SIZE:break
             singletons=connection.execute(SINGLETON_QUERY,(list(SINGLETONS),)).fetchall()
             for record in singletons:append(record)
-            assedef collect_snapshot_spooled(pool):
+            assert_no_hidden_control_tail(connection)
+    return records
+
+
+def collect_snapshot_spooled(pool):
     """Stage a whole consistent snapshot into one unlinked local temporary file.
 
     Only one <=2MiB chunk is held in Python memory. PostgreSQL's repeatable
@@ -192,11 +196,6 @@ def collect_snapshot(pool):
         flush();file.seek(0)
         return dict(file=file,records=count,parts=parts,sha256=aggregate.hexdigest(),
                     staged_bytes=total_bytes)
-    except Exception:
-        file.close()
-        raise
-
-
     except Exception:
         file.close()
         raise
