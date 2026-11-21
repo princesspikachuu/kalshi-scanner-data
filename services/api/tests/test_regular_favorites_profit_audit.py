@@ -156,6 +156,21 @@ class RegularFavoritesProfitAuditTests(unittest.TestCase):
             self.assertEqual(view['return_observations'],1)
             self.assertEqual(D(view['average_return_pct']),25)
 
+    def test_conservative_correlated_event_label_does_not_override_confirmed_cash_payout(self):
+        # The same venue event can contain several thresholds. A conservative
+        # event-level loss label must not overwrite this entry's paid side.
+        row=self.row(contracts='4',cost='3',net='-.40',
+            outcomes={'grouped-thresholds':0},
+            returns={'grouped-thresholds':dict(cost='3',net='-.40')},
+            policy='all_executions')
+        row.update(resolved='4',winners='4')
+        summary=self.aggregate([row])
+        self.assertEqual(D(summary['events']),1)
+        self.assertEqual(D(summary['event_wins']),0)
+        self.assertEqual(summary['return_observations'],1)
+        self.assertEqual(D(summary['average_return_pct']),D(100)/D(3),
+            'cash payout is known to be a win despite conservative event label')
+
     def test_bad_legacy_evidence_never_invents_a_profit_or_breaks_workspace(self):
         rows=[
             self.row(outcomes={'bad-outcome':'unknown'},
