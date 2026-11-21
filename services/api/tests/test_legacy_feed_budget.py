@@ -59,9 +59,11 @@ class LegacyFeeReadinessScope(unittest.TestCase):
     def test_idle_selected_markets_do_not_reparse_fees_or_count_valid_books(self):
         run=self.fixture()
         balance=run.engine.wallet.cash
+        run.legacy_ticker_needed=Mock(side_effect=AssertionError('idle owner checks must be bypassed'))
         active,books,verified,skipped=run.legacy_health_readiness(1000)
         self.assertEqual((active,books,verified,skipped),([],[],0,2))
         run.verified_fees.schedule.assert_not_called()
+        run.legacy_ticker_needed.assert_not_called()
         self.assertEqual(run.engine.wallet.cash,balance)
         self.assertTrue(run.engine.books['SHARED'].valid)
         self.assertEqual(len(run.selected),2)
