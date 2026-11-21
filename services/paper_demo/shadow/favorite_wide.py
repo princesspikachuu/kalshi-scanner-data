@@ -19,11 +19,11 @@ def _label(seconds):
     return f'{minutes:.1f}'.rstrip('0').rstrip('.')+'m'
 
 def summarize_wide(folder_bots,profiles,category_for):
-    sources={};bounds={};by_bot={}
+    sources={};bounds={};by_bot={};specs={}
     for bot_id,bot in folder_bots.items():
         profile=profiles.get(str(bot_id),{})
         if not profile:continue
-        category=category_for(profile)
+        category=category_for(profile);sources.setdefault(category,[]);specs[category]=profile
         for row in bot.get('entry_timing',[]):
             sources.setdefault(category,[]).append((str(bot_id),profile,row))
             if duration(profile) is None:
@@ -34,7 +34,7 @@ def summarize_wide(folder_bots,profiles,category_for):
                     bounds[category]=(min(old[0],min(times)),max(old[1],max(times)))
     output={};coverage={}
     for category,items in sources.items():
-        nominal=duration(items[0][1]);lo,hi=(0,nominal) if nominal else bounds.get(category,(0,0))
+        nominal=duration(specs[category]);lo,hi=(0,nominal) if nominal else bounds.get(category,(0,0))
         report=dict(window_start_seconds=lo,window_end_seconds=hi,time_basis='market_duration' if nominal else 'observed_entry_window',
                     excluded_legacy_observations=0,excluded_price_observations=0)
         coverage[category]=report
@@ -82,7 +82,7 @@ def summarize_wide(folder_bots,profiles,category_for):
                 # One event receives one vote for both outcome accuracy and
                 # average entry. Multi-contract positions do not inflate n.
                 entry=sum((v['cost']/v['quantity'] for v in events.values() if v['quantity']>0),D(0))
-                result.append(dict(series='combined',market_type=category,clock='market_close',
+                result.append(dict(series='combined',market_type=category,clock='estimated_game_end' if specs[category].get('asset')=='sports' else 'market_close',
                     price=str(PRICES[band][0]),band=PRICES[band][2],horizon=labels[slot],time_slot=slot,wide=True,
                     events=n,event_wins=wins,event_win_rate=100*wins/n if n else None,
                     contracts=str(n),cost=str(entry),closed=str(len(returns)),net=str(sum((D(v['net']) for v in returns.values()),D(0))),

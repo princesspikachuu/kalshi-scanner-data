@@ -60,3 +60,8 @@ class WideBuckets(unittest.TestCase):
         result=self.summary([row])['rows']['category'][0]
         self.assertEqual(result['event_wins'],0)
         self.assertEqual(D(result['average_return_pct']),D(100)/3)
+
+    def test_empty_hourly_category_still_shows_its_three_known_time_columns(self):
+        result=self.summary([],series='KXUSDCADAH',asset='hourly')
+        self.assertEqual(result['rows']['category'],[])
+        self.assertEqual(result['coverage']['category']['time_buckets'],['0m–20m','20m–40m','40m–60m'])
