@@ -514,7 +514,7 @@ class HostedRun(ForwardRun):
                 control_started=time.monotonic()
                 await self.audit.durable_io(self.guard)
                 was_suspended=getattr(self,'_suspended_entry_bots',None) is not None
-                restored=restore_prior_entries(self)
+                restored=restore_prior_entries(self,all_rows)
                 if was_suspended:
                     print(json.dumps(dict(event='shadow_control_read_restored',
                         running_bots_restored=restored,real_orders_enabled=False)),flush=True)
