@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,winConfidence90,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -21,7 +21,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes,listeners};
 }
 test('Data Learning panel distinguishes active learning from diagnostics-only and operational strategies',()=>{
@@ -921,6 +921,93 @@ test('collector matrix preserves category research and does not invent pending o
 });
 
 
+test('Favorites bucket stars have stable coordinates and accessible pressed state',()=>{
+ const key=favoriteBucketKey('collector:crypto-15m','detailed','80–84¢','5–10m');
+ const stars=new Set([key]);
+ assert.notEqual(key,favoriteBucketKey('collector:crypto-hourly','detailed','80–84¢','5–10m'));
+ assert.notEqual(key,favoriteBucketKey('market:btc','detailed','80–84¢','5–10m'));
+ assert.notEqual(key,favoriteBucketKey('collector:crypto-15m','wide','80–84¢','5–10m'));
+ assert.notEqual(key,favoriteBucketKey('collector:crypto-15m','detailed','80–84¢','10–15m'));
+ const selected=favoriteBucketStarMarkup('collector:crypto-15m','detailed','80–84¢','5–10m',stars);
+ assert.match(selected,/data-favorite-star="/);
+ assert.match(selected,/aria-pressed="true"/);
+ assert.match(selected,/class="favorite-bucket-star is-starred"/);
+ assert.match(selected,/★/);
+ assert.match(selected,/80–84¢/);
+ const normal=favoriteBucketStarMarkup('collector:crypto-15m','detailed','80–84¢','10–15m',stars);
+ assert.match(normal,/aria-pressed="false"/);
+ assert.match(normal,/☆/);
+ assert.equal(favoriteBucketStarMarkup('', 'detailed','80–84¢','5–10m',stars),'');
+});
+
+test('stars appear on filled and empty Detailed, Wider, Single and Statistics favorites cells',()=>{
+ const row={series:'KXBTC15M',market_type:'15m_price',clock:'market_close',
+   horizon:'5–10m',price:'.80',contracts:1,closed:1,resolved:1,winners:1,
+   events:1,event_wins:1,cost:'.80',return_sum:'.20',return_observations:1};
+ const bot={id:'btc',name:'Bitcoin',asset:'crypto',series:'KXBTC15M',experiment:{entry_timing:[row]}};
+ const a=favoriteBucketKey('collector:crypto-15m','detailed','80–84¢','5–10m');
+ const b=favoriteBucketKey('collector:crypto-15m','wide','78–<86¢','1');
+ const c=favoriteBucketKey('collector:crypto-15m','single','all','all');
+ const d=favoriteBucketKey('statistics:15m_price','statistics','85-89','5–10m');
+ const e=favoriteBucketKey('market:btc','detailed','80–84¢','5–10m');
+ const stars=new Set([a,b,c,d,e]);
+ const collector=favoriteCollectorOverviewMarkup([bot],new Set(),{starredBuckets:stars});
+ assert.match(collector,/favorite-bucket-star is-starred/);
+ assert.match(collector,/stat-empty/);
+ assert.ok(collector.includes('data-favorite-star="'+a+'"'));
+ const wide=favoriteWideOverviewMarkup([bot],{
+   price_buckets:['70–<78¢','78–<86¢','86–95¢'],
+   coverage:{'crypto-15m':{time_buckets:['Early','Middle','Late']}},
+   rows:{'crypto-15m':[{band:'78–<86¢',time_slot:1,events:1,event_wins:1,
+      contracts:1,cost:'.80',return_sum:'.20',return_observations:1}]}
+ },new Set(),stars);
+ assert.ok(wide.includes('data-favorite-star="'+b+'"'));
+ assert.match(wide,/favorite-bucket-star is-starred/);
+ assert.match(wide,/stat-empty/);
+ const sample={resolved_events:1,event_wins:1,return_observations:1,
+   average_return_pct:'25',uncertainty90_pct:null};
+ const single=favoriteSingleOverviewMarkup([bot],{rows:{'crypto-15m':sample},by_bot:{}},new Set(),stars);
+ assert.ok(single.includes('data-favorite-star="'+c+'"'));
+ assert.match(single,/favorite-bucket-star is-starred/);
+ const timing=favoriteTimingMarkup([row],null,{mode:'detailed',starScope:'market:btc',starredBuckets:stars});
+ assert.ok(timing.includes('data-favorite-star="'+e+'"'));
+ const stat=favoriteStatisticsMatrixMarkup({min_samples:20,matrix:[{
+   market_type:'15m_price',price_buckets:['80-84','85-89'],time_buckets:['5–10m'],
+   cells:[{price_bucket:'80-84',horizon:'5–10m',samples:2,win_rate:.5,lower:.1,
+     level:'market_type_price_time',fallback_level:'insufficient_samples',
+     eligibility:'insufficient_samples'}]
+ }]},new Set(),null,stars);
+ assert.ok(stat.includes('data-favorite-star="'+d+'"'));
+ assert.match(stat,/No settled events/);
+ assert.match(stat,/favorite-bucket-star is-starred/);
+});
+
+test('star toggles persist across redraw, reload and switching Favorites table settings',()=>{
+ const d=fixture(),key=favoriteBucketKey('collector:crypto-15m','single','all','all');
+ const storage=new Map([['moneytree-favorite-table-mode','single']]);
+ const updates=[],button={dataset:{favoriteStar:key,favoriteStarLabel:'all prices · all times research bucket'},
+   setAttribute:(name,value)=>updates.push([name,value]),
+   classList:{toggle(name,on){updates.push([name,on])}}};
+ const {nodes,context}=setup(d,{storage,queries:{'[data-favorite-star]':[button]}});
+ assert.match(nodes.get('groups').innerHTML,/Single bucket/);
+ let prevented=false,stopped=false;
+ const click={preventDefault(){prevented=true},stopPropagation(){stopped=true}};
+ button.onclick(click);
+ assert.equal(prevented,true);assert.equal(stopped,true);
+ assert.equal(button.textContent,'★');
+ assert.equal(storage.get('moneytree-favorites-starred-v1'),JSON.stringify([key]));
+ assert.ok(updates.some(([name,value])=>name==='aria-pressed'&&value==='true'));
+ assert.match(setup(d,{storage}).nodes.get('groups').innerHTML,/favorite-bucket-star is-starred/);
+ storage.set('moneytree-favorite-table-mode','detailed');
+ vm.runInContext('draw()',context);
+ storage.set('moneytree-favorite-table-mode','single');
+ const restored=setup(d,{storage}).nodes.get('groups').innerHTML;
+ assert.match(restored,/favorite-bucket-star is-starred/);
+ button.onclick(click);
+ assert.equal(button.textContent,'☆');
+ assert.equal(storage.get('moneytree-favorites-starred-v1'),'[]');
+ assert.ok(updates.some(([name,value])=>name==='aria-pressed'&&value==='false'));
+});
 test('Favorites table setting switches views and persists across reload without changing trading controls',()=>{
  const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
  folder.collector_wide_summary={price_buckets:['70–<78¢','78–<86¢','86–95¢'],
