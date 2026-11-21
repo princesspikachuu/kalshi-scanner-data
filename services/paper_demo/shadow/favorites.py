@@ -51,13 +51,16 @@ class FavoritesStrategy(ConvexityStrategy):
                  f"{favorite_timing.horizon(float(chunk.get('seconds_to_event_end',chunk.get('seconds_to_market_close',0))))}|"
                  f"{chunk.get('clock','market_close')}"
                  for chunk in a.get('entry_fills',[]) if D(chunk.get('quantity','0'))>0}
-        if a.get('first') and not a.get('entry_fills'):
-            # Older restored positions can precede actual-fill cohort storage.
-            # Their saved entry signal still describes the original bucket;
-            # never treat that held inventory as an empty research bucket.
+        if a.get('first') and not a.get('entry_fills') and not a.get('legacy_filled_bucket'):
+            # An older restored held lot may predate fill-cohort storage.
+            # Capture its original saved bucket once, before new bids update
+            # entry_key; keep that bucket when newer recorded cohorts appear.
             parts=str(a.get('entry_key','')).split('|')
             if len(parts)>=6 and parts[-3].isdigit() and parts[-4] in ('yes','no'):
-                buckets.add(f"{parts[-4]}|{price_bucket(D(parts[-3])/100)}|{parts[-2]}|{parts[-1]}")
+                a['legacy_filled_bucket']=f"{parts[-4]}|{price_bucket(D(parts[-3])/100)}|{parts[-2]}|{parts[-1]}"
+            else:
+                a['legacy_bucket_unknown']=True
+        if a.get('legacy_filled_bucket'):buckets.add(a['legacy_filled_bucket'])
         return buckets
 
     def research_inventory_cap(self):
@@ -156,7 +159,8 @@ class FavoritesStrategy(ConvexityStrategy):
     def offer_distinct_bucket(self,ticker,m,a,lots,q,active=None,pending=None):
         if q['mode']!='paper_exploration':return 'duplicate'
         bucket=self.research_bucket(ticker,a['side'],q['price'])
-        if a.get('first') and not a.get('entry_fills') and not self.filled_buckets(a):
+        if a.get('first') and not a.get('entry_fills'):self.filled_buckets(a)
+        if a.get('legacy_bucket_unknown'):
             a['last_repeat_suppression']=dict(reason='legacy_filled_bucket_unknown',signal=bucket,at=self.e.now)
             return 'blocked'
         if active is None or pending is None:active,pending=self.active_buckets(ticker,a)
