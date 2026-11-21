@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,winConfidence90,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,winConfidence90,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -21,7 +21,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,winConfidence90,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes,listeners};
 }
 test('Data Learning panel distinguishes active learning from diagnostics-only and operational strategies',()=>{
@@ -767,6 +767,71 @@ test('Favorites table setting switches views and persists across reload without 
  button.dataset.favoriteTable='detailed';button.onclick();
  assert.equal(storage.get('moneytree-favorite-table-mode'),'detailed');
  assert.doesNotMatch(nodes.get('groups').innerHTML,/<h3>High-Probability Favorites · wider/);
+});
+
+test('single bucket combines resolved-event hold P/L and 90% ROI uncertainty without changing other views',()=>{
+  const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
+  folder.collector_single_summary={rows:{'crypto-15m':{
+    resolved_events:3,event_wins:2,return_observations:2,
+    average_return_pct:'4.2',uncertainty90_pct:'1.8',ci90_low_pct:'2.4',
+    ci90_high_pct:'6.0',incomplete_events:1,estimated_return_observations:0
+  }},by_bot:{favorites:{
+    resolved_events:3,event_wins:2,return_observations:2,
+    average_return_pct:'4.2',uncertainty90_pct:'1.8',ci90_low_pct:'2.4',
+    ci90_high_pct:'6.0',incomplete_events:1,estimated_return_observations:0
+  }}};
+  const button={dataset:{favoriteTable:'single'}},storage=new Map();
+  const {nodes}=setup(d,{storage,queries:{'[data-favorite-table]':[button]}});
+  assert.match(nodes.get('groups').innerHTML,/Wider · 3 × 3/);
+  assert.match(nodes.get('groups').innerHTML,/Single bucket/);
+  button.onclick();
+  assert.equal(storage.get('moneytree-favorite-table-mode'),'single');
+  const html=nodes.get('groups').innerHTML;
+  assert.match(html,/favorite-single-matrix/);
+  assert.match(html,/\+4\.20% Hold P\/L/);
+  assert.match(html,/90% P\/L uncertainty: ±1\.80 percentage points/);
+  assert.match(html,/n=2 distinct event returns/);
+  assert.match(html,/90% interval 2\.40% to 6\.00%/);
+  assert.match(html,/All entries · single bucket/,'market-level research follows mode');
+  assert.doesNotMatch(html,/NaN|undefined/);
+  assert.match(setup(d,{storage}).nodes.get('groups').innerHTML,/favorite-single-matrix/);
+  button.dataset.favoriteTable='wide';button.onclick();
+  assert.equal(storage.get('moneytree-favorite-table-mode'),'wide');
+  assert.match(nodes.get('groups').innerHTML,/favorite-wide-matrix|wider 3 × 3/);
+});
+
+test('single bucket reports insufficient ROI observations without inventing uncertainty',()=>{
+  const unknown=favoriteSingleCellMarkup(null);
+  assert.match(unknown,/Event-level combined evidence is not available/);
+  const one=favoriteSingleCellMarkup({resolved_events:1,event_wins:1,
+    return_observations:1,average_return_pct:'33.3',uncertainty90_pct:null,
+    ci90_low_pct:null,ci90_high_pct:null,incomplete_events:0,estimated_return_observations:0});
+  assert.match(one,/\+33\.30% Hold P\/L/);
+  assert.match(one,/fewer than 2 independent return observations/);
+  assert.doesNotMatch(one,/±0\.00|NaN|undefined/);
+  const empty=favoriteSingleCellMarkup({resolved_events:0,event_wins:0,
+    return_observations:0,average_return_pct:null,uncertainty90_pct:null,
+    ci90_low_pct:null,ci90_high_pct:null});
+  assert.match(empty,/n=0 distinct event returns/);
+  assert.doesNotMatch(empty,/0\.00% Hold P\/L/);
+});
+
+test('single bucket can appear in combined category, sports market and market research',()=>{
+  const summary={resolved_events:2,event_wins:1,return_observations:2,
+    average_return_pct:'-12.5',uncertainty90_pct:'22',
+    ci90_low_pct:'-34.5',ci90_high_pct:'9.5'};
+  const sports={id:'sports',label:'Sports',bots:[{id:'sport-a',name:'Sports market',
+    series:'KXNBAGAME',asset:'sports',experiment:{entry_timing:[]}}]};
+  const overview=favoriteSingleOverviewMarkup(sports.bots,
+    {rows:{sports:summary},by_bot:{'sport-a':summary}},new Set(['favorites-collector-sports']));
+  assert.match(overview,/Sports market/);
+  assert.match(overview,/\-12\.50% Hold P\/L/);
+  assert.equal((overview.match(/favorite-single-matrix/g)||[]).length,2);
+  const category=favoriteCategoryResearchMarkup(sports,new Set(),{mode:'single',singleSummary:{rows:{sports:summary}}});
+  assert.match(category,/favorite-single-matrix/);
+  assert.doesNotMatch(category,/favorite-wide-matrix/);
+  const bot=favoriteResearchMarkup(sports.bots,new Set(),{mode:'single',singleSummary:{by_bot:{'sport-a':summary}}});
+  assert.match(bot,/favorite-single-matrix/);
 });
 
 test('90 percent Wilson uncertainty remains nonzero at perfect accuracy and decreases with independent sample size',()=>{
