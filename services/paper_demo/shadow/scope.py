@@ -13,7 +13,7 @@ HOURLY=(('KXBTCD','Bitcoin'),('KXETHD','Ethereum'),('KXSOLD','Solana'),('KXXRPD'
  ('KXINXU','S&P 500'),('KXNASDAQ100U','Nasdaq 100'))
 
 def hourly_profiles():
-    return [dict(id='fav_hour_'+s.lower(),series=s,name='1 hour · '+name,asset='hourly',contracts=10,
+    return [dict(id='fav_hour_'+s.lower(),series=s,name='1 hour · '+name,asset='hourly',contracts=1,
         folder_id='favorites',strategy='favorites',version='favorites-hourly-1') for s,name in HOURLY]
 
 def sequential_profiles():
