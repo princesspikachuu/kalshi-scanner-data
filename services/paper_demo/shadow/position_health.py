@@ -1,6 +1,6 @@
 """Read-only, bounded paper Favorites position/settlement health summary.
 
-This does not verify an exchange result, infer a payout or mutate a wallet.
+This does not verify an exchange result, infer a payout or mutate a wallet.\nThe recorded marker may originate from a verified WS event or approved REST recovery.
 """
 from decimal import Decimal
 
@@ -13,8 +13,8 @@ def position_settlement_health(engine, now):
     """
     groups = {
         "still_open": {"lots": 0, "contracts": Decimal(0), "markets": set()},
-        "expired_ws_settled": {"lots": 0, "contracts": Decimal(0), "markets": set()},
-        "expired_not_ws_settled": {"lots": 0, "contracts": Decimal(0), "markets": set()},
+        "expired_settlement_recorded": {"lots": 0, "contracts": Decimal(0), "markets": set()},
+        "expired_no_recorded_settlement": {"lots": 0, "contracts": Decimal(0), "markets": set()},
         "expired_already_paid": {"lots": 0, "contracts": Decimal(0), "markets": set()},
         "unknown_market": {"lots": 0, "contracts": Decimal(0), "markets": set()},
     }
@@ -27,9 +27,9 @@ def position_settlement_health(engine, now):
         elif market["close"] > now:
             label = "still_open"
         elif lot.ticker in engine.settled:
-            label = "expired_ws_settled"
+            label = "expired_settlement_recorded"
         else:
-            label = "expired_not_ws_settled"
+            label = "expired_no_recorded_settlement"
         group = groups[label]
         group["lots"] += 1
         group["contracts"] += lot.quantity
