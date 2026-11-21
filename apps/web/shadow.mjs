@@ -88,6 +88,23 @@ function restoreDashboardPanels(expanded){
 }
 const note=value=>$('message').textContent=value;
 const loadNote=value=>{loadError=value;note(value)};
+// Activity is optional and collapsed by default; don't scan its history on
+// each portfolio refresh while Favorites research is being inspected.
+let lastActivityRefresh=0,activityRequestPending=false;
+async function refreshRecentActivity(force=false){
+ const detail=$('activity');
+ if(!detail?.open||activityRequestPending||(!force&&Date.now()-lastActivityRefresh<60000))return;
+ activityRequestPending=true;
+ try{
+  const response=await demoCall('shadow/events');
+  events=Array.isArray(response.items)?response.items:[];
+  lastActivityRefresh=Date.now();
+  if(data)draw();
+ }catch{
+  lastActivityRefresh=Date.now();
+  if(detail.open)note('Recent activity temporarily unavailable. Favorites and balances are still available.');
+ }finally{activityRequestPending=false}
+}
 function botCard(bot,status){
   const selected=periods[bot.id]||'all',metrics=(bot.financial_metrics||bot.metrics).all,ticker=status.selected?.[bot.series];
   const market=status.market_states?.[ticker],active=market&&market.close>Date.now()/1000;
@@ -178,7 +195,7 @@ function hydrateEventCounts(payload){
 function draw(){
   const expandedPanels=expandedDashboardPanels();
  const status=data.status||{},health=data.health||{};
- $('health').textContent=health.message||'Waiting for worker';
+ $('health').textContent=(health.message||'Waiting for worker')+(data.historical_metrics_delayed?' · historical reports delayed':'');
  // At a glance describes strategies accepting new entries, not historical/paused portfolios.
  const activeOverview=(data.folders||[]).filter(folder=>(data.bots||[]).some(bot=>
   (bot.folder_id||'convexity')===folder.id&&bot.desired==='running'&&!bot.retired));
@@ -247,12 +264,18 @@ async function load(){
  try{
   const result=await demoCall('shadow/workspace?version='+($('latest').checked?'latest':'full'));
   if(!result.installed){$('health').textContent='Worker initializing';loadNote('Shadow engine is initializing. Reload after the worker finishes its handover.');return}
-  if(loadError&&$('message').textContent===loadError)note('');loadError=null;
+  if(result.historical_metrics_delayed){
+   loadNote('Current portfolio balances and Favorites research are available. Optional historical reports are delayed and will retry automatically.');
+  }else{
+   if(loadError&&$('message').textContent===loadError)note('');
+   loadError=null;
+  }
   data=hydrateEventCounts(result);draw();
+
   // The combined Favorites matrix must not depend on opening individual cards.
   void loadFolderResearch('favorites');
   for(const folder of openFolders)if(folder!=='favorites')void loadFolderResearch(folder);
-  try{const activity=await demoCall('shadow/events');events=Array.isArray(activity.items)?activity.items:[];draw()}catch{loadNote('Balances and bots loaded. Activity is temporarily unavailable; retrying automatically.')}
+  void refreshRecentActivity();
  }catch(error){
   loadNote(error.message);
   if(!data){
@@ -279,6 +302,7 @@ async function load(){
 }
 async function change(id,fields){try{const bot=data.bots.find(b=>b.id===id);await demoCall('shadow/bots/'+id,{revision:bot.revision,...fields});note('Saved. New entries follow the worker’s next verified update; existing risk management continues.');await load()}catch(error){note(error.message)}}
 $('find').oninput=()=>{if(data)draw()};$('latest').onchange=load;$('reload').onclick=load;
+$('activity').ontoggle=()=>{if($('activity').open)return refreshRecentActivity(true)};
 for(const [id,action] of [['pauseAll','pause'],['resumeAll','resume']])$(id).onclick=async()=>{try{await demoCall('shadow/bulk',{action});await load()}catch(error){note(error.message)}};
 $('connect').onclick=()=>$('connectionDialog').showModal();
 for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>$(button.dataset.close).close();
