@@ -12,7 +12,7 @@ class CommittedServiceRate(unittest.TestCase):
         b=self.mixed();s=b.limits(101)
         self.assertEqual(s['processing_p95_ms'],90)
         self.assertAlmostEqual(s['estimated_queue_seconds'],.18)
-        self.assertTrue(s['admitting']);self.assertEqual(s['total'],32)
+        self.assertTrue(s['admitting']);self.assertIsNone(s['total'])
         self.assertEqual(s['service_sample_inputs'],512)
     def test_includes_database_commit_time_in_observed_per_input_cost(self):
         b=MonitoringBudget();b.observe(100,600,.01,(100+150)/500,input_count=500)
@@ -41,7 +41,7 @@ class CommittedServiceRate(unittest.TestCase):
             b.observe(now,300,.02,.5,input_count=512)
         s=b.limits(120)
         self.assertEqual(s['level'],1)
-        self.assertEqual(s['total'],40)
+        self.assertIsNone(s['total'])
         self.assertLessEqual(s['estimated_queue_seconds'],.25)
 
     def test_small_queue_growth_without_service_evidence_stays_at_base_capacity(self):
@@ -51,7 +51,7 @@ class CommittedServiceRate(unittest.TestCase):
         s=b.limits(180)
         self.assertTrue(s['admitting'])
         self.assertEqual(s['level'],0)
-        self.assertEqual(s['total'],32)
+        self.assertIsNone(s['total'])
 
     def test_hard_backlog_lag_processing_and_provider_guards_still_apply(self):
         for backlog,lag,cost,cooldown in ((2001,.01,.01,0),(0,3,.01,0),(0,.01,101,0),(0,.01,.01,1)):
