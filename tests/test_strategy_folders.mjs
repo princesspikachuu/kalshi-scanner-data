@@ -222,7 +222,13 @@ test('expanded account, diagnostics and market panels survive redraw and stay sc
 });
 
 test('all key second-level panels have stable market and folder identities',()=>{
-  const {nodes}=setup(fixture()),html=nodes.get('groups').innerHTML;
+  const data=fixture();
+  data.bots.find(bot=>bot.id==='favorites').experiment.entry_timing=[
+    {series:'KXBTC15M',market_type:'15m_price',clock:'market_close',
+     price:'.8',horizon:'5–10m',events:1,event_wins:1,
+     contracts:1,cost:.8,return_sum:.25,return_observations:1}
+  ];
+  const {nodes}=setup(data),html=nodes.get('groups').innerHTML;
   for(const key of ['folder:favorites:account','folder:favorites:research',
    'folder:favorites:diagnostics','market:favorites:money',
    'market:favorites:stats','market:favorites:lots',
