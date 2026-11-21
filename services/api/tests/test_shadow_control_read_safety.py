@@ -23,11 +23,18 @@ class ControlReadSafetyTests(unittest.TestCase):
         paused=SimpleNamespace(enabled=False)
         order=SimpleNamespace(status='resting',quantity=1,filled=0)
         wallet=SimpleNamespace(cash='987.50',lots=[object()])
-        host=SimpleNamespace(strategy=SimpleNamespace(bots={'old':old}),
+        host=SimpleNamespace(
+            profiles=[dict(series='old',id='legacy-bot')],
+            strategy=SimpleNamespace(bots={'old':old}),
             experiments=SimpleNamespace(portfolios={'favorites':(
                 SimpleNamespace(wallet=wallet,orders={'bid':order}),
-                SimpleNamespace(bots={'active':active,'paused':paused}),[])}))
+                SimpleNamespace(bots={'active':active,'paused':paused}),
+                [dict(series='active',id='active-bot'),dict(series='paused',id='paused-bot')])}))
         return host,old,active,paused,wallet,order
+
+    @staticmethod
+    def rows(*ids):
+        return [dict(parameters=dict(id=ident)) for ident in ids]
 
     def test_freeze_preserves_wallet_existing_bids_and_pause_flags(self):
         host,old,active,paused,wallet,order=self.host_with_financial_state()
@@ -40,7 +47,7 @@ class ControlReadSafetyTests(unittest.TestCase):
         self.assertIs(wallet.lots,original_lots)
         self.assertEqual((order.status,order.quantity,order.filled),('resting',1,0))
         self.assertEqual(suspend_new_entries(host),0)
-        self.assertEqual(restore_prior_entries(host),2)
+        self.assertEqual(restore_prior_entries(host,self.rows('legacy-bot','active-bot','paused-bot')),2)
         self.assertTrue(old.enabled)
         self.assertTrue(active.enabled)
         self.assertFalse(paused.enabled)
@@ -51,10 +58,10 @@ class ControlReadSafetyTests(unittest.TestCase):
         suspend_new_entries(host)
         active.enabled=True  # An unrelated mutation must not replace saved state.
         self.assertEqual(suspend_new_entries(host),0)
-        self.assertEqual(restore_prior_entries(host),2)
+        self.assertEqual(restore_prior_entries(host,self.rows('legacy-bot','active-bot','paused-bot')),2)
         self.assertTrue(active.enabled)
         self.assertFalse(paused.enabled)
-        self.assertEqual(restore_prior_entries(host),0)
+        self.assertEqual(restore_prior_entries(host,self.rows('legacy-bot','active-bot','paused-bot')),0)
 
     def test_new_verified_pause_still_cancels_existing_maker_bids(self):
         host,old,active,paused,wallet,order=self.host_with_financial_state()
@@ -70,12 +77,24 @@ class ControlReadSafetyTests(unittest.TestCase):
         self.assertEqual(suspend_new_entries(host),2)
         self.assertFalse(active.enabled)
         # No entries admitted while controls cannot be verified.
-        self.assertEqual(restore_prior_entries(host),2)
+        self.assertEqual(restore_prior_entries(host,self.rows('legacy-bot','favorite-bot')),2)
         suite.control([dict(parameters=dict(id='favorite-bot',contracts='1'),
                             progress=dict(desired='paused'))],'demo')
         engine.cancel_buys.assert_called_once_with(ticker)
         self.assertFalse(active.enabled)
         self.assertTrue(old.enabled)
+
+    def test_missing_or_empty_verified_catalog_cannot_reenable_removed_bots(self):
+        host,old,active,paused,wallet,order=self.host_with_financial_state()
+        suspend_new_entries(host)
+        self.assertEqual(restore_prior_entries(host,self.rows('legacy-bot')),1)
+        self.assertTrue(old.enabled)
+        self.assertFalse(active.enabled)  # Control row removed; no stale authority.
+        self.assertFalse(paused.enabled)
+        suspend_new_entries(host)
+        self.assertEqual(restore_prior_entries(host,[]),0)
+        self.assertFalse(old.enabled)
+        self.assertFalse(active.enabled)
 
     def test_actual_control_coroutine_catches_only_read_timeouts(self):
         async def scenario(error,expected_frozen):
@@ -83,9 +102,11 @@ class ControlReadSafetyTests(unittest.TestCase):
             host.done=asyncio.Event()
             host.outer_stop=asyncio.Event()
             host.store=SimpleNamespace(pool=object())
+            host.profiles=[dict(series='old',id='legacy-bot')]
             host.strategy=SimpleNamespace(bots={'old':SimpleNamespace(enabled=True)})
             host.experiments=SimpleNamespace(portfolios={'favorites':(
-                object(),SimpleNamespace(bots={'new':SimpleNamespace(enabled=True)}),[])})
+                object(),SimpleNamespace(bots={'new':SimpleNamespace(enabled=True)}),
+                [dict(series='new',id='new-bot')])})
             @asynccontextmanager
             async def mutex():
                 yield
