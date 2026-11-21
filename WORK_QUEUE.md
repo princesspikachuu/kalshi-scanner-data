@@ -816,7 +816,7 @@ _Fill in when done._
 # PRIORITY 6 — Keep paused items out of the way without losing them
 
 ## MT-006 — Sort paused folders/strategies/markets to the bottom everywhere
-**Status:** IN PROGRESS  
+**Status:** DONE — PR #308 merged, staging frontend deployed and asset-verified  
 **Worker:** ChatGPT / MT-006 paused-first dashboard ordering  
 **Claimed:** 2026-11-21 18:24 UTC  
 **Urgency:** U3 — NORMAL  
@@ -842,7 +842,10 @@ Paused items should remain visible and retain all history/state, but they should
 - Mobile and desktop views are verified.
 
 ### Completion notes
-_Fill in when done._
+- **Implementation:** PR [#308](https://github.com/princesspikachuu/kalshi-scanner-data/pull/308) merged into `build/google-auth-foundation` as `3aa642a9f2e447aa768bfda11822561b3b67ed15` on 2026-11-21.
+- **Files:** `apps/web/shadow-view.mjs` (sort active market-type subfolders ahead of paused-only types, and keep nonretired running markets first); `tests/test_strategy_folders.mjs` (three new regression cases). Existing top-level folder and Maker individual market sorting retained.
+- **Verification:** PR head `be79ad43a6af8f287c95a1e62ff73440d3390b7d` passed GitHub Actions API/PostgreSQL + Node dashboard suite (`44935686622`); new tests cover pause/unpause, categories, retired markets, preserved expanded state, held settlement positions and Maker market pause controls. Separate staging frontend deployment (`44936050890`) succeeded and verified published assets match merge commit.
+- **Safety:** No worker execution, live trading, storage, history, position accounting, or pause state logic changed. Mobile and desktop use the same responsive DOM ordering; authenticated viewport screenshots were not available for independent visual review.
 
 ---
 
