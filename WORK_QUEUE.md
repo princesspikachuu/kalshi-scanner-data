@@ -1949,7 +1949,7 @@ Before the normal paper-maintenance backup may use any prior immutable R2 part, 
 ---
 
 ## MT-030 — Investigate low regular Favorites trade throughput on November 21, 2026
-**Status:** IN PROGRESS — investigating November 21 regular Favorites throughput and fill bottlenecks
+**Status:** IN PROGRESS — main 15m discovery bottleneck FIXED and six independent paper first-filled events verified; venue settlements and comparable throughput still pending
 **Worker:** ChatGPT / MT-030 Favorites trading slowdown audit (claimed 2026-11-22 UTC)
 **Urgency:** U1 — URGENT
 **Priority:** Investigate immediately after active P0 integrity blockers; user reports that trading was unusually slow all day and remains far below expectations.
@@ -1995,6 +1995,8 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 - Evidence: [MT-030 report](docs/audits/MT-030-regular-favorites-nov21-throughput.md) and [Issue #333 live verification comment](https://github.com/princesspikachuu/kalshi-scanner-data/issues/333#issuecomment-7072876258).
 
 ### November 22 02:23 UTC — six independent 15m first-fill events
+- **Postrelease safety at 02:24:24–27 UTC:** `paper_strategy_health` still **75 regular Favorites bots, 0 Statistics-Backed, 0 other active strategies**, real orders disabled. Render error-level logs since new worker takeover were empty. Settlement polling remains **venue_not_final** for older unresolved held markets; this does not justify a forced payout, and new 15m events have not yet yielded official outcomes.
+
 - New live paper worker's `favorites_quote_lifecycle` **02:23:53 UTC** counted **15m_price: 19 submitted maker orders across 9 independent events, 6 first-filled orders across 6 independent events, 10 orders still open, 0 confirmed unfilled cancels**. Additionally, weather: 1 submitted order/event, 0 first fills, 1 open. Overall: **20 submissions / 10 distinct events / 6 first-filled distinct events / 11 open**. This is a rolling/restart-local count with censored still-open orders: **not** a day-wide fill rate, not 6/19 validated odds, and not settled outcomes.
 - This validates MT-018's restored 15m discovery and regular Favorites paper first-fill path for multiple independent events with legacy, Stats-Backed and all other strategies paused, live orders off. [Updated MT-030 evidence report](docs/audits/MT-030-regular-favorites-nov21-throughput.md). **MT-030 remains IN PROGRESS** awaiting authoritative exchange-confirmed post-expiry settlement attribution of these new 15m fills and longer-window throughput comparison. Preserve all history, don't manually pay, exit or relax margins to manufacture results.
 
