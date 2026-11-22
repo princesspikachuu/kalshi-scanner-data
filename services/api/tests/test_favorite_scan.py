@@ -18,20 +18,17 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         suite.enabled_profiles=lambda asset:selected if asset=='hourly' else original(asset)
         return host,suite
 
-    async def test_major_crypto_sleep_diagnostic_reports_wake_without_changing_it(self):
+    async def test_crypto_hourly_persisted_sleep_is_removed(self):
         host,suite=self.setup_host()
-        suite.enabled_profiles=lambda kind:[dict(series='KXBTCD')] if kind=='hourly' else []
+        suite.enabled_profiles=lambda kind:[]
         suite.settlement_markets=lambda:{}
-        suite.discovery_wakes={'hourly:KXBTCD':1600}
-        suite.hourly_coverage={'KXBTCD':dict(reason='Known next hourly entry window')}
+        crypto=('KXBTCD','KXETHD','KXSOLD','KXXRPD','KXDOGED','KXBNBD','KXHYPED','KXZECD','KXNEARD')
+        suite.discovery_wakes={'hourly:'+series:1600 for series in crypto}
+        suite.discovery_wakes['hourly:KXGOLDH']=1600
         with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000), \
-             patch('builtins.print') as printed:
+             patch('builtins.print'):
             await hourly_once(host)
-        self.assertEqual(suite.discovery_wakes['hourly:KXBTCD'],1600)
-        entries=[str(c.args[0]) for c in printed.call_args_list if c.args]
-        self.assertTrue(any('"series": "KXBTCD"' in entry and
-                            '"discovery_wake_seconds": 600' in entry and
-                            '"reason": "scheduled_sleep"' in entry for entry in entries))
+        self.assertEqual(suite.discovery_wakes,{'hourly:KXGOLDH':1600})
         host.verified_data.call.assert_not_called()
         host.put.assert_not_awaited()
 

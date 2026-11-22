@@ -20,6 +20,7 @@ def favorite_bid(m):
     return max(prices,default=None)
 
 
+CRYPTO_HOURLY_SERIES=frozenset(('KXBTCD','KXETHD','KXSOLD','KXXRPD','KXDOGED','KXBNBD','KXHYPED','KXZECD','KXNEARD'))
 FINANCE_PREFIXES=('KXUSDCAD','KXAUDUSD','KXUSDJPY','KXGBPUSD','KXEURUSD',
                  'KX2YRRATE','KX5YRRATE','KX10YRRATE','KX30YRRATE',
                  'KXINX','KXNDQ','KXNASDAQ100')
@@ -112,6 +113,10 @@ async def hourly_once(host):
     if not isinstance(getattr(suite,'hourly_empty_listing_probe_at',None),dict):suite.hourly_empty_listing_probe_at={}
     # Keep pagination filters stable for each in-memory cursor chain.
     if not isinstance(getattr(suite,'hourly_page_bounds',None),dict):suite.hourly_page_bounds={}
+    # Crypto trades around the clock: discard persisted entry-window sleeps.
+    # Keep ordinary bounded retry/read budgets and all admission safeguards.
+    for crypto_series in CRYPTO_HOURLY_SERIES:
+        remember(suite,'hourly:'+crypto_series,None,now)
     active=candidate_markets(suite,markets,'hourly',now)
     ps=balanced_hourly_profiles(suite.enabled_profiles('hourly'));staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
@@ -147,7 +152,7 @@ async def hourly_once(host):
     for _ in range(min(3,len(ps))):
         blocked=active+[p['series']+'-cooldown' for p in ps
             if suite.hourly_retry_at.get(p['series'],0)>now or
-               asleep(suite,'hourly:'+p['series'],now)]
+               (p['series'] not in CRYPTO_HOURLY_SERIES and asleep(suite,'hourly:'+p['series'],now))]
         p,cursor=next_hourly_profile(ps,blocked,suite.hourly_cursor,active)
         if not p:break
         suite.hourly_cursor=cursor;series=p['series'];scan['checked_series']+=1
@@ -253,7 +258,7 @@ async def hourly_once(host):
         suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),
             eligible_markets=len(rows),reason=reason+stage_detail)
         suite.hourly_retry_at[series]=now+(15 if listed or next_page else 60)
-        if not listed and not page_cursor and not next_page:
+        if series not in CRYPTO_HOURLY_SERIES and not listed and not page_cursor and not next_page:
             # A future wake is safe only for a COMPLETE, single-page listing.
             # A nonempty cursor means another page may contain an eligible
             # market now. Later pages alone cannot prove the earliest wake.
