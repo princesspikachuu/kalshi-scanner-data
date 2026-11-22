@@ -30,6 +30,7 @@ from .market_maker import initialize_market_maker,discover_maker
 from .maker_quote_policy import initialize_quote_policy
 from .favorite_statistics_install import initialize_statistics_favorites
 from .favorite_collection_quality import collection_quality
+from .favorite_finance_health import finance_hourly_funnel_snapshot
 from .favorite_quote_lifecycle import FavoriteQuoteLifecycle
 from .position_health import position_settlement_health
 from .settlement_recovery import recover_positions
@@ -715,6 +716,17 @@ class HostedRun(ForwardRun):
                         quality=collection_quality(collector[1].bots.values(),now)
                         print(json.dumps(dict(event='favorites_collection_quality',
                             **quality,real_orders_enabled=False)),flush=True)
+                        if now>=getattr(self,'finance_hourly_funnel_next_at',0):
+                            # Read-only, once/minute regular Favorites finance check.
+                            # Telemetry failures never interrupt paper execution.
+                            self.finance_hourly_funnel_next_at=now+60
+                            try:
+                                diagnostic=finance_hourly_funnel_snapshot(self.experiments,now)
+                                print(json.dumps(dict(event='favorites_finance_hourly_funnel',
+                                    **diagnostic,real_orders_enabled=False)),flush=True)
+                            except Exception as exc:
+                                print(json.dumps(dict(event='favorites_finance_hourly_funnel_error',
+                                    error=type(exc).__name__,real_orders_enabled=False)),flush=True)
                     for folder,(se,sf,_) in self.experiments.portfolios.items():
                         if folder not in (*SCALPER_FOLDERS,*MM_FOLDERS):continue
                         totals=[b.research['totals'] for b in sf.bots.values()]
