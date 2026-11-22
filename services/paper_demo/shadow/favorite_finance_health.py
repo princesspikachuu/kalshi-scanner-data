@@ -5,6 +5,7 @@ events, missed fills, or evidence of profitability. No REST calls, order placeme
 risk changes, persistence, or historical reconstruction.
 """
 from decimal import Decimal as D
+from math import isfinite
 
 from .hourly import hourly_category
 from .schedules import session_wake
@@ -47,7 +48,8 @@ def finance_hourly_funnel_snapshot(suite, now):
     for series, enabled in sorted(selected.items()):
         last = coverage.get(series, {})
         at = last.get('at')
-        valid_at = isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at
+        valid_at = (isinstance(at, (int, float)) and not isinstance(at, bool)
+                    and isfinite(at) and 0 <= now - at)
         age = int(now - at) if valid_at else None
         recent = age is not None and age <= 120
 
