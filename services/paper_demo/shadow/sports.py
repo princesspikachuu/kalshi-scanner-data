@@ -119,7 +119,8 @@ async def sports_once(host):
     events={}
     for r in rows:events.setdefault(r['event_ticker'],[]).append(r)
     due=sorted(events,key=lambda ev:(suite.sports_events.get(ev,{}).get('retry_at',0),abs(expected_end(events[ev][0])-now)))
-    scan=dict(at=now,series=series,checked_events=0,scheduled_sleep=0,live_events=0,subscribed=0)
+    scan=dict(at=now,series=series,checked_events=0,scheduled_sleep=0,live_events=0,subscribed=0,
+              fee_policy_rejected=0,fee_coverage_rejected=0)
     for event in due:
         state=suite.sports_events.setdefault(event,{})
         if state.get('retry_at',0)>now:continue
