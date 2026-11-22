@@ -1619,11 +1619,14 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 ---
 
 ## MT-018 — Balance Favorites evidence collection across under-sampled market types
-**Status:** IN PROGRESS  
-**Worker:** ChatGPT / MT-018 evidence balance  
-**Claimed:** 2026-11-10 00:20 UTC  
+**Status:** IN PROGRESS — verified handoff to Money Tree Chat 01; prior generic worker attribution unverified  
+**Worker:** Money Tree — Chat 01: Discovery Optimization  
+**Claimed:** 2026-11-10 00:20 UTC; handoff confirmed 2026-11-22 UTC following user correction  
 **Urgency:** U2 — HIGH  
 **Priority:** High, after MT-003
+
+### Ownership clarification — 2026-11-22 UTC, Money Tree Chat 01
+The user confirmed they have **no ChatGPT chat named MT-018** and do not know if its old generic worker is active. An `IN PROGRESS` queue entry is not evidence of a live chat session. Related PR #335 was merged and issue #333 closed; no current unmerged MT-018 scanner implementation PR was found on GitHub at handoff. **Chat 01 now owns the remaining MT-018 regular Favorites discovery work**, particularly hourly/weekday finance and the paginated premature-sleep risk. Other chats must avoid overlapping scanner edits and coordinate through [issue #339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339) / this queue. Chat 03 owns separate quote/fill/cash audit. The small distinct MT-034 wake-helper draft PR #341 remains under Chat 01 and will be verified/closed before new scanner code changes. Preserve original event histories, paper wallets, settlement and fee protections; Statistics-Backed Favorites/other strategies remain paused and no real orders enabled.
 
 ### PR #314 pagination/future-wake safety note for MT-018 owner (Chat 01, 2026-11-22 UTC)
 Source-only concern, **not proven live**: both `hourly.py` (lines 101–132) and `weather.py` (lines 87–103) can receive an incomplete `/markets` response with a nonempty continuation cursor, find only a **future** venue entry time on that first page, set a long persisted wake, and reset their page cursor to `''`. An eligible distinct event on a later page could then be missed. The sports scanner protects incomplete pagination separately. Two-page deterministic regression and an owner's bounded safe fix requested in [#278](https://github.com/princesspikachuu/kalshi-scanner-data/issues/278) and [#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339). **MT-018 retains scanner ownership**. Do not duplicate edits, weaken fees, freshness, settlement or memory/read budgets, or infer actual weekday no-fills solely from this hypothetical risk.
