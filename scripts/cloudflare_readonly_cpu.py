@@ -99,7 +99,7 @@ GRAPHQL_QUERY_MINIMAL_STRING = (GRAPHQL_QUERY_MINIMAL
 # Zero-data, no-PII read-only probes. The first checks the token endpoint, the
 # second checks that this token may see this account, and the third checks the
 # Workers aggregate dataset. Only fixed result labels are ever printed.
-GRAPHQL_PREFLIGHT_VIEWER = "query MT017Viewer { viewer { __typename } }"
+GRAPHQL_PREFLIGHT_VIEWER = "query MT017Viewer { viewer { budget } }"
 GRAPHQL_PREFLIGHT_ACCOUNT = """
 query MT017Account($accountTag: string) {
   viewer {
@@ -149,8 +149,24 @@ def _error_category(errors: object) -> str:
         return "unsupported_field"
     if any(term in words for term in ("unknown type", "expected type", "variable", "validation")):
         return "schema_or_variable_type"
-    if "error parsing args" in words or "syntax" in words:
+    if any(term in words for term in (
+        "error parsing args", "syntax", "query contains error",
+        "query contains errors", "invalid graphql query",
+        "scalar fields must have no selections",
+        "object field must have selections", "failed to parse query",
+    )):
         return "query_parse_failure"
+    if any(term in words for term in (
+        "authentication error", "invalid api token", "invalid token",
+        "token revoked", "token expired", "invalid credentials",
+        "missing authentication",
+    )):
+        return "token_authentication_error"
+    if any(term in words for term in (
+        "permission denied", "permission missing",
+        "token does not have access", "not authorized for",
+    )):
+        return "account_access_denied"
     if any(term in words for term in ("not authorized", "unauthorized", "not permitted", "access denied")):
         return "account_access_denied"
     if any(term in words for term in ("rate limit", "budget depleted")):
@@ -164,7 +180,7 @@ def _post_graphql(token: str, query: str, variables: dict) -> dict:
     """POST only to the fixed read-only GraphQL endpoint; sanitize all errors."""
     request = urllib.request.Request(
         GRAPHQL_URL,
-        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
+        data=json.dumps({"query": " ".join(query.split()), "variables": variables}).encode("utf-8"),
         headers={
             "Authorization": "Bearer " + token,
             "Accept": "application/json",
@@ -180,7 +196,14 @@ def _post_graphql(token: str, query: str, variables: dict) -> dict:
         # including private IDs. Read for classification, never echo content.
         try:
             response = json.loads(exc.read(16384))
-            category = _error_category(response.get("errors") if isinstance(response, dict) else None)
+            if isinstance(response, dict):
+                provider_errors = response.get("errors")
+                if not isinstance(provider_errors, list):
+                    brief = response.get("message") or response.get("error")
+                    provider_errors = [{"message": brief}] if isinstance(brief, str) else []
+                category = _error_category(provider_errors)
+            else:
+                category = "unexpected_json_shape"
         except (ValueError, UnicodeDecodeError, OSError):
             category = "non_json_or_unreadable"
         # Even provider error objects and HTTP reason phrases remain private.
@@ -212,6 +235,46 @@ def _read_analytics_query(account: str, token: str, worker: str,
     if not isinstance(accounts, list) or len(accounts) != 1:
         raise AnalyticsUnavailable("No readable Cloudflare analytics account returned")
     return accounts[0]
+
+
+def safe_verify_token(account: str, token: str) -> dict:
+    """Check Cloudflare's documented user/account read-only token endpoints.
+
+    Return fixed status and optional HTTP code only; never token ID, account
+    ID, expiry, raw response, headers, or request URL to PUBLIC logs.
+    """
+    if re.fullmatch(r"[0-9a-fA-F]{32}", account) is None:
+        return {"status": "invalid_account_id_shape"}
+    paths = (
+        ("user", "https://api.cloudflare.com/client/v4/user/tokens/verify"),
+        ("account", "https://api.cloudflare.com/client/v4/accounts/"
+         + account + "/tokens/verify"),
+    )
+    for kind, url in paths:
+        request = urllib.request.Request(
+            url, method="GET", headers={
+                "Authorization": "Bearer " + token, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                obj = json.load(response)
+        except urllib.error.HTTPError as exc:
+            # The user endpoint may reject account-owned API tokens.
+            if kind == "user" and exc.code in (400, 401, 403, 404):
+                continue
+            return {"status": "http_error",
+                    "code": exc.code if exc.code in (400, 401, 403, 404, 429) else 0}
+        except (urllib.error.URLError, TimeoutError, ValueError, UnicodeDecodeError):
+            return {"status": "unavailable"}
+        if not isinstance(obj, dict):
+            return {"status": "unexpected_response"}
+        result = obj.get("result")
+        status = result.get("status") if isinstance(result, dict) else None
+        if obj.get("success") is True and status in ("active", "disabled", "expired"):
+            return {"status": status, "token_kind": kind}
+        if kind == "user":
+            continue
+        return {"status": "not_verified"}
+    return {"status": "not_verified"}
 
 
 def safe_preflight(account: str, token: str, worker: str, start: str, end: str) -> dict:
@@ -327,6 +390,12 @@ def main() -> int:
         print("Cloudflare audit unavailable: " + str(exc), file=sys.stderr)
         # A second blind retry is not useful. Identify the failure boundary
         # with fixed-label probes, NEVER printing provider error objects.
+        verification = safe_verify_token(account, token)
+        print("MT017_TOKEN_VERIFY " + json.dumps(verification, sort_keys=True),
+              file=sys.stderr)
+        if verification.get("status") in ("disabled", "expired",
+                                          "invalid_account_id_shape"):
+            return 1
         diagnostic = safe_preflight(account, token, DEFAULT_WORKERS[0], start, end)
         print("MT017_SAFE_PREFLIGHT " + json.dumps(diagnostic, sort_keys=True),
               file=sys.stderr)
