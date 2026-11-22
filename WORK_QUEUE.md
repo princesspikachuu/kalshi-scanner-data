@@ -2268,3 +2268,22 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - Separates `scan_state` into recent / scheduled_cash_index (NYSE calendar hint) / scheduled_retry (pre-existing hint) / stale / never_scanned; exposes last scan age/reason, cached series frequency, bounded next-scan hint. Invalid/nonfinite persisted scan timestamps now remain `unknown_scan_time` rather than producing a failed health emission; deterministic regression added. New metadata only uses existing in-memory fields and pure calendar logic; does **not** invoke provider REST, authorize orders or assume market availability.
 - Motivation: first three Saturday runtime reports after #342 showed **9 recent finance scans with 0 eligible listed last-hour markets** while both cash indexes had `scan_recent=false` (possibly expected NYSE weekend sleep), which the existing `no_recent_scan` label could not distinguish. All weekday pre-cash first-fill questions remain open in [#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339).
 - Added deterministic tests for Saturday index scheduling, stale vs explicit retry, immutable existing cached series metadata, bounded invalid hints and no event inference. Exact-head full API/PostgreSQL CI [run 44980269668](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980269668) **in progress** at this checkpoint. Keep draft until focused and full CI pass, then safe merge, auto-deployment and new singleton-worker telemetry verification. Chat 1.1 retains scanner ownership.
+
+---
+
+## MT-036 — Show forward-only regular Favorites profitability validation on the dashboard
+**Status:** IN PROGRESS — claimed by 4.1; implementation and exact-head tests pending
+**Worker:** Money Tree Chat 4.1 — forward profitability evidence display
+**Claimed:** 2026-11-22 UTC
+**Urgency:** U2 — HIGH
+**Priority:** Expose MT-033's pre-registered holdout in the operator-facing regular Favorites research view before future settled events accumulate
+
+### Scope
+- **Regular High-Probability Favorites ONLY.** MT-033 already computes four frozen event-label-post-2026-11-22 cohorts in a once-per-minute API diagnostic. The dashboard cannot currently see that bounded report; no independent longitudinal validation is visible without inspecting logs.
+- Expose the same four pre-registered cohorts as a compact, read-only Favorites research panel: dated-label proxy cutoff, independent settled event counts vs 50, estimated attribution and missing-return counts, mean fee-aware hypothetical held ROI, and nominal 90% confidence bounds *only* when backend interval status and sample gate permit. Distinguish positive/negative interval entirely off zero from exploratory mean.
+- Reuse the existing derived Favorites held view once per workspace response; keep the existing bounded logging cadence and avoid new SQL/R2 reads, provider requests, persistence, background loops, market/account identifiers, or raw event IDs in the frontend payload.
+- Do not alter fixed cohort definitions/cutoff, trading, buys, risk, fees, cash, exits, settlement, existing records, Statistics-Backed Favorites, other strategies, or LIVE orders. The Chat 1.1 scanner, Chat 3.1 finance/throughput, Chat 2 deployment, and MT-019 backup owners retain their separate work.
+- Verify UI markup with synthetic zero/49/50 sample, all-winner, positive/negative/cross-zero intervals, malformed bounds and absent-API cases; run exact-head API/Postgres + frontend CI. Deploy/verify only after review and passing gates. Record PR/commits and outcome below.
+
+### Completion notes
+- Pending.
