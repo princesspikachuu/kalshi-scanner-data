@@ -176,6 +176,63 @@ def _error_category(errors: object) -> str:
     return "unclassified"
 
 
+def _provider_error_category(response: object) -> str:
+    """Classify REST/GraphQL errors using only fixed labels (never error text).
+
+    Cloudflare can return HTTP 400 for invalid Authorization headers, not just
+    bad GraphQL syntax. Inspect known nested numeric codes without logging raw
+    response bodies, identifiers, token material, or new arbitrary codes.
+    """
+    if not isinstance(response, dict):
+        return "unclassified"
+    errors = response.get("errors")
+    if not isinstance(errors, list):
+        return "unclassified"
+    codes: set[int] = set()
+    for error in errors[:8]:
+        if not isinstance(error, dict):
+            continue
+        items = [error]
+        chain = error.get("error_chain")
+        if isinstance(chain, list):
+            items.extend(item for item in chain[:8] if isinstance(item, dict))
+        for item in items:
+            code = item.get("code")
+            if type(code) is int:
+                codes.add(code)
+    if codes.intersection({6003, 6102, 6103, 6111}):
+        return "malformed_auth_header"
+    if codes.intersection({9106, 10000, 10001}):
+        return "token_rejected"
+    return _error_category(errors)
+
+
+def _safe_token_input_issue(token: str) -> str | None:
+    """Recognize clear copy/paste mistakes, emitting labels only.
+
+    Never require a fixed token length: Cloudflare supports older unprefixed
+    API tokens as well as newer scannable cfut_/cfat_ tokens.
+    """
+    if token != token.strip():
+        return "outer_whitespace"
+    if len(token) >= 2 and token[0] in ("'", '"') and token[-1] == token[0]:
+        return "quoted_token"
+    if token.lower().startswith((
+        "bearer ", "authorization:", "token=", "cf_api_token=",
+        "cloudflare_api_token=", "cloudflare_observability_token=",
+    )):
+        return "copied_header_or_assignment"
+    if token.lower().startswith("cfk_"):
+        return "global_api_key_not_api_token"
+    if token[:1] in ("{", "[", "<"):
+        return "copied_non_token_content"
+    if re.fullmatch(r"[A-Fa-f0-9]{32}", token):
+        return "identifier_instead_of_token"
+    if any(ord(ch) <= 32 or ord(ch) == 127 for ch in token):
+        return "embedded_whitespace_or_control"
+    return None
+
+
 def _post_graphql(token: str, query: str, variables: dict) -> dict:
     """POST only to the fixed read-only GraphQL endpoint; sanitize all errors."""
     request = urllib.request.Request(
@@ -197,11 +254,14 @@ def _post_graphql(token: str, query: str, variables: dict) -> dict:
         try:
             response = json.loads(exc.read(16384))
             if isinstance(response, dict):
-                provider_errors = response.get("errors")
-                if not isinstance(provider_errors, list):
-                    brief = response.get("message") or response.get("error")
-                    provider_errors = [{"message": brief}] if isinstance(brief, str) else []
-                category = _error_category(provider_errors)
+                category = _provider_error_category(response)
+                if category == "unclassified":
+                    provider_errors = response.get("errors")
+                    if not isinstance(provider_errors, list):
+                        brief = response.get("message") or response.get("error")
+                        category = _error_category(
+                            [{"message": brief}] if isinstance(brief, str) else []
+                        )
             else:
                 category = "unexpected_json_shape"
         except (ValueError, UnicodeDecodeError, OSError):
@@ -258,11 +318,17 @@ def safe_verify_token(account: str, token: str) -> dict:
             with urllib.request.urlopen(request, timeout=15) as response:
                 obj = json.load(response)
         except urllib.error.HTTPError as exc:
+            # Only fixed error classes, never the raw response, reach logs.
+            try:
+                category = _provider_error_category(json.loads(exc.read(16384)))
+            except (ValueError, UnicodeDecodeError, OSError):
+                category = "unclassified"
             # The user endpoint may reject account-owned API tokens.
             if kind == "user" and exc.code in (400, 401, 403, 404):
                 continue
             return {"status": "http_error",
-                    "code": exc.code if exc.code in (400, 401, 403, 404, 429) else 0}
+                    "code": exc.code if exc.code in (400, 401, 403, 404, 429) else 0,
+                    "category": category}
         except (urllib.error.URLError, TimeoutError, ValueError, UnicodeDecodeError):
             return {"status": "unavailable"}
         if not isinstance(obj, dict):
@@ -378,6 +444,11 @@ def main() -> int:
     account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
     if not token or not account:
         print("Cloudflare read-only analytics secrets are not configured; no query performed.", file=sys.stderr)
+        return 2
+    input_issue = _safe_token_input_issue(token)
+    if input_issue is not None:
+        print("MT017_CREDENTIAL_PREFLIGHT " + json.dumps({"status": input_issue}),
+              file=sys.stderr)
         return 2
 
     start, end = select_window(args.period, datetime.now(timezone.utc))
