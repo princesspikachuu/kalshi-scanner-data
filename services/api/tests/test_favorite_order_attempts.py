@@ -88,6 +88,19 @@ class FavoriteOrderAttemptsTests(unittest.TestCase):
             self.assertEqual(restored.report(5000, self.profiles)['total']['1H']['count'], 0)
             self.assertTrue(restored.report(5000, self.profiles)['total']['1H']['complete'])
 
+    def test_overflowed_legacy_timestamps_fail_closed_without_worker_crash(self):
+        # Restored malformed checkpoint hints must never abort paper order
+        # accounting or silently infer a complete pre-instrumentation history.
+        state = dict(started_at=10 ** 10000, pruned_through=10 ** 10000,
+                     unknown_after=float('inf'), unknown_attempts=0,
+                     cumulative={'hourly-btc': 1},
+                     recent=[['hourly-btc', 'bad-id', 10 ** 10000]])
+        tracker = FavoriteOrderAttempts(state, now=2000)
+        self.assertEqual(tracker.started_at, 2000)
+        self.assertEqual(len(tracker.recent), 0)
+        self.assertEqual(tracker.report(2100, self.profiles)['total']['all']['count'], 1)
+        self.assertFalse(tracker.report(2100, self.profiles)['total']['1H']['complete'])
+
     def test_invalid_action_and_missing_identity_dont_fabricate_attempt(self):
         counter = FavoriteOrderAttempts(now=1000)
         self.submit(counter, 1200, ident='sell', action='sell')
