@@ -5,7 +5,7 @@
 ## Rule: `<stream>.<round>`, NOT a decimal number
 
 - **Stream** = one of the four user-designated parallel work lanes (`1`, `2`, `3`, `4`). **Round** = successive ChatGPT *conversation threads* within that lane, starting at `0`. Continue within one thread without advancing the round. Creating the next handoff conversation increments that lane's suffix.
-- **Current round:** `1.1`, `2.0`, `3.0`, `4.0`. **Next conversation in each lane:** `1.2`, `2.1`, `3.1`, `4.1`. Independent progress: one lane can move to `1.2` while the others remain at `2.0`, `3.0`, `4.0`.
+- **Current round:** `1.1`, `2.0`, `3.0`, `4.1`. **Next conversation in each lane:** `1.2`, `2.1`, `3.1`, `4.2`. Independent progress: one lane can move to `1.2` while the others remain at `2.0`, `3.0`, `4.0`.
 - **After nine rounds** suffixes continue `1.9 → 1.10 → 1.11 → 1.12` (same rule for 2–4). **Treat identifiers as exact text labels, never floating-point values.** `1.10` must never be collapsed to `1.1`.
 - **Suggested ChatGPT title:** `Money Tree — Chat 1.0: Discovery Optimization`, `Money Tree — Chat 2.0: Deployment Verification`, and so on. Every opening substantive response and handoff must give its exact ID/title. The assistant cannot automatically rename ChatGPT sidebar chats.
 - **Legacy aliases:** Past references to `Chat 01`, `Chat 02`, `Chat 03`, `Chat 04` denote round-zero Chats `1.0`, `2.0`, `3.0`, `4.0`; do **not** rewrite historic citations, merge history, or task records just to relabel them. Chat IDs never equal `MT-###` IDs or PR/issue numbers.
@@ -18,9 +18,10 @@
 | **1.1** | **Money Tree — Chat 1.1: Discovery Optimization** | Successor to 1.0; MT-018 discovery verification and weekday finance listing gates, MT-034 release verification; coordinate with Chat 3 MT-035 and Chat 2 deployment | **Active — registered 2026-11-22 UTC** |
 | **2.0** | **Money Tree — Chat 2.0: Deployment Verification** | **This conversation**: deployment, memory, and runtime safety verification; handoffs without taking other owners' code | **Active** |
 | **3.0** | **Money Tree — Chat 3.0: Trading Throughput** | Finance-hourly/MT-035; broad MT-030 requires an explicit ownership reconciliation | **Active** |
-| **4.0** | **Money Tree — Chat 4.0: Profitability Validation** | Regular Favorites forward-only validation (MT-033) | **Active** |
+| **4.0** | **Money Tree — Chat 4.0: Profitability Validation** | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
+| **4.1** | **Money Tree — Chat 4.1: Profitability Validation** | Successor to 4.0; read-only future event profitability follow-up; MT-033 remains DONE; no new task claimed | **Active — registered 2026-11-22 UTC** |
 
-**Next successor conversation IDs (reserved as *planned*, not yet active or claimed): `1.2`, `2.1`, `3.1`, `4.1`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+**Next successor conversation IDs (reserved as *planned*, not yet active or claimed): `1.2`, `2.1`, `3.1`, `4.2`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
 ## New successor thread registration and task ownership
 
