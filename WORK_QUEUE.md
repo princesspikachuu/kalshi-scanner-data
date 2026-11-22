@@ -1579,7 +1579,7 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** IN PROGRESS — second read-only Cloudflare Analytics query HTTP 400 confirmed; PR #348 safer diagnostic merged, awaiting user manual rerun and verified provider access  
+**Status:** IN PROGRESS — authorized Cloudflare Analytics access restored; first 24-hour aggregate CPU audit succeeded with zero exceededCpu and 563 other reported errors; root-cause follow-up pending  
 **Worker:** Money Tree — Chat 2.1: Deployment Verification (successor to 2.0; read-only Cloudflare observability)  
 **Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific
 **Urgency:** U1 — URGENT  
