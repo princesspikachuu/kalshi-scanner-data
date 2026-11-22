@@ -1,42 +1,46 @@
 # Money Tree — Chat Stream/Round Register
 
-**READ THIS FIRST when creating, continuing, or handing off a Money Tree conversation.** The repository's **authoritative scope and task-claim file** is [`main:WORK_QUEUE.md`](../WORK_QUEUE.md) and this [`main:docs/CHAT_INDEX.md`](./CHAT_INDEX.md) is the **stream/round identifier register**. Always fetch both files from the `main` branch of `princesspikachuu/kalshi-scanner-data` at the beginning of a new conversation, before accepting task ownership or editing code. The queue's **"Chat naming and handoff rule — STREAM.ROUND"** section is authoritative if these two files ever disagree. Work branches may be based on `build/google-auth-foundation`; naming and ownership still live on `main`.
+**BOOTSTRAP BEFORE SELF-IDENTIFICATION:** If the user's first message is a bare chat ID such as `1.2`, that exact string is the intended chat title. Before the assistant's first substantive reply or any self-naming, fetch this document and `main:WORK_QUEUE.md` from GitHub. Do not add a topic or prefix to the title. **READ THIS FIRST when creating, continuing, or handing off a Money Tree conversation.** The repository's **authoritative scope and task-claim file** is [`main:WORK_QUEUE.md`](../WORK_QUEUE.md) and this [`main:docs/CHAT_INDEX.md`](./CHAT_INDEX.md) is the **stream/round identifier register**. Always fetch both files from the `main` branch of `princesspikachuu/kalshi-scanner-data` at the beginning of a new conversation, before accepting task ownership or editing code. The queue's **"Chat naming and handoff rule — STREAM.ROUND"** section is authoritative if these two files ever disagree. Work branches may be based on `build/google-auth-foundation`; naming and ownership still live on `main`.
 
 ## Rule: `<stream>.<round>`, NOT a decimal number
 
 - **Stream** = one of the four user-designated parallel work lanes (`1`, `2`, `3`, `4`). **Round** = successive ChatGPT *conversation threads* within that lane, starting at `0`. Continue within one thread without advancing the round. Creating the next handoff conversation increments that lane's suffix.
 - **Current round:** `1.1`, `2.0`, `3.0`, `4.1`. **Next conversation in each lane:** `1.2`, `2.1`, `3.1`, `4.2`. Independent progress: one lane can move to `1.2` while the others remain at `2.0`, `3.0`, `4.0`.
 - **After nine rounds** suffixes continue `1.9 → 1.10 → 1.11 → 1.12` (same rule for 2–4). **Treat identifiers as exact text labels, never floating-point values.** `1.10` must never be collapsed to `1.1`.
-- **Suggested ChatGPT title:** `Money Tree — Chat 1.0: Discovery Optimization`, `Money Tree — Chat 2.0: Deployment Verification`, and so on. Every opening substantive response and handoff must give its exact ID/title. The assistant cannot automatically rename ChatGPT sidebar chats.
+- **Required ChatGPT title:** Exactly the **number only**, such as `1.0`, `1.1`, `2.1`, or `1.10`. No `Money Tree — Chat` prefix and **no topic suffix**. Topics may change and are retained only as internal tracking metadata. The assistant cannot directly rename ChatGPT sidebar chats.
 - **Legacy aliases:** Past references to `Chat 01`, `Chat 02`, `Chat 03`, `Chat 04` denote round-zero Chats `1.0`, `2.0`, `3.0`, `4.0`; do **not** rewrite historic citations, merge history, or task records just to relabel them. Chat IDs never equal `MT-###` IDs or PR/issue numbers.
 
 ## Current active conversation register
 
-| ID | Suggested title | Existing focus / claims | State |
+| ID | Historical workstream context (NOT a chat title) | Existing focus / claims | State |
 | --- | --- | --- | --- |
-| **1.0** | **Money Tree — Chat 1.0: Discovery Optimization** | Prior round: PR #314, #335, #341 and #343 discovery work; MT-018/MT-034 handoff | **Succeeded by 1.1** |
-| **1.1** | **Money Tree — Chat 1.1: Discovery Optimization** | Successor to 1.0; MT-018 discovery verification and weekday finance listing gates, MT-034 release verification; coordinate with Chat 3 MT-035 and Chat 2 deployment | **Active — registered 2026-11-22 UTC** |
-| **2.0** | **Money Tree — Chat 2.0: Deployment Verification** | **This conversation**: deployment, memory, and runtime safety verification; handoffs without taking other owners' code | **Active** |
-| **3.0** | **Money Tree — Chat 3.0: Trading Throughput** | Finance-hourly/MT-035; broad MT-030 requires an explicit ownership reconciliation | **Active** |
-| **4.0** | **Money Tree — Chat 4.0: Profitability Validation** | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
-| **4.1** | **Money Tree — Chat 4.1: Profitability Validation** | Successor to 4.0; read-only future event profitability follow-up; MT-033 remains DONE; no new task claimed | **Active — registered 2026-11-22 UTC** |
+| **1.0** | Discovery Optimization | Prior round: PR #314, #335, #341 and #343 discovery work; MT-018/MT-034 handoff | **Succeeded by 1.1** |
+| **1.1** | Discovery Optimization | Successor to 1.0; MT-018 discovery verification and weekday finance listing gates, MT-034 release verification; coordinate with Chat 3 MT-035 and Chat 2 deployment | **Active — registered 2026-11-22 UTC** |
+| **2.0** | Deployment Verification | **This conversation**: deployment, memory, and runtime safety verification; handoffs without taking other owners' code | **Active** |
+| **3.0** | Trading Throughput | Finance-hourly/MT-035; broad MT-030 requires an explicit ownership reconciliation | **Active** |
+| **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
+| **4.1** | Profitability Validation | Successor to 4.0; read-only future event profitability follow-up; MT-033 remains DONE; no new task claimed | **Active — registered 2026-11-22 UTC** |
 
 **Next successor conversation IDs (reserved as *planned*, not yet active or claimed): `1.2`, `2.1`, `3.1`, `4.2`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
-## Required title-first startup and sidebar check
+## Mandatory startup: the user's numeric ID is the entire chat title
 
-The ChatGPT sidebar title is automatically generated by the ChatGPT interface, **not** by the GitHub register or the assistant's self-label. Registering an ID in GitHub does **not** rename the actual conversation. The assistant must never claim that it changed or verified the sidebar title.
+**2026-11-22 user clarification (supersedes every older descriptive-title instruction in this repository):** The user opens a new chat by sending **only its assigned ID**, e.g. `1.2`. That bare number is the **exact intended title** of this ChatGPT conversation. The subject/topic can change and must **not** appear in the title. Do not ask the user to change their first message or send a longer name.
 
-- **Best new-chat first message:** `Name this chat exactly "Money Tree — Chat 1.2: Discovery Optimization" and continue the previous round.` Substitute the exact unused successor ID and lane topic verified from this register. A message containing only `1.2` can cause the generated sidebar title to omit the number.
-- **Mandatory first line of the first substantive assistant response:** `Money Tree — Chat <stream>.<round>: <topic>` as plain text, **including the complete numeric ID**. Do not start with a topic-only title, nickname, or unnumbered heading. State the same full ID in handoffs.
-- **Sidebar check:** In that first response, remind the user **once** to confirm the sidebar actually shows that exact title; if the auto-generated title omits the number, the user must rename it manually via the chat's menu. The assistant cannot automatically rename it.
-- **No false guarantee:** Explicitly asking for the title and repeating it makes correct auto-naming more likely but cannot enforce ChatGPT's generated sidebar title. The reliable fallback is manual rename.
-- **Do not increment the ID** when fixing a title mismatch; the registry's ID remains authoritative for that conversation.
+**Assistant startup sequence, required before self-identification or substantive reply:**
+
+1. Treat the first user message matching `<stream>.<round>` (for streams 1–4, round a nonnegative integer string) as the exact chat ID and intended sidebar title. Do **not** treat it as a decimal number, version to round, arithmetic expression, or request to guess a topic. Preserve `1.10` distinct from `1.1`.
+2. **Before naming yourself, selecting work, or answering the first message**, fetch the current `main:WORK_QUEUE.md` and `main:docs/CHAT_INDEX.md` from `princesspikachuu/kalshi-scanner-data` through the connected GitHub tools. The repo files are *not* automatically read by a new ChatGPT conversation; the project's own instructions must provide this startup bootstrap.
+3. Verify whether that ID is registered, its predecessor and continuation lane, prior handoff, task ownership, and current project-wide scope. Register the new thread or reconcile collisions before taking tasks; keep topic/focus **only in GitHub metadata**.
+4. The first line of the assistant's first substantive response must be the **ID alone**, e.g. `1.2`, with no Markdown prefix/header, topic, explanatory words, or `Money Tree — Chat` prefix. Then summarize continued work without claiming the sidebar was renamed.
+5. The ChatGPT interface generates sidebar titles independently. The assistant cannot set, see, or guarantee them through GitHub or a reply. If the actual sidebar title is not exactly the numeric ID, the user may manually rename it. Do not increment the round for a title correction.
+
+**Where the bootstrap must live:** Put the short startup rule in the **Money Tree ChatGPT Project's instructions**, since an instruction found only inside GitHub cannot tell a new chat to fetch GitHub before first reading it. The GitHub files are the detailed, authoritative follow-on rules.
 
 ## New successor thread registration and task ownership
 
 1. Fetch `main:WORK_QUEUE.md` and this `main:docs/CHAT_INDEX.md` to learn the exact current stream/round. Identify the predecessor stream and its most recent registered round. Read that predecessor's task handoff and live PR state before making claims.
-2. When opening a **new** thread in an existing stream, select the next unused **literal** `stream.round` string; append a registration row with a short descriptive topic, predecessor ID and actual status. Use the latest file SHA to atomically update this index; on a collision, refresh and pick the next available suffix rather than duplicating a label.
+2. When opening a **new** thread in an existing stream, select the next unused **literal** `stream.round` string; append a registration row under the exact numeric ID, with descriptive topic **as internal metadata only**, predecessor ID and actual status. Use the latest file SHA to atomically update this index; on a collision, refresh and pick the next available suffix rather than duplicating a label.
 3. Have the predecessor (or, if unavailable, the successor after verifying status) update the task claim in `main:WORK_QUEUE.md`, including old/new owner, current branch/PR/CI/deployment, blockers, and next safe action. Merely taking a chat number is **not** task ownership or permission to take another lane's source files.
 4. Do not advance a thread's suffix just because the user says "continue" inside it; the suffix advances only when a **new ChatGPT conversation** in that same lane is started. Preserve four streams unless the user explicitly expands them.
 5. Maintain **regular High-Probability Favorites only** work, including essential common gateway/Cloudflare/Render infrastructure; keep Statistics-Backed Favorites and other strategies paused and LIVE real orders disabled.
