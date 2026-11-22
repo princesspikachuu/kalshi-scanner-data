@@ -67,6 +67,8 @@ async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     if not hasattr(suite,'hourly_metadata'):suite.hourly_metadata={};suite.hourly_retry_at={}
     if not hasattr(suite,'hourly_coverage'):suite.hourly_coverage={}
+    # Keep pagination filters stable for each in-memory cursor chain.
+    if not isinstance(getattr(suite,'hourly_page_bounds',None),dict):suite.hourly_page_bounds={}
     active=candidate_markets(suite,markets,'hourly',now)
     ps=balanced_hourly_profiles(suite.enabled_profiles('hourly'));staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
@@ -84,6 +86,8 @@ async def hourly_once(host):
         category['checked']+=1
         wake=session_wake(series,now)
         if wake is not None:
+            suite.hourly_pages.pop(series,None)
+            suite.hourly_page_bounds.pop(series,None)
             suite.hourly_retry_at[series]=wake
             remember(suite,'hourly:'+series,wake,now)
             suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,next_check_at=wake,
@@ -96,12 +100,20 @@ async def hourly_once(host):
             suite.hourly_metadata[series]=metadata;scan['metadata_checks']+=1
         if metadata['frequency']!='hourly':
             suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,reason='Series frequency '+str(metadata['frequency'])+' · excluded from hourly test')
+            suite.hourly_pages.pop(series,None);suite.hourly_page_bounds.pop(series,None)
             suite.hourly_retry_at[series]=now+900;continue
         page_cursor=suite.hourly_pages.get(series,'')
+        bounds=suite.hourly_page_bounds.get(series) if page_cursor else None
+        if not isinstance(bounds,tuple) or len(bounds)!=2:
+            # Unknown or stale cursor state cannot be resumed safely.
+            page_cursor=''
+            bounds=(int(now+60),int(now+86400))
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=series,
-            min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=page_cursor))
+            min_close_ts=bounds[0],max_close_ts=bounds[1],limit=1000,cursor=page_cursor))
         next_page=result.get('cursor','') or ''
         suite.hourly_pages[series]=next_page
+        if next_page:suite.hourly_page_bounds[series]=bounds
+        else:suite.hourly_page_bounds.pop(series,None)
         listed=[m for m in result.get('markets',[]) if m.get('ticker','').startswith(series+'-') and m.get('status')=='active'
                 and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=3600]
         scan['listed_markets']+=len(listed)
