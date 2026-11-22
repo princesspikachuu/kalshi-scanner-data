@@ -1935,3 +1935,22 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 
 ### Completion notes
 _Pending claim, read-only audit, root cause identification, safe fix and verification._
+
+## MT-031 — Restore Daily Weather research table and period-specific distinct filled-event counts
+**Status:** IN PROGRESS — dashboard/API and regression fixes
+**Worker:** ChatGPT / Daily Weather research and filled-events period UI
+**Claimed:** 2026-11-22 01:55 UTC
+**Urgency:** U2 — HIGH
+**User request:** Daily Weather shows no research data table; show number of observed **filled events** in smaller text beneath dollar P/L, responsive to All, 1H, 6H, 24H, 7D, 30D selectors.
+
+### Acceptance / safety
+- Diagnose the actual missing Daily Weather table; verify existing data against derived research outputs and preserve detailed, Wider 3×3, and Single choices, never fabricate timing or settlement outcomes.
+- Display distinct event identities with an executed **buy fill**, NOT contracts, orders, maker submissions, partial fills, or settlement-only reports. Avoid equating a settled-event count to new fills in a selected period.
+- Per-window counts should be temporally scoped to the same selected P/L window, and clearly mark partial or missing history rather than emitting a misleading zero. Apply to visible relevant P/L headings (overview, folder, market-type, bot) where supported by source data. Preserve other strategies' visibility and period behavior.
+- No changes to trading decisions, LIVE orders, bot enablement, cash/settlements, backups, originals, R2, history retention, or MT-018/019/029/030 work. No expensive full JSONB scans or unbounded snapshot payload. Add repeat-fill/event dedup, time window, missing-history, UI and Daily Weather regression tests.
+- Development based on `build/google-auth-foundation`, draft PR until CI, then verify exact staging release, worker health and research visibility.
+
+### Completion notes
+Pending source audit, implementation, full CI, deployment and verification.
+
+---
