@@ -215,6 +215,16 @@ class FinanceHourlyFunnelSnapshotTests(unittest.TestCase):
         self.assertEqual(row['scan_state'],'never_scanned')
         self.assertIsNone(row['next_scan_hint_seconds'])
 
+    def test_invalid_scan_timestamp_does_not_crash_read_only_health(self):
+        suite,_,_=self.fixture()
+        for invalid in (float('-inf'),float('nan'),True):
+            suite.hourly_coverage[self.SERIES]['at']=invalid
+            row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+            self.assertEqual(row['scan_state'],'unknown_scan_time')
+            self.assertFalse(row['scan_recent'])
+            self.assertIsNone(row['scan_last_age_seconds'])
+            self.assertIsNone(row['scan_listed_last'])
+
     def test_missing_regular_portfolio_fails_to_empty_summary(self):
         value=finance_hourly_funnel_snapshot(SimpleNamespace(portfolios={}),self.NOW)
         self.assertEqual(value['configured_series'],0)
