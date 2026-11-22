@@ -159,7 +159,8 @@ async def sports_once(host):
         if scan['subscribed']:break
     # Do not infer league-wide sleep from a snapshot of known events.
     # Refresh on the normal bounded listing interval and revisit events.
-    cache['retry_at']=min(now+60,cache.get('refresh_at',now+60))
+    unvisited=any(ev not in suite.sports_events for ev in events)
+    cache['retry_at']=now if unvisited or scan['subscribed'] else min(now+60,cache.get('refresh_at',now+60))
     remember(suite,'sports:'+series,None,now)
     print(json.dumps(dict(event='paper_sports_scan',**scan,next_check_at=cache['retry_at'],real_orders_enabled=False)),flush=True)
 
