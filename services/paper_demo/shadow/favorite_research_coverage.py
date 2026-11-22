@@ -6,7 +6,9 @@ Detailed/Wider are *cohort* counts; their sums are NOT independent event counts.
 Only the Single category view deduplicates an event across all price/time cohorts.
 """
 from decimal import Decimal as D, InvalidOperation
-from services.paper_demo.shadow.favorite_single import MIN_HOLD_RETURN_UNCERTAINTY_EVENTS
+from services.paper_demo.shadow.favorite_single import (
+    MIN_HOLD_RETURN_UNCERTAINTY_EVENTS, summarize_regular_attribution_subsets,
+)
 
 
 def _finite(value):
@@ -66,6 +68,35 @@ def _source_coverage(held_bots, profiles, category_for):
     return result
 
 
+def _sensitivity_subset(report):
+    """Bounded, identifier-free description of an observed return subset."""
+    count = _count(report.get('return_observations'))
+    low = (_finite(report.get('ci90_low_pct'))
+           if count >= MIN_HOLD_RETURN_UNCERTAINTY_EVENTS else None)
+    high = (_finite(report.get('ci90_high_pct'))
+            if count >= MIN_HOLD_RETURN_UNCERTAINTY_EVENTS else None)
+    if count < MIN_HOLD_RETURN_UNCERTAINTY_EVENTS:
+        state = 'under_minimum'
+    elif low is None or high is None:
+        state = 'no_numerical_interval'
+    elif low > 0:
+        state = 'nominal_interval_above_zero'
+    elif high < 0:
+        state = 'nominal_interval_below_zero'
+    else:
+        state = 'nominal_interval_overlaps_zero'
+    return dict(
+        independent_held_return_events=count,
+        positive_return_events=_count(report.get('positive_return_events')),
+        negative_return_events=_count(report.get('negative_return_events')),
+        zero_return_events=_count(report.get('zero_return_events')),
+        held_roi_mean_pct=_percent(report.get('average_return_pct')),
+        ci90_low_pct=_percent(low), ci90_high_pct=_percent(high),
+        confidence_state=state,
+        need_to_minimum=max(0, MIN_HOLD_RETURN_UNCERTAINTY_EVENTS-count),
+    )
+
+
 def summarize_regular_favorites_coverage(
     timed, wide, single, *, held_bots=None, profiles=None, category_for=None,
 ):
@@ -84,6 +115,9 @@ def summarize_regular_favorites_coverage(
     origin = (_source_coverage(held_bots, profiles, category_for)
               if held_bots is not None and profiles is not None
               and category_for is not None else {})
+    subsets = (summarize_regular_attribution_subsets(held_bots, profiles, category_for)
+               if held_bots is not None and profiles is not None
+               and category_for is not None else None)
     minimum = MIN_HOLD_RETURN_UNCERTAINTY_EVENTS
     categories = sorted(set(timed_coverage) | set(single_rows)
                         | set(wide_rows) | set(origin))
@@ -154,11 +188,24 @@ def summarize_regular_favorites_coverage(
                 legacy_claimed_resolved_without_event_ids=0)),
             flags=flags,
         )
+        if subsets is not None:
+            split = subsets.get(category) or {}
+            exact = _sensitivity_subset(split.get('exact_only') or {})
+            estimated_only = _sensitivity_subset(split.get('estimated_only') or {})
+            if (exact['independent_held_return_events']
+                    + estimated_only['independent_held_return_events'] != returns):
+                flags.append('attribution_subsets_do_not_reconcile')
+            if estimated_only['independent_held_return_events'] != estimated:
+                flags.append('estimated_attribution_subsets_do_not_reconcile')
+            output[category]['attribution_sensitivity'] = dict(
+                exact_only=exact, estimated_only=estimated_only,
+            )
     return dict(
         basis='regular_favorites_derived_held_returns',
         independent_event_source='single_category_deduplicated',
         confidence_target=minimum,
         confidence_note='approximate_90pct_student_t_not_correlated_adjusted',
+        attribution_note='exact_only_means_no_cohort_flagged_estimated; nonrandom_subsets_not_correlation_adjusted',
         detailed_and_wider_counts='cohort_appearances_not_independent',
         categories=output,
     )
