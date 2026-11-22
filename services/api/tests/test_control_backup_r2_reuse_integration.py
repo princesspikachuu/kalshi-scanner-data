@@ -2,13 +2,15 @@
 import json
 import unittest
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import MagicMock,patch
+from types import SimpleNamespace
 
 from services.demo.control_backup_v2 import (
     PART_FORMAT,backup_controls,canonical,digest_records,
     verify_staged_archive,restore_verified_snapshot,
 )
 from services.demo.maintenance import read_verified
+from services.demo.control_backup_chunk_reuse import lifecycle_reuse_allowed
 
 
 MODULE='services.demo.control_backup_v2'
@@ -168,6 +170,91 @@ class FullReuseReadbackTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             restore_verified_snapshot(objects,new_health['reference'])
         self.assertEqual(store.state['backup-health'],new_health)
+
+
+
+class LiveBucketLifecycleGateTests(unittest.TestCase):
+    @staticmethod
+    def safe_check(rules):
+        client=MagicMock()
+        client.get_bucket_lifecycle_configuration.return_value={'Rules':rules}
+        objects=SimpleNamespace(client=client,bucket='private-example')
+        with patch('builtins.print') as emit:
+            allowed=lifecycle_reuse_allowed(objects)
+        emit.assert_not_called()
+        client.get_bucket_lifecycle_configuration.assert_called_once_with(
+            Bucket='private-example')
+        client.put_object.assert_not_called()
+        client.delete_object.assert_not_called()
+        return allowed
+
+    def test_only_absent_or_nonexpiring_completed_object_rules_allow_reuse(self):
+        self.assertTrue(self.safe_check([]))
+        self.assertTrue(self.safe_check([
+            dict(ID='default-multipart-cleanup',Status='Enabled',
+                 Filter={},AbortIncompleteMultipartUpload={'DaysAfterInitiation':7}),
+        ]))
+        self.assertTrue(self.safe_check([
+            dict(ID='disabled-old-rotation',Status='Disabled',
+                 Filter={},Expiration={'Days':1}),
+        ]))
+        self.assertTrue(self.safe_check([
+            dict(ID='unrelated-retention',Status='Enabled',
+                 Filter={'Prefix':'unrelated/archive/'},Expiration={'Days':1}),
+        ]))
+        self.assertTrue(self.safe_check([
+            dict(ID='cold-transition-only',Status='Enabled',
+                 Filter={'Prefix':'demo/backups/'},Transitions=[{'Days':30}]),
+        ]))
+
+    def test_any_expiration_that_might_match_backup_parts_fails_closed(self):
+        for selector in ({},{'Prefix':'demo/backups/'},
+                         {'Prefix':'demo/backups/roots/'},
+                         {'Prefix':'demo/backups/old-fragment'},
+                         {'Prefix':'demo/'},{'Tag':{'Key':'type','Value':'archive'}},
+                         {'And':{'Prefix':'demo/backups/roots/',
+                                 'Tags':[{'Key':'purpose','Value':'backups'}]}}):
+            for key in ('Expiration','NoncurrentVersionExpiration'):
+                with self.subTest(selector=selector,expiration=key):
+                    rule={'ID':'secret ID must never log',
+                          'Status':'Enabled','Filter':selector,key:{'Days':7}}
+                    self.assertFalse(self.safe_check([rule]))
+
+    def test_legacy_rule_prefix_and_unknown_shapes_fail_conservatively(self):
+        self.assertFalse(self.safe_check([
+            dict(Status='Enabled',Prefix='demo/backups',Expiration={'Days':5})]))
+        self.assertTrue(self.safe_check([
+            dict(Status='Enabled',Prefix='unrelated/',Expiration={'Days':5})]))
+        self.assertFalse(self.safe_check([dict(Status='Unknown')]))
+        self.assertFalse(self.safe_check([dict(Status='Enabled',NewFutureDeleteMode={})]))
+        self.assertFalse(self.safe_check([dict(Status='Enabled',
+                                              Filter={'UnknownFilter':'secret'},
+                                              Expiration={'Days':1})]))
+        self.assertFalse(self.safe_check([dict(Status='Enabled',
+                                              Filter={'Prefix':None},
+                                              Expiration={'Days':1})]))
+        self.assertFalse(self.safe_check(['not a lifecycle rule']))
+
+    def test_missing_lifecycle_configuration_is_distinct_from_unreadable(self):
+        client=MagicMock()
+        objects=SimpleNamespace(client=client,bucket='private')
+        error=RuntimeError('private credential string must not escape')
+        error.response={'Error':{'Code':'NoSuchLifecycleConfiguration'},
+                        'ResponseMetadata':{'HTTPStatusCode':404}}
+        client.get_bucket_lifecycle_configuration.side_effect=error
+        with patch('builtins.print') as emit:
+            self.assertTrue(lifecycle_reuse_allowed(objects))
+        emit.assert_not_called()
+        error.response={'Error':{'Code':'AccessDenied','Message':'private-key'},
+                        'ResponseMetadata':{'HTTPStatusCode':403}}
+        self.assertFalse(lifecycle_reuse_allowed(objects))
+        client.get_bucket_lifecycle_configuration.side_effect=RuntimeError(
+            'private credential string must not escape')
+        self.assertFalse(lifecycle_reuse_allowed(objects))
+        client.get_bucket_lifecycle_configuration.side_effect=None
+        for response in (None,{},dict(Rules=None),dict(Rules={}),dict(Rules='bad')):
+            client.get_bucket_lifecycle_configuration.return_value=response
+            self.assertFalse(lifecycle_reuse_allowed(objects))
 
 
 if __name__=='__main__':
