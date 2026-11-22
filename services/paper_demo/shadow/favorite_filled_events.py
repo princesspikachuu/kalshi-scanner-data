@@ -44,7 +44,8 @@ class FavoriteFilledEvents:
         self.pruned_through = float(data.get('pruned_through', 0) or 0)
         self.unknown_after = float(data.get('unknown_after', 0) or 0)
         self.unknown_fills = int(data.get('unknown_fills', 0) or 0)
-        for item in data.get('events', []):
+        records = data.get('events', [])
+        for item in records if isinstance(records, list) else []:
             if not isinstance(item, list) or len(item) != 3: continue
             bot, event, at = item
             if (not isinstance(bot, str) or not 1 <= len(bot) <= 40
@@ -113,16 +114,6 @@ class FavoriteFilledEvents:
                 per_bot[bot]['all'].add(event)
                 by_category[category]['all'].add(event)
                 combined['all'].add(event)
-        def summarize(groups):
-            return {key: {period: dict(
-                count=len(events),
-                complete=bool(seconds is not None
-                    and now - seconds >= max(self.started_at, self.pruned_through, self.unknown_after)),
-                started_at=self.started_at,
-            ) for (period, seconds), events in
-                ((period, PERIODS[period], values) for period, values in windows.items())}
-                for key, windows in groups.items()}
-        # Fully bounded, ID-free dashboard summaries.
         def one(windows):
             result = {}
             for period, events in windows.items():
