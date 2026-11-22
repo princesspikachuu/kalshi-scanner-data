@@ -24,7 +24,8 @@ _MONTHS = ('JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
 _EVENT_DATE = re.compile(
     r'(?:^|[-_])(?P<year>[0-9]{2})(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|'
     r'JUL|AUG|SEP|OCT|NOV|DEC)(?P<day>[0-9]{2})'
-    r'(?P<compact_close_hhmm>[0-9]{4})?(?![0-9])'
+    r'(?:(?P<compact_close_hhmm>[0-9]{4})|(?P<compact_close_hour>[0-9]{2}))?' 
+    r'(?![0-9])'
 )
 _MIN_DAY_CLUSTERS = 20
 _MIN_PARSE_COVERAGE = D('.80')
@@ -35,9 +36,9 @@ def event_date_label(event):
 
     These are event labels (e.g. KXHIGHNY-26NOV20 or
     KXBTC15M-26NOV021815), not authoritative outcome timestamps.
-    Short-window Kalshi event tickers append HHMM directly to YYMONDD;
-    validate that HHMM and reject extra digits rather than discarding
-    every valid compact-time event. A venue
+    Some short-window event codes append HHMM directly to YYMONDD, while
+    hourly-series codes can append HH. Validate both time formats and reject
+    extra digits rather than silently accepting a malformed code. A venue
     event without a reliably valid label stays unknown and out of day-CI.
     """
     if not isinstance(event, str):
@@ -47,6 +48,9 @@ def event_date_label(event):
         return None
     compact = match.group('compact_close_hhmm')
     if compact is not None and (int(compact[:2]) > 23 or int(compact[2:]) > 59):
+        return None
+    hour = match.group('compact_close_hour')
+    if hour is not None and int(hour) > 23:
         return None
     try:
         value = date(2000 + int(match.group('year')),
