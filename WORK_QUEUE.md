@@ -2254,7 +2254,7 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 ---
 
 ## MT-035 — Read-only weekday finance-hourly Favorites entry-funnel visibility
-**Status:** IN PROGRESS — PR #342 merged and deployed; runtime telemetry verified, weekday finance fills still unproven
+**Status:** IN PROGRESS — PR #342 and #346 merged, deployed, and runtime-verified; funded weekday finance BUY fills/outcomes still unproven
 **Worker:** Money Tree — Chat 3.1: Finance-Hourly Investigation (successor to 3.0)
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U1 — URGENT
@@ -2292,6 +2292,12 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - Added deterministic tests for Saturday index scheduling, stale vs explicit retry, immutable existing cached series metadata, bounded invalid hints and no event inference. Exact-head full API/PostgreSQL CI [run 44980269668](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980269668) **PASSED** at exact PR head; postmerge push [44980717479](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980717479) and PR [44980720955](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980720955) are still running. Full `services/api/tests` suite includes the five new deterministic finance tests; no separate one-contract workflow was triggered due its file-path filters. PR safely merged with only the two expected changed files and no behind-base commits; release requires passing postmerge CI, automatic checks-pass Render deploy, safe lock takeover and observed `scan_state` runtime. Chat 1.1 retains scanner ownership.
 
 ---
+
+### Chat 3.1 — PR #346 production paper-runtime verification (2026-11-22 03:36 UTC)
+- [PR #346](https://github.com/princesspikachuu/kalshi-scanner-data/pull/346) merged as `bb23bd72657525b7fb3b7d29aa1bd7d8e962c104`. Exact-head full [CI #44980269668](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980269668), postmerge [push CI #44980717479](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980717479), and postmerge [PR CI #44980720955](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980720955) all **PASSED**. Verified postmerge PR CI logged **2,212** passing `services/api/tests`, including each of five new scan-state tests. Changed files only `favorite_finance_health.py` and `test_favorite_finance_health.py`.
+- Render `pocket-processing-staging` `autoDeployTrigger=checksPass` released exactly `bb23bd7` as `dep-dc164qu0tbcc73acqt60`, status **live 2026-11-22 03:33:40 UTC**. No manual deploy/forced lock. Replacement singleton `srv-dbhcqr0473hc739kj4pg-9wxvw` emitted `demo_worker_ready` at **03:35:46 UTC**, after normal lock wait; original `9ls9f` ceased exclusive execution.
+- First new-schema `favorites_finance_hourly_funnel` observed **03:36:04 UTC**: 11/11 enabled finance series, **two NYSE cash indexes explicitly `scheduled_cash_index`** with known next prewarm hint (~125,575 seconds), nine other profiles **`never_scanned` immediately after worker startup** (not a broken scanner). Available paper cash `$5,428.827`; zero finance admitted at Saturday-evening sample. `paper_strategy_health`: 75 regular Favorites enabled, **zero** other strategies, `real_orders_enabled=false`; `paper_monitoring_capacity` admitting, backlog 0, RSS pressure ~8.4%. No error-level/finance-funnel-error/scan-retry logs in initial worker slice. Follow up with second snapshot for nine non-index series after scanner warmup.
+- **This fixes observability, not trading.** MT-035 and [Issue #339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339) remain open until weekday finance opportunities can be verified after discovery, admission, fresh book/price/fee/cash checks, actual first BUY fill and independently confirmed final venue outcome. Chat 1.1 retains scanner ownership; do not relax market hours, fees, risk, settlement or cash conditions to fabricate fills.
 
 ## MT-036 — Show forward-only regular Favorites profitability validation on the dashboard
 **Status:** IN PROGRESS — claimed by 4.1; implementation and exact-head tests pending
