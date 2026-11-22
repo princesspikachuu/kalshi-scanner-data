@@ -248,9 +248,19 @@ def maintenance(store,env,stop):
                     # Source records are preserved and never deleted here.
                     from services.demo.control_backup_v2 import backup_controls
                     if env.get('MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED','false')=='true':
-                        # Safely reuse immutable identical R2 parts, but only
-                        # after full new-snapshot readback verifies every part.
-                        backup_controls(store,objects,reuse_previous=True)
+                        from services.demo.control_backup_chunk_reuse import lifecycle_reuse_allowed
+                        # A completed-object expiration rule can erase parts
+                        # referenced by newer roots. If bucket rules cannot
+                        # be verified, make an independent complete backup.
+                        # The user-facing feature flag stays default OFF.
+                        if lifecycle_reuse_allowed(objects):
+                            backup_controls(store,objects,reuse_previous=True)
+                        else:
+                            print(json.dumps(dict(
+                                event='demo_backup_reuse_lifecycle_blocked',
+                                fallback='independent_complete_backup',
+                                real_orders_enabled=False)),flush=True)
+                            backup_controls(store,objects)
                     else:
                         backup_controls(store,objects)
                 else:
