@@ -2032,6 +2032,11 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 - The main Nov 21 zero-15m-Favorites root cause (legacy Convexity pause suppressing independent collector discovery) is not just inferred: PR #335's live worker obtained 15m maker fills and **5 separate venue-settled new 15m event outcomes** (ETH, NEAR, SOL, XRP, ZEC) as of 02:30:31 UTC. See [Issue #333 final confirmation](https://github.com/princesspikachuu/kalshi-scanner-data/issues/333#issuecomment-7072953287), now closed. Current total `unique_verified_1h=9` includes the 5 newly confirmed 15m outcomes; distinct fills vs settlements remain separate measures.
 - Keep MT-030 **IN PROGRESS** for 15m quote cancellation root causes and remaining inactive hourly-price/sports/daily-weather windows, and for statistically honest post-fix baseline comparisons. Do not change risk/fee/freshness gates to chase activity without loss-of-eligible-event evidence.
 
+### Second 15m rollover verified — 02:30–02:31 UTC Nov 22
+- Continued live worker `618370c6` did not need a restart. After the 02:30Z contract expiry, `favorite_paper_entry` emitted fresh maker bids for **next 21:45 ET expiry** events across BTC, ETH, SOL, DOGE, BNB, ZEC, NEAR and XRP 15m series. In 02:30:05–02:31:18Z audit logs, 21 new maker submissions and **12 new BUY fill records** across **8 independently filled events** (5 crypto series BTC/ETH/SOL/NEAR/DOGE, 3 hourly weather). One event can have multiple maker fills; do not mistake 12 for 12 settled events.
+- `paper_position_settlement_poll_health` 02:30:54Z recorded 7 confirmed-queued settlement lookups and 16 venue-not-final responses, showing recoverer continues polling rather than assuming no result; no original historical/portfolio mutation by triage. Worker still 75 regular Favorites active, no real orders, 21 fresh/active books.
+- **Main discovery defect #333 closed**, but **MT-030 remains open** for eligible listing/quote cancellation/missed opportunity measurement and post-fix comparison. Price/fee protections left intact.
+
 
 ## MT-031 — Restore Daily Weather research table and period-specific distinct filled-event counts
 **Status:** DONE — merged, full CI passed, staging frontend/API/worker deployed, runtime checked
