@@ -1579,7 +1579,7 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** BLOCKED — manual read-only Cloudflare Analytics bridge merged and offline tests passed; awaiting user-created Account Analytics Read token in GitHub repository secret and first audited run  
+**Status:** IN PROGRESS — initial authorized GraphQL run failed HTTP 400; PR #345 schema fix merged and offline CI passed; awaiting post-fix manual Cloudflare metrics run  
 **Worker:** Money Tree — Chat 2.0: Deployment Verification (read-only observability onboarding, old inactive MT-017 task)  
 **Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific
 **Urgency:** U1 — URGENT  
@@ -1591,6 +1591,12 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 - Previous generic ChatGPT worker is not assumed active; reserve task for deliberate assignment/handoff to one of active streams before code changes. Protect current Favorites-only scope, authentication, rate guards, source history and paper-only execution.
 
 ### Chat 2.0 active handoff — read-only integration setup (2026-11-21 Pacific)
+### Live query failure and fix — 2026-11-22 UTC
+- User supplied both required GitHub secrets (values masked) and manually ran read-only Cloudflare CPU workflow [#44979977136](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44979977136). **All seven offline tests passed; query step failed HTTP 400.** This was NOT a Render worker/API deployment failure, and no token values or raw Cloudflare responses were printed.
+- Cloudflare's official newer GraphQL example declares datetime filter variables as `Time!`, whereas initial bridge used `string`. [Fix PR #345](https://github.com/princesspikachuu/kalshi-scanner-data/pull/345) corrects types and adds read-only minimal query fallback on HTTP 400. Detailed `exceeded_cpu` is explicitly `null` when unavailable, never incorrectly zero.
+- PR #345 merged as `1da5fc7d54b171e643498523c3569bf7726ea831`; exact PR-head [offline CI #44980183173](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980183173) **SUCCESS**. Current audited branch `main` contains the fix. No Cloudflare/Render runtime changes, no LIVE/paper order modifications or history writes.
+- **Next action:** user reruns [manual Cloudflare CPU workflow](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/cloudflare-cpu-readonly.yml) on `main` for `last_24h`, then Chat 2.0 reads sanitized Actions summary. **Do not claim live CPU metrics fixed until an actual successful run**. Task intentionally remains open.
+
 - **Setup implementation complete:** [PR #344](https://github.com/princesspikachuu/kalshi-scanner-data/pull/344) safely squash-merged as `85b205c2907c73a22b0689ae2e5259fa23360d61` to `main`. Exact-PR-head GitHub Actions [run 44979430401](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44979430401) passed **all seven** offline parsing/credential-exposure tests. The workflow file is on `main`, is manual-only, and has `contents:read`; no Cloudflare query, Worker deployment, trading setting, or history mutation was performed.
 - **Next user-only prerequisite:** create Cloudflare Account Analytics Read token scoped to Money Tree's account, save it as GitHub **Repository secret** `CLOUDFLARE_OBSERVABILITY_TOKEN` alongside existing `CLOUDFLARE_ACCOUNT_ID`, and manually dispatch `cloudflare-cpu-readonly.yml` from `main`. Read-only metrics will be public aggregate numbers in this PUBLIC GitHub repository's Actions logs. Do not print tokens or raw logs.
 - **Task remains BLOCKED on actual authorized metrics**. Once a manual run succeeds, Chat 2.0 should read its sanitized summary via GitHub, distinguish `exceededCpu` from HTTP 403 and Render CPU, and then document measured CPU causes. No access credential has been added by the assistant.
