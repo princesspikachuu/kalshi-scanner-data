@@ -2176,8 +2176,8 @@ Calculate and display **90% event-level held-return uncertainty** for populated 
 ---
 
 ## MT-034 — Fail safely on malformed future-entry timestamp hints (regular Favorites)
-**Status:** IN PROGRESS — PR #341 merged, head/postmerge full CI passed; Render release verification outstanding
-**Worker:** Money Tree — Chat 01: Discovery Optimization
+**Status:** IN PROGRESS — PR #341 merged and CI passed; Chat 1.1 successor owns outstanding Render release verification
+**Worker:** Money Tree — Chat 1.1: Discovery Optimization (successor to Chat 1.0 / legacy Chat 01)
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U2 — HIGH
 **Priority:** Guard regular Favorites discovery against malformed venue schedule hints without overlapping MT-018 market scanner ownership
@@ -2186,6 +2186,9 @@ Calculate and display **90% event-level held-return uncertainty** for populated 
 PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `services/paper_demo/shadow/discovery_wake.py`. Its `ts` parser calls `value.replace(...)` for anything other than int/float. JSON `null` or array/object schedule values raise **AttributeError** (not among the wake helper's caught KeyError/ValueError/TypeError/OverflowError), so a nonessential future hint can propagate a scanner exception and skip all remaining market discovery work for that scan pass. Boolean values also masquerade as numeric epoch timestamps.
 
 **Bounded fix:** In the shared helper, reject booleans and unsupported input types with a caught TypeError before ISO timestamp parsing. Add focused unittest cases for null/list/object/bool in hourly, 15m, weather daily and sports schedule fields, while preserving valid venue times and the existing fail-open-to-discovery unknown-schedule policy. Do not edit `hourly.py`, `weather.py`, `runner.py`, market discovery/admission, entry/cancel, fees, trading, cash, settlement, or persistence. No changes to Statistics-Backed Favorites or other strategies; paper-only. Recheck latest base before a safe independent PR and run full hosted API/PostgreSQL CI before merge/deploy.
+
+### Chat 1.1 successor checkpoint (2026-11-22 UTC)
+- Chat 1.1 took over release verification from Chat 1.0; #341 merged and CI passed, but exact Render deployment cannot be independently verified because the Render connector requires a user-confirmed workspace selection. No claim that code is deployed. No app code or trading state changed.
 
 ### Completion notes
 - **Release checkpoint:** [PR #341](https://github.com/princesspikachuu/kalshi-scanner-data/pull/341) **merged** on 2026-11-22 UTC as `447ff4dd6129e4dd39e2a13511b699b349ee3805` after exact combined head `90a25a499e3be1d8fedee3be0ec98d047c38496a` passed full hosted API/PostgreSQL [44977857044](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44977857044). Postmerge [workflow 44978194515](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44978194515) **PASSED** full API/PostgreSQL checks. Render exact deployment remains unverified in this chat (requires workspace selection). Do not claim live release until verified.
