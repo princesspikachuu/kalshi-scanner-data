@@ -131,3 +131,18 @@ The first live new-worker `favorites_quote_lifecycle` after those submissions, a
 **Causality/limitations:** This establishes that the *specific disabled-Convexity discovery gate* no longer suppresses independent regular Favorites 15-minute market discovery and paper fills. It does **not** establish a profitable win rate, more fills across a comparable full day, or exchange-final outcomes. No new 15m verified outcomes had arrived by 02:22:53 UTC, so `favorites_collection_quality.by_market_type.15m_price.unique_verified_1h=0` is not a contradiction; these new entries are not yet settled. Preserve held-to-authoritative-result positions; do not manufacture settlement or exit positions early. MT-030 stays IN PROGRESS until post-release fill and authoritative outcome windows are measured.
 
 Tracking: [Issue #333 verification comment](https://github.com/princesspikachuu/kalshi-scanner-data/issues/333#issuecomment-7072876258).
+
+
+## Follow-up 15-minute first-fill snapshot — 02:23:53 UTC
+
+The same **new, verified live-worker** five-minute/restart-local observer at **2026-11-22 02:23:53 UTC (Nov 21 18:23:53 PST)** produced:
+
+| Type | Submitted orders | Distinct submitted events | First-filled orders | Distinct first-filled events | Confirmed unfilled cancels | Still-open orders |
+|---|---:|---:|---:|---:|---:|---:|
+| **15m crypto** | **19** | **9** | **6** | **6** | **0** | **10** |
+| Hourly weather | 1 | 1 | 0 | 0 | 0 | 1 |
+| **Total** | **20** | **10** | **6** | **6** | **0** | **11** |
+
+This is the first substantial **post-fix independent-event fill evidence**, rather than merely submitted bids. The window is short, non-disjoint with earlier 02:22:53 telemetry, and has right-censored open orders; it is **not** a valid 6/19 fill probability or a day-over-day performance estimate. No venue-final outcomes from these new 15m fills were available yet. The worker remained at **75 regular Favorites bots / 0 Statistics-Backed bots / real orders disabled**, 21 active/21 fresh books, admission healthy, backlog 0 and memory pressure below 30%.
+
+**Next verification:** await natural market expiration and authoritative yes/no settlement for these independently filled events, then confirm those outcomes appear exactly once in the hold-to-settlement research cohorts. Do not force closures or simulate known results without venue data.
