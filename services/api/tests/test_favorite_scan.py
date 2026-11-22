@@ -47,6 +47,35 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         self.assertIn('min_close_ts',requests[-1])
         host.put.assert_not_awaited()
 
+    async def test_empty_hourly_finance_probe_is_read_only_and_throttled(self):
+        host,suite=self.setup_host()
+        suite.enabled_profiles=lambda kind:[dict(series='KXUSDCADAH')] if kind=='hourly' else []
+        suite.settlement_markets=lambda:{}
+        suite.search_capacity=lambda *args:True
+        def call(method,path,query=None):
+            if path.startswith('/series/'):
+                return dict(series=dict(frequency='hourly'))
+            if 'min_close_ts' in query:
+                return dict(markets=[])
+            return dict(markets=[dict(ticker='KXUSDCADAH-active',status='active')])
+        host.verified_data.call.side_effect=call
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000):
+            await hourly_once(host)
+        requests=[c.args[2] for c in host.verified_data.call.call_args_list
+                  if c.args[1]=='/markets']
+        self.assertEqual(len(requests),2)
+        self.assertIn('min_close_ts',requests[0])
+        self.assertNotIn('min_close_ts',requests[1])
+        host.put.assert_not_awaited()
+        self.assertEqual(suite.hourly_scan['subscribed'],0)
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1061):
+            await hourly_once(host)
+        requests=[c.args[2] for c in host.verified_data.call.call_args_list
+                  if c.args[1]=='/markets']
+        self.assertEqual(len(requests),3)
+        self.assertIn('min_close_ts',requests[-1])
+        host.put.assert_not_awaited()
+
     def test_hourly_profile_order_reaches_finance_without_increasing_scan_budget(self):
         profiles=[dict(series=s) for s in ('KXBTCD','KXETHD','KXSOLD',
             'KXGOLDH','KXSILVERH','KXUSDCADAH','KX10YRRATEAH')]
