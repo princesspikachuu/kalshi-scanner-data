@@ -290,7 +290,7 @@ export function favoriteSingleOverviewMarkup(bots=[],summary=null,open=new Set()
  }).join('');
  return '<section class="favorite-collector-overview favorite-single-overview"><h3>High-Probability Favorites · single bucket</h3><p class="small">All verified event-level held returns pooled across entry prices and times, including records that cannot be placed in the 3 × 3 table. Repeated events count once per table.</p>'+sections+'</section>';
 }
-export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new Set()){
+export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new Set(),source={}){
  const labels=new Map(marketTypeGroups(bots).map(g=>[g.id,g.label]));
  const categories=[...new Set([...labels.keys(),...Object.keys(summary?.rows||{})])];
  const prices=summary?.price_buckets||['70–<78¢','78–<86¢','86–95¢'];
@@ -308,8 +308,20 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new
    return '<td class="stat-observed '+favoriteProfitClass(signal)+'">'+star(price,slot)+'<details><summary><strong>n='+e(String(n))+' · '+e(favoriteEvidenceTier(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Win margin '+e(c.margin)+'</small><small>Win-rate error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
   }).join('')+'</tr>').join('');
   const excluded=Number(coverage.excluded_legacy_observations)||0;
+  // For daily weather, genuine event outcomes can precede usable entry-time
+  // bounds. Keep those original cohorts visible; never invent third placements.
+  const original=source.timed?.rows?.[category]||[];
+  const hasWide=times.length>0&&rows.some(r=>Number(r.events)>0);
+  const hasOriginal=Array.isArray(original)&&original.some(r=>Number(r.events)>0);
+  const fallback=!hasWide?(hasOriginal?
+    '<p class="small">Three equal entry-time thirds are not verifiable. Showing the recorded price × time cohorts instead.</p>'+
+    favoriteResearchGrid(favoriteCategoryRows(original,true),{mode:'detailed',starScope:'collector:'+category,starredBuckets:stars}):
+    Number(source.single?.rows?.[category]?.return_observations)>0?
+      '<p class="small">Entry-time thirds are unavailable; showing verified held-event returns without guessing their entry times.</p>'+
+      favoriteSingleCellMarkup(source.single.rows[category],{starScope:'collector:'+category,starredBuckets:stars}):
+      '<p class="small">No verified timed event evidence is available yet.</p>'):'';
   const note=(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary><p class="small">'+e(note)+'</p>'+(times.length?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':'<p class="small">Waiting for exact entry times to establish the betting window.</p>')+'</details>';
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary><p class="small">'+e(note)+'</p>'+(hasWide?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':fallback)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · wider 3 × 3</h3><p class="small">Distinct resolved events · hold-only return after fees · 90% confidence intervals. Wider bins pool different entry states.</p>'+sections+'</section>';
 }
@@ -317,7 +329,17 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new
 export function favoriteTimingMarkup(rows,wideRows=null,options={}){
  const panelKey=options.panelKey?` data-ui-panel="${e(options.panelKey)}"`:'';
  if(options.mode==='single')return `<details class="favorite-timing"${panelKey}><summary>All entries · single bucket</summary>${favoriteSingleCellMarkup(options.single,{starScope:options.starScope,starredBuckets:options.starredBuckets})}</details>`;
- if(wideRows!==null)return `<details class="favorite-timing"${panelKey}><summary>Wider entry price × time thirds</summary>${favoriteResearchGrid(wideRows,{mode:'wide',starScope:options.starScope,starredBuckets:options.starredBuckets})}</details>`;
+  if(wideRows!==null){
+    const valid=wideRows.some(r=>Number(r.events)>0);
+    const content=valid?
+      favoriteResearchGrid(wideRows,{mode:'wide',starScope:options.starScope,starredBuckets:options.starredBuckets}):
+      Array.isArray(rows)&&rows.some(r=>Number(r.events)>0)?
+        favoriteResearchGrid(favoriteCategoryRows(rows),{mode:'detailed',starScope:options.starScope,starredBuckets:options.starredBuckets}):
+        favoriteSingleCellMarkup(options.single,{starScope:options.starScope,starredBuckets:options.starredBuckets});
+    return '<details class="favorite-timing"'+panelKey+'><summary>Wider entry price × time thirds</summary>'+
+      (valid?'':'<p class="small">Exact time thirds unavailable. Showing original verified evidence without guessing timestamps.</p>')+
+      content+'</details>';
+  }
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
  return `<details class="favorite-timing"${panelKey}><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${favoriteResearchGrid(favoriteCategoryRows(rows),{mode:'detailed',starScope:options.starScope,starredBuckets:options.starredBuckets})}</details>`;
 }
