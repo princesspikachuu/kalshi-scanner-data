@@ -273,3 +273,5 @@
  .shadow-workspace .favorite-bucket-star{width:27px;height:27px;min-height:27px}
  .shadow-workspace .favorite-stat-matrix td>details>summary{padding-right:23px}
 }
+/* Compact, period-sensitive event counts sit directly under dollar P/L. */
+.shadow-workspace .filled-events-subtitle{display:block;margin-top:3px;font-size:11px;line-height:1.35;font-weight:400;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
