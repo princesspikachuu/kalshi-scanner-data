@@ -58,6 +58,69 @@ class BackupDiagnosticsTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in store.alert.call_args_list],
                          ['backup','backup-freshness'])
 
+    def test_opt_in_reuse_is_gated_by_read_only_bucket_lifecycle(self):
+        # Even an operator who opts in to reuse cannot bypass confirmed
+        # completed-object retention safety. All fallback paths still back
+        # up the full source with the existing immutable R2 writer.
+        scenarios=(
+            ('no_expiry',{'Rules':[dict(Status='Enabled',Filter={},
+                AbortIncompleteMultipartUpload={'DaysAfterInitiation':7})]},True),
+            ('unrelated_expiry',{'Rules':[dict(Status='Enabled',
+                Filter={'Prefix':'unrelated/'},Expiration={'Days':1})]},True),
+            ('backup_expiry',{'Rules':[dict(Status='Enabled',
+                Filter={'Prefix':'demo/backups/'},Expiration={'Days':1})]},False),
+            ('unparseable',{'Rules':None},False),
+        )
+        for label,response,safe in scenarios:
+            with self.subTest(label=label):
+                store=Mock();store.pool=MagicMock();store.get.return_value=None
+                store.pool.connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value={'size':1000}
+                objects=Mock()
+                objects.client.get_bucket_lifecycle_configuration.return_value=response
+                output=io.StringIO()
+                with patch('services.demo.maintenance.object_store',return_value=objects),\
+                     patch('services.demo.maintenance.restore_requests'),\
+                     patch('services.demo.control_backup_v2.backup_controls') as backup,\
+                     patch('services.demo.maintenance.emails'),contextlib.redirect_stdout(output):
+                    maintenance(store,dict(MT_CONTROL_BACKUP_V2_ENABLED='true',
+                        MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED='true'),Mock())
+                objects.client.get_bucket_lifecycle_configuration.assert_called_once_with(
+                    Bucket=objects.bucket)
+                if safe:
+                    backup.assert_called_once_with(store,objects,reuse_previous=True)
+                else:
+                    backup.assert_called_once_with(store,objects)
+                events=[json.loads(line) for line in output.getvalue().splitlines()]
+                blocked=[e for e in events if
+                         e.get('event')=='demo_backup_reuse_lifecycle_blocked']
+                self.assertEqual(len(blocked),int(not safe))
+                if blocked:
+                    self.assertEqual(blocked[0]['fallback'],
+                                     'independent_complete_backup')
+                objects.client.close.assert_called_once()
+
+    def test_denied_lifecycle_and_default_disabled_never_reuse(self):
+        for flag in ('false','true'):
+            with self.subTest(flag=flag):
+                store=Mock();store.pool=MagicMock();store.get.return_value=None
+                store.pool.connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value={'size':1000}
+                objects=Mock()
+                objects.client.get_bucket_lifecycle_configuration.side_effect=RuntimeError(
+                    'secret: private credential must never be printed')
+                output=io.StringIO()
+                with patch('services.demo.maintenance.object_store',return_value=objects),\
+                     patch('services.demo.maintenance.restore_requests'),\
+                     patch('services.demo.control_backup_v2.backup_controls') as backup,\
+                     patch('services.demo.maintenance.emails'),contextlib.redirect_stdout(output):
+                    maintenance(store,dict(MT_CONTROL_BACKUP_V2_ENABLED='true',
+                        MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED=flag),Mock())
+                backup.assert_called_once_with(store,objects)
+                self.assertEqual(
+                    objects.client.get_bucket_lifecycle_configuration.call_count,
+                    int(flag=='true'))
+                self.assertNotIn('private credential',output.getvalue())
+                self.assertNotIn('secret:',output.getvalue())
+
     def test_failed_object_verification_cannot_advance_archive_cursor(self):
         from datetime import datetime,timezone
         dt=datetime(2000,1,1,tzinfo=timezone.utc)
