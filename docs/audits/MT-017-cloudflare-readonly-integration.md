@@ -57,6 +57,8 @@ origin HTTP 403s and from Render trading-worker resource limits. Aggregates
 do **not** identify high-CPU routes or raw request traces; deeper investigation
 would require additional approved, narrowly scoped observability access.
 
+**HTTP 400 query-schema compatibility:** After the first manual run failed at the Cloudflare GraphQL request (not at deployment), the audit now tries Cloudflare's newer `Time` variable scalar and, for schema HTTP 400 only, a smaller documented read-only query. The final compatibility variant uses the older `string` scalar. On a partial fallback, `exceeded_cpu: null` means the detailed breakdown was unavailable, **not** that zero CPU-limit failures occurred. No raw Cloudflare API response or credentials are printed. Offline test success is not confirmation of actual Cloudflare analytics access.
+
 The workflow has only **workflow_dispatch**, repository **contents:read**,
 a fixed Cloudflare **HTTPS POST GraphQL query**, and static Worker names
 pocket-analytics-staging and kalshi-pocket-analytics. It cannot deploy code,

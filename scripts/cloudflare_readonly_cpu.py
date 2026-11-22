@@ -26,10 +26,10 @@ DEFAULT_WORKERS = ("pocket-analytics-staging", "kalshi-pocket-analytics")
 # Both total and exceededCpu are aggregate queries; no event payload is fetched.
 GRAPHQL_QUERY = """
 query WorkerCpuAudit(
-  $accountTag: string,
-  $datetimeStart: string,
-  $datetimeEnd: string,
-  $scriptName: string
+  $accountTag: string!,
+  $datetimeStart: Time!,
+  $datetimeEnd: Time!,
+  $scriptName: string!
 ) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
@@ -60,6 +60,39 @@ query WorkerCpuAudit(
 }
 """
 
+# Cloudflare versions may not expose every optional field/filter. If the
+# full read-only query gets a schema HTTP 400, try the smaller official
+# Workers metrics shape, never turning an unknown exceededCpu count into zero.
+GRAPHQL_QUERY_MINIMAL = """
+query WorkerCpuAuditBasic(
+  $accountTag: string!,
+  $datetimeStart: Time!,
+  $datetimeEnd: Time!,
+  $scriptName: string!
+) {
+  viewer {
+    accounts(filter: { accountTag: $accountTag }) {
+      total: workersInvocationsAdaptive(
+        limit: 1,
+        filter: {
+          scriptName: $scriptName,
+          datetime_geq: $datetimeStart,
+          datetime_leq: $datetimeEnd
+        }
+      ) {
+        sum { requests errors }
+        quantiles { cpuTimeP50 cpuTimeP99 }
+      }
+    }
+  }
+}
+"""
+
+# An older public Cloudflare tutorial declares time variables with the
+# provider-specific "string" scalar; newer examples use Time. This is the
+# last compatibility probe if the strict Time query fails validation.
+GRAPHQL_QUERY_MINIMAL_STRING = GRAPHQL_QUERY_MINIMAL.replace("Time!", "string!")
+
 
 class AnalyticsUnavailable(RuntimeError):
     """Signals missing/invalid data without exposing private API details."""
@@ -80,9 +113,11 @@ def select_window(period: str, now: datetime) -> tuple[str, str]:
     return format_utc(start), format_utc(end)
 
 
-def read_analytics(account: str, token: str, worker: str, start: str, end: str) -> dict:
+def _read_analytics_query(account: str, token: str, worker: str,
+                          start: str, end: str, query: str) -> dict:
+    """Read one aggregate GraphQL query; never expose provider response text."""
     payload = {
-        "query": GRAPHQL_QUERY,
+        "query": query,
         "variables": {
             "accountTag": account,
             "datetimeStart": start,
@@ -104,7 +139,10 @@ def read_analytics(account: str, token: str, worker: str, start: str, end: str) 
         with urllib.request.urlopen(request, timeout=30) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
-        # Do not print response body, URI, token, or raw provider exception.
+        # Do not print body, URL, request headers, account ID or provider
+        # exception. HTTP 400 may mean an invalid GraphQL schema selection.
+        if exc.code == 400:
+            raise AnalyticsUnavailable("Cloudflare GraphQL HTTP 400 (query validation)") from None
         raise AnalyticsUnavailable("Cloudflare Analytics returned HTTP " + str(exc.code)) from None
     except (urllib.error.URLError, TimeoutError):
         raise AnalyticsUnavailable("Cloudflare Analytics network request unavailable") from None
@@ -112,6 +150,7 @@ def read_analytics(account: str, token: str, worker: str, start: str, end: str) 
         raise AnalyticsUnavailable("Cloudflare Analytics returned invalid JSON") from None
 
     if not isinstance(result, dict) or result.get("errors"):
+        # Same constant regardless of the error body. Logs are PUBLIC.
         raise AnalyticsUnavailable(
             "Cloudflare GraphQL query failed; verify Account Analytics Read permission and dataset access"
         )
@@ -120,6 +159,24 @@ def read_analytics(account: str, token: str, worker: str, start: str, end: str) 
         raise AnalyticsUnavailable("No readable Cloudflare analytics account returned")
     return accounts[0]
 
+
+def read_analytics(account: str, token: str, worker: str, start: str, end: str) -> dict:
+    """Prefer the complete query, then documented read-only compat shapes."""
+    options = (GRAPHQL_QUERY, GRAPHQL_QUERY_MINIMAL, GRAPHQL_QUERY_MINIMAL_STRING)
+    for idx, query in enumerate(options):
+        try:
+            result = _read_analytics_query(account, token, worker, start, end, query)
+        except AnalyticsUnavailable as exc:
+            if "HTTP 400" in str(exc) and idx < len(options) - 1:
+                continue
+            raise
+        if idx:
+            # Explicitly distinguish unsupported breakdown from zero errors.
+            result = dict(result)
+            result["exceeded"] = None
+            result["_partial_analytics"] = True
+        return result
+    raise AnalyticsUnavailable("Cloudflare GraphQL schema not supported")
 
 def optional_ms(value: object) -> float | None:
     if value is None:
@@ -144,18 +201,21 @@ def summarize_worker(worker: str, account: dict) -> dict:
         raise AnalyticsUnavailable("Incomplete invocation counters")
 
     exceeded = account.get("exceeded")
-    if not isinstance(exceeded, list):
+    if account.get("_partial_analytics"):
+        cpu_failures = None
+    elif not isinstance(exceeded, list):
         raise AnalyticsUnavailable("Missing Cloudflare exceededCpu result")
-    cpu_failures = (exceeded[0].get("sum") or {}).get("requests") if exceeded else 0
-    if not isinstance(cpu_failures, (int, float)):
-        raise AnalyticsUnavailable("Invalid exceededCpu counter")
+    else:
+        cpu_failures = (exceeded[0].get("sum") or {}).get("requests") if exceeded else 0
+        if isinstance(cpu_failures, bool) or not isinstance(cpu_failures, (int, float)):
+            raise AnalyticsUnavailable("Invalid exceededCpu counter")
 
     return {
         "worker": worker,
-        "state": "estimated_analytics",
+        "state": "estimated_analytics_partial" if account.get("_partial_analytics") else "estimated_analytics",
         "requests": int(requests),
         "errors": int(errors),
-        "exceeded_cpu": int(cpu_failures),
+        "exceeded_cpu": int(cpu_failures) if cpu_failures is not None else None,
         "cpu_ms_p50": optional_ms(quantiles.get("cpuTimeP50")),
         "cpu_ms_p95": optional_ms(quantiles.get("cpuTimeP95")),
         "cpu_ms_p99": optional_ms(quantiles.get("cpuTimeP99")),
