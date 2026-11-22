@@ -1703,7 +1703,7 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 ## MT-018 — Balance Favorites evidence collection across under-sampled market types
 ### Chat 1.1 → 1.2 successor handoff (2026-11-22 UTC)
 
-**PREPARED — NOT ACTIVE.** Current conversation `1.1 - Money Tree` is still the registered exclusive **MT-018 scanner owner**, and its current chat/sidebar title must not be changed. The user sent `1.2` to 1.1 as a successor-preparation command, not a request to start 1.2's implementation. `1.2 - Money Tree` is RESERVED as **PREPARED / NOT ACTIVE** in `main:docs/CHAT_INDEX.md`. **Do not change the MT-018 owner until 1.2 has opened the new Project chat, read both coordination files and explicitly checked in.** Then transfer ONLY this owner's authorized work and mark 1.1 succeeded.
+**HISTORICAL PREPARATION NOTE (superseded by 1.2 activation below).** Current conversation `1.1 - Money Tree` is still the registered exclusive **MT-018 scanner owner**, and its current chat/sidebar title must not be changed. The user sent `1.2` to 1.1 as a successor-preparation command, not a request to start 1.2's implementation. `1.2 - Money Tree` is RESERVED as **PREPARED / NOT ACTIVE** in `main:docs/CHAT_INDEX.md`. **Do not change the MT-018 owner until 1.2 has opened the new Project chat, read both coordination files and explicitly checked in.** Then transfer ONLY this owner's authorized work and mark 1.1 succeeded.
 
 **Repo and task:** `princesspikachuu/kalshi-scanner-data`; coordination branch `main`, implementation/merge branch `build/google-auth-foundation`, verified HEAD at handoff `cf2cf74e05ec220d23da4effb6282c77e580be7f`. **MT-018 IN PROGRESS (U2 HIGH)**, exclusive scanner listing/pagination/fee-stage diagnosis for **regular High Probability Favorites only**, including issue [#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339). **MT-034 DONE**; do not reopen merely due to successor transition.
 
@@ -1765,8 +1765,8 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 - Coordination: PR #346 belongs to Chat 3.1 and changes its separate MT-035 telemetry without touching `hourly.py`. PR #347 stays draft until exact-head focused and full hosted API/PostgreSQL CI pass and latest base is reconciled; Monday Nov 23 funded weekday venue evidence still required for [issue #339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339).
 
 
-**Status:** IN PROGRESS — transferred from Chat 1.0 to successor Chat 1.1; weekday finance runtime acceptance pending  
-**Worker:** Money Tree — Chat 1.1: Discovery Optimization (successor to Chat 1.0 / legacy Chat 01)  
+**Status:** IN PROGRESS — transferred from 1.1 to active successor 1.2; weekday finance runtime acceptance pending  
+**Worker:** 1.2 - Money Tree (exclusive MT-018 scanner owner; succeeded 1.1)  
 **Claimed:** 2026-11-10 00:20 UTC; handoff confirmed 2026-11-22 UTC following user correction  
 **Urgency:** U2 — HIGH  
 **Priority:** High, after MT-003
@@ -1816,7 +1816,11 @@ This is now the dominant Favorites learning-data imbalance.
 - 15m evidence throughput is not intentionally reduced.
 - Any market type that remains sparse has an explicit measured reason (availability, fills, discovery, risk, or another gate).
 
-### MT-023 read-only coverage evidence (2026-11-21, for MT-018 owner)
+#
+### Chat 1.2 activation and claim (2026-11-22 UTC)
+- New conversation `1.2 - Money Tree` received `continue` after naming-only startup, read current main queue/index, and verified the prepared 1.1 handoff. `1.1` succeeded; exclusive MT-018 ownership transferred to `1.2` only. MT-034 remains DONE; MT-017, MT-035, MT-036 and MT-030 retain their separate owners.
+- PR #347/#351 are merged with passing CI but exact Render worker runtime remains unverified. Next: verify deployed worker SHA/singleton and safe regular-Favorites-only operation with authorized read-only evidence; then capture funded Monday Nov 23 finance-hourly venue listing, zero-maker-fee and first-fill funnel evidence for issue #339. Do not change fee, time, cash, safety, settlements, or historical data without separate bounded evidence and tests.
+## MT-023 read-only coverage evidence (2026-11-21, for MT-018 owner)
 Existing authenticated API `favorites_timed_rollup` snapshots around 20:09–20:12 UTC report **finance-hourly 0/11 bots with entry-timing rows**, weather-hourly 4/8, crypto-hourly 7/9, commodities-hourly 4/5, sports 4/7, and finance-15m 10/11. Overall 53/75 regular Favorites bots have timing rows. These are **bot-level record coverage**, not distinct settled event counts or availability evidence. Investigate no-trade hourly-finance gating/opportunity availability with your existing MT-018 owner scope; do not suppress healthy 15m collection. MT-023's draft PR #326 will measure independently settled event coverage without changing trading.
 
 ### High-priority 15m discovery dependency audit (2026-11-22 ~01:21Z; MT-026 investigator, for MT-018 owner)
