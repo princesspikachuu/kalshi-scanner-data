@@ -1665,6 +1665,11 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 ---
 
 ## MT-018 — Balance Favorites evidence collection across under-sampled market types
+### Chat 1.1 — Kalshi Get Markets filter contract discrepancy (read-only; 2026-11-22 UTC)
+- Official [Kalshi Get Markets docs](https://docs.kalshi.com/api-reference/market/get-markets) list `min_close_ts/max_close_ts` as compatible with `status=closed` **or omitted status**; `status=open` is explicitly listed with created-time filters. Our hosted hourly/weather discovery currently combine `status=open` with close-time bounds. `ProductionData.call` passes query fields unchanged.
+- **UNVERIFIED compatibility concern, not proven weekday finance no-fill cause.** The Saturday worker had successful hourly scans, so do not assume a systemic HTTP 400. A future authorized, bounded weekday provider comparison of the combined query versus documented close-time-only query should establish response status, applied filters, pagination and distinct active events before changing code. No extra live probe, fee/risk bypass or unrestricted REST burst is authorized in this note.
+- Recorded for MT-018 and MT-035 coordination in [issue #339 comment](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339#issuecomment-7073534883). PR #347 does not modify query compatibility.
+
 ### Chat 1.1 — MT-018 draft PR #347 stage-visibility checkpoint (2026-11-22 UTC)
 - [Draft PR #347](https://github.com/princesspikachuu/kalshi-scanner-data/pull/347) on branch `feat/mt018-hourly-listing-stage-visibility-20261121`, head `e94ea04a5aa7c01c39282ff409f72f72d7c9c140`, based cleanly on deployed `c980217225fa0f14bfd04de6a4b98e08d062ae5b` with **only** `hourly.py` and `test_favorite_scan.py` changed (2 commits, zero behind-base commits at branch creation). **DRAFT / CI NOT YET VERIFIED / NOT DEPLOYED.**
 - The currently live hourly scanner's "No active markets closing within one hour" message conflates no returned market pages with records that have the wrong status, future opens, or out-of-window closes. Draft adds bounded **per-page** category counts and compact per-series `hourly_coverage.reason` stage summaries, reused by Chat 3.1's read-only MT-035 monitor. These counts are provider page appearances, **not distinct events or observed tradeable opportunities**.
