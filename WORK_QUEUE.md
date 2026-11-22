@@ -2429,7 +2429,7 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 ---
 
 ## MT-037 — Show submitted paper BUY attempts next to distinct filled events; investigate hourly crypto zero fills
-**Status:** IN PROGRESS — claimed by Chat 2.1 for independent Favorites-only instrumentation/UI and read-only runtime triage
+**Status:** IN PROGRESS — PR #354 merged; frontend staged; worker deployment and runtime acceptance pending; hourly crypto read-only discovery diagnosis handed to MT-018 owner
 **Worker:** Money Tree — Chat 2.1 (deployment/telemetry lane)
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U1 — URGENT; explicitly prioritized by user after pausing MT-017
@@ -2444,6 +2444,10 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 
 ### Completion notes
 - 2026-11-22 UTC: User first requested task. MT-017 was paused (not closed); existing completed MT-031 filled-event observer and MT-026 five-minute quote lifecycle evidence identified. Work to be recorded under this section.
+
+### 2026-11-22 UTC — MT-037 merged and dedicated frontend released
+- [PR #354](https://github.com/princesspikachuu/kalshi-scanner-data/pull/354) merged to `build/google-auth-foundation` as **`33a37fba702951640c989c67e92802ea75c4c664`** after guarded clean current-base compare (7 expected files; zero commits behind; no scanner/trading/fees/settlement/history edits). Exact-head full API/PostgreSQL CI [#44989701387 attempt 2](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44989701387/attempts/2) **PASSED** after first attempt hit an unrelated one-off PostgreSQL session advisory lock retention test failure. Browser/gateway test steps and all 2,228 Python tests + staging Blueprint validation passed on rerun.
+- Dedicated staging frontend push workflow [#44990547267](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44990547267) **SUCCEEDED**, including exact published asset checks. The independent generic staging gateway [#44990547271](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44990547271) failed its *unauthenticated HTTP boundary smoke* after successful staging deployment step, consistent with prior protected 403 endpoint caveat; do not infer logged-in dashboard failure or change Cloudflare security rules. Postmerge API/PostgreSQL push [#44990547282](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44990547282) and PR [#44990550026](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44990550026) still in progress at checkpoint. Verify both, Render processing worker on exact merge SHA, exclusive lock takeover and 75 regular Favorites bots, other strategies 0, real orders disabled before task DONE. No manual API deploy.
 
 ### 2026-11-22 UTC — MT-037 exact-head release gate
 - **MT-037 CI first attempt isolated:** [hosted full API/PostgreSQL #44989701387 attempt 1](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44989701387/attempts/1) ran 2,228 tests with **1 failure** unrelated to MT-037: `test_held_diagnostic_retention.RealRetentionLeaseTests.test_a_replacement_waits_until_the_original_session_closes` failed immediately reacquiring a PostgreSQL advisory session lock on a second connection following first connection teardown. The new MT-037 attempt-counter tests and frontend/browser suite passed; no evidence this affects trading or retention runtime. **Do not change MT-019 retention production code or bypass CI.** A **single failed-job rerun** of exact same PR head was requested; attempt 2 in progress at checkpoint. Hold draft/unmerged until exact-head green, guarded base review, then verify auto worker/frontend release. No manual API deploy needed because live API `workspace_response` already preserves safe compact counters/folder fields.
