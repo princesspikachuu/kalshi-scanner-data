@@ -94,7 +94,7 @@ class DiscoveryWakeIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(suite.weather_scan['categories']['weather_daily']['reason'],
                          'known_entry_windows_sleeping')
 
-    async def test_provider_future_hourly_open_sleeps_and_survives_checkpoint(self):
+    async def test_future_crypto_market_does_not_create_sleep_hint(self):
         host,suite=Scan().setup_host();now=1000
         suite.enabled_profiles=lambda asset:([dict(series='KXBTCD')]
             if asset=='hourly' else [])
@@ -106,19 +106,12 @@ class DiscoveryWakeIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(path,'/markets')
             return dict(markets=[future])
         host.verified_data.call.side_effect=response
+        suite.discovery_wakes={'hourly:KXBTCD':now+3600}
         with patch('services.paper_demo.shadow.hourly.time.time',return_value=now):
             await hourly_once(host)
-        self.assertEqual(suite.discovery_wakes['hourly:KXBTCD'],now+3600)
+        self.assertNotIn('hourly:KXBTCD',suite.discovery_wakes)
         self.assertEqual(host.verified_data.call.call_count,2)
         with patch('services.paper_demo.shadow.hourly.time.time',return_value=now+90):
             await hourly_once(host)
-        self.assertEqual(host.verified_data.call.call_count,2)
-        saved=suite.state()
-        self.assertEqual(saved['_discovery_wakes']['hourly:KXBTCD'],now+3600)
-        restored=ExperimentSuite(suite.host,suite.rows,saved)
-        self.assertTrue(asleep(restored,'hourly:KXBTCD',now+100))
-        self.assertFalse(asleep(restored,'hourly:KXBTCD',now+3600))
-        with patch('services.paper_demo.shadow.hourly.time.time',return_value=now+3600):
-            await hourly_once(host)
         self.assertGreater(host.verified_data.call.call_count,2)
-        host.put.assert_awaited_once()
+        host.put.assert_not_awaited()
