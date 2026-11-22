@@ -1579,7 +1579,7 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** IN PROGRESS — initial authorized GraphQL run failed HTTP 400; PR #345 schema fix merged and offline CI passed; awaiting post-fix manual Cloudflare metrics run  
+**Status:** IN PROGRESS — second read-only Cloudflare Analytics query HTTP 400 confirmed; PR #348 safer diagnostic merged, awaiting user manual rerun and verified provider access  
 **Worker:** Money Tree — Chat 2.0: Deployment Verification (read-only observability onboarding, old inactive MT-017 task)  
 **Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific
 **Urgency:** U1 — URGENT  
@@ -1637,6 +1637,11 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 - **BLOCKER:** No connected Cloudflare observability/CPU metrics or authorized Cloudflare Analytics API read access. Need to determine whether `pocket-analytics-staging`, `kalshi-pocket-analytics` or both generated `exceededCpu` errors and obtain pre/post 2026-11-09 15:00 UTC CPU p50/p95/p99, invocation counts and affected routes.
 - After metrics are available: quantify error trend, identify specific high-CPU route, implement validated optimization and re-test authenticated dashboard. Leave task BLOCKED rather than claiming the alert is resolved.
 
+
+### Second HTTP400 and safe staged diagnostic, Chat 2.0 (2026-11-22 UTC)
+- Manual Cloudflare read-only audit [GitHub run #44980433098](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980433098) reported **all 11 offline tests passing**, then HTTP 400 from the Cloudflare GraphQL metrics request after three query variants; both configured GitHub secrets were present, values masked. **No Render/Worker deployment failed.** Exact provider error category remains unknown because raw errors intentionally are not printed in PUBLIC Actions logs.
+- **Follow-up [PR #348](https://github.com/princesspikachuu/kalshi-scanner-data/pull/348)** (merged `80df3fc186569d24d7486de65f6b1e764d79ec76` to main; exact PR-head [17 offline tests passed](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980642663)). Adds a read-only, credential-redacting three-stage fallback diagnostic: Cloudflare viewer authorization, account visibility, Workers aggregate dataset, plus **account-ID secret shape** validation. The printed result `MT017_SAFE_PREFLIGHT` uses only fixed safe labels, not provider messages/IDs/IPs/paths/token data. Last query fallback now uses Cloudflare's documented nullable string variables.
+- **Next:** user must manually rerun [MT-017 Cloudflare CPU (read-only)](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/cloudflare-cpu-readonly.yml) on `main` with `last_24h` to obtain a sanitized preflight or aggregate CPU report. Do **not** request credentials in chat, bypass the public-log redaction, loosen permissions, or infer CPU fixed without a successful provider response. No other task ownership changes.
 
 # Coordination notes
 
