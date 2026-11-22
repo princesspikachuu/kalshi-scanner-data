@@ -2153,3 +2153,23 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - `discovery_wake.ts` now rejects unsupported JSON input types and booleans with `TypeError`, allowing existing `known_entry_wake` failure-to-schedule path to return `None`. Added 45 invalid-field deterministic subcases across 15m, hourly, weather daily and sports. No scanner, execution, fee, risk, wallet, settlement or history mutations.
 - Original full API/PostgreSQL workflow [run 44977652713](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44977652713) and new exact-combined-head workflow [44977857044](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44977857044) are **in progress** at this checkpoint. New head must pass before merge. Draft/unmerged, not deployed. Must confirm exact-head full CI, review base changes, and then do guarded merge/release verification.
 - MT-018 remains the sole owner of pagination/full listing and weekday finance no-trade work ([#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339)); MT-030 retains order/fill throughput.
+
+
+---
+
+## MT-035 — Read-only weekday finance-hourly Favorites entry-funnel visibility
+**Status:** IN PROGRESS
+**Worker:** Money Tree — Chat 03: Weekday Finance Investigation
+**Claimed:** 2026-11-22 UTC
+**Urgency:** U1 — URGENT
+**Priority:** Diagnose the persistent zero-finance-hourly-Favorites-trades problem before any cash starvation; coordinate with MT-018's exclusive scanner work and MT-030's maker-lifecycle work.
+
+### Scope
+- Regular High-Probability Favorites only. Issue [#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339) tracks eleven configured finance-hourly series with no verified settled research rows.
+- MT-018 / Chat 01 exclusively owns `hourly.py`, market listing and pagination. **This task must not modify scanner code or trading gates**. MT-030 retains its separate maker cancel logic. Instead add a bounded, periodic, read-only post-admission diagnostic in the existing hosted regular Favorites health pass, using already retained engine/book/order and discovery-coverage state. Never add REST requests or DB/R2 activity.
+- For each enabled finance-hourly series, separately report whether it has a fresh scan, active admitted market, fresh two-sided book, price-qualified maker candidate, verified zero-maker-fee marker, enough paper cash for one contract, and active maker buy orders. These are *snapshot-stage indicators*, not independently tradeable/filled event counts, promises of fills or a full historical funnel.
+- The diagnostic must not call any trading action, invoke recovery/fee refresh, change wallet/risk/order/settlement state, or log market/order identities, private book depths, or secrets. Log at most once per minute with a bounded small summary and non-fatal errors. Preserve all histories and real_orders_enabled=false.
+- Add deterministic synthetic tests for funded qualifying, cash-starved, stale/one-sided/price-disqualified, zero-fee-unverified, empty/disabled series and separation from other portfolios. Run exact-head focused + full API/PostgreSQL CI and deploy/verify only after passes, coordinated with Chat 01. Record actual weekday before/after results and do not claim root cause without a real venue observation.
+
+### Completion notes
+_Draft PR, tests, deployment and observed finance-hourly funnel findings pending._
