@@ -16,6 +16,7 @@ from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
 from .favorite_filled_events import FavoriteFilledEvents
+from .favorite_order_attempts import FavoriteOrderAttempts
 from .monitoring import MonitoringBudget,protected,maker_entry_limit,category as market_category
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
@@ -164,6 +165,8 @@ class ExperimentSuite:
             if folder=='favorites':
                 e._favorite_filled_events=FavoriteFilledEvents(
                     (state or {}).get('filled_event_tracking'),now=time.time())
+                e._favorite_order_attempts=FavoriteOrderAttempts(
+                    (state or {}).get('submitted_attempt_tracking'),now=time.time())
             for p in ps:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
@@ -206,7 +209,8 @@ class ExperimentSuite:
     def state(self):
         return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_discovery_wakes=self.discovery_wakes,_maker_allocation=self.maker_allocation,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
             strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()},
-             **({'filled_event_tracking':e._favorite_filled_events.export()}
+             **({'filled_event_tracking':e._favorite_filled_events.export(),
+                  'submitted_attempt_tracking':e._favorite_order_attempts.export()}
                  if folder=='favorites' else {}))
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
@@ -791,10 +795,14 @@ class ExperimentSuite:
                             ids.update(str(k) for k in row['outcome_events'] if k)
                     historical[p['id']]=ids
                 observed=e._favorite_filled_events.report(now,ps,historical)
+                submitted=e._favorite_order_attempts.report(now,ps)
                 result[folder].update(filled_events=observed['total'],
-                    filled_events_by_category=observed['by_category'])
+                    filled_events_by_category=observed['by_category'],
+                    attempted_orders=submitted['total'],
+                    attempted_orders_by_category=submitted['by_category'])
                 for p in ps:
                     bots[p['id']]['filled_events']=observed['by_bot'][p['id']]
+                    bots[p['id']]['attempted_orders']=submitted['by_bot'][p['id']]
         return result
     def maintain(self):
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
@@ -930,7 +938,9 @@ class ExperimentSuite:
         self.summary.pop(folder,None)
         self.comparison.pop(folder,None)
         e.wallet=Wallet(D(1000));e.orders={};e.pending=[];e.closed_reports=set();e.clear_trade_ids()
-        if folder=='favorites':e._favorite_filled_events=FavoriteFilledEvents(now=e.now or time.time())
+        if folder=='favorites':
+            e._favorite_filled_events=FavoriteFilledEvents(now=e.now or time.time())
+            e._favorite_order_attempts=FavoriteOrderAttempts(now=e.now or time.time())
         for b in f.bots.values():
             b.attempts={};b.history={} if hasattr(b,'history') else None
             if hasattr(b,'decisions'):b.decisions={}

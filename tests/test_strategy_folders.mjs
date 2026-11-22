@@ -1353,7 +1353,7 @@ test('period-specific filled-event subtitles follow P/L headings and never count
    '6H':{count:5,complete:true},'24H':{count:8,complete:false},
    '7D':{count:10,complete:false},'30D':{count:12,complete:false}};
  assert.match(filledEventsSmall(filled,'all'),/≥19 filled events · partial history/);
- assert.match(filledEventsSmall(filled,'1H'),/>2 filled events</);
+ assert.match(filledEventsSmall(filled,'1H'),/2 filled events · attempted fills unavailable/);
  assert.doesNotMatch(filledEventsSmall(filled,'1H'),/partial history/);
  assert.equal(filledEventsSmall({},'1H'),'');
  const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
@@ -1392,4 +1392,37 @@ test('actual folder time selector updates filled-event number beneath P/L',()=>{
  select.onclick({preventDefault(){},stopPropagation(){}});
  assert.match(nodes.get('groups').innerHTML,/2 filled events/);
  assert.doesNotMatch(nodes.get('groups').innerHTML,/≥19 filled events/);
+});
+
+test('submitted maker BUY attempts appear beside distinct filled events for each selected P/L period',()=>{
+ const filled={all:{count:12,complete:false},'1H':{count:0,complete:true},'6H':{count:3,complete:true}};
+ const attempts={all:{count:150,complete:false},'1H':{count:7,complete:true},'6H':{count:22,complete:false}};
+ assert.match(filledEventsSmall(filled,'1H',attempts),/0 filled events · 7 attempted fills/);
+ assert.doesNotMatch(filledEventsSmall(filled,'1H',attempts),/partial history/);
+ assert.match(filledEventsSmall(filled,'6H',attempts),/3 filled events · ≥22 attempted fills · partial history/);
+ assert.match(filledEventsSmall(filled,'all',attempts),/≥12 filled events · partial history · ≥150 attempted fills · partial history/);
+ assert.match(filledEventsSmall(filled,'1H'),/attempted fills unavailable/);
+ assert.match(filledEventsSmall(filled,'1H',{'1H':{count:-1}}),/attempted fills unavailable/);
+ assert.doesNotMatch(filledEventsSmall({},'1H',attempts),/attempted fills/,
+   'do not fabricate a filled-events counter for incomplete source');
+ const d=fixture(),f=d.folders.find(f=>f.id==='favorites');
+ f.filled_events=filled;f.attempted_orders=attempts;
+ f.filled_events_by_category={'crypto-15m':filled};
+ f.attempted_orders_by_category={'crypto-15m':attempts};
+ f.accounting.portfolio={cash:'1000',equity:'1002',total_pnl:'2',deposits:'1000',position_cost:'0'};
+ const bot=d.bots.find(b=>b.id==='favorites');
+ bot.experiment.filled_events=filled;bot.experiment.attempted_orders=attempts;
+ bot.account={total_pnl:'2',realized_pnl:'2',unrealized_pnl:'0'};
+ const group={id:'crypto-15m',label:'Crypto · 15 minutes',bots:[bot]};
+ for(const html of [
+  folderOverviewMarkup([f],'1H'),
+  folderCardSummaryMarkup(f,'1H'),
+  marketTypeSummaryMarkup(group,'1H',[],null,[],filled,attempts),
+  botPnlMarkup(bot,'1H'),
+  botPnlDetailsMarkup(bot,'1H')
+ ])assert.match(html,/0 filled events · 7 attempted fills/);
+ const {nodes}=setup(d);
+ assert.match(nodes.get('groups').innerHTML,/≥150 attempted fills · partial history/);
+ const html=marketTypeSummaryMarkup(group,'6H',[],null,[],filled,attempts);
+ assert.match(html,/≥22 attempted fills · partial history/);
 });

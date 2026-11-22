@@ -481,6 +481,16 @@ class Engine:
                 observer.observe(kind,order,self.now,self.markets.get(order.ticker,{}),fields.get('reason'))
             except Exception:
                 self._favorite_quote_lifecycle_errors=getattr(self,'_favorite_quote_lifecycle_errors',0)+1
+        # Independently count submitted maker BUY *orders* as attempts,
+        # including those which never fill. The durable audit remains canonical.
+        if kind == 'ORDER_SUBMITTED' and order is not None:
+            attempts = getattr(self, '_favorite_order_attempts', None)
+            if attempts is not None:
+                try:
+                    attempts.observe(order, self.now, self.markets.get(order.ticker, {}))
+                except Exception:
+                    self._favorite_order_attempts_errors = getattr(
+                        self, '_favorite_order_attempts_errors', 0) + 1
         # A separate, bounded read-only observer counts unique *filled events*.
         # Its failures must never affect audit durability or paper execution.
         if kind == 'FILL' and order is not None and order.action == 'buy':
