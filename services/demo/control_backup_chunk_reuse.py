@@ -114,16 +114,23 @@ def _lifecycle_expiration_might_touch_backups(rule):
         # already completed immutable backup objects.
         return False
     if 'Filter' in rule:
+        # A valid S3 lifecycle rule has one filter selector at most.
+        # Conflicting legacy top-level prefixes must not make a deletion safe.
         selector=rule['Filter']
-        if not isinstance(selector,dict):
+        if 'Prefix' in rule or not isinstance(selector,dict) or len(selector)>1:
             return True
         if 'Prefix' in selector:
             prefix=selector['Prefix']
-        elif 'And' in selector and isinstance(selector['And'],dict):
+        elif 'And' in selector:
+            compound=selector['And']
+            if (not isinstance(compound,dict) or
+                    set(compound)-{'Prefix','Tags',
+                                   'ObjectSizeGreaterThan','ObjectSizeLessThan'}):
+                return True
             # Other And conditions narrow matching, never expand beyond Prefix.
-            prefix=selector['And'].get('Prefix','')
+            prefix=compound.get('Prefix','')
         elif set(selector).issubset({'Tag','ObjectSizeGreaterThan',
-                                    'ObjectSizeLessThan','And'}):
+                                    'ObjectSizeLessThan'}):
             prefix=''  # Tags/size alone might select any backup object.
         else:
             return True
