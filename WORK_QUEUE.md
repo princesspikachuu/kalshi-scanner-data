@@ -15,6 +15,8 @@ This file is the coordination source of truth for ChatGPT/Codex implementation c
 - **COORDINATION:** Every parallel ChatGPT/Codex development chat should read this directive from `WORK_QUEUE.md` on `main` before acting, even when its application code lives on `build/google-auth-foundation`. Any work handoff, new issue, or PR must state how it serves **regular** High-Probability Favorites. This directive remains in effect until explicitly revoked by the user.
 
 
+**NEW U1 — URGENT REGULAR FAVORITES THROUGHPUT:** [MT-030 — Investigate why regular Favorites traded so little November 21](#mt-030--investigate-low-regular-favorites-trade-throughput-on-november-21-2026). This is a high-priority, actionable READY task; do not divert into Statistics-Backed Favorites or another strategy.
+
 ## How implementation chats must use this file
 
 When the user says **"continue"** and the current chat has finished its assigned work:
@@ -1895,3 +1897,32 @@ Before the normal paper-maintenance backup may use any prior immutable R2 part, 
 - **Draft [PR #332](https://github.com/princesspikachuu/kalshi-scanner-data/pull/332), branch `audit/mt029-regular-favorites-event-correlation-20261121`:** Isolated `favorite_event_correlation.py` + tests and once/minute `favorites_event_correlation` log. Strict venue `YYMONDD` date parsing supports known weather/15m ticker examples; explicit unknown fallback. Reports same-event ID overlap across categories, date parse coverage, days and within-day concentration. Conditional CR1 cluster-robust ROI 90% interval requires >=50 event-equal returns, >=80% dated coverage, >=20 distinct event dates and both gain/loss signs, otherwise unavailable. Distinguishes dated-subset iid interval from full-history nominal interval; never asserts day independence.
 - **Coordination:** MT-027 [PR #330](https://github.com/princesspikachuu/kalshi-scanner-data/pull/330) is independently in progress on exact-vs-estimated split. MT-029 does not edit `favorite_research_coverage.py` and only adds a separate log after the existing research log. Validate merge ordering/conflicts before deployment. No actual event IDs, account balances, raw source or financial state are changed.
 - **Next:** Run full exact-head CI, reconcile PR #330 if merged first, then merge & deploy safe read-only diagnostics and record observed date clusters plus limitations.
+
+---
+
+## MT-030 — Investigate low regular Favorites trade throughput on November 21, 2026
+**Status:** READY — high-priority user-requested investigation; not yet claimed
+**Worker:** UNCLAIMED — next eligible regular Favorites debugging chat
+**Urgency:** U1 — URGENT
+**Priority:** Investigate immediately after active P0 integrity blockers; user reports that trading was unusually slow all day and remains far below expectations.
+**Reported:** Saturday 2026-11-21, America/Los_Angeles (local date; UTC events can span 2026-11-21 and 2026-11-22)
+
+### Scope and goal
+**Regular High-Probability Favorites ONLY.** Determine *why actual paper fills/trading volume were so low today*, and whether it is caused by limited eligible opportunities, discovery coverage or staleness, bots not becoming active, maker order placement/cancellations/short resting time, exposure/capital/risk/fee filters, settlement/collateral holds, execution/quote routing, task/worker backpressure, market-specific timing windows, or missing diagnostic counts. Explicitly exclude **Statistics-Backed Favorites** and every other strategy from any debugging changes, optimizations, tests of throughput, or reactivation.
+
+### Investigation and required evidence
+- Establish a timestamped Nov 21 **Pacific-time** baseline versus at least the preceding comparable day and most recent successful active windows. Do not mistake 75 enabled bots for 75 trading opportunities. Break down **15-minute crypto/finance, hourly crypto/finance/commodities, weather hourly/daily, and sports**, including markets with zero trades.
+- Trace the complete **market discovered → admitted/subscribed → valid fresh bid/ask/fee snapshot → eligible opportunity → decision/gating reason → maker/taker choice → submitted/open bid → first/partial fill → cancellation/expiry/rejection → position → authoritative settlement** funnel. Count **independent market events and order attempts**, not contracts, duplicate fills or bots, and distinguish *observed* from *inferred* reasons.
+- Measure quote resting duration, bid churn and cancellation causes, any limit on simultaneous outstanding bids, per-market exposure and available funds, suspicious time-to-expiry filters, disabled/nontrading bot states, worker locks, queue lag, memory/CPU, API rate/fee readiness, data gaps and missed eligible markets. Include detailed empty hourly-finance coverage previously flagged by MT-018/MT-023.
+- Compare read-only telemetry with known [MT-024](https://github.com/princesspikachuu/kalshi-scanner-data/pull/328) and **MT-026** maker-order churn evidence; prior sample showed many unfilled cancels, but mismatched order cohorts must **not** be reported as a precise fill rate. Coordinate with existing MT-018 discovery balancing, MT-026 quote-churn work, and MT-019 settlement/backup owners; do not duplicate their overlapping code changes.
+- Rank measured **root causes** by lost eligible events/fills and propose fixes that genuinely increase qualifying trades (especially hourly/other undersampled categories) without reducing healthy 15m activity, relaxing fee/risk/exposure or market-finality protections, or compromising the research's observation integrity.
+- Implement only clearly validated Favorites-related fixes in an isolated branch/PR with focused and full API/PostgreSQL tests, preserving all historical observations, orders, balances, held-to-settlement interpretation and paper-only behavior. Compare before/after **actual fills and independently settled events**, not quote attempts or contract counts alone.
+
+### Acceptance criteria
+A concrete baseline table by market type and hour; measured gating and loss-of-opportunity distribution; demonstrated explanation for the unusually low Nov 21 trading; tests for any fix; and post-deployment evidence of increased *qualifying* regular Favorites fills without missed settlements or other strategies running. Record truly unavailable markets or absent data explicitly rather than assuming the algorithm is too restrictive.
+
+### Coordination
+**Do not work on Statistics-Backed Favorites, Market Maker or any other strategy. Never enable LIVE trading.** Keep R2 history immutable, current worker lock singleton, settlement and risk safeguards intact. This task is READY for another chat to claim; MT-028 remains separately owned in this chat pending post-merge validation and live deployment verification.
+
+### Completion notes
+_Pending claim, read-only audit, root cause identification, safe fix and verification._
