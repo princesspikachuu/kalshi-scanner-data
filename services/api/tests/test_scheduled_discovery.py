@@ -85,7 +85,7 @@ class Discovery(unittest.IsolatedAsyncioTestCase):
         host.verified_data.call.reset_mock()
         with patch('services.paper_demo.shadow.sports.time.time',return_value=now+10):await sports_once(host)
         self.assertEqual(host.verified_data.call.call_count,1)
-    async def test_future_games_sleep_without_live_reads_and_recheck_before_start(self):
+    async def test_future_games_are_checked_without_league_sleep_but_not_admitted(self):
         s=allocation.AllocationTests().suite();s.enabled_profiles=lambda asset:[dict(series='KXNBAGAME')]
         host=Mock(experiments=s);host.put=AsyncMock();now=at('2026-11-07T12:00')
         date=lambda n:datetime.fromtimestamp(n,EASTERN).isoformat()
@@ -95,15 +95,14 @@ class Discovery(unittest.IsolatedAsyncioTestCase):
             if path=='/markets':return dict(markets=[row])
             if path=='/milestones':return dict(milestones=[dict(id='future',category='Sports',start_date=now+3600,related_event_tickers=['EVENT'])])
             if path.startswith('/live_data/'):
-                return dict(live_data=dict(milestone_id='future',details=dict(status='scheduled',last_updated_ts=now+3300)))
+                return dict(live_data=dict(milestone_id='future',details=dict(status='scheduled',last_updated_ts=now)))
             raise AssertionError(path)
         host.verified_data.call.side_effect=call
+        s.discovery_wakes={'sports:KXNBAGAME':now+3300}
         with patch('services.paper_demo.shadow.sports.time.time',return_value=now):await sports_once(host)
-        self.assertEqual(host.verified_data.call.call_count,1);host.put.assert_not_awaited()
-        self.assertEqual(s.discovery_wakes['sports:KXNBAGAME'],now+3300)
+        self.assertEqual(host.verified_data.call.call_count,2)
+        self.assertNotIn('sports:KXNBAGAME',s.discovery_wakes)
+        host.put.assert_not_awaited()
         host.verified_data.call.reset_mock()
-        with patch('services.paper_demo.shadow.sports.time.time',return_value=now+15):await sports_once(host)
-        host.verified_data.call.assert_not_called()
-        with patch('services.paper_demo.shadow.sports.time.time',return_value=now+3300):await sports_once(host)
-        self.assertTrue(any(c.args[1].startswith('/live_data/') for c in host.verified_data.call.call_args_list))
+        with patch('services.paper_demo.shadow.sports.time.time',return_value=now+61):await sports_once(host)
         host.put.assert_not_awaited()
