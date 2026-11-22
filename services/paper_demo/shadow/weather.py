@@ -10,7 +10,7 @@ from .weather_window import CITY_ZONES,entry_allowed
 from .settlement_recovery import due_for_confirmation
 from services.research.reports import SERIES
 
-WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets and holds until authoritative settlement. Daily entries are allowed throughout the dated city's local calendar day. Favorite bias remains a hypothesis.'
+WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets and holds until authoritative settlement. Daily entries are allowed throughout the dated city local calendar day. Favorite bias remains a hypothesis.'
 
 def weather_profiles():
     return [dict(id='fav_'+s.lower(),series=s,name=('Hourly weather · ' if category=='weather' else 'Daily weather · ')+s,
