@@ -1840,3 +1840,25 @@ _In progress: isolated source/test PR, CI, deployment and bounded live verificat
 Pending implementation, test, deployment, and live results.
 
 ---
+
+---
+
+## MT-028 — Fail closed on R2 expiration rules before optional Favorites backup chunk reuse
+**Status:** IN PROGRESS — isolated opt-in safety guard
+**Worker:** ChatGPT / MT-019 Favorites backup retention guard
+**Claimed:** 2026-11-22 UTC
+**Urgency:** U2 — HIGH
+**Priority:** Protect regular High-Probability Favorites recovery before any future opt-in R2 reuse
+
+### Goal
+Before the normal paper-maintenance backup may use any prior immutable R2 part, make a **read-only** bucket lifecycle check via the supported R2 S3 GetBucketLifecycleConfiguration operation. Any enabled completed-object expiration rule that could match `demo/backups/`, any malformed response, or any unverified policy state must block reuse and fall back to a full, independent snapshot. Disabled rules, unrelated prefixes, and abort-incomplete-multipart-only rules cannot delete completed backup parts. Do not enable reuse or change the existing daily backup schedule, R2 objects, keys, or retention policies.
+
+### Safety / coordination
+- This is strictly backup safety for the sole active **regular High-Probability Favorites** strategy under MT-019 / issue #238. Do not develop or activate Statistics-Backed Favorites or other strategies.
+- `MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED` stays default **OFF** and must remain OFF in Render until an independent actual-bucket lifecycle audit and retained-root restore is performed.
+- Protect all historical observations, paper orders, financial ledgers, positions, settlements, recovery catalogs/roots and chunk references; no new SQL or R2 writes beyond the already-required independent backup when due.
+- Keep API/worker service lock and paper trading behavior unchanged. Sanitize any lifecycle failure log (fixed reason only; never exception text, credentials, bucket ID or rule IDs).
+- Isolate implementation in the existing optional reuse and maintenance code, mock R2 checks and run exact-head full API/PostgreSQL CI. Draft PR until verified, then check actual Render deploy and worker health if merged.
+
+### Completion notes
+_Pending implementation, tests, PR, and live checks. This guard is defense-in-depth and does not replace the human actual-bucket audit._
