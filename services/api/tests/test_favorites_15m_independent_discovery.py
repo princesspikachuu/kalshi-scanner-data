@@ -95,6 +95,18 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         run.put.assert_not_awaited()
         self.assertNotIn('fifteen:KXBTC15M',suite.discovery_wakes)
 
+    async def test_statistics_only_cannot_reactivate_regular_favorites_15m_reads(self):
+        run,suite,rows,listed,now=self.fixture(active=False)
+        stats=suite.portfolios['favorites_statistics'][1]
+        stats.bots['KXBTC15M']=SimpleNamespace(enabled=True,
+            profile=dict(strategy='favorites_statistics',series='KXBTC15M'))
+        self.assertFalse(run.favorites_fifteen_discovery_enabled('KXBTC15M'))
+        self.assertFalse(run.legacy_discovery_required('KXBTC15M'))
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        run.api.fetch.assert_not_awaited()
+        run.put.assert_not_awaited()
+
     async def test_legacy_only_and_standalone_behavior_remains_unchanged(self):
         run,suite,rows,listed,now=self.fixture(active=False,legacy_active=True)
         self.assertTrue(run.legacy_discovery_required('KXBTC15M'))
@@ -155,7 +167,7 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_cash_index_weekend_remains_asleep_until_local_session(self):
         run,suite,_,_,now=self.fixture()
-        series='KXINXU'
+        series='KXINX15M'
         run.profiles=[profile(series,'legacy_index','convexity')]
         run.strategy=StrategyFleet(run.engine,run.profiles)
         run.strategy.bots[series].enabled=False
