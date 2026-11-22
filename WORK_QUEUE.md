@@ -1660,6 +1660,11 @@ Existing authenticated API `favorites_timed_rollup` snapshots around 20:09–20:
 - New 15m market admission checks enabled regular Favorites even with legacy Convexity paused. Favorites-only market never inflates/activates inactive legacy wallet; legacy pending settlement still retained. Favorite 15m book subscription, fee warmup and verification survive restarts; capacity, exchange status/open_time, schedules/DST, risk/fee/one-contract paper controls remain unchanged. Dedicated tests cover all, including empty-worker startup.
 - **Still pending** two post-merge full CI runs [44975123669](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975123669) and [44975129411](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975129411), exact Render deployment and exclusive active Favorites worker, and live active 15m subscriptions or source-backed absence. Do not close Issue #333 or mark this subtask DONE until those pass. No real exchange orders enabled. See [Issue #333](https://github.com/princesspikachuu/kalshi-scanner-data/issues/333).
 
+### Issue #333 automatic deployment reached Render — active worker confirmation still pending
+- Exact merge commit `618370c663b3ead89389e8453a83fee16ba21bf3` **passed both post-merge full integration tests**: push [44975123669](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975123669) and PR [44975129411](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975129411).
+- Render `pocket-processing-staging` auto-deploy `dep-dc152bflk1mc7383ilig` verified **live** on exact SHA at 2026-11-22 **02:20:09 UTC**; replacement instance `655b7` logged `demo_lock_wait`. Subsequent log requests hit **Render 429**. **No proven new singleton worker start, 15m active book, or outcome yet**. Do not close Issue #333 or mark all MT-018 done until fresh Render logs verify the handoff, regular Favorites only, paper-only, fee + settlement health, real 15m eligible discovery, or exchange-backed lack of availability. Full checkpoint in [Issue #333](https://github.com/princesspikachuu/kalshi-scanner-data/issues/333#issuecomment-7072851761).
+- Preserve existing active worker, outstanding bids and settlement backlog; no forced restart/other strategy toggles/real-money orders.
+
 ### Completion notes
 _Fill in when done._
 
