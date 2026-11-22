@@ -153,6 +153,72 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         self.assertIn('ret=7',suite.hourly_coverage[series]['reason'])
         self.assertIn('badts=1',suite.hourly_coverage[series]['reason'])
 
+    def setup_finance_fee_host(self):
+        host,suite=self.setup_host()
+        series='KXUSDCADAH'
+        suite.enabled_profiles=lambda asset:[dict(series=series)] if asset=='hourly' else []
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        market=dict(ticker=series+'-fee-check',event_ticker=series+'-event',
+                    status='active',open_time=date(900),close_time=date(1900),
+                    yes_bid_dollars='.81',no_bid_dollars='.16')
+        def call(method,path,query=None):
+            if path=='/series/'+series:return dict(series=dict(frequency='hourly'))
+            self.assertEqual(path,'/markets')
+            self.assertEqual(query['series_ticker'],series)
+            return dict(markets=[market],cursor='')
+        host.verified_data.call.side_effect=call
+        return host,suite,series
+
+    async def test_finance_hourly_nonzero_maker_fee_reports_not_admitted(self):
+        host,suite,series=self.setup_finance_fee_host()
+        host.fee_policy.return_value=Mock(maker_multiplier=D(1),taker_multiplier=D(1))
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000):
+            await hourly_once(host)
+        host.put.assert_not_awaited()
+        host.verified_fees.zero_maker_fees_until.assert_not_called()
+        cat=suite.hourly_scan['by_category']['finance']
+        self.assertEqual(cat['fee_blocked'],1)
+        self.assertEqual(cat['fee_nonzero'],1)
+        self.assertEqual(cat['fee_unverified'],0)
+        self.assertEqual(cat['fee_verified'],0)
+        self.assertEqual(cat['subscribed'],0)
+        self.assertIn('Nonzero maker fee; not admitted',suite.hourly_coverage[series]['reason'])
+        self.assertNotIn('subscribing',suite.hourly_coverage[series]['reason'])
+        self.assertIn('win=1',suite.hourly_coverage[series]['reason'])
+
+    async def test_finance_hourly_unverified_zero_maker_fee_reports_not_admitted(self):
+        host,suite,series=self.setup_finance_fee_host()
+        host.verified_fees.zero_maker_fees_until.return_value=False
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000):
+            await hourly_once(host)
+        host.put.assert_not_awaited()
+        host.verified_fees.zero_maker_fees_until.assert_called_once()
+        cat=suite.hourly_scan['by_category']['finance']
+        self.assertEqual(cat['fee_blocked'],1)
+        self.assertEqual(cat['fee_nonzero'],0)
+        self.assertEqual(cat['fee_unverified'],1)
+        self.assertEqual(cat['fee_verified'],0)
+        self.assertEqual(cat['subscribed'],0)
+        self.assertIn('Maker fee unverified through close; not admitted',
+                      suite.hourly_coverage[series]['reason'])
+
+    async def test_finance_hourly_verified_maker_fee_reports_actual_monitor_submission(self):
+        host,suite,series=self.setup_finance_fee_host()
+        host.verified_fees.zero_maker_fees_until.return_value=True
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000):
+            await hourly_once(host)
+        host.put.assert_awaited_once()
+        self.assertEqual(host.put.await_args.args[1]['market']['series_ticker'],series)
+        cat=suite.hourly_scan['by_category']['finance']
+        self.assertEqual(cat['fee_blocked'] if 'fee_blocked' in cat else 0,0)
+        self.assertEqual(cat['fee_nonzero'],0)
+        self.assertEqual(cat['fee_unverified'],0)
+        self.assertEqual(cat['fee_verified'],1)
+        self.assertEqual(cat['subscribed'],1)
+        self.assertIn('Eligible favorite submitted for monitoring',
+                      suite.hourly_coverage[series]['reason'])
+        self.assertNotIn('verifying maker fee',suite.hourly_coverage[series]['reason'])
+
     async def test_hourly_incomplete_future_page_keeps_cursor_and_finds_ready_market(self):
         host,suite=self.setup_host();now=1000
         suite.enabled_profiles=lambda asset:([dict(series='KXUSDCADAH')]
