@@ -275,3 +275,7 @@
 }
 /* Compact, period-sensitive event counts sit directly under dollar P/L. */
 .shadow-workspace .filled-events-subtitle{display:block;margin-top:3px;font-size:11px;line-height:1.35;font-weight:400;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
+
+/* Align the filled-event subtitle BELOW the compact market-card P/L amount. */
+.shadow-workspace .market-pnl-compact{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:baseline;gap:2px 6px;white-space:normal;min-width:0}
+.shadow-workspace .market-pnl-compact>.filled-events-subtitle{grid-column:2;grid-row:2;margin-top:0}
