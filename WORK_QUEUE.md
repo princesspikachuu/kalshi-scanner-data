@@ -2088,3 +2088,25 @@ Calculate and display **90% event-level held-return uncertainty** for populated 
 
 - **Live MT-032 bucket evidence (API `favorites_timed_rollup`, 2026-11-22 02:27:40 UTC):** commodities-15m 70¢/10–15m **n=349, average +5.87%, nominal 90% held ROI CI [+0.55%, +11.18%], 349 estimated**; commodities-15m 75¢/10–15m **n=182, average +9.20%, CI [+3.35%, +15.05%], 176 estimated**; crypto-15m 70¢/5–10m **n=413, average -5.55%, CI [-10.90%, -0.20%], 255 estimated**. Finance-15m 75¢/10–15m n=90 +5.07%, CI [-3.87%,+14.02%] crosses zero. Crypto-hourly 90¢/15–30m n=44, +8.81% average, **numerical P/L interval suppressed (needs 6 additional distinct settled returns to reach 50)**. Results are **exploratory**: many candidate price/time cells were screened and historical entry quantities are frequently reconstructed. A selected nominal interval entirely above/below zero is NOT sufficient out-of-sample/multiple-comparisons evidence of a reproducible edge. Neither day-diversity nor a 20-calendar-day sample requirement is used.
 - **Next, if assigned:** Prioritize event-based verification and pre-registered out-of-sample bucket confirmation, exact-vs-estimated attribution sensitivity and maintaining independent per-market settlement evidence. Do not add a calendar-day gate or automatically alter paper bids on these exploratory results.
+
+
+---
+
+## MT-033 — Forward-only regular Favorites price/time profitability validation
+**Status:** IN PROGRESS — scoped design and read-only implementation  
+**Worker:** ChatGPT / Money Tree Chat 04, forward-only regular Favorites validation  
+**Claimed:** 2026-11-22 UTC  
+**Urgency:** U2 — HIGH  
+**Priority:** Preserve meaningful 90% confidence assessment after MT-032 without recycling the same selected historical outcomes
+
+### Scope and acceptance
+- Regular **High Probability Favorites only**; no Statistics-Backed Favorites, other portfolios, real trading, or changes to entries, exits, fees, risk, settlement, cash, or historical observations.
+- Freeze a fixed short-list of Nov 21 **historically selected/exploratory** Detailed 15m price/time cohorts and evaluate separately on **future-date, independently settled exchange-event returns**. The holdout date gate is for a forward-time split only, **not** a minimum number of calendar days / day clustering requirement. Each verified event counts once within a cell even with repeated bids/contracts.
+- Use conservative valid venue event date labels strictly after 2026-11-22 (earliest 2026-11-23), never reconstruct fill timestamps or treat encoded dates as authoritative settlement timestamps. Mark the test as date-proxy forward evidence, not a guarantee the market was never previously monitored or a multiple-testing-adjusted proof.
+- Reuse the regular Favorites read-only held-to-settlement research view and fee-inclusive per-event 90% Student-t interval with the existing 50-independent-event minimum and both observed positive and negative returns. Unknown outcomes, missing event attribution, unparseable labels, and historical dated events do not count.
+- Fixed exploratory cohort shortlist from MT-032 Nov 21 checkpoint: commodities-15m 70–74¢ / 10–15m; commodities-15m 75–79¢ / 10–15m; crypto-15m 70–74¢ / 5–10m; finance-15m 75–79¢ / 10–15m. No midstream cherry-picking based on forward outcomes.
+- Provide bounded, identifier-free forward progress for these four cells alongside existing one-minute regular Favorites research diagnostics; no new DB queries, R2 accesses, persistent event IDs, expanded background jobs, or new worker tasks. Add deterministic tests for old/new dates, repeat fills, estimated historic attribution, unknown/unsettled events, incomplete event returns, 49/50 confidence gating, shared-event overlap and unchanged source records.
+- Run exact PR-head GitHub API/PostgreSQL checks, safely merge and verify API telemetry when tests pass. Other task owners retain MT-019 settlement, MT-030 throughput and MT-011 resources.
+
+### Completion notes
+- In progress; do not report new evidence or deploy status until independently verified.
