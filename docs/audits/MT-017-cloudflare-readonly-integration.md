@@ -30,13 +30,13 @@ deployment is initiated.
    *logs/traces* if that feature becomes necessary; it is not required for this
    GraphQL-only query. Verify token scope before creating it.
 3. In GitHub open the repository **Settings → Secrets and variables → Actions**
-   (or under the existing **staging** environment if that's where secrets
-   are stored). Add a secret named **CLOUDFLARE_OBSERVABILITY_TOKEN** and paste
+   . Add a **Repository secret** (not an Environment secret) named
+   **CLOUDFLARE_OBSERVABILITY_TOKEN** and paste
    the token **there only**. Never paste it into chat, PRs, tickets, scripts,
    workflow inputs, screenshots or terminal output.
 4. The workflow also needs **CLOUDFLARE_ACCOUNT_ID**. If the staging deployment
    already uses that GitHub Actions secret, reuse it; otherwise add the account
-   ID as a separate secret in the same accessible scope. The account ID itself
+   ID as a Repository secret too. The account ID itself
    is never printed.
 5. Once the workflow exists on **main**, open:
    https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/cloudflare-cpu-readonly.yml
