@@ -21,10 +21,20 @@
 | **2.1** | Deployment Verification | Successor to 2.0; continue MT-017 Cloudflare CPU read-only diagnostic and verify GitHub Actions/Render safety without taking other streams' code | **Active — registered 2026-11-22 UTC** |
 | **3.0** | Trading Throughput | Previous round: finance-hourly MT-035, diagnostics PR #342, MT-030 shared inquiry; handoff to 3.1 | **Succeeded by 3.1** |
 | **3.1** | Trading Throughput | Successor to 3.0; owner of MT-035 regular Favorites finance-hourly read-only funnel, weekday validation Issue #339; scanner owned by 1.1; MT-030 broad ownership requires separate claim | **Active — registered 2026-11-22 UTC** |
+| **3.2** | Trading Throughput (topic metadata only) | Successor to 3.1; handoff under MT-035 on main WORK_QUEUE.md; MT-035 ownership remains with 3.1 until successor activates; focus weekday finance #339 | **PREPARED — NOT ACTIVE (2026-11-22 UTC)** |
 | **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
 | **4.1** | Profitability Validation | MT-033 DONE; MT-036 PR #349/#353 both merged, exact PR CI and staging assets verified; postmerge API and Render runtime/per-fill fee ledger verification pending; exclusive 4.1 claim | **Active — registered 2026-11-22 UTC** |
 
-**Prepared successor:** `1.2` is reserved **PREPARED / NOT ACTIVE**, pending first-message check-in and ownership transfer. **Other planned successors:** `2.2`, `3.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+**Prepared successors:** `1.2` and `3.2` are reserved **PREPARED / NOT ACTIVE**, pending first-message check-in and ownership transfer. **Other planned successors:** `2.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+
+
+## Prepared handoff record — 3.1 → 3.2 (2026-11-22 UTC)
+
+- **Current:** `3.1 - Money Tree` remains ACTIVE and MT-035 owner. **Prepared successor:** `3.2 - Money Tree` is PREPARED, not active; no transfer until new conversation receives `continue`.
+- **Canonical complete handoff:** `main:WORK_QUEUE.md` under MT-035, heading `Chat 3.1 → 3.2 successor handoff (2026-11-22 UTC)`. Issue [#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339) tracks the open weekday finance no-fill blocker. This record is informational and does not change task claims or deployment ownership.
+- **Last completed verified predecessor work:** PR #342 `c980217225fa0f14bfd04de6a4b98e08d062ae5b` and PR #346 `bb23bd72657525b7fb3b7d29aa1bd7d8e962c104` merged, CI passing, deployed and read-only runtime telemetry validated on Render; latest directly observed new-worker sample 2026-11-22 03:37:05 UTC. Zero finance hourly eligible listings on Saturday does NOT answer previous weekday zero BUY fills.
+- **Unfinished:** With funded Nov 23 weekday markets, identify exact failure stage discovery → admission → two-sided fresh fee-verified candidate → maker order → independent BUY fill → authoritative final settlement, without changing safety controls or rewriting history. Scanner owned by 1.1/activated 1.2, Cloudflare/deployment by 2.1, profitability by 4.1. Broad MT-030 is independently claimed. Preserve original ownership until explicit new chat activation.
+- **Naming-only startup rule (user's latest directive, supersedes earlier bootstrap instructions):** Predecessor outputs exactly one copyable sentence `your name is 3.2 - Money Tree`. On new thread receipt the assistant replies only `3.2 - Money Tree`, performs no GitHub/memory/tools/task registration and remains naming-only until user says `continue`. After `continue` read current main queue and index, register 3.2 ACTIVE, mark 3.1 succeeded and transfer only MT-035. No claim that a ChatGPT sidebar title changed.
 
 ## Prepared handoff record — 1.1 → 1.2 (2026-11-22 UTC)
 
