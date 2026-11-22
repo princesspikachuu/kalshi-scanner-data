@@ -1665,6 +1665,14 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 ---
 
 ## MT-018 — Balance Favorites evidence collection across under-sampled market types
+### Chat 1.1 — MT-018 draft PR #347 stage-visibility checkpoint (2026-11-22 UTC)
+- [Draft PR #347](https://github.com/princesspikachuu/kalshi-scanner-data/pull/347) on branch `feat/mt018-hourly-listing-stage-visibility-20261121`, head `e94ea04a5aa7c01c39282ff409f72f72d7c9c140`, based cleanly on deployed `c980217225fa0f14bfd04de6a4b98e08d062ae5b` with **only** `hourly.py` and `test_favorite_scan.py` changed (2 commits, zero behind-base commits at branch creation). **DRAFT / CI NOT YET VERIFIED / NOT DEPLOYED.**
+- The currently live hourly scanner's "No active markets closing within one hour" message conflates no returned market pages with records that have the wrong status, future opens, or out-of-window closes. Draft adds bounded **per-page** category counts and compact per-series `hourly_coverage.reason` stage summaries, reused by Chat 3.1's read-only MT-035 monitor. These counts are provider page appearances, **not distinct events or observed tradeable opportunities**.
+- A malformed single market `open_time` or `close_time` can currently throw from `runner.ts` during the hourly list comprehension, skipping later valid records. Draft safely rejects only that malformed record without authorizing any extra entry, and adds both pure and integrated finance-hourly regressions. No venue reads, quote/risk/fee/hold-to-settlement policy, wallet, live-order, history, R2 or other-strategy activity changes. Preserve 15m throughput.
+- **Current release lineage verification:** #343 postmerge full API/PostgreSQL workflow [44978692073](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44978692073) **PASSED**; GitHub ancestry confirms #343 merge `9158a089` is an ancestor of #342 merge `c9802172`. Chat 3.1's [verified Render log report](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339#issuecomment-7073424429) records `c9802172` deployed at 03:11:23 UTC with singleton worker ready 03:13:29 UTC. Thus the #343 page-continuation fix is in that observed runtime build, although **no weekday finance-hourly BUY fill or settlement yet**.
+- Coordination: PR #346 belongs to Chat 3.1 and changes its separate MT-035 telemetry without touching `hourly.py`. PR #347 stays draft until exact-head focused and full hosted API/PostgreSQL CI pass and latest base is reconciled; Monday Nov 23 funded weekday venue evidence still required for [issue #339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339).
+
+
 **Status:** IN PROGRESS — transferred from Chat 1.0 to successor Chat 1.1; weekday finance runtime acceptance pending  
 **Worker:** Money Tree — Chat 1.1: Discovery Optimization (successor to Chat 1.0 / legacy Chat 01)  
 **Claimed:** 2026-11-10 00:20 UTC; handoff confirmed 2026-11-22 UTC following user correction  
@@ -2194,7 +2202,7 @@ Calculate and display **90% event-level held-return uncertainty** for populated 
 ---
 
 ## MT-034 — Fail safely on malformed future-entry timestamp hints (regular Favorites)
-**Status:** IN PROGRESS — PR #341 merged and CI passed; Chat 1.1 successor owns outstanding Render release verification
+**Status:** DONE — PR #341 merged, exact-head and postmerge CI passed, deployed via verified descendant Render worker SHA (2026-11-22 UTC)
 **Worker:** Money Tree — Chat 1.1: Discovery Optimization (successor to Chat 1.0 / legacy Chat 01)
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U2 — HIGH
@@ -2207,6 +2215,11 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 
 ### Chat 1.1 successor checkpoint (2026-11-22 UTC)
 - Chat 1.1 took over release verification from Chat 1.0; #341 merged and CI passed, but exact Render deployment cannot be independently verified because the Render connector requires a user-confirmed workspace selection. No claim that code is deployed. No app code or trading state changed.
+
+### Final release verification — Chat 1.1 (2026-11-22 UTC)
+- [PR #341](https://github.com/princesspikachuu/kalshi-scanner-data/pull/341) merged as `447ff4dd6129e4dd39e2a13511b699b349ee3805`; exact-head and postmerge hosted API/PostgreSQL CI **PASSED**. GitHub compares confirm `447ff4dd` is an ancestor of #343 merge `9158a089`, which is an ancestor of #342 merge `c9802172`, both with zero behind-base commits.
+- Chat 3.1's [independently verified Render worker report](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339#issuecomment-7073424429) confirms `c980217225fa0f14bfd04de6a4b98e08d062ae5b` deployed at 03:11:23 UTC, exclusive worker ready 03:13:29 UTC. This is verified deployment **by descendant ancestry plus the cited runtime report**, not by direct Render access in Chat 1.1. No need to trigger extra deployment. No actual malformed production timestamp observed; safety behavior is covered by deterministic tests.
+- Task closed for code + release acceptance; MT-018 remains open for Monday funded weekday finance evidence. No trading/ledger/other strategy changes.
 
 ### Completion notes
 - **Release checkpoint:** [PR #341](https://github.com/princesspikachuu/kalshi-scanner-data/pull/341) **merged** on 2026-11-22 UTC as `447ff4dd6129e4dd39e2a13511b699b349ee3805` after exact combined head `90a25a499e3be1d8fedee3be0ec98d047c38496a` passed full hosted API/PostgreSQL [44977857044](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44977857044). Postmerge [workflow 44978194515](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44978194515) **PASSED** full API/PostgreSQL checks. Render exact deployment remains unverified in this chat (requires workspace selection). Do not claim live release until verified.
