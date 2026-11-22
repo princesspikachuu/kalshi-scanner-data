@@ -25,6 +25,18 @@ This file is the coordination source of truth for ChatGPT/Codex implementation c
 
 ## How implementation chats must use this file
 
+### Numbered development chat IDs (user directive)
+
+**Every Money Tree development chat must identify itself with a unique, stable descriptive number** in the opening substantive reply and every handoff: `Money Tree — Chat NN: Short topic` (e.g., `Money Tree — Chat 01: Discovery Optimization`). Chat identifiers are **not** the MT task number, GitHub issue number, or PR number. State the suggested title for the user; ChatGPT cannot rename a conversation in the application.
+
+**Existing user-designated chat numbers (2026-11-21 Pacific; do not reuse):**
+- **Chat 01 — Discovery Optimization:** PR #314 follow-up and ownership coordination (current thread).
+- **Chat 02 — Deployment Verification:** deployment status continuation.
+- **Chat 03 — Trading Throughput:** low-frequency/finance trading follow-up.
+
+For a newly opened development chat, read this registry on `main` before selecting the next unused positive number (04, 05, etc.). Claim the number with a descriptive topic by editing this subsection on `main` using the latest content SHA *before* making app-code changes. If two writers race, refresh and select a different number rather than duplicating. Keep an already user-numbered chat's identifier stable when continuing and correct accidental duplicate self-labels in future handoffs. All work remains subject to the Favorites-only scope above; numbering does not authorize new unrelated tasks.
+
+
 When the user says **"continue"** and the current chat has finished its assigned work:
 
 1. Read this file before choosing more work.
