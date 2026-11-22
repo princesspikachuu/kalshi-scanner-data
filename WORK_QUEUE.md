@@ -1647,11 +1647,16 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 ---
 
 ## MT-018 — Balance Favorites evidence collection across under-sampled market types
-**Status:** IN PROGRESS — verified handoff to Money Tree Chat 01; prior generic worker attribution unverified  
-**Worker:** Money Tree — Chat 01: Discovery Optimization  
+**Status:** IN PROGRESS — transferred from Chat 1.0 to successor Chat 1.1; weekday finance runtime acceptance pending  
+**Worker:** Money Tree — Chat 1.1: Discovery Optimization (successor to Chat 1.0 / legacy Chat 01)  
 **Claimed:** 2026-11-10 00:20 UTC; handoff confirmed 2026-11-22 UTC following user correction  
 **Urgency:** U2 — HIGH  
 **Priority:** High, after MT-003
+
+### Chat 1.1 successor ownership — 2026-11-22 UTC
+- New conversation **Money Tree — Chat 1.1: Discovery Optimization** registered at `main:docs/CHAT_INDEX.md`, follows Chat 1.0. MT-018 is transferred to Chat 1.1; scanner listing/pagination (`hourly.py`, `weather.py`) remains exclusive to this lane. Chat 3 owns MT-035 non-scanner finance entry diagnostics and MT-030 quote/cash audit; Chat 2 owns runtime deployment verification.
+- PR #314, #335, #341, #343 are merged. PR #343 exact-head full API/PostgreSQL and focused Favorites tests passed; its **postmerge and exact Render deployment/runtime effect still require verification**. Finance-hourly **weekday** actual BUY fills and authoritative settled outcomes remain unverified (issue #339); do not mark MT-018 DONE solely based on CI.
+- Only regular High Probability Favorites is in scope. Do not activate other strategies or LIVE orders; preserve all event history and paper ledgers.
 
 ### Ownership clarification — 2026-11-22 UTC, Money Tree Chat 01
 The user confirmed they have **no ChatGPT chat named MT-018** and do not know if its old generic worker is active. An `IN PROGRESS` queue entry is not evidence of a live chat session. Related PR #335 was merged and issue #333 closed; no current unmerged MT-018 scanner implementation PR was found on GitHub at handoff. **Chat 01 now owns the remaining MT-018 regular Favorites discovery work**, particularly hourly/weekday finance and the paginated premature-sleep risk. Other chats must avoid overlapping scanner edits and coordinate through [issue #339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339) / this queue. Chat 03 owns separate quote/fill/cash audit. The small distinct MT-034 wake-helper draft PR #341 remains under Chat 01 and will be verified/closed before new scanner code changes. Preserve original event histories, paper wallets, settlement and fee protections; Statistics-Backed Favorites/other strategies remain paused and no real orders enabled.
