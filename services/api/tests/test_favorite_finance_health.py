@@ -57,6 +57,7 @@ class FinanceHourlyFunnelSnapshotTests(unittest.TestCase):
         self.assertEqual(value['paper_cash_available'],'1000')
         self.assertEqual(row['admitted_active_markets'],1)
         self.assertEqual(row['fresh_books'],1)
+        self.assertEqual(row['fee_verified_admitted_markets'],1)
         self.assertEqual(row['two_sided_books'],1)
         self.assertEqual(row['price_candidate_books'],1)
         self.assertEqual(row['fee_verified_price_books'],1)
@@ -74,6 +75,7 @@ class FinanceHourlyFunnelSnapshotTests(unittest.TestCase):
 
     def test_unverified_maker_fee_still_separately_visible(self):
         _,row,_,_,_=self.check(fee=False)
+        self.assertEqual(row['fee_verified_admitted_markets'],0)
         self.assertEqual(row['price_candidate_books'],1)
         self.assertEqual(row['fee_verified_price_books'],0)
         self.assertEqual(row['fundable_price_books'],0)
@@ -81,6 +83,7 @@ class FinanceHourlyFunnelSnapshotTests(unittest.TestCase):
     def test_stale_or_one_sided_books_are_not_counted_as_valid_quotes(self):
         _,stale,_,_,_=self.check(fresh=False)
         self.assertEqual(stale['fresh_books'],0)
+        self.assertEqual(stale['fee_verified_admitted_markets'],1)
         self.assertEqual(stale['two_sided_books'],0)
         _,one_sided,_,_,_=self.check(no=None)
         self.assertEqual(one_sided['fresh_books'],1)
