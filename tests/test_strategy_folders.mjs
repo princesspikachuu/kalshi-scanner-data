@@ -1333,7 +1333,7 @@ test('Daily Weather wider view retains its verified table when three-way timing 
  assert.match(rendered,/Three equal entry-time thirds are not verifiable/);
  assert.match(rendered,/favorite-stat-matrix/);
  assert.match(rendered,/n=19/);
- assert.match(rendered,/≥2h/);
+ assert.match(rendered,/>=2h/);
  assert.doesNotMatch(rendered,/Waiting for exact entry times to establish the betting window/);
  const market=favoriteTimingMarkup([aggregate],[],{mode:'wide',single:single.rows['weather-daily']});
  assert.match(market,/Exact time thirds unavailable/);
