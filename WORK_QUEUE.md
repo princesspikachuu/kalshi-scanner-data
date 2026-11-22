@@ -1910,8 +1910,8 @@ Before the normal paper-maintenance backup may use any prior immutable R2 part, 
 ---
 
 ## MT-030 — Investigate low regular Favorites trade throughput on November 21, 2026
-**Status:** READY — high-priority user-requested investigation; not yet claimed
-**Worker:** UNCLAIMED — next eligible regular Favorites debugging chat
+**Status:** IN PROGRESS — investigating November 21 regular Favorites throughput and fill bottlenecks
+**Worker:** ChatGPT / MT-030 Favorites trading slowdown audit (claimed 2026-11-22 UTC)
 **Urgency:** U1 — URGENT
 **Priority:** Investigate immediately after active P0 integrity blockers; user reports that trading was unusually slow all day and remains far below expectations.
 **Reported:** Saturday 2026-11-21, America/Los_Angeles (local date; UTC events can span 2026-11-21 and 2026-11-22)
