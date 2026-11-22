@@ -97,9 +97,11 @@ async def hourly_once(host):
         if metadata['frequency']!='hourly':
             suite.hourly_coverage[series]=dict(at=now,active_markets=0,eligible_markets=0,reason='Series frequency '+str(metadata['frequency'])+' · excluded from hourly test')
             suite.hourly_retry_at[series]=now+900;continue
+        page_cursor=suite.hourly_pages.get(series,'')
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=series,
-            min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=suite.hourly_pages.get(series,'')))
-        suite.hourly_pages[series]=result.get('cursor','')
+            min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=page_cursor))
+        next_page=result.get('cursor','') or ''
+        suite.hourly_pages[series]=next_page
         listed=[m for m in result.get('markets',[]) if m.get('ticker','').startswith(series+'-') and m.get('status')=='active'
                 and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=3600]
         scan['listed_markets']+=len(listed)
@@ -113,15 +115,18 @@ async def hourly_once(host):
         rows=[m for m in listed if m['ticker'] not in markets and suite.candidate_allowed(m['ticker'],now) and (favorite_bid(m) is not None or liquid_scalp(m))]
         scan['eligible_markets']+=len(rows);category['eligible']+=len(rows)
         capacity=suite.search_capacity('hourly',time.time(),staged+1)
-        reason=('No active markets closing within one hour' if not listed else
+        reason=('Incomplete market listing; next page pending' if next_page and not listed else
+            'No active markets closing within one hour' if not listed else
             'Active markets found · no 70–95¢ maker entry' if not rows else
             'Active qualifying markets · feed capacity paused' if not capacity else
             'Active qualifying market · subscribing to order book')
         suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),eligible_markets=len(rows),reason=reason)
-        suite.hourly_retry_at[series]=now+(15 if listed else 60)
-        if not listed:
-            # Provider listed a future opening or an hourly market whose final
-            # hour has not begun: do not poll it again before that known time.
+        suite.hourly_retry_at[series]=now+(15 if listed or next_page else 60)
+        if not listed and not page_cursor and not next_page:
+            # A future wake is safe only for a COMPLETE, single-page listing.
+            # A nonempty cursor means another page may contain an eligible
+            # market now. Later pages alone cannot prove the earliest wake.
+            # Keep following incomplete listings on the existing read budget.
             future=[known_entry_wake(m,'hourly',now) for m in result.get('markets',[])
                     if m.get('status')=='active' and m.get('ticker','').startswith(series+'-')]
             future=[wake for wake in future if wake is not None]
