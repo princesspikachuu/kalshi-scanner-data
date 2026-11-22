@@ -46,6 +46,7 @@ def candidates(rows,series,now):
 
 async def weather_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
+    if not isinstance(getattr(suite,'weather_page_bounds',None),dict):suite.weather_page_bounds={}
     scan=dict(at=now,categories={})
     for category in ('weather_daily','weather'):
         # Daily contracts have a single closing opportunity. Give them first
@@ -66,6 +67,9 @@ async def weather_once(host):
                 # the only safe daily entry window. No listings/fee reads until.
                 wake=daily_scan_wake(option['series'],now)
                 if wake is not None:
+                    # A fresh local-day window needs a fresh listing cursor.
+                    suite.weather_pages.pop(option['series'],None)
+                    suite.weather_page_bounds.pop(option['series'],None)
                     remember(suite,key,wake,now)
                     continue
                 remember(suite,key,None,now)
@@ -85,10 +89,17 @@ async def weather_once(host):
         row['series']=p['series']
         suite.weather_cursor[category]=cursor
         page_cursor=suite.weather_pages.get(p['series'],'')
+        bounds=suite.weather_page_bounds.get(p['series']) if page_cursor else None
+        if not isinstance(bounds,tuple) or len(bounds)!=2:
+            # Unknown/stale page state: start a fresh bounded listing.
+            page_cursor=''
+            bounds=(int(now+60),int(now+86400))
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],
-            min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=page_cursor))
+            min_close_ts=bounds[0],max_close_ts=bounds[1],limit=1000,cursor=page_cursor))
         next_page=result.get('cursor','') or ''
         suite.weather_pages[p['series']]=next_page
+        if next_page:suite.weather_page_bounds[p['series']]=bounds
+        else:suite.weather_page_bounds.pop(p['series'],None)
         listed=candidates(result.get('markets',[]),p['series'],now)
         # A known future open/entry time is durable across worker restarts.
         # A future wake is safe only for a COMPLETE single-page result.
