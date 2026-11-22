@@ -16,6 +16,7 @@
 | --- | --- | --- | --- |
 | **1.0** | Discovery Optimization | Prior round: PR #314, #335, #341 and #343 discovery work; MT-018/MT-034 handoff | **Succeeded by 1.1** |
 | **1.1** | Discovery Optimization | Successor to 1.0; MT-018 discovery verification and weekday finance listing gates, MT-034 release verification; coordinate with Chat 3 MT-035 and Chat 2 deployment | **Active — registered 2026-11-22 UTC** |
+| **1.2** | Discovery and finance-hourly runtime verification (topic metadata only) | Successor to 1.1; handoff on main WORK_QUEUE.md under MT-018; exclusive scanner ownership NOT yet transferred; PR #347/#351 merged, verify exact Render deployment and weekday outcomes | **PREPARED — NOT ACTIVE; 1.1 retains MT-018 until successor checks in (2026-11-22 UTC)** |
 | **2.0** | Deployment Verification | Predecessor to 2.1; runtime health, memory audit, and MT-017 Cloudflare read-only observability bridge PRs #344/#345/#348/#350 | **Succeeded by 2.1** |
 | **2.1** | Deployment Verification | Successor to 2.0; continue MT-017 Cloudflare CPU read-only diagnostic and verify GitHub Actions/Render safety without taking other streams' code | **Active — registered 2026-11-22 UTC** |
 | **3.0** | Trading Throughput | Previous round: finance-hourly MT-035, diagnostics PR #342, MT-030 shared inquiry; handoff to 3.1 | **Succeeded by 3.1** |
@@ -23,7 +24,17 @@
 | **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
 | **4.1** | Profitability Validation | Successor to 4.0; MT-033 DONE; MT-036 regular Favorites forward profitability dashboard PR #349 IN PROGRESS, owned by 4.1; awaiting exact-head CI / safe release | **Active — registered 2026-11-22 UTC** |
 
-**Next successor conversation IDs (reserved as *planned*, not yet active or claimed): `1.2`, `2.2`, `3.2`, `4.2`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+**Prepared successor:** `1.2` is reserved **PREPARED / NOT ACTIVE**, pending first-message check-in and ownership transfer. **Other planned successors:** `2.2`, `3.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+
+## Prepared handoff record — 1.1 → 1.2 (2026-11-22 UTC)
+
+- **Current:** `1.1 - Money Tree`, remains active/owner until successor explicitly checks in. **Prepared successor:** `1.2 - Money Tree`, title exact; NOT active and NO ownership transfer yet. The current conversation must not be renamed.
+- **Canonical complete predecessor handoff:** `main:WORK_QUEUE.md`, heading `Chat 1.1 → 1.2 successor handoff (2026-11-22 UTC)`, inside `MT-018`.
+- **Repo:** `princesspikachuu/kalshi-scanner-data`. Coordination: `main`; development: `build/google-auth-foundation`, verified HEAD `cf2cf74e05ec220d23da4effb6282c77e580be7f` at preparation. Merged PR #347 (`2a699a2135a59e28d6d76a2b158140ea4909cab2`) and PR #351 (`cf2cf74e05ec220d23da4effb6282c77e580be7f`). PR #351 source branch `fix/mt018-hourly-fee-gate-reasons-20261121`, original head `1d8c1baad3a6350e7bd0d123a34b64ee57256829`; PR #347 source branch `feat/mt018-hourly-listing-stage-visibility-20261121`.
+- **Verified CI:** PR #351 full API/PostgreSQL #44982045049 passed **2,223 Python tests** (including 3 new fee-stage tests); its postmerge push #44982441825 and PR #44982446595 BOTH passed. PR #347 original and combined exact-head and postmerge checks also passed. **Render runtime for exact PR #347/#351 merges remains unverified by predecessor**; Chat 3.1's earlier worker confirmation reached #346 (`bb23bd7...`), not proof of later merge deployment.
+- **Unfinished MT-018:** finance-hourly regular High Probability Favorites, Issue #339, **zero verified independent weekday BUY fills and settled outcomes before earlier cash shortage**. Capture funded Monday Nov 23 FX/Treasury/cash-index venue listings, scan/quote/fee/admission stages, true first fills, official venue-final outcomes, or exact failure gate; distinguish page appearances from independent events. Confirm actual worker deployment before interpreting new stage fields. Preserve all history, protections and LIVE-disabled state.
+- **Other owners:** 2.1 MT-017 Cloudflare/deployment, 3.1 MT-035 read-only finance funnel (and MT-030 claim to be verified), 4.1 MT-036 profitability/dashboard. They retain ownership; successor must not edit those files or workstreams.
+- **Next step on new chat:** paste generated exact-title startup message, read GitHub main queue/index, verify this handoff and newer commits/PRs, change 1.2 to ACTIVE and transfer ONLY MT-018 from 1.1 in queue, update 1.1 to succeeded, coordinate deployment/runtime verification and weekday evidence. Do not start 1.2's implementation within 1.1.
 
 ## Successor handoff: the current chat prepares the next chat's first message
 
