@@ -133,7 +133,7 @@ def _category_report(events):
             halfwidth = _format_pct(100*error)
             iid = nominal.get('uncertainty90_pct')
             if iid is not None and D(iid) > 0:
-                ratio_of_errors = _format_pct(100*error/D(iid))
+                ratio_of_errors = _format_pct(10000*error/D(iid))
     return dict(
         independent_settled_return_events=n,
         with_parseable_event_date=dated_n,
