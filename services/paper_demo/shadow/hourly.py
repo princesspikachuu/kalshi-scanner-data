@@ -168,7 +168,7 @@ async def hourly_once(host):
         # that the venue has no open hourly markets. Probe at most once per
         # series per 15 minutes; never admit candidates from this response.
         if (not market_rows and not page_cursor and not next_page
-                and hourly_category(series)=='crypto_or_other'
+                and hourly_category(series) in ('crypto_or_other','finance')
                 and now>=suite.hourly_empty_listing_probe_at.get(series,0)):
             suite.hourly_empty_listing_probe_at[series]=now+900
             try:
@@ -178,7 +178,7 @@ async def hourly_once(host):
                 matching=[m for m in comparison_rows if isinstance(m,dict)
                     and isinstance(m.get('ticker'),str) and m['ticker'].startswith(series+'-')]
                 print(json.dumps(dict(event='paper_hourly_empty_listing_probe',
-                    series=series,filtered_rows=0,unbounded_page_rows=len(comparison_rows),
+                    series=series,category=hourly_category(series),filtered_rows=0,unbounded_page_rows=len(comparison_rows),
                     matching_series_rows=len(matching),
                     status_counts={status:sum(m.get('status')==status for m in matching)
                         for status in sorted({str(m.get('status')) for m in matching})},
