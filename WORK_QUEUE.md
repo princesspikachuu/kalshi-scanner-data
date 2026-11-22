@@ -1579,7 +1579,7 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** IN PROGRESS — authorized Cloudflare Analytics access restored; first 24-hour aggregate CPU audit succeeded with zero exceededCpu and 563 other reported errors; root-cause follow-up pending  
+**Status:** PAUSED — user requested 2026-11-21 PT; 24-hour Cloudflare audit succeeded; non-CPU error attribution and Nov 9 historical incident deliberately deferred  
 **Worker:** Money Tree — Chat 2.1: Deployment Verification (successor to 2.0; read-only Cloudflare observability)  
 **Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific
 **Urgency:** U1 — URGENT  
@@ -1642,6 +1642,9 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 - Manual Cloudflare read-only audit [GitHub run #44980433098](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980433098) reported **all 11 offline tests passing**, then HTTP 400 from the Cloudflare GraphQL metrics request after three query variants; both configured GitHub secrets were present, values masked. **No Render/Worker deployment failed.** Exact provider error category remains unknown because raw errors intentionally are not printed in PUBLIC Actions logs.
 - **Follow-up [PR #348](https://github.com/princesspikachuu/kalshi-scanner-data/pull/348)** (merged `80df3fc186569d24d7486de65f6b1e764d79ec76` to main; exact PR-head [17 offline tests passed](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980642663)). Adds a read-only, credential-redacting three-stage fallback diagnostic: Cloudflare viewer authorization, account visibility, Workers aggregate dataset, plus **account-ID secret shape** validation. The printed result `MT017_SAFE_PREFLIGHT` uses only fixed safe labels, not provider messages/IDs/IPs/paths/token data. Last query fallback now uses Cloudflare's documented nullable string variables.
 - **Next:** user must manually rerun [MT-017 Cloudflare CPU (read-only)](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/cloudflare-cpu-readonly.yml) on `main` with `last_24h` to obtain a sanitized preflight or aggregate CPU report. Do **not** request credentials in chat, bypass the public-log redaction, loosen permissions, or infer CPU fixed without a successful provider response. No other task ownership changes.
+
+### User-requested pause — Chat 2.1 (2026-11-22 UTC)
+- User explicitly paused **MT-017 Cloudflare CPU investigation** to prioritize regular Favorites fill-attempt visibility and hourly crypto zero fills. Preserve all prior successful Cloudflare audit evidence (4,313 sampled request estimates, 563 other errors, zero exceededCpu in that reported 24h period), credentials, PRs, historical findings, and unresolved non-CPU error attribution. **PAUSED** is not **DONE**. Do not continue MT-017 until user resumes it.
 
 ### Chat 2.1 — first SUCCESSFUL authorized Cloudflare CPU audit (2026-11-22 UTC)
 - User corrected `CLOUDFLARE_OBSERVABILITY_TOKEN`. [Manual MT-017 Actions run #44987602729](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44987602729) **SUCCEEDED** at 05:02 UTC, including all **27 offline redaction/contract tests** and authenticated Cloudflare aggregate Analytics query. Credential-access blocker is **RESOLVED** (no token values retrieved or printed). No Worker deployment, Render deployment, paper/live trading changes, or historical writes were performed.
@@ -2422,3 +2425,22 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - **Frontend verified at exact merge:** [Money Tree staging workflow 44981849032](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44981849032) **PASSED**, including deployment to `pocket-analytics-staging` and byte-for-byte validation of published `shadow.html`, `shadow.mjs`, `shadow-view.mjs`, and `money.css` against merge `953fbcd7`. The independent [generic gateway workflow 44981849012](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44981849012) deployed successfully but then **FAILED** the known unauthenticated sign-in asset HTTP403 vs expected 200 smoke check. Do not mistake this for a new authenticated API failure or claim that check passed.
 - **Remaining acceptance:** postmerge hosted API CI [44981849031](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44981849031) / [44981852121](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44981852121) still running at checkpoint; Render staging API and processing-worker exact revision and regular Favorites runtime status **unverified** without a user-confirmed Render workspace. Keep task IN PROGRESS until this is verified or explicitly handed off.
 
+
+---
+
+## MT-037 — Show submitted paper BUY attempts next to distinct filled events; investigate hourly crypto zero fills
+**Status:** IN PROGRESS — claimed by Chat 2.1 for independent Favorites-only instrumentation/UI and read-only runtime triage
+**Worker:** Money Tree — Chat 2.1 (deployment/telemetry lane)
+**Claimed:** 2026-11-22 UTC
+**Urgency:** U1 — URGENT; explicitly prioritized by user after pausing MT-017
+
+### Requirements and definition
+- **First:** Next to the existing small **filled events** count beneath P/L, show **attempted fills** for the same All/1H/6H/24H/7D/30D selector in overview, regular Favorites folder, market type (particularly crypto-hourly), and bot where relevant.
+- Define an **attempt** as one distinct paper maker **BUY ORDER_SUBMITTED** (whether it later fills, cancels, expires or remains open), NOT an observed market, partial fill, order-quantity/contract count, rejected order, or settlement. Repeated distinct bids on the same event each count as an additional attempt. The existing numerator **filled events** is one distinct Kalshi exchange event with at least one actual BUY fill; **do not label attempts / filled events as a fill success rate** because these have different units and overlapping time cohorts.
+- Prefer reuse of existing regular Favorites bounded durable observer and snapshot reporting. Preserve records; protect snapshots with bounded memory and explicit **partial history** when observer starts late, is pruned, or timestamps are unknown. Do not fabricate zeros for untracked periods. Do not trigger provider, R2, DB, extra worker loops, settlement, trading, auth, or historical rewrites.
+- Add targeted Python and browser/node tests for rolling selector alignment, multiple orders per event, pending/partial/cancel/expired and rejected/SELL exclusions, reset/restore, missing tracking, and safe dashboard rendering. Coordinate frontend files with MT-036/Chat 4.1; avoid touching MT-036's profit research behavior.
+- **Then:** Read-only audit why regular Favorites **hourly crypto has zero distinct actual BUY filled events in the last hour**, distinguishing elapsed venue availability/scan (MT-018/Chat 1.2 owner), admissions, fresh books and fee verification, submitted/filled/canceled maker orders (MT-030 owner), cash, capacity, settlement and reporting coverage. **Do not modify scanner or maker trade gates owned by other workers.** Use existing sanitized Render diagnostics; do not infer root cause from an empty filled-events counter alone.
+- Keep **regular High-Probability Favorites ONLY**, all other strategies paused, real orders OFF, settlement and historical financial backups preserved. Review current target-base and CI. API staging has `autoDeploy=no` with a migration-bearing predeploy; do not manually deploy API without separately authorized coordination with MT-019/MT-036. Avoid unsafe workaround.
+
+### Completion notes
+- 2026-11-22 UTC: User first requested task. MT-017 was paused (not closed); existing completed MT-031 filled-event observer and MT-026 five-minute quote lifecycle evidence identified. Work to be recorded under this section.
