@@ -23,9 +23,10 @@
 | **3.1** | Trading Throughput | MT-035 handed off to 3.2 after prepared successor check-in | **Succeeded by 3.2 — 2026-11-22 UTC** |
 | **3.2** | Trading Throughput (topic metadata only) | ACTIVE successor to 3.1; MT-035 regular Favorites finance-hourly read-only weekday evidence, Issue #339; scanner remains stream 1 | **ACTIVE — registered 2026-11-22 UTC** |
 | **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
-| **4.1** | Profitability Validation | MT-033 and MT-036 DONE; PRs #349/#353 merged and verified; manual Render staging API deploy `a4e850c3` LIVE 2026-11-22 14:03 UTC with correct four-cohort forward telemetry and $0 fee read-only audit; authenticated browser-only UI QA optional; no unfinished MT-036 implementation tasks | **Active — registered 2026-11-22 UTC** |
+| **4.1** | Profitability Validation | MT-033 and MT-036 DONE; PRs #349/#353 merged and verified; manual Render staging API deploy `a4e850c3` LIVE 2026-11-22 14:03 UTC with correct four-cohort forward telemetry and $0 fee read-only audit; authenticated browser-only UI QA optional; no unfinished MT-036 implementation tasks | **Succeeded by 4.2 — 2026-11-22 UTC** |
+| **4.2** | Profitability Validation (topic metadata only) | Successor to 4.1; MT-033/MT-036 already DONE, no inherited unfinished claim; monitor future forward-cohort evidence and optional authenticated UI QA without taking other streams' work | **ACTIVE — registered 2026-11-22 UTC** |
 
-**Prepared successors:** `1.2` is now ACTIVE; next successor `1.3`. `3.2` activated after `continue` and succeeds `3.1`; its next successor ID is `3.3`. **Other planned successors:** `2.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+**Prepared successors:** `1.2` is now ACTIVE; next successor `1.3`. `3.2` activated after `continue` and succeeds `3.1`; its next successor ID is `3.3`. **Other planned successors:** `2.2`; stream 4 next successor `4.3`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
 
 ## Prepared handoff record — 3.1 → 3.2 (2026-11-22 UTC)
@@ -107,3 +108,8 @@ The earlier erroneous designation of this deployment conversation as **Chat 01**
 
 ## Chat 1.2 activation (2026-11-22 UTC)
 - User explicitly sent `continue` after naming-only startup. Verified prepared 1.1 handoff in main WORK_QUEUE.md. 1.2 takes only MT-018; 1.1 succeeded, MT-034 remains DONE. Runtime deployment of PR #347/#351 remains unverified; verify before interpreting weekday scan diagnostics. Other chat ownership unchanged.
+
+## Chat 4.2 activation and 4.1 succession (2026-11-22 UTC)
+- User started `4.2 - Money Tree` and sent `continue`. Fresh `main:WORK_QUEUE.md` and `main:docs/CHAT_INDEX.md` confirmed 4.1's completed MT-033/MT-036 work. No separate prepared 4.1→4.2 handoff was present; this activation uses the completed MT-036 queue checkpoint as verified predecessor state, without inventing unfinished implementation.
+- 4.1 succeeded; 4.2 ACTIVE. **No task claim transferred:** MT-033 and MT-036 are DONE. The residual authenticated visual browser check is optional QA, not evidence of a production failure. The four future date-proxy cohorts were under minimum as of API deployment 2026-11-22 14:03 UTC; new independent settled events must accumulate organically before interpretation.
+- Separate ownership preserved: 1.2 MT-018 scanner; 3.2 MT-035 finance-hourly funnel; separate MT-030 throughput owner; 2.1 operations/deployment. No strategy, order, fee, cash, settlement, historical record, or LIVE settings changed during succession. Current scope remains regular High-Probability Favorites only.
