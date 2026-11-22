@@ -54,7 +54,7 @@ class CloudflareCpuReadonlyTests(unittest.TestCase):
         self.assertIn("$datetimeStart: Time!", audit.GRAPHQL_QUERY)
         self.assertIn("$datetimeEnd: Time!", audit.GRAPHQL_QUERY)
         self.assertIn("$datetimeStart: Time!", audit.GRAPHQL_QUERY_MINIMAL)
-        self.assertIn("$datetimeStart: string!", audit.GRAPHQL_QUERY_MINIMAL_STRING)
+        self.assertIn("$datetimeStart: string", audit.GRAPHQL_QUERY_MINIMAL_STRING)
         self.assertNotIn("mutation", audit.GRAPHQL_QUERY.lower())
         self.assertNotIn("mutation", audit.GRAPHQL_QUERY_MINIMAL.lower())
 
@@ -118,6 +118,90 @@ class CloudflareCpuReadonlyTests(unittest.TestCase):
         self.assertNotIn(secret, str(raised.exception))
         self.assertNotIn("private-account", str(raised.exception))
 
+    def test_safe_preflight_checks_three_read_only_boundaries(self):
+        valid = "a" * 32
+        sequence = [
+            {"data": {"viewer": {"__typename": "Viewer"}}},
+            {"data": {"viewer": {"accounts": [{"__typename": "Account"}]}}},
+            {"data": {"viewer": {"accounts": [{"total": []}]}}},
+        ]
+        with mock.patch.object(audit, "_post_graphql", side_effect=sequence) as client:
+            result = audit.safe_preflight(valid, "secret-do-not-log", "some-worker",
+                                          "2026-11-21T00:00:00Z", "2026-11-22T00:00:00Z")
+        self.assertEqual(result, {"stage": "dataset", "result": "valid"})
+        self.assertEqual(client.call_count, 3)
+        self.assertEqual(client.call_args_list[0].args[1], audit.GRAPHQL_PREFLIGHT_VIEWER)
+        self.assertEqual(client.call_args_list[1].args[1], audit.GRAPHQL_PREFLIGHT_ACCOUNT)
+        self.assertEqual(client.call_args_list[2].args[1], audit.GRAPHQL_QUERY_MINIMAL_STRING)
+
+    def test_preflight_invalid_account_id_does_not_call_provider(self):
+        with mock.patch.object(audit, "_post_graphql") as client:
+            result = audit.safe_preflight("private-account-string", "very-secret-token",
+                                          "worker", "start", "end")
+        self.assertEqual(result, {
+            "stage": "account_id", "result": "not_32_hex_characters",
+        })
+        client.assert_not_called()
+        self.assertNotIn("private-account", str(result))
+
+    def test_preflight_blocks_on_missing_account_permission_without_leaking_details(self):
+        account = "b" * 32
+        response = {"data": {"viewer": {"__typename": "Viewer"}}}
+        with mock.patch.object(audit, "_post_graphql", side_effect=[
+            response,
+            audit.AnalyticsUnavailable(
+                "Cloudflare GraphQL HTTP 403 (account_access_denied)"
+            ),
+        ]) as client:
+            result = audit.safe_preflight(account, "private-token", "worker",
+                                          "start", "end")
+        self.assertEqual(result["stage"], "account")
+        self.assertEqual(result["result"], "failed")
+        self.assertEqual(client.call_count, 2)
+        self.assertNotIn(account, str(result))
+        self.assertNotIn("private-token", str(result))
+
+    def test_provider_400_body_is_classified_without_printing_private_details(self):
+        import urllib.error
+        from io import BytesIO
+
+        body = json.dumps({"errors": [
+            {"message": 'unknown field "private-user-ABC" on dataset'},
+            {"message": "Account private-account-ID was invalid"},
+        ]}).encode("utf-8")
+        def failing_request(_request, timeout):
+            raise urllib.error.HTTPError(audit.GRAPHQL_URL, 400, "bad query",
+                                         hdrs={}, fp=BytesIO(body))
+        with mock.patch.object(audit.urllib.request, "urlopen",
+                               side_effect=failing_request):
+            with self.assertRaises(audit.AnalyticsUnavailable) as outcome:
+                audit._post_graphql("private-token", audit.GRAPHQL_QUERY_MINIMAL_STRING, {})
+        self.assertEqual(str(outcome.exception),
+                         "Cloudflare GraphQL HTTP 400 (unsupported_field)")
+        self.assertNotIn("private-account", str(outcome.exception))
+        self.assertNotIn("private-user", str(outcome.exception))
+        self.assertNotIn("private-token", str(outcome.exception))
+
+    def test_provider_400_time_window_category_is_constant(self):
+        self.assertEqual(audit._error_category([{
+            "message": "cannot request data older than 86400s on ACCOUNT_SECRET"
+        }]), "window_not_supported")
+        self.assertEqual(audit._error_category([{
+            "message": "Unknown type Time on ACCOUNT_SECRET"
+        }]), "schema_or_variable_type")
+        self.assertEqual(audit._error_category([{
+            "message": "some unrecognized sensitive issue on TOKEN_SECRET"
+        }]), "unclassified")
+
+    def test_preflight_graphql_no_account_is_not_success(self):
+        with mock.patch.object(audit, "_post_graphql", side_effect=[
+            {"data": {"viewer": {"__typename": "Viewer"}}},
+            {"data": {"viewer": {"accounts": []}}},
+        ]):
+            result = audit.safe_preflight("f" * 32, "private-token", "worker",
+                                          "start", "end")
+        self.assertEqual(result, {"stage": "account", "result": "account_not_readable"})
+
     def test_missing_credentials_does_not_access_network(self):
         with mock.patch.dict(os.environ, {
             "CLOUDFLARE_OBSERVABILITY_TOKEN": "",
@@ -135,7 +219,7 @@ class CloudflareCpuReadonlyTests(unittest.TestCase):
         encoded = json.dumps(response).encode("utf-8")
         with mock.patch.object(audit.urllib.request, "urlopen") as opener:
             opener.return_value.__enter__.return_value = io.BytesIO(encoded)
-            with self.assertRaisesRegex(audit.AnalyticsUnavailable, "verify Account Analytics Read"):
+            with self.assertRaisesRegex(audit.AnalyticsUnavailable, "response error"):
                 audit.read_analytics("secret-account", "secret-token", "a-worker",
                                      "2026-11-09T00:00:00Z", "2026-11-10T00:00:00Z")
 
