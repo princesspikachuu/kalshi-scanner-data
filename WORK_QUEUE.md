@@ -1985,3 +1985,24 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 
 
 ---
+
+---
+
+## MT-032 — Add event-based held-profit uncertainty to regular Favorites price/time cohorts
+**Status:** IN PROGRESS — independent regular Favorites research
+**Worker:** ChatGPT / Detailed and Wider held-ROI interval audit
+**Claimed:** 2026-11-21
+**Urgency:** U2 — research reliability after event-based clarification
+
+### Goal
+Calculate and display **90% event-level held-return uncertainty** for populated Detailed and Wider regular High-Probability Favorites price/time cohorts, using the exact same pooled one-event-one-vote, fee-inclusive hypothetical held-to-settlement return method and >=50 event minimum as Single. These are **not** separate contracts, partial bids, repeated price-tier appearances or calendar-day clusters. Maintain distinct win-rate Wilson error vs held-profit-return Student-t error.
+
+### Boundaries and coordination
+- No 20-day cluster threshold, day-diversity gate, or automatic trading decision. Independently confirmed exchange event identities are the research observations. Source data and original early-exit cash ledger remain unchanged.
+- Active MT-031 [PR #337](https://github.com/princesspikachuu/kalshi-scanner-data/pull/337) owns the `apps/web/shadow-view.mjs` view and Daily Weather fallback; coordinate any markup changes, avoid overwriting its edits. MT-030/MT-018 own quote and discovery throughput. Do not touch other strategy portfolios, LIVE orders, settlements or backups.
+- Derive 90% bounds from already-pooled per-event return maps in the regular Favorites Detailed and Wider summarizers only; no new SQL queries or heavy history reads, and never generate independent observations from aggregated counts lacking IDs.
+- Distinguish 'under 50 independent settled hold returns', '50+ but no observed gains *and* losses', and a valid numerical interval. Show uncertainty in **percentage points** next to held ROI (not win-rate margin); do not misrepresent unadjusted exploratory interval as proof of profitability, especially across many tested cells.
+- Add event-dedup, repeat-fill, missing-settlement, historical known-exit, estimated-return, threshold, zero-variance and frontend regressions. Base implementation on `build/google-auth-foundation`, draft PR and CI before staging release.
+
+### Completion notes
+_Pending implementation, CI, conflict coordination and rollout. No trades or historical data to be changed._
