@@ -2177,4 +2177,8 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - Add deterministic synthetic tests for funded qualifying, cash-starved, stale/one-sided/price-disqualified, zero-fee-unverified, empty/disabled series and separation from other portfolios. Run exact-head focused + full API/PostgreSQL CI and deploy/verify only after passes, coordinated with Chat 01. Record actual weekday before/after results and do not claim root cause without a real venue observation.
 
 ### Completion notes
-_Draft PR, tests, deployment and observed finance-hourly funnel findings pending._
+- **Draft [PR #342](https://github.com/princesspikachuu/kalshi-scanner-data/pull/342)**, branch `feat/mt035-finance-hourly-favorites-funnel-20261121`, head `e9c64ced5f803e56139c89740b0e2e38aa742f6f` against live development SHA `c1c44dc6440252b41f2831776bbe44d8d1e2f8ec`.
+- Only three changed files: `favorite_finance_health.py`, once-per-minute bounded logging in `host.py`, and 11 synthetic tests `test_favorite_finance_health.py`. No scanner, order, fee, settlement, cash, historical or other-strategy code changed.
+- Focused one-contract validation [44978104087](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44978104087) **PASSED**. Full API/PostgreSQL [44978104042](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44978104042) **IN PROGRESS**, not yet passing. **No merge, deployment, or verified weekday finance fills.**
+- Historical correction: CFTC 2025 listings confirm `KXUSDJPYH` and `KXEURUSDH` were genuine at that time; their absence from a 2026 category listing is **not** proof they never existed or are currently eligible. Follow up with provider verified series metadata without deleting source history.
+
