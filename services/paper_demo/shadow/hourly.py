@@ -129,7 +129,8 @@ async def hourly_once(host):
             dict(checked=0,eligible=0,subscribed=0,capacity_blocked=0,
                  returned=0,active=0,in_window=0,future_open=0,
                  closing_later=0,closing_soon=0,invalid_schedule=0,
-                 excluded=0,quote_rejected=0))
+                 excluded=0,quote_rejected=0,
+                 fee_nonzero=0,fee_unverified=0,fee_verified=0))
         category['checked']+=1
         wake=session_wake(series,now)
         if wake is not None:
@@ -193,15 +194,15 @@ async def hourly_once(host):
             'No active markets closing within one hour' if not listed else
             'Active markets found · no 70–95¢ maker entry' if not rows else
             'Active qualifying markets · feed capacity paused' if not capacity else
-            'Active qualifying market · subscribing to order book')
+            'Active qualifying market · verifying maker fee')
         # The existing per-series diagnostic reads this human-readable reason.
         # Keep it concise; all counts are from this one REST page, not
         # distinct events or a historical opportunity denominator.
-        reason+=(f" [ret={stages['returned']} active={stages['active']} win={stages['in_window']}"
-                 f" ex={already_monitored+candidate_rejected} quote={quote_rejected}"
-                 f" badts={stages['invalid_schedule']}]")
+        stage_detail=(f" [ret={stages['returned']} active={stages['active']} win={stages['in_window']}"
+                      f" ex={already_monitored+candidate_rejected} quote={quote_rejected}"
+                      f" badts={stages['invalid_schedule']}]")
         suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),
-            eligible_markets=len(rows),reason=reason)
+            eligible_markets=len(rows),reason=reason+stage_detail)
         suite.hourly_retry_at[series]=now+(15 if listed or next_page else 60)
         if not listed and not page_cursor and not next_page:
             # A future wake is safe only for a COMPLETE, single-page listing.
@@ -228,14 +229,23 @@ async def hourly_once(host):
             continue
         raw=min(rows,key=lambda m:(ts(m['close_time']),-float(m.get('volume_fp') or m.get('volume') or 0)))
         fee=await host.fee_policy(raw,{})
-        if fee.maker_multiplier!=0 or not host.verified_fees.zero_maker_fees_until(
-                raw['ticker'],now,ts(raw['close_time'])):
+        if fee.maker_multiplier!=0:
             category['fee_blocked']=category.get('fee_blocked',0)+1
-            scan['reason']='Nonzero or unverified maker fee; not admitted'
+            category['fee_nonzero']+=1
+            suite.hourly_coverage[series]['reason']='Nonzero maker fee; not admitted'+stage_detail
+            scan['reason']='Nonzero maker fee; not admitted'
+            continue
+        if not host.verified_fees.zero_maker_fees_until(raw['ticker'],now,ts(raw['close_time'])):
+            category['fee_blocked']=category.get('fee_blocked',0)+1
+            category['fee_unverified']+=1
+            suite.hourly_coverage[series]['reason']='Maker fee unverified through close; not admitted'+stage_detail
+            scan['reason']='Maker fee unverified through close; not admitted'
             continue
         await host.put('hourly_market',dict(market=dict(ticker=raw['ticker'],event_ticker=raw['event_ticker'],series_ticker=series,
             open=ts(raw['open_time']),close=ts(raw['close_time']),discovered_at=now,hourly_price=True),
             taker_multiplier=str(fee.taker_multiplier),maker_multiplier=str(fee.maker_multiplier)))
+        category['fee_verified']+=1
+        suite.hourly_coverage[series]['reason']='Eligible favorite submitted for monitoring'+stage_detail
         staged+=1;active.append(raw['ticker']);scan['subscribed']+=1;category['subscribed']+=1;scan['reason']='Eligible favorites submitted for monitoring'
     suite.hourly_scan=scan
     if now>=getattr(suite,'hourly_scan_log_at',0):
