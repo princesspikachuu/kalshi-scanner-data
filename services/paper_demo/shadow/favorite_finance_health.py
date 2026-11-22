@@ -69,7 +69,7 @@ def finance_hourly_funnel_snapshot(suite, now):
         elif next_scan:
             scan_state = 'scheduled_retry'
         elif age is None:
-            scan_state = 'never_scanned'
+            scan_state = 'unknown_scan_time' if last else 'never_scanned'
         else:
             scan_state = 'stale'
 
