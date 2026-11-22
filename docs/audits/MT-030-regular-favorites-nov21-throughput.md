@@ -22,6 +22,15 @@ The hosted 15-minute scanner `ForwardRun.discover_once` was gated by `legacy_dis
 
 **Semantics:** `favorites_trading_diagnostics.active_markets` is eligible tracked markets, **not** independent filled/settled outcomes. `paper_hourly_scan.listed_markets` counts returned contract rows, **not** independent events; zero qualifying market is not proof of an algorithm bug. Snapshots came from nearby minutes and are **not** transactionally joined. The 75 running bots are configured profiles, not 75 simultaneous trading opportunities.
 
+### Cash-restoration source clarified at 08:06 PST
+
+The ~5,000 rise later in the day is **not** proven to be settlement-released cash. Read-only Render `favorites_trading_diagnostics` samples show:
+- **08:06:10 PST**: wallet cash $391.6271, available $384.7571, 125.50 open contracts.
+- **08:06:40 PST**: wallet cash $5,390.2271, available $5,384.0571, 127.50 open contracts.
+- Within the same interval, `shadow_durability_cost` reported **2 processed command rows** (16:06:19Z) and then **1 command row** (16:06:51Z). Code in `services/paper_demo/shadow/host.py` has explicit idempotent paper `refill`/reset commands.
+- This ~$4,998.60 net change while contracts increased by 2 is **strongly consistent with a $5,000 paper refill**, not a normal release of nearly that much collateral. The available logs do not expose the exact command type, so treat a refill as **likely, not independently confirmed**; don't infer direct live-money deposits or manipulate financial state.
+- The earlier 01:57 PST shortage remains real. It can temporarily prevent 70–95¢ bids from funding one contract. Do **not** use the later $5k snapshot as evidence that earlier settlement delays resolved themselves; inspect actual official settlement confirmations separately if that matters to future allocation decisions.
+
 ### Confirmed paper collateral starvation at 01:57 PST
 
 - `favorites_trading_diagnostics`: paper cash **$19.2036**, available/unreserved **$0.2036**, 515.01 open contracts, two resting orders.
