@@ -150,6 +150,81 @@ class FinanceHourlyFunnelSnapshotTests(unittest.TestCase):
         self.assertIsNone(row['scan_listed_last'])
         self.assertIsNone(row['scan_eligible_last'])
 
+    def test_cash_index_calendar_wake_is_not_a_venue_listing(self):
+        suite,engine,_=self.fixture()
+        # Saturday Nov 21, 2026 19:13 Pacific. Series has not yet been
+        # scanned by a newly started worker; the NYSE calendar is closed.
+        now=1_795_317_226
+        engine.markets.clear()
+        suite.hourly_coverage.clear()
+        row=finance_hourly_funnel_snapshot(suite,now)['by_series'][self.SERIES]
+        self.assertFalse(row['scan_recent'])
+        self.assertEqual(row['scan_state'],'scheduled_cash_index')
+        self.assertIsNone(row['scan_last_reason'])
+        self.assertIsNone(row['scan_listed_last'])
+        self.assertGreater(row['next_scan_hint_seconds'],0)
+        self.assertEqual(row['admitted_active_markets'],0)
+
+    def test_stale_scan_vs_explicit_retry_are_different(self):
+        suite,_,_=self.fixture()
+        suite.hourly_coverage[self.SERIES].update(
+            at=self.NOW-200,reason='Last confirmed older scan',
+            active_markets=8,eligible_markets=7)
+        suite.hourly_retry_at={self.SERIES:self.NOW+3600}
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertFalse(row['scan_recent'])
+        self.assertEqual(row['scan_state'],'scheduled_retry')
+        self.assertEqual(row['scan_last_age_seconds'],200)
+        self.assertEqual(row['scan_last_reason'],'Last confirmed older scan')
+        self.assertEqual(row['next_scan_hint_seconds'],3600)
+        self.assertIsNone(row['scan_listed_last'])
+        self.assertIsNone(row['scan_eligible_last'])
+        suite.hourly_retry_at.clear()
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertEqual(row['scan_state'],'stale')
+        self.assertIsNone(row['next_scan_hint_seconds'])
+        suite.hourly_coverage.clear()
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertEqual(row['scan_state'],'never_scanned')
+        self.assertIsNone(row['scan_last_age_seconds'])
+
+    def test_cached_series_frequency_reports_metadata_without_provider_reads(self):
+        suite,_,_=self.fixture()
+        suite.hourly_metadata={self.SERIES:dict(at=self.NOW-5,frequency='hourly')}
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertEqual(row['verified_series_frequency'],'hourly')
+        suite.hourly_metadata[self.SERIES]['frequency']='daily'
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertEqual(row['verified_series_frequency'],'daily')
+        self.assertEqual(row['scan_state'],'recent')
+        self.assertEqual(suite.hourly_metadata[self.SERIES]['frequency'],'daily')
+
+    def test_future_scan_hints_are_bounded_and_do_not_authorize_listings(self):
+        suite,_,_=self.fixture()
+        suite.hourly_coverage.clear()
+        suite.discovery_wakes={'hourly:'+self.SERIES:self.NOW+180}
+        suite.hourly_retry_at={self.SERIES:self.NOW+450}
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertEqual(row['scan_state'],'scheduled_retry')
+        self.assertEqual(row['next_scan_hint_seconds'],180)
+        self.assertIsNone(row['scan_listed_last'])
+        self.assertIsNone(row['scan_eligible_last'])
+        suite.discovery_wakes['hourly:'+self.SERIES]=float('inf')
+        suite.hourly_retry_at[self.SERIES]=self.NOW+32_000_000
+        row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+        self.assertEqual(row['scan_state'],'never_scanned')
+        self.assertIsNone(row['next_scan_hint_seconds'])
+
+    def test_invalid_scan_timestamp_does_not_crash_read_only_health(self):
+        suite,_,_=self.fixture()
+        for invalid in (float('-inf'),float('nan'),True):
+            suite.hourly_coverage[self.SERIES]['at']=invalid
+            row=finance_hourly_funnel_snapshot(suite,self.NOW)['by_series'][self.SERIES]
+            self.assertEqual(row['scan_state'],'unknown_scan_time')
+            self.assertFalse(row['scan_recent'])
+            self.assertIsNone(row['scan_last_age_seconds'])
+            self.assertIsNone(row['scan_listed_last'])
+
     def test_missing_regular_portfolio_fails_to_empty_summary(self):
         value=finance_hourly_funnel_snapshot(SimpleNamespace(portfolios={}),self.NOW)
         self.assertEqual(value['configured_series'],0)
