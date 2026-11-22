@@ -33,6 +33,7 @@ This file is the coordination source of truth for ChatGPT/Codex implementation c
 - **Chat 01 — Discovery Optimization:** PR #314 follow-up and ownership coordination (current thread).
 - **Chat 02 — Deployment Verification:** deployment status continuation.
 - **Chat 03 — Trading Throughput:** low-frequency/finance trading follow-up.
+- **Chat 04 — Forward-only Favorites Validation:** MT-033, forward-only validation of frozen regular Favorites profitability cohorts; PR #340 in development (already claimed by another chat).
 
 For a newly opened development chat, read this registry on `main` before selecting the next unused positive number (04, 05, etc.). Claim the number with a descriptive topic by editing this subsection on `main` using the latest content SHA *before* making app-code changes. If two writers race, refresh and select a different number rather than duplicating. Keep an already user-numbered chat's identifier stable when continuing and correct accidental duplicate self-labels in future handoffs. All work remains subject to the Favorites-only scope above; numbering does not authorize new unrelated tasks.
 
