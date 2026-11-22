@@ -76,24 +76,22 @@ class KnownWake(unittest.TestCase):
 
 
 class DiscoveryWakeIntegration(unittest.IsolatedAsyncioTestCase):
-    async def test_daily_weather_does_no_discovery_reads_outside_city_window(self):
+    async def test_daily_weather_discovers_at_local_noon_without_sleep(self):
         suite=Mock();suite.feed_markets.return_value={}
         suite.enabled_profiles.side_effect=lambda category:(
             [dict(series='KXHIGHNY')] if category=='weather_daily' else [])
         suite.weather_cursor={};suite.weather_pages={};suite.portfolios={};suite.weather_scan_log_at=0
         suite.settlement_markets.return_value={}
         suite.search_capacity.return_value=True
+        suite.discovery_wakes={'weather_daily:KXHIGHNY':at('2026-11-22T03:00Z')}
         host=Mock(experiments=suite);host.put=AsyncMock()
+        host.verified_data.call.return_value={'markets':[],'cursor':''}
         now=at('2026-11-21T17:00Z')
         with patch('services.paper_demo.shadow.weather.time.time',return_value=now):
             await weather_once(host)
-        host.verified_data.call.assert_not_called()
+        host.verified_data.call.assert_called_once()
         host.put.assert_not_awaited()
-        self.assertEqual(suite.discovery_wakes['weather_daily:KXHIGHNY'],
-                         at('2026-11-22T03:00Z'))
-        self.assertEqual(suite.weather_scan['categories']['weather_daily']['reason'],
-                         'known_entry_windows_sleeping')
-
+        self.assertNotIn('weather_daily:KXHIGHNY',suite.discovery_wakes)
     async def test_provider_future_hourly_open_sleeps_and_survives_checkpoint(self):
         host,suite=Scan().setup_host();now=1000
         suite.enabled_profiles=lambda asset:([dict(series='KXBTCD')]
