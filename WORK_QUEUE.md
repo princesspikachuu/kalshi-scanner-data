@@ -1819,3 +1819,21 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 
 ### Completion notes
 _In progress: isolated source/test PR, CI, deployment and bounded live verification._
+
+## MT-027 — Compare exact vs estimated held-return profitability in regular Favorites
+**Status:** IN PROGRESS — U2, read-only research sensitivity
+**Worker:** ChatGPT / regular Favorites attribution sensitivity
+**Claimed:** 2026-11-22 01:23 UTC
+**Urgency:** U2 — HIGH
+**Priority:** Follow up on MT-023's finding that 77.1% of derived held-event returns are flagged estimated
+
+### Scope and acceptance
+- Regular High-Probability Favorites ONLY; no Statistics-Backed Favorites, Market Maker, new trading rules, balances, actual payouts, data deletion or source rewrites.
+- For each existing category, compare **exact-only** and **estimated-only** event-level cost-weighted held-return subsets after consistent event deduplication. An event with any estimated cohort must remain estimated; an incomplete event must be excluded from both.
+- Derive sample counts, mean hypothetical hold ROI and the current nominal 90% Student-t interval **only** where at least 50 events and both gains/losses exist; otherwise explicitly Pending/Unavailable. Clarify that neither subset is randomly sampled and that estimates/market correlations can bias even exact-only results.
+- Reuse regular Favorites derived snapshot in existing once-per-minute `favorites_timed_rollup` research evidence telemetry. No additional database/R2 reads or expanded main dashboard payload. Include no raw event/market IDs, financial balances or order identities.
+- Add focused source immutability, pooled-event/correlation, incomplete, mixed-attribution, fifty-event boundary, and scope regression tests. Validate with exact-head API/PostgreSQL CI; deploy only after checks and verify live log. Coordinate away from MT-018 discovery, MT-019 backup, MT-026 quote lifecycle.
+### Completion notes
+Pending implementation, test, deployment, and live results.
+
+---
