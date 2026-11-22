@@ -281,6 +281,14 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                                 for kind,cov in aggregate['coverage'].items()},
                     research_evidence=evidence,
                     source='worker_entry_timing',real_orders_enabled=False)),flush=True)
+                # MT-033: predetermined future-event cohorts. Bounded, read-only
+                # and computed from this same derived Favorites held view.
+                # No added provider, SQL, R2 or hot-worker work.
+                from services.paper_demo.shadow.favorite_forward_validation import summarize_forward_regular_favorites
+                forward = summarize_forward_regular_favorites(
+                    held_bots, profiles, favorite_timing_category)
+                print(json.dumps(dict(event='favorites_forward_validation',
+                    research_evidence=forward, real_orders_enabled=False)), flush=True)
                 # A separate bounded, read-only dependence diagnostic.
                 # Group distinct exchange events by strictly parsed venue
                 # event date; never log any raw event or market identifiers.
