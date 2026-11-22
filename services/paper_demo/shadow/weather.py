@@ -4,13 +4,13 @@ from uuid import uuid4
 from .runner import ts
 from .storage import put
 from .discovery_budget import candidate_markets,next_profile
-from .discovery_wake import asleep,remember,daily_scan_wake,known_entry_wake
+from .discovery_wake import asleep,remember,known_entry_wake
 from .hourly import favorite_bid
 from .weather_window import CITY_ZONES,entry_allowed
 from .settlement_recovery import due_for_confirmation
 from services.research.reports import SERIES
 
-WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets and holds until authoritative settlement. Daily entries are limited to the city’s final two hours. Favorite bias remains a hypothesis.'
+WEATHER_DESCRIPTION='Tests 70–95¢ maker purchases in 15-minute, hourly weather and daily weather markets and holds until authoritative settlement. Daily entries are allowed throughout the dated city local calendar day. Favorite bias remains a hypothesis.'
 
 def weather_profiles():
     return [dict(id='fav_'+s.lower(),series=s,name=('Hourly weather · ' if category=='weather' else 'Daily weather · ')+s,
@@ -63,15 +63,8 @@ async def weather_once(host):
         for option in choices:
             key=category+':'+option['series']
             if category=='weather_daily':
-                # City-local day start, not exchange settlement time, determines
-                # the only safe daily entry window. No listings/fee reads until.
-                wake=daily_scan_wake(option['series'],now)
-                if wake is not None:
-                    # A fresh local-day window needs a fresh listing cursor.
-                    suite.weather_pages.pop(option['series'],None)
-                    suite.weather_page_bounds.pop(option['series'],None)
-                    remember(suite,key,wake,now)
-                    continue
+                # Discover daily weather throughout the local calendar day.
+                # Discard persisted end-of-day-only sleep hints.
                 remember(suite,key,None,now)
             elif asleep(suite,key,now):
                 continue
@@ -105,7 +98,7 @@ async def weather_once(host):
         # A future wake is safe only for a COMPLETE single-page result.
         # Incomplete pages can hide currently eligible markets; follow the
         # existing cursor before considering any long sleep.
-        if not listed and not page_cursor and not next_page:
+        if category!='weather_daily' and not listed and not page_cursor and not next_page:
             future=[known_entry_wake(m,category,now) for m in result.get('markets',[])
                     if m.get('ticker','').startswith(p['series']+'-') and m.get('status')=='active']
             future=[when for when in future if when is not None]

@@ -33,7 +33,11 @@ def daily_day_end(m):
 
 def entry_allowed(m,now):
     end=daily_day_end(m)
-    return end is not None and end-7200<=now<min(end,float(m['close']))-60
+    if end is None:return False
+    zone=CITY_ZONES.get(str(m.get('ticker','')).split('-')[0])
+    start=datetime.fromtimestamp(end,ZoneInfo(zone)).date()-timedelta(days=1)
+    start_ts=datetime.combine(start,day_time(),ZoneInfo(zone)).timestamp()
+    return start_ts<=now<min(end,float(m['close']))-60
 
 def entry_end(m):
     end=daily_day_end(m)
