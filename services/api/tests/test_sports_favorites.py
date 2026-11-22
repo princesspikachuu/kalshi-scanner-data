@@ -130,6 +130,20 @@ class SportsDiscovery(unittest.IsolatedAsyncioTestCase):
         cache=next(iter(host.experiments.sports_schedule.values()))
         self.assertLess(cache['retry_at'],now+2)
 
+    async def test_live_game_fee_rejections_are_counted_without_subscribing(self):
+        import io,json
+        from contextlib import redirect_stdout
+        for maker,coverage,field in ((D(1),True,'fee_policy_rejected'),(D(0),False,'fee_coverage_rejected')):
+            host,now,seen=self.batch_host(1)
+            host.fee_policy.return_value=Mock(taker_multiplier=D(1),maker_multiplier=maker)
+            host.verified_fees.zero_maker_fees_until.return_value=coverage
+            out=io.StringIO()
+            with redirect_stdout(out):await sports_once(host)
+            scan=json.loads(out.getvalue().splitlines()[-1])
+            self.assertEqual(scan[field],1)
+            self.assertEqual(scan['subscribed'],0)
+            host.put.assert_not_awaited()
+
     async def test_verified_late_game_uses_read_only_milestone_and_live_endpoints(self):
         suite,rows=weather.WeatherSuite().suite()
         rows += [dict(parameters=dict(p,revision=1),progress=dict(desired='running')) for p in sports_profiles()]
