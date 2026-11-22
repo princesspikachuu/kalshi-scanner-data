@@ -109,6 +109,7 @@ async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     if not hasattr(suite,'hourly_metadata'):suite.hourly_metadata={};suite.hourly_retry_at={}
     if not hasattr(suite,'hourly_coverage'):suite.hourly_coverage={}
+    if not isinstance(getattr(suite,'hourly_empty_listing_probe_at',None),dict):suite.hourly_empty_listing_probe_at={}
     # Keep pagination filters stable for each in-memory cursor chain.
     if not isinstance(getattr(suite,'hourly_page_bounds',None),dict):suite.hourly_page_bounds={}
     active=candidate_markets(suite,markets,'hourly',now)
@@ -163,6 +164,29 @@ async def hourly_once(host):
         if next_page:suite.hourly_page_bounds[series]=bounds
         else:suite.hourly_page_bounds.pop(series,None)
         market_rows=result.get('markets') or []
+        # Read-only comparison: an empty time-filtered page does not establish
+        # that the venue has no open hourly markets. Probe at most once per
+        # series per 15 minutes; never admit candidates from this response.
+        if (not market_rows and not page_cursor and not next_page
+                and hourly_category(series)=='crypto_or_other'
+                and now>=suite.hourly_empty_listing_probe_at.get(series,0)):
+            suite.hourly_empty_listing_probe_at[series]=now+900
+            try:
+                comparison=await asyncio.to_thread(host.verified_data.call,'GET','/markets',
+                    dict(status='open',series_ticker=series,limit=100))
+                comparison_rows=comparison.get('markets') or []
+                matching=[m for m in comparison_rows if isinstance(m,dict)
+                    and isinstance(m.get('ticker'),str) and m['ticker'].startswith(series+'-')]
+                print(json.dumps(dict(event='paper_hourly_empty_listing_probe',
+                    series=series,filtered_rows=0,unbounded_page_rows=len(comparison_rows),
+                    matching_series_rows=len(matching),
+                    status_counts={status:sum(m.get('status')==status for m in matching)
+                        for status in sorted({str(m.get('status')) for m in matching})},
+                    has_next_page=bool(comparison.get('cursor')),
+                    real_orders_enabled=False)),flush=True)
+            except Exception as exc:
+                print(json.dumps(dict(event='paper_hourly_empty_listing_probe_error',
+                    series=series,error=type(exc).__name__,real_orders_enabled=False)),flush=True)
         listed,stages=hourly_listing_stages(market_rows,series,now)
         scan['listed_markets']+=len(listed)
         for field in ('returned','active','in_window','future_open','closing_later',
