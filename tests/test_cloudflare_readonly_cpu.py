@@ -270,6 +270,93 @@ class CloudflareCpuReadonlyTests(unittest.TestCase):
             "message": "unrecognized PRIVATE TOKEN ERROR"
         }]), "unclassified")
 
+    def test_token_input_copy_errors_are_safe_fixed_labels(self):
+        examples = (
+            ("Bearer private-example", "copied_header_or_assignment"),
+            ('"private-example"', "quoted_token"),
+            (" private-example ", "outer_whitespace"),
+            ("cfk_private-example", "global_api_key_not_api_token"),
+            ('{"token":"private-example"}', "copied_non_token_content"),
+            ("f" * 32, "identifier_instead_of_token"),
+            ("private-example\\nline", None),
+            ("private-example\nline", "embedded_whitespace_or_control"),
+            ("cfut_example-fake", None),
+            ("cfat_example-fake", None),
+            ("A1" * 20, None),
+        )
+        for secret, expected in examples:
+            with self.subTest(expected=expected):
+                result = audit._safe_token_input_issue(secret)
+                self.assertEqual(result, expected)
+                self.assertNotIn("private-example", str(result))
+
+    def test_nested_auth_error_codes_are_classified_without_echo(self):
+        response = {"errors": [{
+            "code": 6003, "message": "SECRET-PRIVATE-DATA",
+            "error_chain": [{"code": 6111, "message": "SECRET-PRIVATE-DATA"}],
+        }]}
+        self.assertEqual(audit._provider_error_category(response),
+                         "malformed_auth_header")
+        self.assertEqual(audit._provider_error_category(
+            {"errors": [{"code": 10000, "message": "SECRET-PRIVATE-DATA"}]}
+        ), "token_rejected")
+        self.assertEqual(audit._provider_error_category(
+            {"errors": [{"code": 999999, "message": "SECRET-PRIVATE-DATA"}]}
+        ), "unclassified")
+
+    def test_graphql_error_code_not_private_body_reaches_logs(self):
+        import urllib.error
+        from io import BytesIO
+
+        body = json.dumps({"errors": [{
+            "code": 6003, "message": "SECRET-PRIVATE-DATA",
+            "error_chain": [{"code": 6111, "message": "SECRET-PRIVATE-DATA"}],
+        }]}).encode("utf-8")
+        with mock.patch.object(audit.urllib.request, "urlopen",
+                               side_effect=urllib.error.HTTPError(
+                                   audit.GRAPHQL_URL, 400, "SECRET-PRIVATE-DATA",
+                                   hdrs={}, fp=BytesIO(body))):
+            with self.assertRaises(audit.AnalyticsUnavailable) as observed:
+                audit._post_graphql("SECRET-PRIVATE-TOKEN", audit.GRAPHQL_PREFLIGHT_VIEWER, {})
+        self.assertEqual(str(observed.exception),
+                         "Cloudflare GraphQL HTTP 400 (malformed_auth_header)")
+        self.assertNotIn("PRIVATE", str(observed.exception))
+
+    def test_verify_token_http400_categorizes_nesting_not_secret_body(self):
+        import urllib.error
+        from io import BytesIO
+
+        body = json.dumps({"errors": [{
+            "code": 6003, "message": "SECRET-PRIVATE-DATA",
+            "error_chain": [{"code": 6111, "message": "SECRET-PRIVATE-DATA"}],
+        }]}).encode("utf-8")
+        def reject(req, timeout):
+            raise urllib.error.HTTPError(req.full_url, 400, "SECRET-PRIVATE-DATA",
+                                         hdrs={}, fp=BytesIO(body))
+        with mock.patch.object(audit.urllib.request, "urlopen",
+                               side_effect=reject) as opener:
+            status = audit.safe_verify_token("f" * 32, "SECRET-PRIVATE-TOKEN")
+        self.assertEqual(status, {
+            "status": "http_error", "code": 400,
+            "category": "malformed_auth_header",
+        })
+        self.assertEqual(opener.call_count, 2)
+        self.assertNotIn("PRIVATE", str(status))
+
+    def test_main_rejects_copied_bearer_prefix_without_calling_provider(self):
+        with mock.patch.dict(os.environ, {
+            "CLOUDFLARE_OBSERVABILITY_TOKEN": "Bearer SECRET-PRIVATE-TOKEN",
+            "CLOUDFLARE_ACCOUNT_ID": "f" * 32,
+        }):
+            with mock.patch.object(audit.urllib.request, "urlopen") as opener:
+                with mock.patch("sys.argv", ["cloudflare_readonly_cpu.py"]):
+                    with mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                        self.assertEqual(audit.main(), 2)
+                opener.assert_not_called()
+                self.assertIn("MT017_CREDENTIAL_PREFLIGHT", output.getvalue())
+                self.assertIn("copied_header_or_assignment", output.getvalue())
+                self.assertNotIn("SECRET-PRIVATE-TOKEN", output.getvalue())
+
     def test_missing_credentials_does_not_access_network(self):
         with mock.patch.dict(os.environ, {
             "CLOUDFLARE_OBSERVABILITY_TOKEN": "",
