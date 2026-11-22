@@ -2,6 +2,8 @@
 
 This file is the coordination source of truth for ChatGPT/Codex implementation chats working on this repository.
 
+**CHAT STARTUP RULE:** Read this `main:WORK_QUEUE.md` and [`main:docs/CHAT_INDEX.md`](docs/CHAT_INDEX.md) before any work or handoff. Current chats use **stream.round** identifiers (1.0, 2.0, 3.0, 4.0); successor threads use 1.1, 2.1, 3.1, 4.1, continuing 1.9 → 1.10 (never decimal parsing). See the authoritative naming section below.
+
 
 ## ACTIVE PROJECT-WIDE SCOPE — regular High-Probability Favorites ONLY (2026-11-21)
 
@@ -27,22 +29,31 @@ This file is the coordination source of truth for ChatGPT/Codex implementation c
 - **User-confirmed active chats: only Chats 01, 02, 03, 04.** At snapshot, 35 MT tasks: 27 DONE, 7 IN PROGRESS, 1 BLOCKED. No existing task ownership is changed by this review.
 - **Needs owner reconciliation:** MT-019 (P0 Favorites history/backup and operator verification), MT-011 (U1 Favorites-only memory/resource efficiency), MT-030 (U1 broad Favorites throughput), all still attributed to unnamed prior ChatGPT workers. MT-030 may fit Chat 03 but must be explicitly claimed; MT-011 and MT-019 must not silently imply an active owner.
 - **Do not reclaim active numbered work:** MT-018 and MT-034 = Chat 01; MT-035 = Chat 03; MT-033 = Chat 04; Chat 02 handles read-only deployment/health. PR #340 and #341 have merged, but task DONE still requires owner-led deployment/runtime acceptance; PR #342 remains draft.
-- **Blocked/out of scope:** MT-017 remains blocked, but do not pursue unrelated Cloudflare work without evidence directly affecting regular Favorites. Old PRs #247, #157, #124, #125 need owner review for supersession, not automatic merge. Older other-strategy PRs stay paused.
+- **Shared infrastructure correction (user clarification):** MT-017 Cloudflare Workers CPU audit is **IN SCOPE** because the common staging dashboard, authentication and gateway serve regular Favorites, even though paper execution runs on Render. MT-017 remains **BLOCKED** on actual Cloudflare CPU analytics/authorized access, not paused for scope reasons. Old PRs #247, #157, #124, #125 need owner review for supersession, not automatic merge. Older other-strategy PRs stay paused.
 - **Full read-only audit:** [Unfinished tasks, owner reconciliation, legacy open PRs and issues](docs/audits/2026-11-21-money-tree-unfinished-task-audit.md). This snapshot is not an instruction to change ownership, run old scripts or drop records; obey the latest queue and explicit code claims.
 
 ## How implementation chats must use this file
 
-### Numbered development chat IDs (user directive)
+### Chat naming and handoff rule — STREAM.ROUND (user directive, 2026-11-21)
 
-**Every Money Tree development chat must identify itself with a unique, stable descriptive number** in the opening substantive reply and every handoff: `Money Tree — Chat NN: Short topic` (e.g., `Money Tree — Chat 01: Discovery Optimization`). Chat identifiers are **not** the MT task number, GitHub issue number, or PR number. State the suggested title for the user; ChatGPT cannot rename a conversation in the application.
+**Mandatory read-before-work:** Every Money Tree chat must read `main:WORK_QUEUE.md` (this file, authoritative task claims and scope) and `main:docs/CHAT_INDEX.md` (stream/round register and handoff conventions) **before selecting its name, continuing a task, assigning an owner, or changing source code**. These files belong to repository `princesspikachuu/kalshi-scanner-data`. Do not rely on a previous conversation's memory or a stale copied queue; re-fetch current `main`.
 
-**Existing user-designated chat numbers (2026-11-21 Pacific; do not reuse):**
-- **Chat 01 — Discovery Optimization:** PR #314 follow-up and ownership coordination (current thread).
-- **Chat 02 — Deployment Verification:** deployment status continuation.
-- **Chat 03 — Trading Throughput:** low-frequency/finance trading follow-up.
-- **Chat 04 — Forward-only Favorites Validation:** MT-033, forward-only validation of frozen regular Favorites profitability cohorts; PR #340 in development (already claimed by another chat).
+**Identifier format:** `Money Tree — Chat <stream>.<round>: <descriptive topic>` (e.g., `Money Tree — Chat 2.0: Deployment Verification`). The stream number identifies the long-lived work lane; the suffix identifies that lane's successive conversation thread/round. The current four lanes are:
 
-For a newly opened development chat, read this registry on `main` before selecting the next unused positive number (04, 05, etc.). Claim the number with a descriptive topic by editing this subsection on `main` using the latest content SHA *before* making app-code changes. If two writers race, refresh and select a different number rather than duplicating. Keep an already user-numbered chat's identifier stable when continuing and correct accidental duplicate self-labels in future handoffs. All work remains subject to the Favorites-only scope above; numbering does not authorize new unrelated tasks.
+| Stream | Current thread (round 0) | Next successor thread (round 1) |
+| --- | --- | --- |
+| **1** | **Chat 1.0 — Discovery Optimization**, owner of MT-018/MT-034 and PR #314 follow-up | **Chat 1.1** |
+| **2** | **Chat 2.0 — Deployment Verification**, this ongoing deployment/health/coordination thread | **Chat 2.1** |
+| **3** | **Chat 3.0 — Trading Throughput**, finance/regular Favorites follow-up (MT-035 claimed; confirm MT-030 ownership) | **Chat 3.1** |
+| **4** | **Chat 4.0 — Profitability Validation**, forward-only regular Favorites (MT-033) | **Chat 4.1** |
+
+**Current active conversations are Chat 1.0, 2.0, 3.0, and 4.0 only**, per user. Next round is 1.1 / 2.1 / 3.1 / 4.1. When a stream moves to a *new conversation*, increment only that stream's round: `1.0 → 1.1 → 1.2 → ... → 1.9 → 1.10 → 1.11 → 1.12`, similarly for 2, 3, 4. **These are two-part literal labels, not decimal numbers:** never parse them as floating-point, drop a trailing zero, or treat 1.10 as equal to 1.1. Do not advance a round merely because an existing conversation continues.
+
+**Registry and ownership mechanics:**
+- At the start of each **new successor conversation**, check the latest `main:docs/CHAT_INDEX.md` and this queue, reserve its unique `<stream>.<next-round>` there with a short descriptive topic, predecessor ID, and focus, and update the registry with the latest GitHub file SHA. If another chat already claimed it, refresh and use the next unclaimed suffix; do not create duplicate threads with one label. Do not create Chat 5.0 or other streams unless the user approves expanding beyond four.
+- Every opening substantive response and every handoff states its *exact* label; suggest the title for the sidebar (the assistant cannot rename ChatGPT conversations). Keep that exact ID for the life of the conversation. Existing old `Chat 01`, `02`, `03`, `04` historical labels refer to their respective **round-0** streams; preserve historical task records and translate these aliases to **1.0–4.0** when referencing owners.
+- A chat-number or successor version is **not a task claim**. Continue only explicitly owned `IN PROGRESS` tasks or claim an eligible `READY` task using the latest queue SHA. Before an old chat retires, save a handoff in the queue with task state, current branch/PR/CI/deploy, blockers and next steps, and have the successor explicitly take over that task in the queue; no automatic ownership transfer.
+- Chat labels are distinct from `MT-###` task IDs, GitHub PRs, issues, and Render service IDs. All development remains governed by the **regular High-Probability Favorites only** priority, including necessary shared Cloudflare/Render infrastructure, and the prohibition on activating other strategies or LIVE orders.
 
 
 When the user says **"continue"** and the current chat has finished its assigned work:
@@ -1571,6 +1582,11 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 **Claimed:** 2026-11-09 19:20 UTC  
 **Urgency:** U1 — URGENT  
 **Priority:** High
+
+### Scope clarification — user directive, November 21, 2026
+- **This task is in scope and broadly relevant to Money Tree infrastructure**, because the shared Cloudflare gateway and authenticated dashboard present regular High-Probability Favorites trading/research data and errors can interrupt access to those functions. Render-based paper execution itself runs independently and must not be assumed to have crashed because the Cloudflare Worker exceeded CPU.
+- Keep **BLOCKED**, *not* `PAUSED — out of scope`, until actual Cloudflare per-Worker CPU/exceededCpu telemetry or an authorized diagnostic path is available; do not infer CPU-limit resolution from successful asset deployment or the unauthenticated HTTP 403 root-page check.
+- Previous generic ChatGPT worker is not assumed active; reserve task for deliberate assignment/handoff to one of active streams before code changes. Protect current Favorites-only scope, authentication, rate guards, source history and paper-only execution.
 
 ### Problem
 Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Workers CPU limit exceeded." The affected Worker and per-route CPU measurements have not yet been verified. Free-tier CPU exhaustion can interrupt the authenticated Money Tree dashboard, even while the Kalshi paper-trading engine continues running separately on Render.
