@@ -111,5 +111,47 @@ class ForwardRegularFavoritesValidationTests(unittest.TestCase):
         self.assertEqual(cell['unparseable_cohort_appearances_excluded'], 1)
 
 
+    def test_workspace_exposes_bounded_forward_cohorts_without_record_mutation(self):
+        """One derived Favorites view drives both the workspace and log evidence."""
+        import json
+        from services.api import shadow as api_shadow
+
+        event = 'KXGOLD15M-26NOV231030'
+        payload = {
+            'status': {},
+            'folders': [
+                {'id': 'favorites', 'bots': {
+                    'bot': {'entry_timing': [_row(event, True)]},
+                }},
+                {'id': 'favorites_statistics', 'bots': {}},
+            ],
+            'bots': [{'id': 'bot', 'series': 'KXGOLD15M',
+                      'asset': 'hourly'}],
+        }
+        original = copy.deepcopy(payload)
+        previous_log_at = api_shadow.FAVORITES_ROLLUP_LOG_AT
+        try:
+            # Hide unrelated periodic summary output; the workspace must
+            # expose the independent event count even between log emissions.
+            api_shadow.FAVORITES_ROLLUP_LOG_AT = float('inf')
+            response = api_shadow.workspace_response(payload)
+        finally:
+            api_shadow.FAVORITES_ROLLUP_LOG_AT = previous_log_at
+        body = json.loads(response.body)
+        self.assertEqual(payload, original)
+        favorite, statistics = body['folders']
+        self.assertNotIn('bots', favorite)
+        self.assertNotIn('bots', statistics)
+        self.assertNotIn('collector_forward_validation', statistics)
+        report = favorite['collector_forward_validation']
+        self.assertEqual(report['basis'],
+                         'regular_favorites_forward_event_date_proxy')
+        self.assertEqual(len(report['cells']), 4)
+        self.assertEqual(report['cells'][0]['independent_held_return_events'], 1)
+        self.assertEqual(report['cells'][0]['confidence_status'], 'under_minimum')
+        self.assertNotIn(event, json.dumps(report))
+        self.assertNotIn(event, response.body.decode('utf-8'))
+
+
 if __name__ == '__main__':
     unittest.main()
