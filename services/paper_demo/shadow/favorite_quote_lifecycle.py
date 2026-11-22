@@ -15,6 +15,10 @@ EVENTS={'ORDER_SUBMITTED','ORDER_REJECTED','MAKER_RESTING','CANCEL_SUBMITTED','C
 # mislabeled as a known 15-minute contract.
 MARKET_TYPES=('15m_price','hourly_price','weather','weather_daily','sports','unknown')
 REST_BANDS=('under_5s','5_to_30s','30_to_120s','at_least_120s','unknown_not_resting')
+# Fixed diagnostic labels; user-supplied strategy strings/IDs never become log keys.
+CANCEL_CAUSES=('entry_guard','quote_unavailable','crossed_quote','same_bucket_reprice',
+               'partial_guard','redundant_after_fill','daily_window','after_fill',
+               'fee_guard','unknown')
 
 
 def _market_type(market, ticker):
@@ -66,7 +70,7 @@ class FavoriteQuoteLifecycle:
                  market_type=_market_type(market,order.ticker),
                  created=float(order.created),
                  resting=(float(order.arrives) if restored and order.status=='resting' else None),
-                 filled=False,cancel=None,restored=restored)
+                 filled=False,cancel=None,restored=restored,cancel_cause=None)
         self.open[order.id]=row
         if restored:self.restored+=1
         return row
@@ -75,6 +79,16 @@ class FavoriteQuoteLifecycle:
         for o in orders:
             if o.maker and o.action=='buy' and o.status in ('pending','resting'):
                 self._start(o,markets.get(o.ticker,{}),restored=True)
+
+    def note_cancel_cause(self,ident,cause):
+        """Attach a fixed, ephemeral *intent* before the normal cancellation.
+
+        Never changes the order, its price, expiry, queue position or audit.
+        The actual outcome is counted only after an observed CANCELLED event.
+        """
+        row=self.open.get(ident)
+        if row is not None and row.get('cancel_cause') is None:
+            row['cancel_cause']=cause if cause in CANCEL_CAUSES else 'unknown'
 
     def observe(self,kind,order,at,market=None,reason=None):
         if kind not in EVENTS or not order.maker or order.action!='buy':return
@@ -111,6 +125,15 @@ class FavoriteQuoteLifecycle:
                 self._record(at,'first_filled',row,wait)
             if not order.remaining:self._finish(order.id,row,'filled_complete',at)
         elif kind in ('CANCELLED','EXPIRED'):
+            if kind=='CANCELLED' and not row['filled']:
+                cause=row.get('cancel_cause')
+                if cause is None:
+                    # Only known engine guard wording is interpreted; never
+                    # log an arbitrary free-form reason from the exchange.
+                    cause=('fee_guard' if reason=='Maker entry fee nonzero or unverified'
+                           else 'daily_window' if reason=='Entry window closed or not yet open'
+                           else 'unknown')
+                self._record(at,'cancel_cause:'+cause,row)
             self._finish(order.id,row,
                          ('cancelled' if kind=='CANCELLED' else 'expired')+
                          ('_after_partial_fill' if row['filled'] else '_without_fill'),at)
@@ -147,6 +170,8 @@ class FavoriteQuoteLifecycle:
             cancel_ages=[r[4] for r in cancels if r[4] is not None]
             fill_ages=[r[4] for r in filled if r[4] is not None]
             bands=Counter(_rest_band(r[4]) for r in cancels)
+            cancel_causes={cause:c['cancel_cause:'+cause] for cause in CANCEL_CAUSES
+                           if c['cancel_cause:'+cause]}
             opening_ages=[max(0.,now-r['resting']) for r in open_rows if r['resting'] is not None]
             by_market_type[market_type]=dict(
                 submitted_orders=c['submitted'],
@@ -155,6 +180,7 @@ class FavoriteQuoteLifecycle:
                 first_filled_orders=c['first_filled'],
                 first_filled_events=len({r[3] for r in filled if r[3]}),
                 cancelled_without_fill=c['cancelled_without_fill'],
+                unfilled_cancel_causes=cancel_causes,
                 cancelled_after_partial_fill=c['cancelled_after_partial_fill'],
                 expired_without_fill=c['expired_without_fill'],
                 expired_after_partial_fill=c['expired_after_partial_fill'],
@@ -178,6 +204,8 @@ class FavoriteQuoteLifecycle:
                     fill_events=counts['fill_events'],
                     completely_filled_orders=counts['filled_complete'],
                     cancelled_without_fill=counts['cancelled_without_fill'],
+                    unfilled_cancel_causes={cause:counts['cancel_cause:'+cause]
+                        for cause in CANCEL_CAUSES if counts['cancel_cause:'+cause]},
                     cancelled_after_partial_fill=counts['cancelled_after_partial_fill'],
                     expired_without_fill=counts['expired_without_fill'],
                     expired_after_partial_fill=counts['expired_after_partial_fill'],
