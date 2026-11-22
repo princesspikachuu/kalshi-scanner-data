@@ -1624,6 +1624,10 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 **Urgency:** U2 — HIGH  
 **Priority:** High, after MT-003
 
+### PR #314 pagination/future-wake safety note for MT-018 owner (Chat 01, 2026-11-22 UTC)
+Source-only concern, **not proven live**: both `hourly.py` (lines 101–132) and `weather.py` (lines 87–103) can receive an incomplete `/markets` response with a nonempty continuation cursor, find only a **future** venue entry time on that first page, set a long persisted wake, and reset their page cursor to `''`. An eligible distinct event on a later page could then be missed. The sports scanner protects incomplete pagination separately. Two-page deterministic regression and an owner's bounded safe fix requested in [#278](https://github.com/princesspikachuu/kalshi-scanner-data/issues/278) and [#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339). **MT-018 retains scanner ownership**. Do not duplicate edits, weaken fees, freshness, settlement or memory/read budgets, or infer actual weekday no-fills solely from this hypothetical risk.
+
+
 ### Goal
 Increase verified Favorites evidence for hourly, weather, weather-daily, and sports markets while preserving the now-healthy 15-minute collection rate.
 
