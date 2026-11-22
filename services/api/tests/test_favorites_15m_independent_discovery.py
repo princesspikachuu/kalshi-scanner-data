@@ -14,7 +14,7 @@ from services.api.tests.test_strategy_scope import ScopeTests
 from services.api.tests.test_strategy_folders import QuietAudit, profile
 from services.paper_demo.shadow.core import Engine, FeePolicy, StrategyFleet
 from services.paper_demo.shadow.runner import ForwardRun
-from services.paper_demo.shadow.host import legacy_market_input_allowed
+from services.paper_demo.shadow.host import HostedRun, legacy_market_input_allowed
 from services.paper_demo.shadow.schedules import EASTERN
 
 
@@ -193,6 +193,24 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         run.api.fetch.assert_not_awaited()
         run.put.assert_not_awaited()
         self.assertIn(ticker,run.subscription_tickers(now+10))
+
+    async def test_restored_favorites_only_book_keeps_verified_fee_maintenance(self):
+        run,suite,rows,listed,now=self.fixture()
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        ticker=listed['ticker']
+        # No legacy selected market or extra entry is required for the feed.
+        self.assertEqual(run.selected,{})
+        self.assertNotIn(ticker,suite.extra)
+        self.assertIn(ticker,HostedRun.fee_candidate_tickers(run,now))
+        # The checkpoint restores experiment markets, not ephemeral discovery
+        # state. Maker fees must still warm and refresh after that restart.
+        del run.favorites_15m_pending
+        self.assertIn(ticker,HostedRun.fee_candidate_tickers(run,now+10))
+        # Once paused and flat, do not refresh dormant market metadata.
+        for row in rows:row['progress']['desired']='paused'
+        suite.control(rows)
+        self.assertNotIn(ticker,HostedRun.fee_candidate_tickers(run,now+10))
 
     async def test_next_favorites_15m_roll_does_not_erase_unsettled_prior_market(self):
         run,suite,rows,first,now=self.fixture()
