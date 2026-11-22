@@ -45,6 +45,26 @@ class KnownWake(unittest.TestCase):
         missing=dict(open_time=stamp(now),close_time=stamp(now+3600))
         self.assertIsNone(known_entry_wake(missing,'sports',now))
 
+    def test_malformed_venue_timestamps_do_not_abort_future_discovery(self):
+        # A nullable or structurally invalid market schedule is unknown,
+        # never permission to sleep until a fabricated future entry window.
+        now=1000
+        row=dict(ticker='KXHIGHNY-example',event_ticker='EVENT',
+                 open_time=stamp(now+3600),close_time=stamp(now+7200),
+                 expected_expiration_time=stamp(now+5400))
+        invalid=(None,[],{},True,False)
+        for kind in ('15m','hourly','weather_daily','sports'):
+            for field in ('open_time','close_time'):
+                for value in invalid:
+                    with self.subTest(kind=kind,field=field,value=repr(value)):
+                        broken=dict(row);broken[field]=value
+                        self.assertIsNone(known_entry_wake(broken,kind,now))
+        for value in invalid:
+            with self.subTest(kind='sports',field='expected_expiration_time',
+                              value=repr(value)):
+                broken=dict(row);broken['expected_expiration_time']=value
+                self.assertIsNone(known_entry_wake(broken,'sports',now))
+
     def test_wake_at_is_only_a_hint_not_a_market_authorization(self):
         suite=Mock();suite.discovery_wakes={}
         remember(suite,'hourly:ABC',200,100)
