@@ -138,6 +138,9 @@ async def hourly_once(host):
         print(json.dumps(dict(event='paper_hourly_major_crypto_selection',
             series=watched,reason=reason,
             retry_seconds=max(0,round(suite.hourly_retry_at.get(watched,0)-now)),
+            discovery_wake_at=getattr(suite,'discovery_wakes',{}).get('hourly:'+watched),
+            discovery_wake_seconds=max(0,round(getattr(suite,'discovery_wakes',{}).get('hourly:'+watched,0)-now)),
+            coverage_reason=suite.hourly_coverage.get(watched,{}).get('reason'),
             real_orders_enabled=False)),flush=True)
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
     # series back off; stable frequency metadata is cached independently of fees.
