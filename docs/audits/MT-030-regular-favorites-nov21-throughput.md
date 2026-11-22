@@ -112,3 +112,22 @@ At **2026-11-22 02:17:27 UTC (November 21, 18:17:27 PST)** the **still-current p
 The three confirmed unfilled cancellations were **two `quote_unavailable`** and **one `same_bucket_reprice`**; `observer_errors_total=0`. All these observed orders were **weather**. The rolling window overlaps earlier snapshots and restored orders may be censored; this is **not** 7/12 filled probability or verified post-settlement profitability. No 15m price outcomes were newly timestamped in the corresponding latest-hour research-health sample. This bounded diagnostic capture should be retained in the shared audit because worker restarts clear the temporary counters.
 
 MT-018 [PR #335](https://github.com/princesspikachuu/kalshi-scanner-data/pull/335) was merged as `618370c663b3ead89389e8453a83fee16ba21bf3` at **02:14:03 UTC** but the required postmerge push [44975123669](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975123669) and PR [44975129411](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975129411) CI were still running, with prior `d8de25f7` commit serving on Render. **Do not infer the 15m fix was running from this pre-release snapshot.**
+
+
+## First live 15-minute discovery and paper fill after MT-018 — 02:22 UTC
+
+**All findings below are from the new production-like Render staging worker, not the drained pre-fix process.** MT-018 [PR #335](https://github.com/princesspikachuu/kalshi-scanner-data/pull/335), merge `618370c663b3ead89389e8453a83fee16ba21bf3`, passed both postmerge [push 44975123669](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975123669) and [PR 44975129411](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975129411) CI. The exact Render `pocket-processing-staging` deploy `dep-dc152bflk1mc7383ilig` went `live` **2026-11-22 02:20:09 UTC / Nov 21 18:20:09 PST**.
+
+The replacement safely acquired its **sole paper worker lock** (`shadow_worker_start_recorded` and `demo_worker_ready` at **02:22:14 UTC**) following normal `demo_lock_wait` messages. Fee warmup at 02:22:22 UTC reported **22 markets tested / 22 verified**. Paper health reported **75 regular High-Probability Favorites bots**, **zero Statistics-Backed Favorites bots**, all other strategies paused and `real_orders_enabled=false`. The strategy's 02:22:53 UTC status had **20 currently active and 20 fresh books**, admission available, 0 backlog, memory pressure about 20.5%, and no sampled `demo_backup_verification_failed` events.
+
+### Six new independent 15-minute series with submitted maker bids
+
+Exactly these series appeared in fresh `favorite_paper_entry` logs between **02:22:32 and 02:22:40 UTC**, all **one-contract, 95-cent, maker, paper-only** submissions:
+
+`KXBTC15M`, `KXETH15M`, `KXNEAR15M`, `KXHYPE15M`, `KXDOGE15M`, `KXSOL15M`.
+
+The first live new-worker `favorites_quote_lifecycle` after those submissions, at **02:22:53 UTC**, reported **9** submitted 15-minute maker orders, **1** first-filled order for **1 independent event**, **8** orders still open, **0** canceled unfilled, and **0** observer errors. All recorded quotes/fills in this window were `15m_price`. This is positive evidence of **repaired admission and actual simulated first fills**; no false normalization by number of contracts is needed.
+
+**Causality/limitations:** This establishes that the *specific disabled-Convexity discovery gate* no longer suppresses independent regular Favorites 15-minute market discovery and paper fills. It does **not** establish a profitable win rate, more fills across a comparable full day, or exchange-final outcomes. No new 15m verified outcomes had arrived by 02:22:53 UTC, so `favorites_collection_quality.by_market_type.15m_price.unique_verified_1h=0` is not a contradiction; these new entries are not yet settled. Preserve held-to-authoritative-result positions; do not manufacture settlement or exit positions early. MT-030 stays IN PROGRESS until post-release fill and authoritative outcome windows are measured.
+
+Tracking: [Issue #333 verification comment](https://github.com/princesspikachuu/kalshi-scanner-data/issues/333#issuecomment-7072876258).
