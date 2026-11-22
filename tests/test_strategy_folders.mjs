@@ -1432,8 +1432,8 @@ test('individual regular Favorites period cards distinguish submitted orders fro
   attempted_orders:{all:{count:80,complete:false},'1H':{count:6,complete:true},'6H':{count:10,complete:false},'24H':{count:20,complete:true}},
   filled_events:{all:{count:20,complete:false},'1H':{count:2,complete:true},'6H':{count:3,complete:false},'24H':{count:5,complete:true}}};
  const one=individualMarketActivityMarkup(exp,'1H');
- assert.match(one,/Attempted fills · 1h<\\/span><strong>6<\\/strong>/);
- assert.match(one,/Filled events · 1h<\\/span><strong>2<\\/strong>/);
+ assert.match(one,/Attempted fills · 1h<\/span><strong>6<\/strong>/);
+ assert.match(one,/Filled events · 1h<\/span><strong>2<\/strong>/);
  assert.doesNotMatch(one,/999|888|≥80|≥20/);
  assert.match(individualMarketActivityMarkup(exp,'6H'),/≥10/);
  assert.match(individualMarketActivityMarkup(exp,'6H'),/≥3/);
@@ -1441,7 +1441,7 @@ test('individual regular Favorites period cards distinguish submitted orders fro
  assert.match(individualMarketActivityMarkup(exp,'all'),/≥20/);
  assert.match(individualMarketActivityMarkup(exp,'7D'),/Attempt tracking unavailable/);
  assert.match(individualMarketActivityMarkup(exp,'7D'),/Fill tracking unavailable/);
- assert.doesNotMatch(individualMarketActivityMarkup({attempted_orders:{'1H':{count:-1}}},'1H'),/<strong>-1<\\/strong>/);
+ assert.doesNotMatch(individualMarketActivityMarkup({attempted_orders:{'1H':{count:-1}}},'1H'),/<strong>-1<\/strong>/);
 });
 
 test('individual regular Favorites time selector changes expanded attempts and filled events',()=>{
@@ -1451,12 +1451,12 @@ test('individual regular Favorites time selector changes expanded attempts and f
   filled_events:{all:{count:25,complete:false},'1H':{count:1,complete:true}}};
  const control={dataset:{botSummary:'favorites',summaryPeriod:'1H'}};
  const {nodes}=setup(d,{queries:{'[data-bot-summary]':[control]}});
- assert.match(nodes.get('groups').innerHTML,/≥77<\\/strong>/);
- assert.doesNotMatch(nodes.get('groups').innerHTML,/>999<\\/strong>/);
+ assert.match(nodes.get('groups').innerHTML,/≥77<\/strong>/);
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/>999<\/strong>/);
  control.onclick({preventDefault(){},stopPropagation(){}});
  const html=nodes.get('groups').innerHTML;
- assert.match(html,/Attempted fills · 1h<\\/span><strong>4<\\/strong>/);
- assert.match(html,/Filled events · 1h<\\/span><strong>1<\\/strong>/);
- assert.doesNotMatch(html,/≥77<\\/strong>/);
- assert.doesNotMatch(html,/>999<\\/strong>/);
+ assert.match(html,/Attempted fills · 1h<\/span><strong>4<\/strong>/);
+ assert.match(html,/Filled events · 1h<\/span><strong>1<\/strong>/);
+ assert.doesNotMatch(html,/≥77<\/strong>/);
+ assert.doesNotMatch(html,/>999<\/strong>/);
 });
