@@ -259,6 +259,10 @@ class LiveBucketLifecycleGateTests(unittest.TestCase):
         error.response={'Error':{'Code':'AccessDenied','Message':'private-key'},
                         'ResponseMetadata':{'HTTPStatusCode':403}}
         self.assertFalse(lifecycle_reuse_allowed(objects))
+        error.response={'Error':{'Code':'NoSuchLifecycleConfiguration'},
+                        'ResponseMetadata':'malformed'}
+        client.get_bucket_lifecycle_configuration.side_effect=error
+        self.assertFalse(lifecycle_reuse_allowed(objects))
         client.get_bucket_lifecycle_configuration.side_effect=RuntimeError(
             'private credential string must not escape')
         self.assertFalse(lifecycle_reuse_allowed(objects))
