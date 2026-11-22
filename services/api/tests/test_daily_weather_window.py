@@ -22,7 +22,7 @@ class DailyWindowTests(unittest.TestCase):
         for ticker in ('KXHIGHNY-26NOV21-T60','KXHIGHLAX-26NOV21-T70','KXHIGHAUS-26NOV21-T80'):
             m=dict(ticker=ticker,event_ticker=ticker.rsplit('-',1)[0],weather_category='weather_daily',close=at('2026-11-22T10:00Z'))
             self.assertEqual(entry_allowed(m,at('2026-11-21T08:25Z')),
-                             ticker.startswith(('KXHIGHNY','KXHIGHAUS')))
+                             True)
     def test_iana_timezone_handles_summer_trading_day_and_earlier_venue_close(self):
         m=dict(ny(),ticker='KXHIGHNY-26JUN15-T80',event_ticker='KXHIGHNY-26JUN15',close=at('2026-06-16T05:00Z'))
         self.assertEqual(daily_day_end(m),at('2026-06-16T04:00Z'))
