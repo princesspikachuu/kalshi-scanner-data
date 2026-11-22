@@ -43,9 +43,15 @@ class RegularFavoritesCorrelationTests(unittest.TestCase):
         self.assertEqual(event_date_label('KXBTC15M-26NOV021815'),'2026-11-02')
         self.assertEqual(event_date_label('KXBTC15M-26NOV021815-15'),'2026-11-02')
         self.assertEqual(event_date_label('KXGOLD15M-26NOV211745'),'2026-11-21')
+        # Hourly series can encode an HH (not HHMM) immediately after YYMONDD.
+        self.assertEqual(event_date_label('KXTEMPMIAH-26OCT1614'),'2026-10-16')
+        self.assertEqual(event_date_label('KXBTCD-26NOV2017'),'2026-11-20')
+        self.assertEqual(event_date_label('KXINXU-26NOV2115'),'2026-11-21')
+        self.assertIsNone(event_date_label('KXTEMPMIAH-26OCT1624'))
         self.assertIsNone(event_date_label('KXBTC15M-26NOV022415'))
         self.assertIsNone(event_date_label('KXBTC15M-26NOV021860'))
         self.assertIsNone(event_date_label('KXBTC15M-26NOV0218152'))
+        self.assertIsNone(event_date_label('KXBTC15M-26NOV21181500'))
         self.assertEqual(event_date_label('KXNBAGAME-TEST'),None)
         self.assertEqual(event_date_label('KXFOO-26FEB29'),None)
         self.assertEqual(event_date_label('KXBTC15M-26BAD21'),None)
@@ -146,6 +152,19 @@ class RegularFavoritesCorrelationTests(unittest.TestCase):
         self.assertEqual(report['event_date_coverage_pct'],'100.00')
         self.assertEqual(report['cluster_interval_status'],'available')
         self.assertIsNotNone(report['cluster_90pct_error_pp'])
+
+    def test_hourly_compact_date_labels_support_real_day_clusters(self):
+        entries=[]
+        for day in range(1,26):
+            for hour in (12, 13):
+                ident=f'KXBTCD-26NOV{day:02d}{hour:02d}'
+                gain=bool(day%2)
+                entries.append(row(ident,cost='1',net='1' if gain else '-1',
+                                   outcome=int(gain)))
+        report=audit({'btc':dict(entry_timing=entries)})['categories']['crypto-15m']
+        self.assertEqual(report['with_parseable_event_date'],50)
+        self.assertEqual(report['distinct_event_dates'],25)
+        self.assertEqual(report['cluster_interval_status'],'available')
 
     def test_clustering_cannot_fake_fifty_independent_days(self):
         rows=[row(f'KXBTC15M-26NOV20T{i:04d}',cost='1',
