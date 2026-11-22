@@ -266,6 +266,12 @@ def workspace_response(payload,*,compressed=False,request_started=None):
             folder['collector_wide_summary']=summarize_wide(held_bots,profiles,favorite_timing_category)
             from services.paper_demo.shadow.favorite_single import summarize_single
             folder['collector_single_summary']=summarize_single(held_bots,profiles,favorite_timing_category)
+            # MT-036: expose the four pre-registered, event-equal forward cohorts
+            # from the same derived held view already used by this response.
+            # This adds no provider, SQL/R2, worker, or persistence reads.
+            from services.paper_demo.shadow.favorite_forward_validation import summarize_forward_regular_favorites
+            folder['collector_forward_validation']=summarize_forward_regular_favorites(
+                held_bots, profiles, favorite_timing_category)
             if time.monotonic()>=FAVORITES_ROLLUP_LOG_AT:
                 FAVORITES_ROLLUP_LOG_AT=time.monotonic()+60
                 # Reuse the summaries computed for this exact workspace
@@ -284,11 +290,9 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                 # MT-033: predetermined future-event cohorts. Bounded, read-only
                 # and computed from this same derived Favorites held view.
                 # No added provider, SQL, R2 or hot-worker work.
-                from services.paper_demo.shadow.favorite_forward_validation import summarize_forward_regular_favorites
-                forward = summarize_forward_regular_favorites(
-                    held_bots, profiles, favorite_timing_category)
                 print(json.dumps(dict(event='favorites_forward_validation',
-                    research_evidence=forward, real_orders_enabled=False)), flush=True)
+                    research_evidence=folder['collector_forward_validation'],
+                    real_orders_enabled=False)), flush=True)
                 # A separate bounded, read-only dependence diagnostic.
                 # Group distinct exchange events by strictly parsed venue
                 # event date; never log any raw event or market identifiers.

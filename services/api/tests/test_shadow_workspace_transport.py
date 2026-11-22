@@ -130,7 +130,20 @@ class WorkspaceTransport(unittest.TestCase):
         self.assertEqual(result['status']['positions'],payload['status']['positions'])
         self.assertEqual(result['folders'][0]['accounting']['portfolio'],account['portfolio'])
         self.assertEqual(result['folders'][0]['accounting']['positions'],account['positions'])
-        self.assertLess(len(response.body),2000)
+        # MT-036 adds an intentionally bounded four-cohort report. Preserve
+        # the existing <2KB compact-account contract *apart from* that new
+        # read-only report, and cap its size independently of source histories.
+        forward=result['folders'][0]['collector_forward_validation']
+        self.assertEqual(len(forward['cells']),4)
+        forward_bytes=len(json.dumps(forward,ensure_ascii=False,
+            separators=(',',':')).encode('utf-8'))
+        self.assertLess(forward_bytes,2300)
+        without_forward=deepcopy(result)
+        without_forward['folders'][0].pop('collector_forward_validation')
+        old_bytes=len(json.dumps(without_forward,ensure_ascii=False,
+            separators=(',',':')).encode('utf-8'))
+        self.assertLess(old_bytes,2000)
+        self.assertLess(len(response.body),4300)
         self.assertEqual(response.headers['x-pocket-workspace-sha256'],hashlib.sha256(response.body).hexdigest())
         self.assertEqual(response.headers['x-pocket-workspace-bytes'],str(len(response.body)))
 

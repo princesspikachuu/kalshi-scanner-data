@@ -42,6 +42,70 @@ const favoriteProfitClass=signal=>({
  'realized-positive':'profit-positive','realized-negative':'profit-negative'
 })[signal]||'';
 export const favoriteProfitLegendMarkup=(mode='detailed')=>mode==='single'?'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Positive hold P/L · 🔴 Negative hold P/L</p>':'<p class="small favorite-profit-legend"><strong>Colors:</strong> 🟢 Positive win margin · 🔴 Negative win margin · blank when margin is unavailable</p>';
+// Pre-registered MT-033 cohort evidence is computed ONLY by the regular
+// Favorites API. Never assemble a forward holdout from browser-visible rows.
+export function favoriteForwardValidationMarkup(report){
+ if(report?.basis!=='regular_favorites_forward_event_date_proxy'||
+    !Array.isArray(report.cells))return '';
+ const minRaw=Number(report.confidence_target);
+ const min=Number.isSafeInteger(minRaw)&&minRaw>=50?minRaw:50;
+ const integer=value=>{
+  const n=Number(value);
+  return value!==null&&value!==undefined&&value!==''&&
+    Number.isSafeInteger(n)&&n>=0?n:null;
+ };
+ const percent=value=>{
+  const n=Number(value);
+  return value!==null&&value!==undefined&&value!==''&&
+    Number.isFinite(n)?n:null;
+ };
+ const fmt=value=>(value>0?'+':'')+value.toFixed(2)+'%';
+ const labels={'commodities-15m':'Commodities · 15m',
+   'crypto-15m':'Crypto · 15m','finance-15m':'Finance · 15m'};
+ const rows=report.cells.slice(0,4).map(cell=>{
+  if(!cell||typeof cell!=='object')return '';
+  const n=integer(cell.independent_held_return_events);
+  const band=integer(cell.price_band_cents);
+  const label=labels[cell.category]||String(cell.category||'Unknown');
+  const price=band!==null&&band<=95?band+'–'+Math.min(99,band+4)+'¢':'—';
+  const horizon=String(cell.time_bucket||'—');
+  const estimated=integer(cell.estimated_held_return_events);
+  const incomplete=integer(cell.incomplete_settled_events);
+  const mean=percent(cell.held_roi_mean_pct);
+  const low=percent(cell.held_roi_ci90_low_pct);
+  const high=percent(cell.held_roi_ci90_high_pct);
+  const eligible=n!==null&&n>=min&&cell.confidence_status==='available'&&
+    low!==null&&high!==null&&low<=high;
+  const positive=eligible&&low>0,negative=eligible&&high<0;
+  const interval=eligible?low.toFixed(2)+'% to '+high.toFixed(2)+'%':
+    n===null?'Unavailable':n<min?'Pending '+n+'/'+min:
+    cell.confidence_status==='insufficient_gain_loss_variation'?
+      'Need observed gains and losses':'Unavailable';
+  const signal=positive?'profit-positive':negative?'profit-negative':'';
+  const verdict=eligible?(positive?'Entirely above 0%':negative?
+    'Entirely below 0%':'Includes 0%'):'Not yet established';
+  return '<tr><th scope="row">'+e(label)+'</th><td>'+e(price)+
+    '<small>'+e(horizon)+' left</small></td><td>'+
+    e(n===null?'—':n+'/'+min)+'<small>'+
+    e(estimated===null?'—':String(estimated))+' estimated · '+
+    e(incomplete===null?'—':String(incomplete))+' incomplete</small></td><td>'+
+    e(mean===null?'—':fmt(mean))+'</td><td class="'+signal+'">'+
+    e(interval)+'<small>'+e(verdict)+'</small></td></tr>';
+ }).join('');
+ const cutoff=String(report.holdout_event_label_after||'2026-11-22');
+ return '<section class="favorite-forward-validation"><h4>Forward validation · 4 fixed cohorts</h4>'+
+  '<p class="small">Only independently settled exchange-event labels after '+
+  e(cutoff)+'. Each event counts once per cohort; unknown outcomes are excluded. '+
+  'Event labels are a date proxy, not verified first-observation times.</p>'+
+  '<div class="table-scroll"><table class="favorite-stat-matrix favorite-forward-matrix">'+
+  '<thead><tr><th>Market type</th><th>Entry / remaining</th><th>Settled events</th>'+
+  '<th>Average held P/L</th><th>Nominal 90% P/L interval</th></tr></thead><tbody>'+
+  rows+'</tbody></table></div>'+
+  '<p class="small">Returns assume holding known-outcome entries to settlement, after entry costs/fees. '+
+  'Intervals require at least 50 distinct settled returns and both gains and losses; '+
+  'no calendar-day minimum. Cohorts were chosen using older data, so comparisons '+
+  'and repeated checks are not multiple-testing adjusted.</p></section>';
+}
 const observationCount=n=>Number.isInteger(Number(n))?String(Number(n)):'—';
 const averageReturn=r=>Number(r.return_observations)>0&&Number.isFinite(Number(r.return_sum))?(100*Number(r.return_sum)/Number(r.return_observations)).toFixed(2)+'%':'—';
 const eventAccuracy=(wins,n)=>n>0?(100*wins/n).toFixed(1)+'%':'—';

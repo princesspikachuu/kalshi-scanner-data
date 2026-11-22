@@ -146,6 +146,19 @@
 .shadow-workspace .table-scroll table tbody tr.profit-positive > td,
 .shadow-workspace .table-scroll table tbody tr.profit-negative > td,
 .shadow-workspace .table-scroll table tbody tr.profit-exit-drag > td{border-style:solid;border-width:1px}
+/* Four predetermined forward-profitability rows must fit narrow research panels.
+   Existing Detailed/Wide/Single matrix layouts are deliberately unchanged. */
+.favorite-stat-matrix.favorite-forward-matrix{min-width:0;width:100%;table-layout:fixed;border-spacing:2px}
+.favorite-stat-matrix.favorite-forward-matrix th,
+.favorite-stat-matrix.favorite-forward-matrix td{
+  min-width:0;white-space:normal;overflow-wrap:anywhere;padding:6px 4px}
+.favorite-stat-matrix.favorite-forward-matrix th:first-child{position:static}
+.favorite-stat-matrix.favorite-forward-matrix td small{display:block;font-size:10px}
+@media(max-width:650px){
+  .favorite-stat-matrix.favorite-forward-matrix{font-size:10px}
+  .favorite-stat-matrix.favorite-forward-matrix th,
+  .favorite-stat-matrix.favorite-forward-matrix td{padding:4px 2px}
+}
 .favorite-profit-legend{margin:14px 0 10px;padding:7px 0}
 .profit-warning{display:block;color:#ffdb9e;font-size:11px;font-weight:700}
 
