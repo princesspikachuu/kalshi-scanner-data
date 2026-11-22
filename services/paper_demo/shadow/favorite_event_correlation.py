@@ -185,8 +185,33 @@ def summarize_regular_favorites_event_correlation(
         for event in events:
             event_memberships[event].add(category)
         report = _category_report(events)
+        # Correlation is a separate sensitivity from the MT-027 mean-ROI
+        # split: preserve the whole event's estimated classification and test
+        # dependence within each attribution tier, without rewriting either.
+        exact_events = {event: value for event, value in events.items()
+                        if not value['missing'] and value['cost'] > 0
+                        and not value['estimated']}
+        estimated_events = {event: value for event, value in events.items()
+                            if not value['missing'] and value['cost'] > 0
+                            and value['estimated']}
+        cluster_fields = (
+            'independent_settled_return_events', 'with_parseable_event_date',
+            'event_date_coverage_pct', 'distinct_event_dates',
+            'cluster_interval_status', 'cluster_90pct_error_pp',
+            'cluster_90pct_low_roi_pct', 'cluster_90pct_high_roi_pct',
+        )
+        exact_cluster = _category_report(exact_events)
+        estimated_cluster = _category_report(estimated_events)
+        report['attribution_date_clusters'] = {
+            'exact_only': {key: exact_cluster[key] for key in cluster_fields},
+            'estimated_only': {key: estimated_cluster[key] for key in cluster_fields},
+        }
         prior = expected.get(category)
         flags = []
+        if (report['independent_settled_return_events'] !=
+                exact_cluster['independent_settled_return_events'] +
+                estimated_cluster['independent_settled_return_events']):
+            flags.append('attribution_date_cluster_counts_do_not_reconcile')
         if isinstance(prior, dict):
             if report['independent_settled_return_events'] != int(
                     prior.get('return_observations') or 0):
