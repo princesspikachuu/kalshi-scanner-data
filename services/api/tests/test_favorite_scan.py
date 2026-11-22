@@ -18,6 +18,23 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         suite.enabled_profiles=lambda asset:selected if asset=='hourly' else original(asset)
         return host,suite
 
+    async def test_major_crypto_selection_diagnostics_are_throttled_and_read_only(self):
+        host,suite=self.setup_host()
+        suite.enabled_profiles=lambda kind:[]
+        suite.settlement_markets=lambda:{}
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000):
+            await hourly_once(host)
+        self.assertEqual(suite.hourly_major_crypto_selection_log_at,
+                         {'KXBTCD':1300,'KXETHD':1300})
+        host.verified_data.call.assert_not_called()
+        host.put.assert_not_awaited()
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1100):
+            await hourly_once(host)
+        self.assertEqual(suite.hourly_major_crypto_selection_log_at,
+                         {'KXBTCD':1300,'KXETHD':1300})
+        host.verified_data.call.assert_not_called()
+        host.put.assert_not_awaited()
+
     async def test_empty_hourly_crypto_probe_is_read_only_and_throttled(self):
         host,suite=self.setup_host()
         suite.enabled_profiles=lambda kind:[dict(series='KXBTCD')] if kind=='hourly' else []
