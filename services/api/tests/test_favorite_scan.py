@@ -24,7 +24,7 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         suite.settlement_markets=lambda:{}
         suite.discovery_wakes={'hourly:KXBTCD':1600}
         suite.hourly_coverage={'KXBTCD':dict(reason='Known next hourly entry window')}
-        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000), \\
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000), \
              patch('builtins.print') as printed:
             await hourly_once(host)
         self.assertEqual(suite.discovery_wakes['hourly:KXBTCD'],1600)
