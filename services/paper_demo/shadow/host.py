@@ -364,8 +364,9 @@ class HostedRun(ForwardRun):
             if remaining:
                 await asyncio.sleep(min(5,remaining));continue
             now=time.time()
-            books=self.subscription_books()
-            due=[t for t in self.fee_candidate_tickers(now) if t in books and
+            targets=self.fee_candidate_tickers(now)
+            books=self.subscription_books() if targets else {}
+            due=[t for t in targets if t in books and
                  t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
             if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
             await asyncio.sleep(1)
@@ -843,8 +844,9 @@ class HostedRun(ForwardRun):
 
     async def run(self):
         # No restored book input may run against an empty fee cache.
-        now=time.time();books=self.subscription_books()
-        restored=[t for t in self.fee_candidate_tickers(now) if t in books and t not in self.engine.settled]
+        now=time.time();targets=self.fee_candidate_tickers(now)
+        books=self.subscription_books() if targets else {}
+        restored=[t for t in targets if t in books and t not in self.engine.settled]
         if restored:
             results=await asyncio.gather(*(self.refresh_fee(t) for t in restored))
             print(json.dumps(dict(event='shadow_fee_warmup',markets=len(restored),verified=sum(results),
