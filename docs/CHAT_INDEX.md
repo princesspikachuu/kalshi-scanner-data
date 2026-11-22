@@ -20,12 +20,12 @@
 | **2.0** | Deployment Verification | Predecessor to 2.1; runtime health, memory audit, and MT-017 Cloudflare read-only observability bridge PRs #344/#345/#348/#350 | **Succeeded by 2.1** |
 | **2.1** | Deployment Verification | Successor to 2.0; continue MT-017 Cloudflare CPU read-only diagnostic and verify GitHub Actions/Render safety without taking other streams' code | **Active — registered 2026-11-22 UTC** |
 | **3.0** | Trading Throughput | Previous round: finance-hourly MT-035, diagnostics PR #342, MT-030 shared inquiry; handoff to 3.1 | **Succeeded by 3.1** |
-| **3.1** | Trading Throughput | Successor to 3.0; owner of MT-035 regular Favorites finance-hourly read-only funnel, weekday validation Issue #339; scanner owned by 1.1; MT-030 broad ownership requires separate claim | **Active — registered 2026-11-22 UTC** |
-| **3.2** | Trading Throughput (topic metadata only) | Successor to 3.1; handoff under MT-035 on main WORK_QUEUE.md; MT-035 ownership remains with 3.1 until successor activates; focus weekday finance #339 | **PREPARED — NOT ACTIVE (2026-11-22 UTC)** |
+| **3.1** | Trading Throughput | MT-035 handed off to 3.2 after prepared successor check-in | **Succeeded by 3.2 — 2026-11-22 UTC** |
+| **3.2** | Trading Throughput (topic metadata only) | ACTIVE successor to 3.1; MT-035 regular Favorites finance-hourly read-only weekday evidence, Issue #339; scanner remains stream 1 | **ACTIVE — registered 2026-11-22 UTC** |
 | **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
 | **4.1** | Profitability Validation | MT-033 DONE; MT-036 PR #349/#353 both merged, exact PR CI and staging assets verified; postmerge API and Render runtime/per-fill fee ledger verification pending; exclusive 4.1 claim | **Active — registered 2026-11-22 UTC** |
 
-**Prepared successors:** `1.2` and `3.2` are reserved **PREPARED / NOT ACTIVE**, pending first-message check-in and ownership transfer. **Other planned successors:** `2.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
+**Prepared successors:** `1.2` remains **PREPARED / NOT ACTIVE**. `3.2` activated after `continue` and succeeds `3.1`; its next successor ID is `3.3`. **Other planned successors:** `2.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
 
 ## Prepared handoff record — 3.1 → 3.2 (2026-11-22 UTC)
