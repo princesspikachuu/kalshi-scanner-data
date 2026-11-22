@@ -89,9 +89,9 @@ class FavoritesStrategy(ConvexityStrategy):
                     # current fill buckets may continue resting independently.
                     if (buckets.get(other.id) in (origin,actual) or
                             self.research_bucket(order.ticker,other.side,other.price)==actual):
-                        self.e.cancel(other.id)
+                        self._cancel_buy(other.id,'redundant_after_fill')
                 return
-        self.e.cancel_buys(order.ticker)
+        self._cancel_buys(order.ticker,'after_fill')
         if a and order.action=='sell':self.finish_data_window(order.ticker,a)
 
     def retain_partial_entry(self,ticker,m,a,lots):
@@ -101,7 +101,7 @@ class FavoritesStrategy(ConvexityStrategy):
                and m['close']-self.e.now>60 and not a.get('exit_reason'))
         q=self.entry_quote(ticker,a['side']) if valid else None
         if not q:
-            self.e.cancel_buys(ticker)
+            self._cancel_buys(ticker,'quote_unavailable')
             return
         inventory=sum((l.quantity for l in lots if l.side==a['side']),ZERO)
         ceiling=self.research_inventory_cap()
@@ -112,7 +112,7 @@ class FavoritesStrategy(ConvexityStrategy):
             if (order.side!=a['side'] or order.remaining>D(1) or order.price>D('.95')
                     or order.price<D('.70') or order.remaining>permitted
                     or order.price>=self.e.books[ticker].ask(order.side)):
-                self.e.cancel(order.id)
+                self._cancel_buy(order.id,'partial_guard')
             else:
                 permitted-=order.remaining
         canceling={ident for _,_,action,ident in self.e.pending if action=='cancel'}
@@ -123,8 +123,31 @@ class FavoritesStrategy(ConvexityStrategy):
     def entry_quote(self,ticker,side,max_price=None):
         return quote(self.e,self.profile,self.contracts,ticker,side,self.exit_evidence.cells,
             None if self.profile.get('paper_exploration',True) is not False else max_price)
-    def cancel_entry(self,ticker,reason):
+    def _note_cancel_cause(self,ident,cause):
+        # Only the regular Favorites engine has this observer attached. Keep
+        # telemetry failures isolated from the real paper cancel operations.
+        observer=getattr(self.e,'_favorite_quote_lifecycle',None)
+        if observer is None:return
+        try:observer.note_cancel_cause(ident,cause)
+        except Exception:
+            self.e._favorite_quote_lifecycle_errors=getattr(
+                self.e,'_favorite_quote_lifecycle_errors',0)+1
+
+    def _cancel_buy(self,ident,cause):
+        self._note_cancel_cause(ident,cause)
+        self.e.cancel(ident)
+
+    def _cancel_buys(self,ticker,cause):
+        # Existing Engine.cancel_buys remains the sole mutation pathway.
+        if getattr(self.e,'_favorite_quote_lifecycle',None) is not None:
+            for order in self.e.orders.values():
+                if (order.ticker==ticker and order.action=='buy' and
+                        order.maker and order.status in ('pending','resting')):
+                    self._note_cancel_cause(order.id,cause)
         self.e.cancel_buys(ticker)
+
+    def cancel_entry(self,ticker,reason,category='entry_guard'):
+        self._cancel_buys(ticker,category)
         self.last_reason=reason
     def submit_entry(self,ticker,a,q,allow_parallel=False):
         # Distinct-bucket paper probes may coexist; other modes still never
@@ -276,7 +299,7 @@ class FavoritesStrategy(ConvexityStrategy):
             if not ticker.startswith(self.series+'-'):continue
             a=self.attempts.get(ticker);now=self.e.now
             if weather_window.is_daily(m) and not weather_window.entry_allowed(m,now):
-                self.e.cancel_buys(ticker)
+                self._cancel_buys(ticker,'daily_window')
                 self.last_reason='Daily weather: entries only in the city’s final two hours; official settlement may follow later'
             if self.hold_only:
                 for order in self.e.orders.values():
@@ -304,7 +327,7 @@ class FavoritesStrategy(ConvexityStrategy):
                 self.finish_data_window(ticker,a)
                 lots=[l for l in self.e.wallet.lots if l.ticker==ticker]
                 if a.get('entry_policy')=='favorites-paper-data-v3':self.retain_partial_entry(ticker,m,a,lots)
-                else:self.e.cancel_buys(ticker)
+                else:self._cancel_buys(ticker,'after_fill')
                 if not self.hold_only and lots and self.e.book_fresh(ticker):
                     reason=assess(self.e,ticker,lots,a,self.exit_evidence)
                     if reason:a['exit_reason']=reason;self.e.cancel_buys(ticker)
@@ -334,7 +357,7 @@ class FavoritesStrategy(ConvexityStrategy):
             active=[o for o in self.e.orders.values() if o.ticker==ticker and o.status in ('pending','resting')]
             if not q:
                 if a:
-                    self.cancel_entry(ticker,'Waiting for a maker bid with sufficient value after fees')
+                    self.cancel_entry(ticker,'Waiting for a maker bid with sufficient value after fees',category='quote_unavailable')
                     a['retry_at']=now+2
                 else:self.last_reason='Waiting for a maker bid with sufficient value after fees'
                 continue
@@ -351,7 +374,7 @@ class FavoritesStrategy(ConvexityStrategy):
             crossed=[o for o in active if o.action=='buy' and
                      o.price>=self.e.books[ticker].ask(o.side)]
             if crossed:
-                for order in crossed:self.e.cancel(order.id)
+                for order in crossed:self._cancel_buy(order.id,'crossed_quote')
                 self.last_reason='Cancel crossed maker bid before renewed research entry'
                 a['retry_at']=now+1
                 continue
@@ -377,7 +400,7 @@ class FavoritesStrategy(ConvexityStrategy):
                     (reprice_for_data and q['price']-o.price>=D('.02')) or
                     (a.get('entry_mode')=='calibrated_maker' and q['mode']=='paper_exploration') for o in compare):
                 if a.get('entry_policy')=='favorites-paper-data-v3':
-                    for order in compare:self.e.cancel(order.id)
+                    for order in compare:self._cancel_buy(order.id,'same_bucket_reprice')
                     self.last_reason='Maker entry refreshed within current research bucket'
                 else:
                     self.cancel_entry(ticker,'Maker entry refreshed: current price, configured size or fee conditions changed')
