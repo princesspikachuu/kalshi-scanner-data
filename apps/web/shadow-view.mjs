@@ -320,7 +320,7 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new
       '<p class="small">Entry-time thirds are unavailable; showing verified held-event returns without guessing their entry times.</p>'+
       favoriteSingleCellMarkup(source.single.rows[category],{starScope:'collector:'+category,starredBuckets:stars}):
       '<p class="small">No verified timed event evidence is available yet.</p>'):'';
-  const note=(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
+  const note=(hasWide?(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. '):'No reliable three-way entry-time division is available. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
   return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary><p class="small">'+e(note)+'</p>'+(hasWide?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':fallback)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · wider 3 × 3</h3><p class="small">Distinct resolved events · hold-only return after fees · 90% confidence intervals. Wider bins pool different entry states.</p>'+sections+'</section>';
