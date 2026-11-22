@@ -1577,9 +1577,9 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** BLOCKED  
-**Worker:** ChatGPT / MT-017 Cloudflare CPU audit  
-**Claimed:** 2026-11-09 19:20 UTC  
+**Status:** IN PROGRESS — Chat 2.0 preparing manual read-only Cloudflare Analytics bridge; live CPU verification BLOCKED pending scoped token in GitHub Secrets  
+**Worker:** Money Tree — Chat 2.0: Deployment Verification (inherits old inactive MT-017 claim)  
+**Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific  
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
@@ -1587,6 +1587,11 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 - **This task is in scope and broadly relevant to Money Tree infrastructure**, because the shared Cloudflare gateway and authenticated dashboard present regular High-Probability Favorites trading/research data and errors can interrupt access to those functions. Render-based paper execution itself runs independently and must not be assumed to have crashed because the Cloudflare Worker exceeded CPU.
 - Keep **BLOCKED**, *not* `PAUSED — out of scope`, until actual Cloudflare per-Worker CPU/exceededCpu telemetry or an authorized diagnostic path is available; do not infer CPU-limit resolution from successful asset deployment or the unauthenticated HTTP 403 root-page check.
 - Previous generic ChatGPT worker is not assumed active; reserve task for deliberate assignment/handoff to one of active streams before code changes. Protect current Favorites-only scope, authentication, rate guards, source history and paper-only execution.
+
+### Chat 2.0 active handoff — read-only integration setup (2026-11-21 Pacific)
+- User explicitly opted for programmatic read-only observability. A direct Cloudflare plugin is not currently available in ChatGPT. Prepare a narrowly scoped, manual-only GitHub Actions query bridge to Cloudflare Account Analytics Read GraphQL API (no Worker deployment/writes, database or R2 access).
+- Store the analytics token only in a GitHub Actions secret, not in chat, code, action inputs, or printed logs. GitHub repository is PUBLIC and aggregate workflow logs will be publicly visible: print no raw Cloudflare traces, request paths, IPs, identities, secrets, or event bodies.
+- Await the user's creation of the scoped Cloudflare token and GitHub secret before claiming live observations. The remaining blocker is credential onboarding, not a resolved CPU issue.
 
 ### Problem
 Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Workers CPU limit exceeded." The affected Worker and per-route CPU measurements have not yet been verified. Free-tier CPU exhaustion can interrupt the authenticated Money Tree dashboard, even while the Kalshi paper-trading engine continues running separately on Render.
