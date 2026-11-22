@@ -41,6 +41,20 @@ test('forward-only Favorites cohorts are visible even at zero settled events',()
   assert.doesNotMatch(html,/profit-positive|profit-negative/);
 });
 
+test('forward ROI explicitly expects no new maker fees but retains recorded historical costs',()=>{
+  const html=favoriteForwardValidationMarkup(report([cohort({
+    independent_held_return_events:50,held_roi_mean_pct:'6',
+    held_roi_ci90_low_pct:'1',held_roi_ci90_high_pct:'11',
+    confidence_status:'available',
+  })]));
+  assert.match(html,/New regular Favorites entries require verified \$0 maker fees/);
+  assert.match(html,/held to settlement/);
+  assert.match(html,/Historical returns preserve recorded entry costs, including any older fees/);
+  assert.match(html,/no new fees are assumed/);
+  assert.match(html,/nonzero fee on a new maker fill requires investigation/);
+  assert.doesNotMatch(html,/after entry costs\/fees/);
+});
+
 test('49 returns suppress stale numeric intervals and cannot imply profitable validation',()=>{
   const html=favoriteForwardValidationMarkup(report([cohort({
     independent_held_return_events:49,
