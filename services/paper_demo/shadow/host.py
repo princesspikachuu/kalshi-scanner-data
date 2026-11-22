@@ -49,6 +49,19 @@ def book_conflation_interval(experiments):
     # Public trade prints remain on a separate real-time subscription.
     return 1000
 
+def legacy_market_input_allowed(source,payload):
+    """An enabled Favorites 15m collector needs public markets, not a legacy wallet.
+
+    Reject accidental use of this internal routing tag on any other family.
+    The experiment consumer still validates live strategy controls and fees.
+    """
+    if source!='market' or payload.get('favorites_15m_only') is not True:return True
+    ticker=payload.get('market',{}).get('ticker')
+    if not isinstance(ticker,str) or not ticker.split('-',1)[0].endswith('15M'):
+        raise ValueError('Favorites-only market route requires a 15-minute ticker')
+    return False
+
+
 class NoCapture:
     def write(self,data):pass
     def flush(self):pass
@@ -325,6 +338,24 @@ class HostedRun(ForwardRun):
             await self.metadata_unavailable('fee_refresh',exc,ticker=ticker,series=ticker.split('-')[0])
             return False
 
+    def fee_candidate_tickers(self,now):
+        """Include active regular Favorites 15m books in normal fee refresh.
+
+        Legacy selected markets and other shared categories retain their old
+        cadence. Favorites-only 15m books have no legacy self.selected entry,
+        including after a worker restart, so their current venue fees must be
+        refreshed directly from the experiment's active subscribed market.
+        """
+        targets=set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{}))
+        suite=getattr(self,'experiments',None)
+        fav=getattr(suite,'portfolios',{}).get('favorites') if suite else None
+        if fav:
+            engine,fleet,_=fav
+            targets.update(t for t,m in engine.markets.items()
+                if t.split('-',1)[0].endswith('15M') and m.get('close',0)>now
+                and not m.get('paid') and suite.ticker_feed_needed(engine,fleet,t))
+        return targets
+
     async def fee_maintenance(self):
         # Independent of the once-per-second UI/control loop. Four bounded
         # verifiers share the data adapter's global request pacing/cooldown.
@@ -333,7 +364,9 @@ class HostedRun(ForwardRun):
             if remaining:
                 await asyncio.sleep(min(5,remaining));continue
             now=time.time()
-            due=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and
+            targets=self.fee_candidate_tickers(now)
+            books=self.subscription_books() if targets else {}
+            due=[t for t in targets if t in books and
                  t not in self.engine.settled and now-self.verified_fees.cache.get(t,{}).get('at',0)>25]
             if due:await asyncio.gather(*(self.refresh_fee(t) for t in due))
             await asyncio.sleep(1)
@@ -497,7 +530,8 @@ class HostedRun(ForwardRun):
                         if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
                         last=now
                         try:
-                            legacy_input=self.legacy_input_needed(source,payload)
+                            legacy_input=(legacy_market_input_allowed(source,payload) and
+                                self.legacy_input_needed(source,payload))
                             if legacy_input:payload=self.prepare_fees(source,payload,now)
                             if source=='rest_settlement_confirmed':
                                 if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
@@ -810,7 +844,9 @@ class HostedRun(ForwardRun):
 
     async def run(self):
         # No restored book input may run against an empty fee cache.
-        restored=[t for t in set(self.selected.values())|set(getattr(getattr(self,'experiments',None),'extra',{})) if t in self.subscription_books() and t not in self.engine.settled]
+        now=time.time();targets=self.fee_candidate_tickers(now)
+        books=self.subscription_books() if targets else {}
+        restored=[t for t in targets if t in books and t not in self.engine.settled]
         if restored:
             results=await asyncio.gather(*(self.refresh_fee(t) for t in restored))
             print(json.dumps(dict(event='shadow_fee_warmup',markets=len(restored),verified=sum(results),
