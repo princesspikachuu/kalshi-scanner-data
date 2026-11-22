@@ -1579,9 +1579,9 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 ---
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
-**Status:** IN PROGRESS — Chat 2.0 preparing manual read-only Cloudflare Analytics bridge; live CPU verification BLOCKED pending scoped token in GitHub Secrets  
-**Worker:** Money Tree — Chat 2.0: Deployment Verification (inherits old inactive MT-017 claim)  
-**Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific  
+**Status:** BLOCKED — manual read-only Cloudflare Analytics bridge merged and offline tests passed; awaiting user-created Account Analytics Read token in GitHub repository secret and first audited run  
+**Worker:** Money Tree — Chat 2.0: Deployment Verification (read-only observability onboarding, old inactive MT-017 task)  
+**Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific
 **Urgency:** U1 — URGENT  
 **Priority:** High
 
@@ -1591,6 +1591,10 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 - Previous generic ChatGPT worker is not assumed active; reserve task for deliberate assignment/handoff to one of active streams before code changes. Protect current Favorites-only scope, authentication, rate guards, source history and paper-only execution.
 
 ### Chat 2.0 active handoff — read-only integration setup (2026-11-21 Pacific)
+- **Setup implementation complete:** [PR #344](https://github.com/princesspikachuu/kalshi-scanner-data/pull/344) safely squash-merged as `85b205c2907c73a22b0689ae2e5259fa23360d61` to `main`. Exact-PR-head GitHub Actions [run 44979430401](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44979430401) passed **all seven** offline parsing/credential-exposure tests. The workflow file is on `main`, is manual-only, and has `contents:read`; no Cloudflare query, Worker deployment, trading setting, or history mutation was performed.
+- **Next user-only prerequisite:** create Cloudflare Account Analytics Read token scoped to Money Tree's account, save it as GitHub **Repository secret** `CLOUDFLARE_OBSERVABILITY_TOKEN` alongside existing `CLOUDFLARE_ACCOUNT_ID`, and manually dispatch `cloudflare-cpu-readonly.yml` from `main`. Read-only metrics will be public aggregate numbers in this PUBLIC GitHub repository's Actions logs. Do not print tokens or raw logs.
+- **Task remains BLOCKED on actual authorized metrics**. Once a manual run succeeds, Chat 2.0 should read its sanitized summary via GitHub, distinguish `exceededCpu` from HTTP 403 and Render CPU, and then document measured CPU causes. No access credential has been added by the assistant.
+
 - User explicitly opted for programmatic read-only observability. A direct Cloudflare plugin is not currently available in ChatGPT. Prepare a narrowly scoped, manual-only GitHub Actions query bridge to Cloudflare Account Analytics Read GraphQL API (no Worker deployment/writes, database or R2 access).
 - Store the analytics token only in a GitHub Actions secret, not in chat, code, action inputs, or printed logs. GitHub repository is PUBLIC and aggregate workflow logs will be publicly visible: print no raw Cloudflare traces, request paths, IPs, identities, secrets, or event bodies.
 - Await the user's creation of the scoped Cloudflare token and GitHub secret before claiming live observations. The remaining blocker is credential onboarding, not a resolved CPU issue.
