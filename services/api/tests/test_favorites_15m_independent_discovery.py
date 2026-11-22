@@ -34,7 +34,7 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         run=object.__new__(ForwardRun)
         run.suspend_idle_feeds=True
         run.engine=Engine(QuietAudit(),cash='1000')
-        legacy=profile('KXBTC15M','legacy_btc','convexity')
+        legacy=dict(profile('KXBTC15M','legacy_btc','convexity'),version='convexity-test-v1')
         run.profiles=[legacy]
         run.strategy=StrategyFleet(run.engine,[legacy])
         run.strategy.bots['KXBTC15M'].enabled=legacy_active
@@ -233,7 +233,7 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
     async def test_cash_index_weekend_remains_asleep_until_local_session(self):
         run,suite,_,_,now=self.fixture()
         series='KXINX15M'
-        run.profiles=[profile(series,'legacy_index','convexity')]
+        run.profiles=[dict(profile(series,'legacy_index','convexity'),version='convexity-test-v1')]
         run.strategy=StrategyFleet(run.engine,run.profiles)
         run.strategy.bots[series].enabled=False
         bot=SimpleNamespace(enabled=True,profile=dict(series=series,strategy='favorites',retired=False))
