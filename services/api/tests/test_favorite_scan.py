@@ -25,7 +25,7 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         crypto=('KXBTCD','KXETHD','KXSOLD','KXXRPD','KXDOGED','KXBNBD','KXHYPED','KXZECD','KXNEARD')
         suite.discovery_wakes={'hourly:'+series:1600 for series in crypto}
         suite.discovery_wakes['hourly:KXGOLDH']=1600
-        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000), \\
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=1000), \
              patch('builtins.print'):
             await hourly_once(host)
         self.assertEqual(suite.discovery_wakes,{'hourly:KXGOLDH':1600})
