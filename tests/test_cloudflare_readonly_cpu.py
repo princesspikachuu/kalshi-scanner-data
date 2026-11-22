@@ -202,6 +202,74 @@ class CloudflareCpuReadonlyTests(unittest.TestCase):
                                           "start", "end")
         self.assertEqual(result, {"stage": "account", "result": "account_not_readable"})
 
+    def test_documented_budget_viewer_and_single_line_payload(self):
+        self.assertIn("viewer { budget }", audit.GRAPHQL_PREFLIGHT_VIEWER)
+        self.assertNotIn("__typename", audit.GRAPHQL_PREFLIGHT_VIEWER)
+        response = {"data": {"viewer": {"budget": 100}}}
+        with mock.patch.object(audit.urllib.request, "urlopen") as opener:
+            opener.return_value.__enter__.return_value = io.BytesIO(
+                json.dumps(response).encode("utf-8"))
+            out = audit._post_graphql("private-token", audit.GRAPHQL_QUERY_MINIMAL, {})
+        self.assertEqual(out, response)
+        request = opener.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertNotIn("\n", payload["query"])
+        self.assertIn("query WorkerCpuAuditBasic", payload["query"])
+
+    def test_safe_verify_user_token_returns_only_status(self):
+        account = "b" * 32
+        response = {"success": True, "result": {
+            "status": "active", "id": "sensitive-token-id",
+            "expires_on": "2030-01-01T00:00:00Z",
+        }}
+        with mock.patch.object(audit.urllib.request, "urlopen") as opener:
+            opener.return_value.__enter__.return_value = io.BytesIO(
+                json.dumps(response).encode("utf-8"))
+            out = audit.safe_verify_token(account, "private-token")
+        self.assertEqual(out, {"status": "active", "token_kind": "user"})
+        self.assertEqual(opener.call_count, 1)
+        self.assertEqual(opener.call_args.args[0].get_method(), "GET")
+        self.assertNotIn("sensitive-token-id", str(out))
+        self.assertNotIn(account, str(out))
+
+    def test_safe_verify_can_fall_back_to_account_token(self):
+        import urllib.error
+        account = "f" * 32
+        response = {"success": True, "result": {"status": "active",
+                                                 "id": "PRIVATE-ID"}}
+        def side_effect(req, timeout):
+            if req.full_url.endswith("/user/tokens/verify"):
+                raise urllib.error.HTTPError(req.full_url, 403, "PRIVATE ERROR",
+                                             hdrs={}, fp=io.BytesIO(b"PRIVATE DATA"))
+            return io.BytesIO(json.dumps(response).encode("utf-8"))
+        with mock.patch.object(audit.urllib.request, "urlopen",
+                               side_effect=side_effect) as opener:
+            out = audit.safe_verify_token(account, "PRIVATE TOKEN")
+        self.assertEqual(out, {"status": "active", "token_kind": "account"})
+        self.assertEqual(opener.call_count, 2)
+        self.assertNotIn("PRIVATE", str(out))
+        self.assertNotIn(account, str(out))
+
+    def test_safe_verify_fails_closed_without_network_for_invalid_id(self):
+        with mock.patch.object(audit.urllib.request, "urlopen") as opener:
+            out = audit.safe_verify_token("not-an-account-id", "private-token")
+        self.assertEqual(out, {"status": "invalid_account_id_shape"})
+        opener.assert_not_called()
+
+    def test_error_categories_include_cloudflare_documented_parse_and_auth(self):
+        self.assertEqual(audit._error_category([{
+            "message": "query contains error, please review it and retry"
+        }]), "query_parse_failure")
+        self.assertEqual(audit._error_category([{
+            "message": "Authentication error: PRIVATE-ACCOUNT-ID"
+        }]), "token_authentication_error")
+        self.assertEqual(audit._error_category([{
+            "message": "not authorized for PRIVATE-ACCOUNT-ID"
+        }]), "account_access_denied")
+        self.assertEqual(audit._error_category([{
+            "message": "unrecognized PRIVATE TOKEN ERROR"
+        }]), "unclassified")
+
     def test_missing_credentials_does_not_access_network(self):
         with mock.patch.dict(os.environ, {
             "CLOUDFLARE_OBSERVABILITY_TOKEN": "",
