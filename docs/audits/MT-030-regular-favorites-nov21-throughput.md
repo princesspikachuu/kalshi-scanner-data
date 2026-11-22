@@ -95,3 +95,20 @@ The verified post-PR #336 worker emitted a five-minute **non-disjoint** `favorit
 - Observer had `observer_errors_total=0`. This sample is useful for per-cancellation cause attribution but its seven submitted bids and two first fills are **NOT** a daily success rate or independent market-win count; first fill is distinct from eventual venue-confirmed settlement.
 - During that window the separate trading diagnostics showed **75 regular Favorites bots, zero Statistics-Backed, $5,439.93 available virtual cash**, at most eight current active/fresh markets, with 35 lots (~33.09 contracts) in nine expired markets still awaiting official recorded settlement. Latest processing capacity reported admission open, zero backlog, memory under 40% at that moment, and real-money orders disabled. Do not force settlements.
 - At the same checkpoint **both exact-head PR #335 GitHub Actions runs** (full [44974770656](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44974770656) and focused [44974770666](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44974770666)) **passed** on `ac414bf6ea6b73865a436d29dbb6110aa454e881`, but the PR remains **draft/unmerged** and therefore **not deployed**. MT-018 has exclusive scanner-fix ownership. Do not claim restored 15m throughput until merged and proved live.
+
+
+## Last bounded maker snapshot before 15-minute scanner release — 02:17 UTC
+
+At **2026-11-22 02:17:27 UTC (November 21, 18:17:27 PST)** the **still-current pre-PR #335** worker emitted a five-minute, restart-local `favorites_quote_lifecycle` snapshot with:
+
+| Regular Favorites event | Count |
+|---|---:|
+| Weather maker orders submitted | 12 |
+| Maker orders with a first fill | 7 |
+| **Distinct first-filled events** | **4** |
+| Canceled without fill | 3 |
+| Open orders | 2 |
+
+The three confirmed unfilled cancellations were **two `quote_unavailable`** and **one `same_bucket_reprice`**; `observer_errors_total=0`. All these observed orders were **weather**. The rolling window overlaps earlier snapshots and restored orders may be censored; this is **not** 7/12 filled probability or verified post-settlement profitability. No 15m price outcomes were newly timestamped in the corresponding latest-hour research-health sample. This bounded diagnostic capture should be retained in the shared audit because worker restarts clear the temporary counters.
+
+MT-018 [PR #335](https://github.com/princesspikachuu/kalshi-scanner-data/pull/335) was merged as `618370c663b3ead89389e8453a83fee16ba21bf3` at **02:14:03 UTC** but the required postmerge push [44975123669](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975123669) and PR [44975129411](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44975129411) CI were still running, with prior `d8de25f7` commit serving on Render. **Do not infer the 15m fix was running from this pre-release snapshot.**
