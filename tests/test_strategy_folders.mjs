@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup,filledEventsSmall} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -1309,4 +1309,87 @@ test('invalid folder refill never silently falls back to legacy Convexity accoun
  assert.match(source,/folder_id:folder,request_id:refillRequest/);
  assert.match(source,/No funds were added/);
  assert.match(source,/Never retry as an unscoped refill/);
+});
+
+
+test('Daily Weather wider view retains its verified table when three-way timing is unobservable',()=>{
+ const bots=[{id:'weather',name:'New York',series:'KXHIGHNY',asset:'weather_daily',
+   desired:'running',experiment:{entry_timing:[]}}];
+ const aggregate={series:'combined',market_type:'weather_daily',
+   clock:'weather_local_day_end',price:'.80',horizon:'>=2h',
+   events:19,event_wins:15,contracts:'19',cost:'15.20',
+   return_observations:19,return_sum:'1.4'};
+ const original={rows:{'weather-daily':[aggregate]},coverage:{'weather-daily':{
+   bots_total:1,bots_with_rows:1}}};
+ const single={rows:{'weather-daily':{
+   resolved_events:19,event_wins:15,return_observations:19,
+   average_return_pct:'7.3',uncertainty90_pct:null}}};
+ const wide={rows:{'weather-daily':[]},coverage:{'weather-daily':{
+   reason:'Waiting for an observed betting window with distinct entry times',
+   time_basis:'observed_entry_window',excluded_legacy_observations:0}}};
+ const rendered=favoriteWideOverviewMarkup(bots,wide,new Set(),new Set(),
+   {timed:original,single});
+ assert.match(rendered,/Daily weather/);
+ assert.match(rendered,/Three equal entry-time thirds are not verifiable/);
+ assert.match(rendered,/favorite-stat-matrix/);
+ assert.match(rendered,/n=19/);
+ assert.match(rendered,/&gt;=2h/);
+ assert.doesNotMatch(rendered,/Waiting for exact entry times to establish the betting window/);
+ const market=favoriteTimingMarkup([aggregate],[],{mode:'wide',single:single.rows['weather-daily']});
+ assert.match(market,/Exact time thirds unavailable/);
+ assert.match(market,/favorite-stat-matrix/);
+ assert.match(market,/n=19/);
+ const stillWide=favoriteWideOverviewMarkup(bots,{
+   rows:{'weather-daily':[{band:'70–<78¢',time_slot:0,events:1,event_wins:1,
+     cost:'.7',contracts:'1',return_observations:1,return_sum:'.42'}]},
+   coverage:{'weather-daily':{time_buckets:['1m–2m','2m–3m','3m–4m']}}},new Set(),
+   new Set(),{timed:original,single});
+ assert.match(stillWide,/favorite-wide-matrix/);
+ assert.doesNotMatch(stillWide,/Three equal entry-time thirds are not verifiable/);
+});
+
+test('period-specific filled-event subtitles follow P/L headings and never count contracts',()=>{
+ const filled={all:{count:19,complete:false},'1H':{count:2,complete:true},
+   '6H':{count:5,complete:true},'24H':{count:8,complete:false},
+   '7D':{count:10,complete:false},'30D':{count:12,complete:false}};
+ assert.match(filledEventsSmall(filled,'all'),/≥19 filled events · partial history/);
+ assert.match(filledEventsSmall(filled,'1H'),/>2 filled events</);
+ assert.doesNotMatch(filledEventsSmall(filled,'1H'),/partial history/);
+ assert.equal(filledEventsSmall({},'1H'),'');
+ const d=fixture(),folder=d.folders.find(f=>f.id==='favorites');
+ folder.filled_events=filled;folder.accounting.portfolio={
+   cash:'1000',equity:'1002',total_pnl:'2',deposits:'1000',position_cost:'0'};
+ const bot=d.bots.find(b=>b.id==='favorites');
+ bot.experiment.filled_events=filled;
+ bot.account={total_pnl:'2',realized_pnl:'2',unrealized_pnl:'0'};
+ bot.performance={'1H':{pnl:'1'},'24H':{pnl:'2'}};
+ const group={id:'crypto-15m',label:'Crypto · 15 minutes',bots:[bot]};
+ for(const html of [
+   folderOverviewMarkup([folder],'1H'),
+   folderCardSummaryMarkup(folder,'1H'),
+   marketTypeSummaryMarkup(group,'1H',[],null,[],filled),
+   botPnlMarkup(bot,'1H'),
+   botPnlDetailsMarkup(bot,'1H')
+ ])assert.match(html,/2 filled events/,html.slice(0,180));
+ for(const html of [
+   folderOverviewMarkup([folder],'all'),
+   folderCardSummaryMarkup(folder,'all'),
+   marketTypeSummaryMarkup(group,'all',[],null,[],filled),
+   botPnlMarkup(bot,'all')
+ ])assert.match(html,/≥19 filled events · partial history/);
+ assert.match(folderCardSummaryMarkup(folder,'24H'),/≥8 filled events · partial history/);
+ const noFill=fixture().folders[2];
+ assert.doesNotMatch(folderCardSummaryMarkup(noFill),/filled events/);
+});
+
+test('actual folder time selector updates filled-event number beneath P/L',()=>{
+ const d=fixture(),f=d.folders[2];f.filled_events={
+   all:{count:19,complete:false},'1H':{count:2,complete:true},
+   '6H':{count:4,complete:true}};
+ const select={dataset:{summaryFolder:'favorites',folderSummaryPeriod:'1H'}};
+ const {nodes}=setup(d,{queries:{'[data-folder-summary-period]':[select]}});
+ assert.match(nodes.get('groups').innerHTML,/≥19 filled events/);
+ select.onclick({preventDefault(){},stopPropagation(){}});
+ assert.match(nodes.get('groups').innerHTML,/2 filled events/);
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/≥19 filled events/);
 });

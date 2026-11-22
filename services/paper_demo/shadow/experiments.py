@@ -15,6 +15,7 @@ from . import maker_allocation
 from .microstructure import MarketTape
 from .scalper import VolatilityScalper,ScalperEngine,SCALPER_FOLDERS
 from .favorite_timing import rows as favorite_timing_rows
+from .favorite_filled_events import FavoriteFilledEvents
 from .monitoring import MonitoringBudget,protected,maker_entry_limit,category as market_category
 from .sequential_comparison import SEQUENTIAL_FOLDERS,EXPERIMENT_FOLDERS
 from .sequential_adaptive import AdaptiveSequentialStrategy,AdaptivePairModel
@@ -160,6 +161,9 @@ class ExperimentSuite:
                     if isinstance(b,SequentialStrategy):b.trial=info.get('trial',b.trial)
                     if folder=='complete_set':b.groups=info.get('groups',{})
                     if isinstance(b,VolatilityScalper):b.restore_state(info.get('scalper',{}))
+            if folder=='favorites':
+                e._favorite_filled_events=FavoriteFilledEvents(
+                    (state or {}).get('filled_event_tracking'),now=time.time())
             for p in ps:
                 r=next(r for r in rows if r['parameters']['id']==p['id']);f.bots[p['series']].enabled=r['progress'].get('desired')=='running'
             self.portfolios[folder]=(e,f,ps);self.models[folder]=model
@@ -201,7 +205,9 @@ class ExperimentSuite:
         if isinstance((previous or {}).get('_maker_discovery'),dict):self.maker_discovery=deepcopy(previous['_maker_discovery'])
     def state(self):
         return dict(_summary=self.summary,_comparison=self.comparison,_rotation_exclusions=self.rotation_exclusions,_discovery_wakes=self.discovery_wakes,_maker_allocation=self.maker_allocation,_maker_discovery=getattr(self,'maker_discovery',None),**{folder:dict(engine=encode(e,f),model=self.models[folder].cells,
-            strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()})
+            strategies={s:dict(scalper=b.export_state() if isinstance(b,VolatilityScalper) else {},attempts=b.attempts,groups=getattr(b,'groups',{}),exit_evidence=b.exit_evidence.cells if hasattr(b,'exit_evidence') else {},trial=getattr(b,'trial',{})) for s,b in f.bots.items()},
+             **({'filled_event_tracking':e._favorite_filled_events.export()}
+                 if folder=='favorites' else {}))
             for folder,(e,f,ps) in self.portfolios.items()})
     def control(self,rows,mode='demo'):
         resumed=False
@@ -774,6 +780,21 @@ class ExperimentSuite:
                 assumptions=dict(latency_ms=e.latency*1000,worker_delay_included=bool(e.wall_clock),
                     execution_model='worker-delay-v1' if e.wall_clock else 'fixed-latency-v1',
                     independent_paper_portfolio=True,real_orders_enabled=False))
+            if folder=='favorites':
+                # Existing settled-event IDs confirm earlier actual fills,
+                # but cannot be assigned an invented original fill timestamp.
+                historical={}
+                for p in ps:
+                    ids=set()
+                    for row in bots[p['id']].get('entry_timing') or []:
+                        if isinstance(row,dict) and isinstance(row.get('outcome_events'),dict):
+                            ids.update(str(k) for k in row['outcome_events'] if k)
+                    historical[p['id']]=ids
+                observed=e._favorite_filled_events.report(now,ps,historical)
+                result[folder].update(filled_events=observed['total'],
+                    filled_events_by_category=observed['by_category'])
+                for p in ps:
+                    bots[p['id']]['filled_events']=observed['by_bot'][p['id']]
         return result
     def maintain(self):
         # Reports are durable in PostgreSQL; the hot checkpoint needs only open
@@ -909,6 +930,7 @@ class ExperimentSuite:
         self.summary.pop(folder,None)
         self.comparison.pop(folder,None)
         e.wallet=Wallet(D(1000));e.orders={};e.pending=[];e.closed_reports=set();e.clear_trade_ids()
+        if folder=='favorites':e._favorite_filled_events=FavoriteFilledEvents(now=e.now or time.time())
         for b in f.bots.values():
             b.attempts={};b.history={} if hasattr(b,'history') else None
             if hasattr(b,'decisions'):b.decisions={}
