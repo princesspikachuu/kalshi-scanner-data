@@ -1804,7 +1804,7 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 ---
 
 ## MT-026 — Attribute regular Favorites maker-bid churn to market type and resting duration
-**Status:** IN PROGRESS
+**Status:** IN PROGRESS — PR #329 merged; post-merge CI and runtime deployment verification pending
 **Worker:** ChatGPT / Favorites paper quote-churn breakdown
 **Claimed:** 2026-11-21 (local US Pacific)
 **Urgency:** U2 — HIGH
@@ -1822,6 +1822,7 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 
 ### Completion notes
 - **Draft implementation:** [PR #329](https://github.com/princesspikachuu/kalshi-scanner-data/pull/329), branch `feat/mt026-favorites-quote-churn-categories-20261121`, exact head `3f27917b73fda2f0ef07b142f7c2918f2118cb2a`; two files only (existing bounded quote telemetry + test). Fixed keys by 15m/hourly/weather/daily/sports/unknown; 5m cancellations split by <5, 5–30, 30–120, >=120 seconds plus never-rested. No trading, discovery, risk, storage, settlement or other portfolio changed. Four new regression tests added, including known event de-dup and unknown market metadata.
+- **Merge:** PR #329 merged safely into `build/google-auth-foundation` as **`08970db415671a9cc82856bdff0f8d75f63c51c9`**. Exact PR head `3f27917b73fda2f0ef07b142f7c2918f2118cb2a` passed full API/PostgreSQL CI [44971297089](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971297089); exact merge SHA post-merge CI runs `44971654910`, `44971658389` still in progress. Render auto-deploy not verified yet.
 - **Validation:** GitHub full API/PostgreSQL run [44971297089](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971297089) started for exact head; at checkpoint still IN PROGRESS; do NOT merge/deploy without success and review branch conflicts.
 - **Separate urgent signal:** likely 15m Favorites discovery depends on paused legacy Convexity, documented in issue [#278 comment](https://github.com/princesspikachuu/kalshi-scanner-data/issues/278#issuecomment-7072191318) and MT-018 note, **owner MT-018**, not edited in PR #329. Prioritize fix over speculative quote lifetime changes.
 - **Next:** Check exact CI, merge safely if passed, verify Render deploy SHA, singleton active worker, 75 regular Favorites and 0 other running bots, real orders disabled, `favorites_quote_lifecycle.by_market_type` totals and no observer errors. If merging cannot be verified, keep PR draft and checkpoint.
