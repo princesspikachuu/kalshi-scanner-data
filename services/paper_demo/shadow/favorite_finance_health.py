@@ -35,7 +35,8 @@ def finance_hourly_funnel_snapshot(suite, now):
         selected[series] = bool(bot and bot.enabled)
 
     counts = ('admitted_active_markets', 'parked_active_markets', 'fresh_books',
-              'two_sided_books', 'price_candidate_books', 'fee_verified_price_books',
+              'fee_verified_admitted_markets', 'two_sided_books',
+              'price_candidate_books', 'fee_verified_price_books',
               'fundable_price_books', 'resting_or_pending_buy_orders')
     coverage = getattr(suite, 'hourly_coverage', {})
     rows = {}
@@ -63,6 +64,9 @@ def finance_hourly_funnel_snapshot(suite, now):
             row['parked_active_markets'] += 1
             continue
         row['admitted_active_markets'] += 1
+        fee_verified = engine.zero_maker_entry_allowed(ticker)
+        if fee_verified:
+            row['fee_verified_admitted_markets'] += 1
         book = engine.books.get(ticker)
         if book is None or not engine.book_fresh(ticker):
             continue
@@ -85,7 +89,7 @@ def finance_hourly_funnel_snapshot(suite, now):
         if not FLOOR <= candidate <= CEILING:
             continue
         row['price_candidate_books'] += 1
-        if not engine.zero_maker_entry_allowed(ticker):
+        if not fee_verified:
             continue
         row['fee_verified_price_books'] += 1
         # Certified zero-maker-fee portfolios require at least one contract.
