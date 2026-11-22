@@ -2481,3 +2481,11 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 
 ### 2026-11-22 — LOW priority dashboard follow-up (unclaimed)
 - **Regular Favorites individual-market attempts/fills do not respond to the dashboard's selected time filter** (1H/6H/24H/7D/30D/etc); currently they show lifetime counts regardless of selection. **TODO — LOW / NOT CRITICAL / READY / UNCLAIMED**: make per-market attempt and fill counts respect the same selected time window as the surrounding dashboard, retaining explicit All Time behavior and accurate distinct event/order definitions. Add time-window tests; avoid changing historical records or execution logic. Coordinate with MT-036/MT-037 dashboard owners before claiming or implementing to avoid overlap. User reported 2026-11-22. This is deferred while MT-018 hourly crypto discovery remains the active priority.
+
+
+## MT-038 — Respect dashboard time filters for regular Favorites individual-market attempts and fills
+**Status:** IN PROGRESS — claimed by 4.2 on user request (2026-11-22 UTC)
+**Worker:** 4.2 - Money Tree
+**Urgency:** U3 — user explicitly requested this deferred fix now
+**Scope:** Only individual-market dashboard attempt counts (distinct submitted paper maker BUY orders) and filled-event counts (distinct exchange events with a BUY fill). All Time plus 1H/6H/24H/7D/30D periods must align with existing dashboard selectors. Preserve partial-history caveats, history, ledgers, trade gates and other strategy pause states; add tests. No scanner or maker execution changes. Source of report: 2026-11-22 low-priority follow-up after MT-037.
+**Ownership:** MT-037 is DONE, MT-036 DONE; 4.2 owns this separate individual-market UI follow-up. MT-018=1.2, MT-035=3.2, MT-030 separate owner, infrastructure=2.1.
