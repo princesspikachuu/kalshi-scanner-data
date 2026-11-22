@@ -101,7 +101,9 @@ export function favoriteForwardValidationMarkup(report){
   '<thead><tr><th>Market type</th><th>Entry / remaining</th><th>Settled events</th>'+
   '<th>Average held P/L</th><th>Nominal 90% P/L interval</th></tr></thead><tbody>'+
   rows+'</tbody></table></div>'+
-  '<p class="small">Returns assume holding known-outcome entries to settlement, after entry costs/fees. '+
+  '<p class="small">New regular Favorites entries require verified $0 maker fees and are held to settlement. '+
+  'Historical returns preserve recorded entry costs, including any older fees; no new fees are assumed. '+
+  'A nonzero fee on a new maker fill requires investigation. '+
   'Intervals require at least 50 distinct settled returns and both gains and losses; '+
   'no calendar-day minimum. Cohorts were chosen using older data, so comparisons '+
   'and repeated checks are not multiple-testing adjusted.</p></section>';
