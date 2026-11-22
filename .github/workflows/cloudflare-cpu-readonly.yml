@@ -1,0 +1,38 @@
+name: MT-017 Cloudflare CPU (read-only)
+on:
+  workflow_dispatch:
+    inputs:
+      period:
+        description: 'Aggregate reporting window; no raw invocation data'
+        required: true
+        type: choice
+        default: last_24h
+        options:
+          - last_24h
+          - nov_09_2026
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mt017-cloudflare-cpu-readonly
+  cancel-in-progress: false
+
+jobs:
+  read-only-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline parser and redaction tests
+        run: python -m unittest -q tests.test_cloudflare_readonly_cpu
+      - name: Query Cloudflare aggregate CPU analytics (read-only)
+        env:
+          CLOUDFLARE_OBSERVABILITY_TOKEN: ${{ secrets.CLOUDFLARE_OBSERVABILITY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          REPORT_PERIOD: ${{ inputs.period }}
+        run: python scripts/cloudflare_readonly_cpu.py --period "$REPORT_PERIOD"
