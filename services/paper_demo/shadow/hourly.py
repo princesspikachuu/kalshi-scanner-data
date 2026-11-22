@@ -117,6 +117,28 @@ async def hourly_once(host):
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
               count_basis='scanned_page_appearances_not_unique_events',
               reason='No eligible listed favorite',by_category={})
+    if not isinstance(getattr(suite,'hourly_major_crypto_selection_log_at',None),dict):
+        suite.hourly_major_crypto_selection_log_at={}
+    # Read-only visibility into why major hourly crypto series do not reach
+    # the listing comparison. Never modify scheduling or admission decisions.
+    for watched in ('KXBTCD','KXETHD'):
+        if now < suite.hourly_major_crypto_selection_log_at.get(watched,0):
+            continue
+        suite.hourly_major_crypto_selection_log_at[watched]=now+300
+        if not any(p['series']==watched for p in ps):
+            reason='not_enabled'
+        elif any(t.startswith(watched+'-') for t in active):
+            reason='active_subscription'
+        elif suite.hourly_retry_at.get(watched,0)>now:
+            reason='retry_cooldown'
+        elif asleep(suite,'hourly:'+watched,now):
+            reason='scheduled_sleep'
+        else:
+            reason='available_for_selection'
+        print(json.dumps(dict(event='paper_hourly_major_crypto_selection',
+            series=watched,reason=reason,
+            retry_seconds=max(0,round(suite.hourly_retry_at.get(watched,0)-now)),
+            real_orders_enabled=False)),flush=True)
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
     # series back off; stable frequency metadata is cached independently of fees.
     for _ in range(min(3,len(ps))):
