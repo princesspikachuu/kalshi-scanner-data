@@ -127,6 +127,50 @@ def summarize_single(folder_bots, profiles, category_for):
                 by_bot=per_bot)
 
 
+
+def summarize_regular_attribution_subsets(folder_bots, profiles, category_for):
+    """Derived-only sensitivity for REGULAR Favorites held-return attribution.
+
+    An event is exact only when every contributing cohort has complete,
+    unestimated return attribution. Any estimated cohort moves the *whole*
+    pooled event to estimated-only; missing cohorts exclude it from both.
+    Separate subsets are not random samples and their nominal Student-t
+    intervals do not adjust for correlation or selection bias.
+
+    This runs only in the bounded research diagnostic path. It returns
+    aggregates, never raw event identities, and cannot affect trading.
+    """
+    if not isinstance(folder_bots, dict) or not isinstance(profiles, dict):
+        return {}
+    categories = {}
+    for bot_id, metric in folder_bots.items():
+        profile = profiles.get(str(bot_id))
+        if not isinstance(profile, dict) or not isinstance(metric, dict):
+            continue
+        kind = category_for(profile)
+        events = categories.setdefault(kind, {})
+        for row in metric.get('entry_timing') or []:
+            if isinstance(row, dict):
+                _collect(events, row)
+    output = {}
+    for kind, events in categories.items():
+        subsets = {'exact_only': {}, 'estimated_only': {}}
+        for identity, evidence in events.items():
+            if evidence['missing'] or evidence['cost'] <= 0:
+                continue
+            key = 'estimated_only' if evidence['estimated'] else 'exact_only'
+            subsets[key][identity] = evidence
+        reports = {}
+        for name, subset in subsets.items():
+            reports[name] = dict(
+                _report(subset, MIN_HOLD_RETURN_UNCERTAINTY_EVENTS),
+                positive_return_events=sum(evidence['net'] > 0 for evidence in subset.values()),
+                negative_return_events=sum(evidence['net'] < 0 for evidence in subset.values()),
+                zero_return_events=sum(evidence['net'] == 0 for evidence in subset.values()),
+            )
+        output[kind] = reports
+    return output
+
 def summarize_statistics_holds(sources, profiles):
     """Read-only Favorites/statistics ROI evidence, separate from trade decisions.
 
