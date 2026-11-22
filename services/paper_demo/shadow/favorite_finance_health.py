@@ -7,6 +7,7 @@ risk changes, persistence, or historical reconstruction.
 from decimal import Decimal as D
 
 from .hourly import hourly_category
+from .schedules import session_wake
 
 TICK = D('.01')
 FLOOR = D('.70')
@@ -38,16 +39,50 @@ def finance_hourly_funnel_snapshot(suite, now):
               'fee_verified_admitted_markets', 'two_sided_books',
               'price_candidate_books', 'fee_verified_price_books',
               'fundable_price_books', 'resting_or_pending_buy_orders')
-    coverage = getattr(suite, 'hourly_coverage', {})
+    coverage = getattr(suite, 'hourly_coverage', {}) or {}
+    metadata = getattr(suite, 'hourly_metadata', {}) or {}
+    retries = getattr(suite, 'hourly_retry_at', {}) or {}
+    discovery_wakes = getattr(suite, 'discovery_wakes', {}) or {}
     rows = {}
     for series, enabled in sorted(selected.items()):
         last = coverage.get(series, {})
         at = last.get('at')
-        recent = isinstance(at, (int, float)) and 0 <= now - at <= 120
+        valid_at = isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at
+        age = int(now - at) if valid_at else None
+        recent = age is not None and age <= 120
+
+        # A missing 120s scan record is not an absent venue listing. The two
+        # cash indexes may be intentionally asleep outside their NYSE session.
+        # These are local scheduling hints, never authority to trade or skip.
+        calendar_wake = session_wake(series, now)
+        future = (last.get('next_check_at'), retries.get(series),
+                  discovery_wakes.get('hourly:' + series), calendar_wake)
+        next_scan = [int(value - now) for value in future
+                     if isinstance(value, (int, float)) and not isinstance(value, bool)
+                     and now < value < now + 31_536_000]
+        if recent:
+            scan_state = 'recent'
+        elif calendar_wake is not None:
+            scan_state = 'scheduled_cash_index'
+        elif next_scan:
+            scan_state = 'scheduled_retry'
+        elif age is None:
+            scan_state = 'never_scanned'
+        else:
+            scan_state = 'stale'
+
+        series_metadata = metadata.get(series, {})
+        frequency = (series_metadata.get('frequency')
+                     if isinstance(series_metadata, dict) else None)
         rows[series] = dict(enabled=enabled,
             scan_recent=recent,
             scan_reason=(str(last.get('reason', 'unknown'))[:110]
                          if recent else 'no_recent_scan'),
+            scan_state=scan_state,
+            scan_last_age_seconds=age,
+            scan_last_reason=(str(last.get('reason', 'unknown'))[:110] if last else None),
+            next_scan_hint_seconds=min(next_scan, default=None),
+            verified_series_frequency=str(frequency)[:24] if frequency is not None else None,
             scan_listed_last=(int(last.get('active_markets', 0)) if recent else None),
             scan_eligible_last=(int(last.get('eligible_markets', 0)) if recent else None),
             **{field: 0 for field in counts})
