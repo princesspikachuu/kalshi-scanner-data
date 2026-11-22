@@ -1854,7 +1854,7 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 ---
 
 ## MT-028 — Fail closed on R2 expiration rules before optional Favorites backup chunk reuse
-**Status:** IN PROGRESS — isolated opt-in safety guard
+**Status:** DONE — PR #331 merged; full CI, Render deployment, and new paper-worker handoff verified
 **Worker:** ChatGPT / MT-019 Favorites backup retention guard
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U2 — HIGH
@@ -1871,10 +1871,11 @@ Before the normal paper-maintenance backup may use any prior immutable R2 part, 
 - Isolate implementation in the existing optional reuse and maintenance code, mock R2 checks and run exact-head full API/PostgreSQL CI. Draft PR until verified, then check actual Render deploy and worker health if merged.
 
 ### Completion notes
-- **Code merged:** [PR #331](https://github.com/princesspikachuu/kalshi-scanner-data/pull/331), squash merge `b2b00915d215a05550578e296b7a3bc6f8f94829` into `build/google-auth-foundation`. Exact PR-head GitHub Actions [44971591074](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971591074) passed full API/PostgreSQL CI on `6ed43b2aa6` with no failed jobs. Post-merge push [44971914840](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971914840) and PR [44971919024](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971919024) validation **still in progress** at this checkpoint; Render deployment of the merged commit has **not** been verified.
+- **Code merged:** [PR #331](https://github.com/princesspikachuu/kalshi-scanner-data/pull/331), squash merge `b2b00915d215a05550578e296b7a3bc6f8f94829` into `build/google-auth-foundation`. Exact PR-head GitHub Actions [44971591074](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971591074) passed full API/PostgreSQL CI on `6ed43b2aa6` with no failed jobs. Post-merge push [44971914840](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971914840) and PR [44971919024](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971919024) validation **both passed**; Render processing staging deploy `dep-dc14ebh42hec73fifhag` at exact merge commit went **live 2026-11-22 01:37:32 UTC**.
 - **Changed:** `services/demo/control_backup_chunk_reuse.py`, `services/demo/maintenance.py`, and two existing API test files. Only future opted-in due backups read the bucket's lifecycle via R2 S3; any overlapping/unknown completed-object expiry or unreadable policy falls back to a new independent complete verified snapshot. No object lifecycle changes, deletion, extra SQL, strategy activation or live orders. `MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED` remains default OFF.
 - **Operator blocker remains:** Actual bucket lifecycle settings and retained-root restore have not been inspected with Cloudflare access, so the reuse flag must remain OFF. Cloudflare's standard incomplete multipart cleanup is not completed-object expiry. Refer to source docs https://developers.cloudflare.com/r2/buckets/object-lifecycles/.
-- **Finish before DONE:** Verify post-merge CI, Render exact descendant commit live, exclusive worker lock + regular 75 Favorites / zero Statistics-Backed / real orders off; then recheck latest verified backup and leave next scope-size telemetry for MT-019. No new full backup was triggered by this code change.
+- **Runtime acceptance verified:** New paper worker logged `shadow_worker_start_recorded` and `demo_worker_ready` at **2026-11-22 01:39:33 UTC** after old-instance exclusive-lock handoff; at 01:39:41 UTC, **75 regular High-Probability Favorites bots** and **0 Statistics-Backed Favorites bots** were running with real orders disabled. Four fresh `favorite_paper_entry` messages followed at 01:39:42 UTC, all paper-only; sampled error-level and `demo_backup_verification_failed` logs were empty after startup. No new full backup was triggered, no lifecycle config or R2 objects changed.
+- **Follow-up for MT-019 (not code acceptance):** First daily verified backup after #325 will report `scope_sizes` and `favorites_shadow_bot_sizes`; use those exact counts before any lossless archive move. Actual bucket rules and retained-root restore still require separate verification before EVER enabling optional chunk reuse; completed MT-028 guard is not that authorization.
 
 ---
 
