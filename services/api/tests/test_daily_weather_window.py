@@ -13,15 +13,16 @@ def ny():return dict(ticker='KXHIGHNY-26NOV20-T65',event_ticker='KXHIGHNY-26NOV2
                      weather_category='weather_daily',open=at('2026-11-20T15:00Z'),close=at('2026-11-21T06:00Z'))
 
 class DailyWindowTests(unittest.TestCase):
-    def test_final_two_hours_use_city_day_not_one_hour_later_api_close(self):
+    def test_full_local_day_uses_city_midnight_not_later_api_close(self):
         m=ny();end=at('2026-11-21T05:00Z')
         self.assertEqual(daily_day_end(m),end)
-        for now,allowed in ((end-7201,False),(end-7200,True),(end-61,True),(end-60,False),(end+25*60,False)):
+        for now,allowed in ((at('2026-11-20T04:59Z'),False),(at('2026-11-20T05:00Z'),True),(end-7201,True),(end-61,True),(end-60,False),(end+25*60,False)):
             self.assertEqual(entry_allowed(m,now),allowed)
-    def test_new_days_markets_do_not_trade_just_after_midnight_pacific(self):
+    def test_new_days_markets_trade_after_own_local_midnight(self):
         for ticker in ('KXHIGHNY-26NOV21-T60','KXHIGHLAX-26NOV21-T70','KXHIGHAUS-26NOV21-T80'):
             m=dict(ticker=ticker,event_ticker=ticker.rsplit('-',1)[0],weather_category='weather_daily',close=at('2026-11-22T10:00Z'))
-            self.assertFalse(entry_allowed(m,at('2026-11-21T08:25Z')))
+            self.assertEqual(entry_allowed(m,at('2026-11-21T08:25Z')),
+                             ticker.startswith(('KXHIGHNY','KXHIGHAUS')))
     def test_iana_timezone_handles_summer_trading_day_and_earlier_venue_close(self):
         m=dict(ny(),ticker='KXHIGHNY-26JUN15-T80',event_ticker='KXHIGHNY-26JUN15',close=at('2026-06-16T05:00Z'))
         self.assertEqual(daily_day_end(m),at('2026-06-16T04:00Z'))
