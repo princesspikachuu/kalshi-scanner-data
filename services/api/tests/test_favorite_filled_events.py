@@ -95,7 +95,7 @@ class FavoriteFilledEventsTests(unittest.TestCase):
             report = tracker.report(2000, self.profiles)
             self.assertEqual(report['total']['all']['count'], 2)
             self.assertFalse(report['total']['1H']['complete'])
-            self.assertNotIn('a', str(report))
+            self.assertNotIn("'a'", str(report))
             reloaded = FavoriteFilledEvents(tracker.export(), now=2000)
             self.assertEqual(reloaded.export(), tracker.export())
 
