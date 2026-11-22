@@ -17,7 +17,8 @@
 | Chat | Suggested user-visible title | Reserved (Pacific) | Scope / status |
 |---|---|---|---|
 | 01 | Money Tree — Chat 01: Discovery Optimization | 2026-11-21 | Resuming merged PR #314, reviewing Favorites-only discovery follow-ups and project numbering convention |
+| 03 | Money Tree — Chat 03: Weekday Finance Investigation | 2026-11-21 | Existing user-numbered finance investigation conversation; regular High-Probability Favorites only; read-only weekday finance no-trade research, Issue #339, coordinated with MT-018/MT-030 |
 
 ## Next number
 
-**02** (after checking the latest registry on `main`).
+**02** remains unregistered in this registry; it corresponds to an existing user-numbered conversation and should register through that conversation. **03** is now reserved for the existing finance investigation; new conversations must re-check the registry and avoid reusing either established chat number.
