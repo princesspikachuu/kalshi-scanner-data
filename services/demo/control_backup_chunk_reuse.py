@@ -92,3 +92,67 @@ def matching_reference(part,candidates):
         # receipt or updating backup-health.
         return ref
     return None
+
+
+# Deliberately conservative. The opt-in writer only reuses a prior part if
+# today's actual bucket lifecycle has been read successfully and no enabled
+# completed-object expiry can affect our backup namespace. This is not a
+# substitute for a human audit or recovery test; lifecycle rules can change.
+def _lifecycle_expiration_might_touch_backups(rule):
+    if not isinstance(rule,dict) or rule.get('Status') not in ('Enabled','Disabled'):
+        return True
+    if rule['Status']=='Disabled':
+        return False
+    known={'ID','Status','Filter','Prefix','Expiration',
+           'NoncurrentVersionExpiration','AbortIncompleteMultipartUpload',
+           'Transitions','NoncurrentVersionTransitions'}
+    if set(rule)-known:
+        # Unknown future R2 deletion semantics must not be assumed harmless.
+        return True
+    if not any(name in rule for name in ('Expiration','NoncurrentVersionExpiration')):
+        # Abort-incomplete-multipart and storage-class-only rules cannot expire
+        # already completed immutable backup objects.
+        return False
+    if 'Filter' in rule:
+        selector=rule['Filter']
+        if not isinstance(selector,dict):
+            return True
+        if 'Prefix' in selector:
+            prefix=selector['Prefix']
+        elif 'And' in selector and isinstance(selector['And'],dict):
+            # Other And conditions narrow matching, never expand beyond Prefix.
+            prefix=selector['And'].get('Prefix','')
+        elif set(selector).issubset({'Tag','ObjectSizeGreaterThan',
+                                    'ObjectSizeLessThan','And'}):
+            prefix=''  # Tags/size alone might select any backup object.
+        else:
+            return True
+    else:
+        prefix=rule.get('Prefix','')
+    if not isinstance(prefix,str):
+        return True
+    return (PREFIX.startswith(prefix) or prefix.startswith(PREFIX))
+
+
+def lifecycle_reuse_allowed(objects):
+    """Read-only S3 lifecycle gate. Unknown/denied/malformed => full backup.
+
+    No rule IDs, object keys, bucket names, credential/exception strings or
+    provider bodies are logged. Only an authoritative absent-configuration
+    response or a parsable non-expiring policy permits consideration of reuse.
+    """
+    try:
+        configuration=objects.client.get_bucket_lifecycle_configuration(
+            Bucket=objects.bucket)
+    except Exception as error:
+        response=getattr(error,'response',None)
+        reason=response.get('Error',{}) if isinstance(response,dict) else {}
+        return (isinstance(reason,dict)
+                and reason.get('Code')=='NoSuchLifecycleConfiguration'
+                and response.get('ResponseMetadata',{}).get('HTTPStatusCode')==404)
+    if not isinstance(configuration,dict):
+        return False
+    rules=configuration.get('Rules')
+    return (isinstance(rules,list)
+            and all(not _lifecycle_expiration_might_touch_backups(rule)
+                    for rule in rules))
