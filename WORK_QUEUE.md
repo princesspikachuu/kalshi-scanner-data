@@ -1797,3 +1797,25 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 - **Deployment:** Render staging worker deployed exact `b303b38` at **2026-11-21 20:32:49 UTC**, then newer descendant `fd402eeb` (includes this commit) went LIVE at **20:33:35 UTC**. Replacement worker recorded `demo_worker_ready` at **20:34:51 UTC** after exclusive lock handoff.
 - **Runtime acceptance:** `demo_backup_freshness` at **2026-11-21 20:35:52 UTC**: `state=fresh`, `recorded_verified=true`, `age_minutes=85`, `backup_interval_hours=24`, `r2_rechecked=false`. This is a fresh *recorded receipt*, not a newly uploaded or independently re-restored archive. At 20:36:02 UTC, **75** regular Favorites bots and **0** Statistics-Backed Favorites bots were running; real orders disabled. No `demo_backup_freshness_unavailable` or `demo_backup_verification_failed` in the sampled post-start window.
 - **Follow-up owned by MT-019:** Await next successful complete verified backup with `scope_sizes` and `favorites_shadow_bot_sizes` for measured, lossless cold-history storage planning. Keep `MT_CONTROL_BACKUP_CHUNK_REUSE_ENABLED=false` until actual R2 lifecycle + retained-root restore audit; no new backup schedule, deleted history, or new strategy activity.
+
+---
+
+## MT-026 — Attribute regular Favorites maker-bid churn to market type and resting duration
+**Status:** IN PROGRESS
+**Worker:** ChatGPT / Favorites paper quote-churn breakdown
+**Claimed:** 2026-11-21 (local US Pacific)
+**Urgency:** U2 — HIGH
+**Priority:** Explain cancels vs fills after MT-024 without unsafe quote changes
+
+### Scope
+- Strictly regular High-Probability Favorites paper bids. MT-018 owns discovery balancing, MT-023 independent settlement/uncertainty, MT-011 worker resources, MT-019 backups; preserve all related concurrent code.
+- Extend **existing bounded in-memory MT-024 telemetry only**, classifying each maker order by existing market metadata into 15m price, hourly price, hourly weather, daily weather, sports or unknown. Show per-type submitted bids, known distinct events, first-filled orders, canceled unfilled (resting-time bins), expiries/rejections, open right-censored orders and fill/cancel resting-time medians. Missing venue event IDs/market type must remain explicitly unknown; per-type unique events across rolling windows are NOT additive independent settled outcomes.
+- No actual order/cancel/price/size, exposure, fees, cash, risk, settlement, worker scheduling, REST traffic, persistent storage, dashboard or real-money changes. Keep memory bounded and omit raw contract/order IDs from logs.
+- Add isolated tests for metadata mapping, multiple bids in the same event, partial fills, censorship, rollovers, resets, unknown source, and historical counter compatibility. PR against `build/google-auth-foundation` only after exact-head tests. Automatic Render release only after successful CI and singleton/health verification.
+
+### Evidence
+- PR #328 runtime, 20:36Z to 01:21Z: 56 approximately nonoverlapping five-minute snapshots showed ~877 submissions, ~200 first-filled orders and ~646 unfilled cancellations (different order cohorts; snapshot offsets drift, not a causal fill rate). Some filled orders were repeated on the same exchange event. At 01:21Z, worker one instance at ~1.03 GB RAM (48.7% of 2 GiB), backlog 0, admission healthy; 75 regular bots, all other strategies disabled, last-hour authoritative verified event outcomes only 4 (weather). MT-018 should investigate absent fresh 15m/hourly confirmations; this task only categorizes the maker lifecycle, not discovery.
+- Unknown-time historical observations are excluded from inferred recent settlement counts. No financial edge or cancellation cause asserted from rolling telemetry.
+
+### Completion notes
+_In progress: isolated source/test PR, CI, deployment and bounded live verification._
