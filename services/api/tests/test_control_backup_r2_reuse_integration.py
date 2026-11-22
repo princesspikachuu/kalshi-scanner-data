@@ -234,6 +234,17 @@ class LiveBucketLifecycleGateTests(unittest.TestCase):
                                               Filter={'Prefix':None},
                                               Expiration={'Days':1})]))
         self.assertFalse(self.safe_check(['not a lifecycle rule']))
+        self.assertFalse(self.safe_check([dict(
+            Status='Enabled',Prefix='unrelated/',
+            Filter={'Prefix':'unrelated/'},Expiration={'Days':1})]))
+        self.assertFalse(self.safe_check([dict(
+            Status='Enabled',Filter={'Prefix':'unrelated/',
+                                     'And':{'Prefix':'demo/backups/'}},
+            Expiration={'Days':1})]))
+        self.assertFalse(self.safe_check([dict(
+            Status='Enabled',Filter={'And':{'Prefix':'unrelated/',
+                                            'UnknownFutureConstraint':True}},
+            Expiration={'Days':1})]))
 
     def test_missing_lifecycle_configuration_is_distinct_from_unreadable(self):
         client=MagicMock()
