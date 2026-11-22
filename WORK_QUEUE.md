@@ -1862,3 +1862,23 @@ Before the normal paper-maintenance backup may use any prior immutable R2 part, 
 
 ### Completion notes
 _Pending implementation, tests, PR, and live checks. This guard is defense-in-depth and does not replace the human actual-bucket audit._
+
+---
+
+## MT-029 — Audit regular Favorites event correlation and same-day clustering
+**Status:** IN PROGRESS — independent read-only statistical audit
+**Worker:** ChatGPT / regular Favorites dependency and cluster confidence audit
+**Claimed:** 2026-11-22
+**Urgency:** U2 — HIGH
+**Priority:** User-requested continuation of MT-023 after finding overlapping cohorts and uncertain nominal confidence
+
+### Scope and acceptance
+- Regular High-Probability Favorites research only. MT-027 is **already separately assigned** exact-vs-estimated return sensitivity; do NOT edit its sensitivity module, test files, `shadow.py`, or queue task. No data rewrites, trading changes, account/fee/settlement modifications or unrelated strategy analysis.
+- Audit overlap of the *same* venue event ID within/between market-type categories separately from dependence among **different events** sharing a time/day cluster. Event identity already deduplicated by Single and must never be counted as independent per fill/contract/cohort.
+- For category-level ROI, group distinct independently settled event identities into *strictly parseable* venue event dates only when date patterns can be verified. Report parse coverage, distinct day clusters, largest-day concentration, cross-category repeats and (when sufficiently supported) **day-cluster-robust 90% confidence intervals** using event-equal mean with a finite-cluster correction. Label within-day dependence assumption and remaining between-day/selection/estimated-return uncertainties; never imply that one calendar day is a guaranteed independent trial.
+- Use bounded read-only aggregation from the existing derived regular Favorites workspace snapshot; avoid external DB/IP allowlist changes, new SQL/R2 reads and raw event/ticker/account identifiers in logs or UI. Prefer isolated source/test code to avoid conflicting with MT-027.
+- Validate parsing of real Kalshi event formats and unknown-date fallback. Add tests for correlation vs exact duplicate ID, repeated fills, malformed/incomplete returns, cluster-robust variance, sparse-day withholding, source immutability and regular-Favorites-only scope.
+- Coordinate with MT-027 before joining its in-progress diagnostics; no changes to its numerical ROI/P&L or 50-event nominal uncertainty rules. Preserve full history.
+
+### Completion notes
+_In progress: source/event-format verification, independent cluster analysis, CI, live coverage and measured uncertainty findings._
