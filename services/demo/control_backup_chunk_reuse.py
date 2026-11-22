@@ -154,9 +154,10 @@ def lifecycle_reuse_allowed(objects):
     except Exception as error:
         response=getattr(error,'response',None)
         reason=response.get('Error',{}) if isinstance(response,dict) else {}
-        return (isinstance(reason,dict)
+        metadata=response.get('ResponseMetadata',{}) if isinstance(response,dict) else {}
+        return (isinstance(reason,dict) and isinstance(metadata,dict)
                 and reason.get('Code')=='NoSuchLifecycleConfiguration'
-                and response.get('ResponseMetadata',{}).get('HTTPStatusCode')==404)
+                and metadata.get('HTTPStatusCode')==404)
     if not isinstance(configuration,dict):
         return False
     rules=configuration.get('Rules')
