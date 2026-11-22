@@ -11,7 +11,7 @@ from services.paper_demo.shadow.favorite_research_coverage import (
     summarize_regular_favorites_coverage,
 )
 from services.paper_demo.shadow.favorite_single import (
-    MIN_HOLD_RETURN_UNCERTAINTY_EVENTS,
+    MIN_HOLD_RETURN_UNCERTAINTY_EVENTS, summarize_single,
 )
 
 
@@ -133,6 +133,69 @@ class RegularFavoritesCoverageTests(unittest.TestCase):
         self.assertEqual(evidence['categories']['crypto-15m']['independent_held_return_events'],1)
         self.assertNotIn('private-ticker',log.getvalue())
         self.assertNotIn('statistics',json.dumps(evidence))
+        sensitivity=evidence['categories']['crypto-15m']['attribution_sensitivity']
+        self.assertEqual(sensitivity['exact_only']['independent_held_return_events'],1)
+        self.assertEqual(sensitivity['estimated_only']['independent_held_return_events'],0)
+        self.assertEqual(sensitivity['exact_only']['held_roi_mean_pct'],'25.00')
+        self.assertEqual(sensitivity['exact_only']['confidence_state'],'under_minimum')
+        self.assertIn('nonrandom_subsets',evidence['attribution_note'])
+
+
+    def test_attribution_sensitivity_tracks_nonrandom_exact_and_estimated_sets(self):
+        profiles={'btc':dict(series='KXBTC15M',asset='crypto')}
+        rows=[
+            dict(contracts='1',price='.80',outcome_events={'sensitive-exact-id':1},
+                 return_events={'sensitive-exact-id':dict(cost='.80',net='.20')},
+                 return_policy='hold_only'),
+            dict(contracts='1',price='.80',outcome_events={'sensitive-estimated-id':0},
+                 return_events={'sensitive-estimated-id':dict(cost='.80',net='-.80',
+                                                               estimated=True)},
+                 return_policy='hold_only'),
+            dict(contracts='1',price='.80',outcome_events={'sensitive-incomplete-id':1},
+                 return_events={},return_policy='hold_only'),
+        ]
+        bots={'btc':dict(entry_timing=rows)}
+        single=summarize_single(bots,profiles,lambda p:'crypto-15m')
+        before=copy.deepcopy([bots,profiles,single])
+        summary=summarize_regular_favorites_coverage(
+            dict(rows={},coverage={}),dict(rows={},coverage={}),single,
+            held_bots=bots,profiles=profiles,category_for=lambda p:'crypto-15m')
+        self.assertEqual([bots,profiles,single],before)
+        cat=summary['categories']['crypto-15m']
+        self.assertEqual(cat['independent_resolved_events'],3)
+        self.assertEqual(cat['independent_held_return_events'],2)
+        self.assertEqual(cat['estimated_held_return_events'],1)
+        self.assertEqual(cat['incomplete_settled_events'],1)
+        split=cat['attribution_sensitivity']
+        self.assertEqual(split['exact_only']['independent_held_return_events'],1)
+        self.assertEqual(split['exact_only']['held_roi_mean_pct'],'25.00')
+        self.assertEqual(split['estimated_only']['independent_held_return_events'],1)
+        self.assertEqual(split['estimated_only']['held_roi_mean_pct'],'-100.00')
+        self.assertEqual(split['exact_only']['positive_return_events'],1)
+        self.assertEqual(split['estimated_only']['negative_return_events'],1)
+        self.assertEqual(split['estimated_only']['confidence_state'],'under_minimum')
+        self.assertIsNone(split['exact_only']['ci90_low_pct'])
+        self.assertNotIn('attribution_subsets_do_not_reconcile',cat['flags'])
+        redacted=json.dumps(summary)
+        for key in ('sensitive-exact-id','sensitive-estimated-id','sensitive-incomplete-id'):
+            self.assertNotIn(key,redacted)
+
+    def test_attribution_sensitivity_flags_mismatched_event_attribution(self):
+        # Never silently present a split as complete when the source totals
+        # disagree with the event-level evidence.
+        profile={'btc':dict(series='KXBTC15M',asset='crypto')}
+        bots={'btc':dict(entry_timing=[dict(
+            contracts='1',price='.80',outcome_events={'only':1},
+            return_events={'only':dict(cost='.80',net='.20')})])}
+        incorrect=dict(rows={'crypto-15m':dict(
+            resolved_events=3,return_observations=3,
+            estimated_return_observations=1,incomplete_events=0)})
+        result=summarize_regular_favorites_coverage(
+            {},{},incorrect,held_bots=bots,profiles=profile,
+            category_for=lambda p:'crypto-15m')
+        flags=result['categories']['crypto-15m']['flags']
+        self.assertIn('attribution_subsets_do_not_reconcile',flags)
+        self.assertIn('estimated_attribution_subsets_do_not_reconcile',flags)
 
 
 if __name__=='__main__':
