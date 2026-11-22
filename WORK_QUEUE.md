@@ -1821,7 +1821,10 @@ Detect a missing, unverified or older-than-configured **recorded verified R2 bac
 - Unknown-time historical observations are excluded from inferred recent settlement counts. No financial edge or cancellation cause asserted from rolling telemetry.
 
 ### Completion notes
-_In progress: isolated source/test PR, CI, deployment and bounded live verification._
+- **Draft implementation:** [PR #329](https://github.com/princesspikachuu/kalshi-scanner-data/pull/329), branch `feat/mt026-favorites-quote-churn-categories-20261121`, exact head `3f27917b73fda2f0ef07b142f7c2918f2118cb2a`; two files only (existing bounded quote telemetry + test). Fixed keys by 15m/hourly/weather/daily/sports/unknown; 5m cancellations split by <5, 5–30, 30–120, >=120 seconds plus never-rested. No trading, discovery, risk, storage, settlement or other portfolio changed. Four new regression tests added, including known event de-dup and unknown market metadata.
+- **Validation:** GitHub full API/PostgreSQL run [44971297089](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971297089) started for exact head; at checkpoint still IN PROGRESS; do NOT merge/deploy without success and review branch conflicts.
+- **Separate urgent signal:** likely 15m Favorites discovery depends on paused legacy Convexity, documented in issue [#278 comment](https://github.com/princesspikachuu/kalshi-scanner-data/issues/278#issuecomment-7072191318) and MT-018 note, **owner MT-018**, not edited in PR #329. Prioritize fix over speculative quote lifetime changes.
+- **Next:** Check exact CI, merge safely if passed, verify Render deploy SHA, singleton active worker, 75 regular Favorites and 0 other running bots, real orders disabled, `favorites_quote_lifecycle.by_market_type` totals and no observer errors. If merging cannot be verified, keep PR draft and checkpoint.
 
 ## MT-027 — Compare exact vs estimated held-return profitability in regular Favorites
 **Status:** IN PROGRESS — U2, read-only research sensitivity
