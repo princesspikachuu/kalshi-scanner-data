@@ -1837,7 +1837,9 @@ _In progress: isolated source/test PR, CI, deployment and bounded live verificat
 - Reuse regular Favorites derived snapshot in existing once-per-minute `favorites_timed_rollup` research evidence telemetry. No additional database/R2 reads or expanded main dashboard payload. Include no raw event/market IDs, financial balances or order identities.
 - Add focused source immutability, pooled-event/correlation, incomplete, mixed-attribution, fifty-event boundary, and scope regression tests. Validate with exact-head API/PostgreSQL CI; deploy only after checks and verify live log. Coordinate away from MT-018 discovery, MT-019 backup, MT-026 quote lifecycle.
 ### Completion notes
-Pending implementation, test, deployment, and live results.
+- Draft [PR #330](https://github.com/princesspikachuu/kalshi-scanner-data/pull/330), head `d1c619de9d0a3c060a4714d12954068a9d0d6769`, based on `build/google-auth-foundation`. It adds derived category exact-only/estimated-only sensitivity to once-per-minute `favorites_timed_rollup.research_evidence`; no trading/ledger/SQL/R2/main dashboard payload changes.
+- New event-level tests cover mixed attribution, duplicate cohorts/bots, 49→50 events, gains/losses, incomplete returns, source immutability, identifier redaction and reconciliation.
+- Exact-head CI [run #44971441808](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44971441808) **IN PROGRESS**. No merge/deployment yet; no claim of observed live exact-only profitability.
 
 ---
 
