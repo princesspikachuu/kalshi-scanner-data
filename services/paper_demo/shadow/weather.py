@@ -46,6 +46,7 @@ def candidates(rows,series,now):
 
 async def weather_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
+    if not isinstance(getattr(suite,'weather_page_bounds',None),dict):suite.weather_page_bounds={}
     scan=dict(at=now,categories={})
     for category in ('weather_daily','weather'):
         # Daily contracts have a single closing opportunity. Give them first
@@ -66,6 +67,9 @@ async def weather_once(host):
                 # the only safe daily entry window. No listings/fee reads until.
                 wake=daily_scan_wake(option['series'],now)
                 if wake is not None:
+                    # A fresh local-day window needs a fresh listing cursor.
+                    suite.weather_pages.pop(option['series'],None)
+                    suite.weather_page_bounds.pop(option['series'],None)
                     remember(suite,key,wake,now)
                     continue
                 remember(suite,key,None,now)
@@ -84,14 +88,24 @@ async def weather_once(host):
             continue
         row['series']=p['series']
         suite.weather_cursor[category]=cursor
+        page_cursor=suite.weather_pages.get(p['series'],'')
+        bounds=suite.weather_page_bounds.get(p['series']) if page_cursor else None
+        if not isinstance(bounds,tuple) or len(bounds)!=2:
+            # Unknown/stale page state: start a fresh bounded listing.
+            page_cursor=''
+            bounds=(int(now+60),int(now+86400))
         result=await asyncio.to_thread(host.verified_data.call,'GET','/markets',dict(status='open',series_ticker=p['series'],
-            min_close_ts=int(now+60),max_close_ts=int(now+86400),limit=1000,cursor=suite.weather_pages.get(p['series'],'')))
-        suite.weather_pages[p['series']]=result.get('cursor','')
+            min_close_ts=bounds[0],max_close_ts=bounds[1],limit=1000,cursor=page_cursor))
+        next_page=result.get('cursor','') or ''
+        suite.weather_pages[p['series']]=next_page
+        if next_page:suite.weather_page_bounds[p['series']]=bounds
+        else:suite.weather_page_bounds.pop(p['series'],None)
         listed=candidates(result.get('markets',[]),p['series'],now)
         # A known future open/entry time is durable across worker restarts.
-        # If nothing is currently eligible, sleep until the earliest listed
-        # market can *possibly* pass its time gate. Resume with a fresh page.
-        if not listed:
+        # A future wake is safe only for a COMPLETE single-page result.
+        # Incomplete pages can hide currently eligible markets; follow the
+        # existing cursor before considering any long sleep.
+        if not listed and not page_cursor and not next_page:
             future=[known_entry_wake(m,category,now) for m in result.get('markets',[])
                     if m.get('ticker','').startswith(p['series']+'-') and m.get('status')=='active']
             future=[when for when in future if when is not None]
@@ -104,7 +118,8 @@ async def weather_once(host):
         row['eligible']=len(listed)
         row['closing_within_hour']=sum(ts(m['close_time'])-now<3600 for m in listed)
         if row['reason']!='waiting_for_known_market_entry_window':
-            row['reason']='no_active_eligible_market' if not listed else 'candidate_unavailable_or_excluded'
+            row['reason']=('listing_pagination_incomplete' if next_page and not listed else
+                'no_active_eligible_market' if not listed else 'candidate_unavailable_or_excluded')
         for m in listed:
             if m['ticker'] in markets or not suite.candidate_allowed(m['ticker'],now):continue
             fee=await host.fee_policy(m,{})
