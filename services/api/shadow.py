@@ -161,7 +161,7 @@ def favorite_collector_timed_totals(folder_bots,profiles,*,held_view=False):
     account/realized cash fields remain unchanged. A repeated event in one
     cohort counts only once, regardless of the number of partial fills.
     """
-    from services.paper_demo.shadow.observation_returns import merge, summarize
+    from services.paper_demo.shadow.observation_returns import merge, summarize_regular_held_events
     from services.paper_demo.shadow.regular_favorites_hold_research import regular_favorites_held_bots
     if not held_view:
         folder_bots=regular_favorites_held_bots(folder_bots)
@@ -235,7 +235,7 @@ def favorite_collector_timed_totals(folder_bots,profiles,*,held_view=False):
         rows.setdefault(kind,[]).append(dict(series='combined',market_type=market_type,clock=clock,
             horizon=horizon,price=str(D(cents)/100),
             **{field:str(value[field]) for field in FAVORITE_TIMING_FIELDS},
-            **summarize(attributed)))
+            **summarize_regular_held_events(attributed)))
     for items in rows.values():items.sort(key=lambda r:(D(r['price']),r['horizon'],r['clock']))
     return dict(rows=rows,coverage={kind:dict(bots_total=cov['bots_total'],
         bots_with_rows=cov['bots_with_rows'],purchased=str(cov['purchased']),

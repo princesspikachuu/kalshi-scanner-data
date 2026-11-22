@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from services.api import shadow
 from services.paper_demo.shadow.favorite_research_coverage import (
-    summarize_regular_favorites_coverage,
+    summarize_regular_favorites_coverage, _top_price_time_cohort,
 )
 from services.paper_demo.shadow.favorite_single import (
     MIN_HOLD_RETURN_UNCERTAINTY_EVENTS, summarize_single,
@@ -16,6 +16,31 @@ from services.paper_demo.shadow.favorite_single import (
 
 
 class RegularFavoritesCoverageTests(unittest.TestCase):
+    def test_held_roi_cohort_telemetry_does_not_emit_false_numeric_confidence(self):
+        base=dict(price='.75',horizon='5–10m',events='50',
+                  return_observations=50,estimated_return_observations=18,
+                  average_return_pct='5',roi_interval_status='available',
+                  uncertainty90_pct='6',ci90_low_pct='-1',
+                  ci90_high_pct='11')
+        ok=_top_price_time_cohort(base,50)
+        self.assertEqual(ok['cohort_held_returns'],50)
+        self.assertEqual(ok['estimated_cohort_held_returns'],18)
+        self.assertEqual(ok['held_roi_interval_status'],'available')
+        self.assertEqual(ok['held_roi_uncertainty90_pp'],'6.00')
+        self.assertEqual(ok['held_roi_ci90_low_pct'],'-1.00')
+        under=_top_price_time_cohort(dict(base,return_observations=49),50)
+        self.assertEqual(under['held_roi_interval_status'],'under_minimum')
+        self.assertIsNone(under['held_roi_uncertainty90_pp'])
+        self.assertIsNone(under['held_roi_ci90_high_pct'])
+        no_variance=_top_price_time_cohort(dict(base,
+                      roi_interval_status='insufficient_gain_loss_variation'),50)
+        self.assertEqual(no_variance['held_roi_interval_status'],
+                         'insufficient_gain_loss_variation')
+        self.assertIsNone(no_variance['held_roi_ci90_low_pct'])
+        malformed=_top_price_time_cohort(dict(base,ci90_low_pct='NaN'),50)
+        self.assertEqual(malformed['held_roi_interval_status'],'not_available')
+        self.assertIsNone(malformed['held_roi_uncertainty90_pp'])
+
     def test_cohort_counts_do_not_masquerade_as_independent_events(self):
         detailed = dict(
             rows={'crypto-15m': [
