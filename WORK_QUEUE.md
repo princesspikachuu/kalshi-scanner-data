@@ -1976,6 +1976,12 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 - Development based on `build/google-auth-foundation`, draft PR until CI, then verify exact staging release, worker health and research visibility.
 
 ### Completion notes
-Pending source audit, implementation, full CI, deployment and verification.
+- **Root cause:** Daily Weather had confirmed event-level research (19 settled category events) but `favorite_wide.summarize_wide` could not establish a reliable 3-way entry-time span, so it emitted no Wider cells; the frontend showed only a waiting paragraph despite populated Detailed/Single data.
+- **Draft [PR #337](https://github.com/princesspikachuu/kalshi-scanner-data/pull/337)** on branch `fix/mt031-weather-wide-and-filled-event-periods-20261121`: category and market-level Wider views now fall back to actual verified detailed cohorts (then Single if only those are available), without guessing time thirds.
+- Introduced a bounded, durable-checkpoint-compatible **actual BUY FILL event** observer in regular Favorites only. Distinct event identity counts per all/1H/6H/24H/7D/30D are sent as safe counts on folder, category and bot snapshots; repeats, contract counts, sell fills, and outcomes without fill timestamps cannot inflate recent totals. Older/incomplete coverage is explicitly partial.
+- The small event-count subtitle renders under P/L in top overview, folder, market-category and individual bot views; bot-time and folder-time controls update the number.
+- Targeted UI and Python regression tests added. Initial CI run caught an escaped-HTML assertion and was corrected. Exact-head full CI still in progress; **no merge or staging deployment yet**. Preserve independent MT-030 changes when merging.
+
+
 
 ---
