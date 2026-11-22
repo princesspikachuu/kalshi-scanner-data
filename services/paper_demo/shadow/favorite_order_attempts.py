@@ -17,9 +17,17 @@ PERIODS = dict(all=None, **WINDOWS)
 
 
 def _valid_time(value, *, max_time=None):
-    return (not isinstance(value, bool) and isinstance(value, (int, float))
-            and isfinite(value) and value > 0
-            and (max_time is None or value <= max_time + 1))
+    # Imported checkpoint data is untrusted. Arbitrarily large integers,
+    # although valid Python ints, overflow float()/math.isfinite() and must not
+    # prevent a Favorites worker from restoring otherwise sound historical state.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        at = float(value)
+    except (ValueError, OverflowError):
+        return False
+    return (isfinite(at) and at > 0
+            and (max_time is None or at <= max_time + 1))
 
 
 class FavoriteOrderAttempts:
