@@ -93,6 +93,81 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(metadata),3) # Frequency cache never substitutes for live quotes/fees.
         self.assertEqual(host.fee_policy.await_count,2)
 
+    async def test_hourly_incomplete_future_page_keeps_cursor_and_finds_ready_market(self):
+        host,suite=self.setup_host();now=1000
+        suite.enabled_profiles=lambda asset:([dict(series='KXBTCD')]
+            if asset=='hourly' else [])
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        future=dict(ticker='KXBTCD-future',event_ticker='FUTURE',status='active',
+            open_time=date(now+3600),close_time=date(now+7200),
+            yes_bid_dollars='.80',no_bid_dollars='.18')
+        ready=dict(ticker='KXBTCD-ready',event_ticker='READY',status='active',
+            open_time=date(now-100),close_time=date(now+1800),
+            yes_bid_dollars='.81',no_bid_dollars='.16')
+        cursors=[]
+        def call(method,path,query=None):
+            if path.startswith('/series/'):return dict(series=dict(frequency='hourly'))
+            self.assertEqual(path,'/markets')
+            self.assertEqual(query['series_ticker'],'KXBTCD')
+            cursor=query.get('cursor','');cursors.append(cursor)
+            if not cursor:return dict(markets=[future],cursor='page-two')
+            self.assertEqual(cursor,'page-two')
+            return dict(markets=[ready],cursor='')
+        host.verified_data.call.side_effect=call
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=now):
+            await hourly_once(host)
+        self.assertEqual(suite.hourly_pages['KXBTCD'],'page-two')
+        self.assertNotIn('hourly:KXBTCD',suite.discovery_wakes)
+        self.assertLessEqual(suite.hourly_retry_at['KXBTCD'],now+15)
+        host.put.assert_not_awaited()
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=now+16):
+            await hourly_once(host)
+        self.assertEqual(cursors,['','page-two'])
+        self.assertEqual(suite.hourly_pages['KXBTCD'],'')
+        host.put.assert_awaited_once()
+        self.assertEqual(host.put.await_args.args[1]['market']['ticker'],'KXBTCD-ready')
+
+    async def test_weather_incomplete_future_page_keeps_cursor_and_finds_ready_market(self):
+        now=1000;series='KXHIGHNYH'
+        suite=Mock();suite.discovery_wakes={};suite.feed_markets.return_value={}
+        suite.weather_cursor={};suite.weather_pages={};suite.weather_scan_log_at=0
+        suite.search_capacity.return_value=True
+        suite.enabled_profiles.side_effect=lambda category:(
+            [dict(series=series)] if category=='weather' else [])
+        suite.candidate_allowed.return_value=True
+        suite.settlement_markets.return_value={};suite.portfolios={}
+        host=Mock(experiments=suite);host.put=AsyncMock()
+        host.fee_policy=AsyncMock(return_value=Mock(taker_multiplier=D(1),maker_multiplier=D(0)))
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        future=dict(ticker=series+'-future',event_ticker='FUTURE',status='active',
+            open_time=date(now+3600),close_time=date(now+7200),
+            yes_bid_dollars='.81',no_bid_dollars='.16')
+        ready=dict(ticker=series+'-ready',event_ticker='READY',status='active',
+            open_time=date(now-100),close_time=date(now+1800),
+            yes_bid_dollars='.81',no_bid_dollars='.16')
+        cursors=[]
+        def call(method,path,query=None):
+            self.assertEqual(path,'/markets')
+            self.assertEqual(query['series_ticker'],series)
+            cursor=query.get('cursor','');cursors.append(cursor)
+            if not cursor:return dict(markets=[future],cursor='page-two')
+            self.assertEqual(cursor,'page-two')
+            return dict(markets=[ready],cursor='')
+        host.verified_data.call.side_effect=call
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now):
+            await weather_once(host)
+        self.assertEqual(suite.weather_pages[series],'page-two')
+        self.assertNotIn('weather:'+series,suite.discovery_wakes)
+        self.assertEqual(suite.weather_scan['categories']['weather']['reason'],
+                         'listing_pagination_incomplete')
+        host.put.assert_not_awaited()
+        with patch('services.paper_demo.shadow.weather.time.time',return_value=now+16):
+            await weather_once(host)
+        self.assertEqual(cursors,['','page-two'])
+        self.assertEqual(suite.weather_pages[series],'')
+        host.put.assert_awaited_once()
+        self.assertEqual(host.put.await_args.args[1]['market']['ticker'],series+'-ready')
+
     async def test_capacity_pause_still_records_listing_coverage_without_subscribing(self):
         host,suite=self.setup_host();suite.search_capacity=lambda *args:False
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
