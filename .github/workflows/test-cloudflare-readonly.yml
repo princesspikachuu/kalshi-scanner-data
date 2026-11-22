@@ -1,0 +1,30 @@
+name: Test MT-017 read-only Cloudflare analytics
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/cloudflare_readonly_cpu.py'
+      - 'tests/test_cloudflare_readonly_cpu.py'
+      - '.github/workflows/test-cloudflare-readonly.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/cloudflare_readonly_cpu.py'
+      - 'tests/test_cloudflare_readonly_cpu.py'
+      - '.github/workflows/test-cloudflare-readonly.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline read-only API contract tests (no credentials)
+        run: python -m unittest discover -s tests -p 'test_cloudflare_readonly_cpu.py' -v
