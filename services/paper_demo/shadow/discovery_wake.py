@@ -12,8 +12,15 @@ from .weather_window import CITY_ZONES, entry_end
 
 
 def ts(value):
+    # Public venue timestamps are only advisory here. Treat malformed JSON
+    # types as unknown schedules, not as fatal errors or numeric epoch hints.
+    # In particular, bool is a subclass of int but is not a venue timestamp.
+    if isinstance(value,bool):
+        raise TypeError('Boolean venue timestamp')
     if isinstance(value,(int,float)):
         return float(value)
+    if not isinstance(value,str):
+        raise TypeError('Unsupported venue timestamp type')
     return datetime.fromisoformat(value.replace('Z','+00:00')).timestamp()
 
 
