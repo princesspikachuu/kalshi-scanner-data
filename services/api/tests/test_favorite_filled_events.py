@@ -78,10 +78,12 @@ class FavoriteFilledEventsTests(unittest.TestCase):
         tracker = FavoriteFilledEvents(now=3000)
         tracker.observe(SimpleNamespace(action='buy'), 3100,
                         dict(bot_id='wx1'))
-        result = tracker.report(9000, self.profiles)
+        result = tracker.report(3300, self.profiles)
         self.assertFalse(result['total']['1H']['complete'])
         self.assertEqual(result['total']['1H']['count'], 0)
         self.assertEqual(result['unknown_fill_events'], 1)
+        self.assertTrue(tracker.report(9000, self.profiles)['total']['1H']['complete'],
+                        'unknown fills outside a window no longer block coverage')
 
     def test_bounded_retention_discloses_truncated_window(self):
         with patch('services.paper_demo.shadow.favorite_filled_events.MAX_TRACKED_EVENTS', 2):
