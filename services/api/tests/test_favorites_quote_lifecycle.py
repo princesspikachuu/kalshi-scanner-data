@@ -110,6 +110,79 @@ class FavoriteQuoteLifecycleTests(unittest.TestCase):
         self.assertEqual(s['submitted_orders'],0)
         self.assertEqual(s['open_orders'],0)
 
+    def test_market_type_mapping_is_metadata_grounded_and_unknown_is_not_fabricated(self):
+        from services.paper_demo.shadow.favorite_quote_lifecycle import _market_type
+        self.assertEqual(_market_type({'weather_category':'weather'},'X'),'weather')
+        self.assertEqual(_market_type({'weather_category':'weather_daily'},'X'),'weather_daily')
+        self.assertEqual(_market_type({'sports':True},'X'),'sports')
+        self.assertEqual(_market_type({'hourly_price':True},'X'),'hourly_price')
+        self.assertEqual(_market_type({'close':900},'KXBTC15M-26NOV'),'15m_price')
+        self.assertEqual(_market_type({'series_ticker':'KXGOLD15M'},'X'),'15m_price')
+        self.assertEqual(_market_type({'close':900},'KXUNKNOWN-1'),'unknown')
+        self.assertEqual(_market_type({},'KXBTC15M-1'),'unknown')
+
+    def test_cancellation_rest_duration_bands_and_event_dedup_by_market_type(self):
+        from services.paper_demo.shadow.favorite_quote_lifecycle import REST_BANDS
+        t=FavoriteQuoteLifecycle(100)
+        # Multiple quotes for the same venue event are NOT new independent
+        # settlements, even if their resting lifetimes differ.
+        for i,seconds in enumerate((2,10,60,130)):
+            o=order('S-weather-'+str(i),ticker='KXTEMP-1',now=101)
+            market={'event_ticker':'WEATHER-EVENT','weather_category':'weather'}
+            t.observe('ORDER_SUBMITTED',o,101,market)
+            o.status='resting';t.observe('MAKER_RESTING',o,101.1,market)
+            o.status='cancelled';t.observe('CANCELLED',o,101.1+seconds,market)
+        s=t.snapshot(250)
+        w=s['by_market_type']['weather']
+        self.assertEqual(w['submitted_orders'],4)
+        self.assertEqual(w['submitted_events'],1)
+        self.assertEqual(w['cancelled_without_fill'],4)
+        self.assertEqual(w['canceled_unfilled_rest_p50_seconds'],10)
+        self.assertEqual(w['canceled_unfilled_rest_bands'],
+                         dict(zip(REST_BANDS,(1,1,1,1,0))))
+        self.assertEqual(w['first_filled_orders'],0)
+        self.assertEqual(w['open_orders'],0)
+        self.assertEqual(s['submitted_events'],1)
+        self.assertEqual(s['cancelled_without_fill'],4)
+
+    def test_fills_open_orders_and_missing_event_ids_split_by_category(self):
+        t=FavoriteQuoteLifecycle(200)
+        event='BTC-ONE'
+        market={'event_ticker':event,'close':1000,'series_ticker':'KXBTC15M'}
+        for i in range(2):
+            o=order('SF'+str(i),ticker='KXBTC15M-'+str(i),now=201)
+            t.observe('ORDER_SUBMITTED',o,201,market)
+            o.status='resting';t.observe('MAKER_RESTING',o,201.15,market)
+            o.remaining=D(0);o.status='filled'
+            t.observe('FILL',o,231,market)
+        missing=order('SPENDING',ticker='KXTEMPD-1',now=211)
+        other={'weather_category':'weather_daily'}  # deliberately no event_ticker
+        t.observe('ORDER_SUBMITTED',missing,211,other)
+        missing.status='resting';t.observe('MAKER_RESTING',missing,211.15,other)
+        s=t.snapshot(235)
+        btc=s['by_market_type']['15m_price']
+        daily=s['by_market_type']['weather_daily']
+        self.assertEqual(btc['first_filled_orders'],2)
+        self.assertEqual(btc['first_filled_events'],1)
+        self.assertEqual(btc['submitted_events'],1)
+        self.assertEqual(s['first_filled_events'],1)
+        self.assertEqual(daily['open_orders'],1)
+        self.assertEqual(daily['open_resting'],1)
+        self.assertEqual(daily['submitted_events'],0)
+        self.assertEqual(daily['submitted_missing_event_id'],1)
+        self.assertEqual(daily['cancelled_without_fill'],0)
+        self.assertGreater(daily['open_rest_age_p50_seconds'],20)
+
+    def test_empty_type_and_old_history_omit_stale_rows(self):
+        t=FavoriteQuoteLifecycle(100)
+        o=order('S-SHORT',ticker='KXTEST-1',now=100)
+        t.observe('ORDER_SUBMITTED',o,100,{})
+        self.assertIn('unknown',t.snapshot(101)['by_market_type'])
+        self.assertNotIn('sports',t.snapshot(101)['by_market_type'])
+        self.assertEqual(t.snapshot(401)['by_market_type']['unknown']['open_orders'],1)
+        o.status='cancelled';t.observe('CANCELLED',o,401,{})
+        self.assertEqual(t.snapshot(702)['by_market_type'],{})
+
     def test_observer_failure_never_interrupts_engine_audit_or_order(self):
         e,b,book,t=self.setup_bot()
         broken=Mock()

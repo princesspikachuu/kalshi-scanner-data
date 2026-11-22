@@ -11,6 +11,34 @@ WINDOW_SECONDS=300
 MAX_OPEN=2048
 MAX_HISTORY=4096
 EVENTS={'ORDER_SUBMITTED','ORDER_REJECTED','MAKER_RESTING','CANCEL_SUBMITTED','CANCELLED','EXPIRED','FILL'}
+# Explicit fixed categories bound log size; unknown metadata must not be
+# mislabeled as a known 15-minute contract.
+MARKET_TYPES=('15m_price','hourly_price','weather','weather_daily','sports','unknown')
+REST_BANDS=('under_5s','5_to_30s','30_to_120s','at_least_120s','unknown_not_resting')
+
+
+def _market_type(market, ticker):
+    if not isinstance(market,dict) or not market:
+        return 'unknown'
+    if market.get('sports'):
+        return 'sports'
+    if market.get('weather_category') in ('weather','weather_daily'):
+        return market['weather_category']
+    if market.get('hourly_price'):
+        return 'hourly_price'
+    # Only the regular Favorites fleet uses this observer; 15m entries have
+    # explicit 15M series prefixes even if their normalized market omits
+    # category metadata. Do not classify an arbitrary other ticker as 15m.
+    series=str(market.get('series_ticker') or ticker.split('-',1)[0])
+    return '15m_price' if series.endswith('15M') else 'unknown'
+
+
+def _rest_band(seconds):
+    if seconds is None:return 'unknown_not_resting'
+    if seconds<5:return 'under_5s'
+    if seconds<30:return '5_to_30s'
+    if seconds<120:return '30_to_120s'
+    return 'at_least_120s'
 
 def _percentile(values, proportion):
     if not values:return None
@@ -26,7 +54,7 @@ class FavoriteQuoteLifecycle:
 
     def _record(self,at,kind,row,duration=None):
         if len(self.history)==MAX_HISTORY:self.overwritten+=1
-        self.history.append((float(at),kind,row['ticker'],row['event'],duration))
+        self.history.append((float(at),kind,row['ticker'],row['event'],duration,row['market_type']))
 
     def _start(self,order,market,restored=False):
         current=self.open.get(order.id)
@@ -35,6 +63,7 @@ class FavoriteQuoteLifecycle:
             self.open.popitem(last=False)
             self.evicted+=1
         row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or None,
+                 market_type=_market_type(market,order.ticker),
                  created=float(order.created),
                  resting=(float(order.arrives) if restored and order.status=='resting' else None),
                  filled=False,cancel=None,restored=restored)
@@ -58,7 +87,8 @@ class FavoriteQuoteLifecycle:
             return
         if kind=='ORDER_REJECTED':
             if row is None:
-                row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or None)
+                row=dict(ticker=order.ticker,event=(market or {}).get('event_ticker') or None,
+                         market_type=_market_type(market,order.ticker))
             self._record(at,'rejected',row)
             self.open.pop(order.id,None)
             return
@@ -103,6 +133,39 @@ class FavoriteQuoteLifecycle:
         terminal=[r[4] for r in events if
                   r[1].startswith(('cancelled_','expired_')) or r[1]=='filled_complete']
         open_age=[max(0.,now-r['resting']) for r in self.open.values() if r['resting'] is not None]
+        # Type-specific counts are measurements of different quote lifecycles,
+        # not a causal filled/submitted ratio, and NEVER settled event outcomes.
+        by_market_type={}
+        for market_type in MARKET_TYPES:
+            sliced=[r for r in events if r[5]==market_type]
+            open_rows=[r for r in self.open.values() if r['market_type']==market_type]
+            if not sliced and not open_rows:continue
+            c=Counter(r[1] for r in sliced)
+            sub=[r for r in sliced if r[1]=='submitted']
+            filled=[r for r in sliced if r[1]=='first_filled']
+            cancels=[r for r in sliced if r[1]=='cancelled_without_fill']
+            cancel_ages=[r[4] for r in cancels if r[4] is not None]
+            fill_ages=[r[4] for r in filled if r[4] is not None]
+            bands=Counter(_rest_band(r[4]) for r in cancels)
+            opening_ages=[max(0.,now-r['resting']) for r in open_rows if r['resting'] is not None]
+            by_market_type[market_type]=dict(
+                submitted_orders=c['submitted'],
+                submitted_events=len({r[3] for r in sub if r[3]}),
+                submitted_missing_event_id=sum(not r[3] for r in sub),
+                first_filled_orders=c['first_filled'],
+                first_filled_events=len({r[3] for r in filled if r[3]}),
+                cancelled_without_fill=c['cancelled_without_fill'],
+                cancelled_after_partial_fill=c['cancelled_after_partial_fill'],
+                expired_without_fill=c['expired_without_fill'],
+                expired_after_partial_fill=c['expired_after_partial_fill'],
+                rejected_orders=c['rejected'],
+                open_orders=len(open_rows),
+                open_resting=sum(r['resting'] is not None for r in open_rows),
+                # Right-censored current bids do not count as failures.
+                open_rest_age_p50_seconds=_percentile(opening_ages,.5),
+                canceled_unfilled_rest_p50_seconds=_percentile(cancel_ages,.5),
+                first_fill_rest_p50_seconds=_percentile(fill_ages,.5),
+                canceled_unfilled_rest_bands={k:bands[k] for k in REST_BANDS})
         return dict(window_seconds=WINDOW_SECONDS,telemetry_started_at=self.started,
                     coverage='read-only since worker start; outcomes unconfirmed',
                     submitted_orders=counts['submitted'],
@@ -134,4 +197,5 @@ class FavoriteQuoteLifecycle:
                     cancel_ack_p90_seconds=_percentile([r[4] for r in events if r[1]=='cancel_ack'],.90),
                     restored_seeded_total=self.restored,
                     unlinked_events_total=self.unlinked,evicted_open_total=self.evicted,
-                    overwritten_history_total=self.overwritten,observer_errors_total=errors)
+                    overwritten_history_total=self.overwritten,observer_errors_total=errors,
+                    by_market_type=by_market_type)
