@@ -90,8 +90,39 @@ class RegularFavoritesCorrelationTests(unittest.TestCase):
         self.assertGreater(float(summary['cluster_90pct_error_pp']),
                            float(summary['nominal_90pct_error_dated_subset_pp']))
         self.assertGreater(float(summary['cluster_vs_iid_error_ratio_pct']),150)
+        exact=summary['attribution_date_clusters']['exact_only']
+        estimated=summary['attribution_date_clusters']['estimated_only']
+        self.assertEqual(exact['independent_settled_return_events'],60)
+        self.assertEqual(exact['cluster_interval_status'],'available')
+        self.assertEqual(estimated['independent_settled_return_events'],0)
+        self.assertIsNone(estimated['cluster_90pct_error_pp'])
         self.assertLess(float(summary['cluster_90pct_low_roi_pct']),0)
         self.assertGreater(float(summary['cluster_90pct_high_roi_pct']),0)
+
+    def test_mixed_estimated_and_exact_date_clusters_remain_separate(self):
+        # Different event IDs on the same date may be correlated, even when
+        # one has fully exact entry sizing and the other is reconstructed.
+        entries=[]
+        for day in range(1,26):
+            for slot,estimated in enumerate((False,True)):
+                ident=f'KXBTC15M-26NOV{day:02d}T{slot:04d}'
+                item=row(ident,cost='1',net='1' if day%2 else '-1',
+                         outcome=int(day%2))
+                item['return_events'][ident]['estimated']=estimated
+                entries.append(item)
+        bots={'btc':dict(entry_timing=entries)}
+        original=copy.deepcopy(bots)
+        report=audit(bots)['categories']['crypto-15m']
+        self.assertEqual(bots,original)
+        self.assertEqual(report['independent_settled_return_events'],50)
+        self.assertEqual(report['distinct_event_dates'],25)
+        exact=report['attribution_date_clusters']['exact_only']
+        estimated=report['attribution_date_clusters']['estimated_only']
+        self.assertEqual(exact['independent_settled_return_events'],25)
+        self.assertEqual(estimated['independent_settled_return_events'],25)
+        self.assertEqual(exact['cluster_interval_status'],'under_50_events')
+        self.assertEqual(estimated['cluster_interval_status'],'under_50_events')
+        self.assertEqual(report['flags'],[])
 
     def test_clustering_cannot_fake_fifty_independent_days(self):
         rows=[row(f'KXBTC15M-26NOV20T{i:04d}',cost='1',
