@@ -97,6 +97,32 @@ def _sensitivity_subset(report):
     )
 
 
+def _top_price_time_cohort(row, minimum):
+    """Sanitized bounded cell evidence; never report stale sub-50 ROI bounds."""
+    n = _count(row.get('return_observations'))
+    raw_status = str(row.get('roi_interval_status') or 'not_available')
+    status = 'under_minimum' if n < minimum else raw_status
+    low = _finite(row.get('ci90_low_pct'))
+    high = _finite(row.get('ci90_high_pct'))
+    err = _finite(row.get('uncertainty90_pct'))
+    valid = (status == 'available' and low is not None and high is not None
+             and low <= high and err is not None and err >= 0)
+    if status == 'available' and not valid:
+        status = 'not_available'
+    return dict(
+        entry_price=str(row.get('price')), time_bucket=str(row.get('horizon')),
+        settled_cohort_events=_count(row.get('events')),
+        cohort_held_returns=n,
+        estimated_cohort_held_returns=_count(row.get('estimated_return_observations')),
+        need_to_minimum=max(0, minimum-n),
+        mean_held_roi_pct=_percent(row.get('average_return_pct')),
+        held_roi_interval_status=status,
+        held_roi_uncertainty90_pp=_percent(err) if valid else None,
+        held_roi_ci90_low_pct=_percent(low) if valid else None,
+        held_roi_ci90_high_pct=_percent(high) if valid else None,
+    )
+
+
 def summarize_regular_favorites_coverage(
     timed, wide, single, *, held_bots=None, profiles=None, category_for=None,
 ):
@@ -176,12 +202,7 @@ def summarize_regular_favorites_coverage(
             wider_legacy_cohort_exclusions=_count(wide_details.get('excluded_legacy_observations')),
             wider_price_cohort_exclusions=_count(wide_details.get('excluded_price_observations')),
             top_sampled_detailed_cohorts=[
-                dict(entry_price=str(r.get('price')),time_bucket=str(r.get('horizon')),
-                     settled_cohort_events=_count(r.get('events')),
-                     cohort_held_returns=_count(r.get('return_observations')),
-                     need_to_minimum=max(0,minimum-_count(r.get('return_observations'))),
-                     mean_held_roi_pct=_percent(r.get('average_return_pct')))
-                for r in sampled
+                _top_price_time_cohort(r, minimum) for r in sampled
             ],
             **origin.get(category, dict(
                 entry_cohort_rows=0,entry_cohorts_without_confirmed_outcome=0,

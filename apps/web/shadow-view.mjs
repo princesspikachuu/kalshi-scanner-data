@@ -118,9 +118,10 @@ function favoriteResearchGrid(rows=[],options={}){
   if(!n)return '<td class="stat-empty">'+star(price,key)+'<span>—</span></td>';
   const entry=Number(r.contracts)>0?Number(r.cost)/Number(r.contracts):null;
   const c=confidenceMarkup(wins,n,entry),ret=averageReturn(r);
+  const roi90=favoriteHeldROIEventInterval(r);
   const margin=winConfidence90(wins,n,entry)?.margin;
   const signal=margin===null||margin===undefined?'unknown':margin>0?'realized-positive':margin<0?'realized-negative':'neutral';
-  return '<td class="stat-observed '+favoriteProfitClass(signal)+'">'+star(price,key)+'<details><summary><strong>n='+e(observationCount(n))+' · '+e(favoriteEvidenceTier(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+' · Hold P/L '+e(ret)+'</small><small>Margin '+e(c.margin)+' · win-rate error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(r.return_observations||0))+' hold-return observations. Settlement-based margin; exits excluded.</p></details></td>';
+  return '<td class="stat-observed '+favoriteProfitClass(signal)+'">'+star(price,key)+'<details><summary><strong>n='+e(observationCount(n))+' · '+e(favoriteEvidenceTier(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+' · Hold P/L '+e(ret)+e(roi90.compact)+'</small><small>Margin '+e(c.margin)+' · win-rate error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(r.return_observations||0))+' hold-return observations. '+(roi90.detail?e(roi90.detail)+' ':'')+'Known-outcome historical exits are modeled as held; actual exit proceeds and exit fees are not used in hypothetical held P/L.</p></details></td>';
  }).join('')+'</tr>').join('');
  return clockNote+'<div class="table-scroll"><table class="'+(wide?'favorite-stat-matrix favorite-wide-matrix':'favorite-stat-matrix')+'"><thead><tr><th scope="col">Entry price</th>'+timeLabels.map(t=>'<th scope="col">'+e(t)+(wide?' left':'')+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
@@ -137,6 +138,26 @@ function heldReturnUncertainty(sample){
  return {n,min,error,provisional:n<min};
 }
 // Single bucket uses event-level backend evidence, never sums overlapping 3x3 cells.
+// Cash-return uncertainty is distinct from the win-rate Wilson error.
+function favoriteHeldROIEventInterval(row){
+ if(!row||!Object.hasOwn(row,'roi_interval_status'))return {compact:'',detail:''};
+ const {n,min,error,provisional}=heldReturnUncertainty(row);
+ if(provisional||row.roi_interval_status==='under_minimum')
+  return {compact:'',detail:'90% held P/L error pending '+n+'/'+min+' distinct settled event returns.'};
+ if(row.roi_interval_status==='insufficient_gain_loss_variation')
+  return {compact:'',detail:'90% held P/L error unavailable until both gains and losses are observed.'};
+ if(row.roi_interval_status!=='available'||error===null)
+  return {compact:'',detail:'90% held P/L error unavailable for incomplete event evidence.'};
+ const low=Number(row.ci90_low_pct),high=Number(row.ci90_high_pct);
+ if(row.ci90_low_pct==null||row.ci90_high_pct==null||
+    !Number.isFinite(low)||!Number.isFinite(high)||low>high)
+  return {compact:'',detail:'90% held P/L interval unavailable; invalid bound evidence.'};
+ const estimated=Number(row.estimated_return_observations)||0;
+ return {compact:' · P/L 90% ±'+error.toFixed(2)+'pp',
+  detail:'90% held P/L interval '+low.toFixed(2)+'% to '+high.toFixed(2)+
+   '%; '+n+' distinct settled event returns ('+estimated+' estimated). '+
+   'Nominal exploratory interval; not adjusted for comparing many price/time cells.'};
+}
 export function favoriteSingleCellMarkup(sample,options={}){
  const star=favoriteBucketStarMarkup(options.starScope,'single','all','all',options.starredBuckets);
  const finitePercent=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
@@ -176,6 +197,18 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
  const matrix=(rows,label,scope)=>{
   const star=(price,time)=>favoriteBucketStarMarkup(scope,'detailed',price,time,source.starredBuckets);
   const cells=new Map();
+  // Do not derive an ROI confidence interval from pre-averaged client cells.
+  // Only one authoritative event-pooled backend cohort may supply it.
+  const backendRows=scope.startsWith('collector:')?
+   source.timedSummary?.rows?.[scope.slice('collector:'.length)]:null;
+  const backendEvidence=new Map();
+  for(const raw of Array.isArray(backendRows)?backendRows:[]){
+   const price=Number(raw.price);
+   if(!Number.isFinite(price)||!raw.horizon)continue;
+   const key=(Math.floor((price*100+1e-7)/5)*5)+'|'+raw.horizon;
+   if(!backendEvidence.has(key))backendEvidence.set(key,[]);
+   backendEvidence.get(key).push(raw);
+  }
   const aggregated=favoriteCategoryRows(rows,true);
   // Do not silently drop valid collected tiers that fall outside the strategy's
   // usual 70-95 cent bidding range. The per-market tables already show them.
@@ -219,10 +252,13 @@ export function favoriteCollectorOverviewMarkup(bots=[],open=new Set(),source={}
     const outcome=eventAccuracy(x.eventWins,observations);
     const pnl=averageReturn(x);
     const confidence=confidenceMarkup(x.eventWins,observations,x.purchased?x.cost/x.purchased:null);
+    const evidence=backendEvidence.get(low+'|'+h)||[];
+    const roi90=evidence.length===1&&Number(evidence[0].return_observations)===x.return_observations?
+      favoriteHeldROIEventInterval(evidence[0]):{compact:'',detail:''};
     const margin=winConfidence90(x.eventWins,observations,x.purchased?x.cost/x.purchased:null)?.margin;
     const signal=margin==null?'unknown':margin>0?'realized-positive':margin<0?'realized-negative':'neutral';
-    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · win margin '+confidence.margin+' · 90% win-rate error '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. Each event counts once per cohort, regardless of contract quantity.';
-    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'">'+star(bucket,h)+'<details><summary><strong>n='+e(observationCount(observations))+' · '+e(favoriteEvidenceTier(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L</small><small>Win margin '+e(confidence.margin)+' · win-rate error '+e(confidence.error)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
+    const detail=observationCount(observations)+' verified resolved event observations · '+outcome+' outcome win rate · '+pnl+' average P/L · win margin '+confidence.margin+' · 90% win-rate error '+confidence.error+' (CI '+confidence.interval+') · '+x.return_observations+' return observations. '+(roi90.detail?roi90.detail+' ':'')+'Each event counts once per cohort, regardless of contract quantity.';
+    return '<td class="'+(observations?'stat-observed':'stat-sparse')+' '+favoriteProfitClass(signal)+'">'+star(bucket,h)+'<details><summary><strong>n='+e(observationCount(observations))+' · '+e(favoriteEvidenceTier(observations))+'</strong><small>Outcome wins '+e(outcome)+'</small><small>'+e(pnl)+' avg P/L'+e(roi90.compact)+'</small><small>Win margin '+e(confidence.margin)+' · win-rate error '+e(confidence.error)+'</small>'+'</summary><p class="small">'+e(detail)+'</p></details></td>';
    }).join('')+'</tr>';
   }).join('');
   return windowNote+(unplaced?'<p class="small">Unclassified timing/price: '+e(observationCount(unplaced))+' resolved observations. See individual market research for source details.</p>':'')+'<div class="table-scroll"><table class="favorite-stat-matrix"><caption>'+e(label)+'</caption><thead><tr><th scope="col">Entry price</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -303,9 +339,10 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new
    if(!row||!(Number(row.events)>0))return '<td class="stat-empty">'+star(price,slot)+'<span>—</span></td>';
    const n=Number(row.events),wins=Number(row.event_wins),entry=Number(row.cost)/Number(row.contracts);
    const c=confidenceMarkup(wins,n,entry),ret=averageReturn(row);
+   const roi90=favoriteHeldROIEventInterval(row);
    const margin=winConfidence90(wins,n,entry)?.margin;
    const signal=margin==null?'unknown':margin>0?'realized-positive':margin<0?'realized-negative':'neutral';
-   return '<td class="stat-observed '+favoriteProfitClass(signal)+'">'+star(price,slot)+'<details><summary><strong>n='+e(String(n))+' · '+e(favoriteEvidenceTier(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Win margin '+e(c.margin)+'</small><small>Win-rate error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
+   return '<td class="stat-observed '+favoriteProfitClass(signal)+'">'+star(price,slot)+'<details><summary><strong>n='+e(String(n))+' · '+e(favoriteEvidenceTier(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+e(roi90.compact)+'</small><small>Win margin '+e(c.margin)+'</small><small>Win-rate error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+(roi90.detail?' '+e(roi90.detail):'')+'</p></details></td>';
   }).join('')+'</tr>').join('');
   const excluded=Number(coverage.excluded_legacy_observations)||0;
   // For daily weather, genuine event outcomes can precede usable entry-time

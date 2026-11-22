@@ -1,6 +1,6 @@
 """Three-by-three Favorites research, without inventing legacy entry timestamps."""
 from decimal import Decimal as D
-from .observation_returns import merge,summarize
+from .observation_returns import merge,summarize_regular_held_events
 
 PRICES=((D('.70'),D('.78'),'70–<78¢'),(D('.78'),D('.86'),'78–<86¢'),(D('.86'),D('.95'),'86–95¢'))
 TIME_INTERVALS={'<3m':(0,180),'3–5m':(180,300),'5–10m':(300,600),'10–15m':(600,900),
@@ -93,7 +93,7 @@ def summarize_wide(folder_bots,profiles,category_for):
                     price=str(PRICES[band][0]),band=PRICES[band][2],horizon=labels[slot],time_slot=slot,wide=True,
                     events=n,event_wins=wins,event_win_rate=100*wins/n if n else None,
                     contracts=str(n),cost=str(entry),closed=str(len(returns)),net=str(sum((D(v['net']) for v in returns.values()),D(0))),
-                    **summarize(returns)))
+                    **summarize_regular_held_events(returns)))
             return result
         output[category]=rows(groups)
         for bot_id,group in bot_groups.items():by_bot[bot_id]=dict(rows=rows(group),coverage=report)
