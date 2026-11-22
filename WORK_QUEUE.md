@@ -23,6 +23,13 @@ This file is the coordination source of truth for ChatGPT/Codex implementation c
 - Priority: actual event-level settled sample count, event-level win probability and calibration against market entry price, fee-aware hypothetical hold ROI, exact-only vs estimated-attribution sensitivity, nominal uncertainty/margin of error, and separate price/time research bucket evidence. Treat selection/multiple-comparisons and genuine overlapping underlying events carefully; do not add a date-diversity gate.
 - MT-029's completed date parsing/cluster telemetry may remain as a historical **optional diagnostic**, not a mandate, trading setting, readiness check, or justification to stall other Favorites work. Historical MT-029 observations remain factual, but its recommendation to collect >=20 dates is **superseded by this user clarification**. No need to rewrite or delete source data, or modify the current running system based solely on this clarification.
 
+### November 21, 2026 — Chat 02 orphaned-task and stale-PR audit (read only)
+- **User-confirmed active chats: only Chats 01, 02, 03, 04.** At snapshot, 35 MT tasks: 27 DONE, 7 IN PROGRESS, 1 BLOCKED. No existing task ownership is changed by this review.
+- **Needs owner reconciliation:** MT-019 (P0 Favorites history/backup and operator verification), MT-011 (U1 Favorites-only memory/resource efficiency), MT-030 (U1 broad Favorites throughput), all still attributed to unnamed prior ChatGPT workers. MT-030 may fit Chat 03 but must be explicitly claimed; MT-011 and MT-019 must not silently imply an active owner.
+- **Do not reclaim active numbered work:** MT-018 and MT-034 = Chat 01; MT-035 = Chat 03; MT-033 = Chat 04; Chat 02 handles read-only deployment/health. PR #340 and #341 have merged, but task DONE still requires owner-led deployment/runtime acceptance; PR #342 remains draft.
+- **Blocked/out of scope:** MT-017 remains blocked, but do not pursue unrelated Cloudflare work without evidence directly affecting regular Favorites. Old PRs #247, #157, #124, #125 need owner review for supersession, not automatic merge. Older other-strategy PRs stay paused.
+- **Full read-only audit:** [Unfinished tasks, owner reconciliation, legacy open PRs and issues](docs/audits/2026-11-21-money-tree-unfinished-task-audit.md). This snapshot is not an instruction to change ownership, run old scripts or drop records; obey the latest queue and explicit code claims.
+
 ## How implementation chats must use this file
 
 ### Numbered development chat IDs (user directive)
