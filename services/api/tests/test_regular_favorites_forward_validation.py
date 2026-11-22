@@ -75,7 +75,7 @@ class ForwardRegularFavoritesValidationTests(unittest.TestCase):
     def test_unknown_outcomes_and_incomplete_cost_never_count(self):
         rows = [_row('KXGOLD15M-26NOV231030', True, outcome_known=False),
                 _row('KXGOLD15M-26NOV231045', False)]
-        rows[1]['return_events'] = {}
+        rows[1]['return_events'] = {'KXGOLD15M-26NOV231045': {'cost': 'NaN', 'net': '-.70'}}
         cell = self.summarize(rows)[0]
         self.assertEqual(cell['resolved_events'], 1)
         self.assertEqual(cell['incomplete_settled_events'], 1)
