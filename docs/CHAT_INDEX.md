@@ -1,19 +1,37 @@
-# Money Tree — Numbered Chat Index
+# Money Tree — Chat Stream/Round Register
 
-The **authoritative chat-number and task-ownership register** is [WORK_QUEUE.md](../WORK_QUEUE.md) on `main`. This index mirrors it for convenient navigation. Chat numbers are separate from `MT-###` task IDs, GitHub PR numbers, and issue numbers. Every development conversation should suggest its number and title to the user; ChatGPT cannot automatically rename the sidebar conversation.
+**READ THIS FIRST when creating, continuing, or handing off a Money Tree conversation.** The repository's **authoritative scope and task-claim file** is [`main:WORK_QUEUE.md`](../WORK_QUEUE.md) and this [`main:docs/CHAT_INDEX.md`](./CHAT_INDEX.md) is the **stream/round identifier register**. Always fetch both files from the `main` branch of `princesspikachuu/kalshi-scanner-data` at the beginning of a new conversation, before accepting task ownership or editing code. The queue's **"Chat naming and handoff rule — STREAM.ROUND"** section is authoritative if these two files ever disagree. Work branches may be based on `build/google-auth-foundation`; naming and ownership still live on `main`.
 
-## Current chat register
+## Rule: `<stream>.<round>`, NOT a decimal number
 
-| Chat | Suggested ChatGPT sidebar title | Focus / ownership | Status |
+- **Stream** = one of the four user-designated parallel work lanes (`1`, `2`, `3`, `4`). **Round** = successive ChatGPT *conversation threads* within that lane, starting at `0`. Continue within one thread without advancing the round. Creating the next handoff conversation increments that lane's suffix.
+- **Current round:** `1.0`, `2.0`, `3.0`, `4.0`. **Next conversation in each lane:** `1.1`, `2.1`, `3.1`, `4.1`. Independent progress: one lane can move to `1.2` while the others remain at `2.0`, `3.0`, `4.0`.
+- **After nine rounds** suffixes continue `1.9 → 1.10 → 1.11 → 1.12` (same rule for 2–4). **Treat identifiers as exact text labels, never floating-point values.** `1.10` must never be collapsed to `1.1`.
+- **Suggested ChatGPT title:** `Money Tree — Chat 1.0: Discovery Optimization`, `Money Tree — Chat 2.0: Deployment Verification`, and so on. Every opening substantive response and handoff must give its exact ID/title. The assistant cannot automatically rename ChatGPT sidebar chats.
+- **Legacy aliases:** Past references to `Chat 01`, `Chat 02`, `Chat 03`, `Chat 04` denote round-zero Chats `1.0`, `2.0`, `3.0`, `4.0`; do **not** rewrite historic citations, merge history, or task records just to relabel them. Chat IDs never equal `MT-###` IDs or PR/issue numbers.
+
+## Current active conversation register
+
+| ID | Suggested title | Existing focus / claims | State |
 | --- | --- | --- | --- |
-| **01** | **Money Tree — Chat 01: Discovery Optimization** | PR #314 discovery/pagination follow-up; existing implementation owner | Assigned to separate conversation |
-| **02** | **Money Tree — Chat 02: Deployment Verification** | **This conversation**: verify Render/GitHub releases, deployed revisions, health, and paper-only safeguards. Read-only coordination; do not take MT-018 or MT-030 application-code ownership | Active, Nov 21, 2026 Pacific |
-| **03** | **Money Tree — Chat 03: Trading Throughput** | Low-frequency / finance and regular Favorites throughput follow-up; use shared task claims | Assigned to separate conversation |
-| **04** | **Money Tree — Chat 04: Forward-only Favorites Validation** | MT-033 forward-only frozen-cohort profitability validation; PR #340 in development | Assigned to separate conversation |
+| **1.0** | **Money Tree — Chat 1.0: Discovery Optimization** | Discovery/pagination, MT-018 and MT-034; observe GitHub active PRs | **Active** |
+| **2.0** | **Money Tree — Chat 2.0: Deployment Verification** | **This conversation**: deployment, memory, and runtime safety verification; handoffs without taking other owners' code | **Active** |
+| **3.0** | **Money Tree — Chat 3.0: Trading Throughput** | Finance-hourly/MT-035; broad MT-030 requires an explicit ownership reconciliation | **Active** |
+| **4.0** | **Money Tree — Chat 4.0: Profitability Validation** | Regular Favorites forward-only validation (MT-033) | **Active** |
 
-**Next currently unassigned number: 05.** Always re-read the latest `main:WORK_QUEUE.md` before claiming a new chat ID. Keep existing numbers stable, and correct accidental duplicate labels rather than starting duplicate implementation.
+**Next successor conversation IDs (reserved as *planned*, not yet active or claimed): `1.1`, `2.1`, `3.1`, `4.1`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
-## Chat 02 — Verified deployment and health handoff
+## New successor thread registration and task ownership
+
+1. Fetch `main:WORK_QUEUE.md` and this `main:docs/CHAT_INDEX.md` to learn the exact current stream/round. Identify the predecessor stream and its most recent registered round. Read that predecessor's task handoff and live PR state before making claims.
+2. When opening a **new** thread in an existing stream, select the next unused **literal** `stream.round` string; append a registration row with a short descriptive topic, predecessor ID and actual status. Use the latest file SHA to atomically update this index; on a collision, refresh and pick the next available suffix rather than duplicating a label.
+3. Have the predecessor (or, if unavailable, the successor after verifying status) update the task claim in `main:WORK_QUEUE.md`, including old/new owner, current branch/PR/CI/deployment, blockers, and next safe action. Merely taking a chat number is **not** task ownership or permission to take another lane's source files.
+4. Do not advance a thread's suffix just because the user says "continue" inside it; the suffix advances only when a **new ChatGPT conversation** in that same lane is started. Preserve four streams unless the user explicitly expands them.
+5. Maintain **regular High-Probability Favorites only** work, including essential common gateway/Cloudflare/Render infrastructure; keep Statistics-Backed Favorites and other strategies paused and LIVE real orders disabled.
+
+---
+
+## Chat 2.0 — Historical deployment and health handoff (snapshot)
 
 **Checked:** 2026-11-22 approximately 02:45 UTC (Saturday, Nov 21 Pacific). These are latest observed deployment and sampled health facts, not a guarantee of future uptime.
 
