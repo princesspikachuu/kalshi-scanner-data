@@ -33,7 +33,7 @@ def daily_day_end(m):
 
 def entry_allowed(m,now):
     end=daily_day_end(m)
-    return end is not None and end-7200<=now<min(end,float(m['close']))-60
+    return end is not None and end-86400<=now<min(end,float(m['close']))-60
 
 def entry_end(m):
     end=daily_day_end(m)
