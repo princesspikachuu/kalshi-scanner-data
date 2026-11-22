@@ -104,12 +104,13 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         ready=dict(ticker='KXUSDCADAH-ready',event_ticker='READY',status='active',
             open_time=date(now-100),close_time=date(now+1800),
             yes_bid_dollars='.81',no_bid_dollars='.16')
-        cursors=[]
+        cursors=[];bounds_seen=[]
         def call(method,path,query=None):
             if path.startswith('/series/'):return dict(series=dict(frequency='hourly'))
             self.assertEqual(path,'/markets')
             self.assertEqual(query['series_ticker'],'KXUSDCADAH')
             cursor=query.get('cursor','');cursors.append(cursor)
+            bounds_seen.append((query['min_close_ts'],query['max_close_ts']))
             if not cursor:return dict(markets=[future],cursor='page-two')
             self.assertEqual(cursor,'page-two')
             return dict(markets=[ready],cursor='')
@@ -123,7 +124,9 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.hourly.time.time',return_value=now+16):
             await hourly_once(host)
         self.assertEqual(cursors,['','page-two'])
+        self.assertEqual(bounds_seen[0],bounds_seen[1])  # Cursor query filters remain fixed.
         self.assertEqual(suite.hourly_pages['KXUSDCADAH'],'')
+        self.assertNotIn('KXUSDCADAH',suite.hourly_page_bounds)
         self.assertEqual(suite.hourly_scan['by_category']['finance']['subscribed'],1)
         host.put.assert_awaited_once()
         self.assertEqual(host.put.await_args.args[1]['market']['ticker'],'KXUSDCADAH-ready')
@@ -146,11 +149,12 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         ready=dict(ticker=series+'-ready',event_ticker='READY',status='active',
             open_time=date(now-100),close_time=date(now+1800),
             yes_bid_dollars='.81',no_bid_dollars='.16')
-        cursors=[]
+        cursors=[];bounds_seen=[]
         def call(method,path,query=None):
             self.assertEqual(path,'/markets')
             self.assertEqual(query['series_ticker'],series)
             cursor=query.get('cursor','');cursors.append(cursor)
+            bounds_seen.append((query['min_close_ts'],query['max_close_ts']))
             if not cursor:return dict(markets=[future],cursor='page-two')
             self.assertEqual(cursor,'page-two')
             return dict(markets=[ready],cursor='')
@@ -165,7 +169,9 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.weather.time.time',return_value=now+16):
             await weather_once(host)
         self.assertEqual(cursors,['','page-two'])
+        self.assertEqual(bounds_seen[0],bounds_seen[1])  # Cursor query filters remain fixed.
         self.assertEqual(suite.weather_pages[series],'')
+        self.assertNotIn(series,suite.weather_page_bounds)
         host.put.assert_awaited_once()
         self.assertEqual(host.put.await_args.args[1]['market']['ticker'],series+'-ready')
 
