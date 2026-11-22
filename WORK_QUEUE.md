@@ -2125,4 +2125,6 @@ Calculate and display **90% event-level held-return uncertainty** for populated 
 - Run exact PR-head GitHub API/PostgreSQL checks, safely merge and verify API telemetry when tests pass. Other task owners retain MT-019 settlement, MT-030 throughput and MT-011 resources.
 
 ### Completion notes
-- In progress; do not report new evidence or deploy status until independently verified.
+- **Draft PR [#340](https://github.com/princesspikachuu/kalshi-scanner-data/pull/340)** on branch `feat/mt033-forward-only-favorites-validation-20261121`, head `c039769cd758fb51d0cde8ab72b4379929000167`. Read-only new `favorite_forward_validation.py`, once-per-minute API report in `services/api/shadow.py`, seven deterministic regression tests in `services/api/tests/test_regular_favorites_forward_validation.py`.
+- Strict future venue event **label** after 2026-11-22, frozen four Nov 21 research coordinates, deduped event-level held ROI; never treat the label as verified original fill/settlement timestamp. No calendar-day cluster requirement, no trading, other portfolio, SQL/R2, settlement, history or risk changes.
+- Full hosted API/PostgreSQL PR-head CI [run 44977398195](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44977398195) started and is **pending** at this checkpoint. PR remains draft and **must not merge/deploy without exact-head passing CI and final review**. Further work should update this status rather than claiming completion.
