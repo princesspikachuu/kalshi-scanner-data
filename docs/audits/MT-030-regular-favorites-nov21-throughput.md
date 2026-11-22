@@ -66,3 +66,23 @@ Selected `paper_monitoring_capacity` measurements had admission on, backlog appr
 - `paper_strategy_health` remained **75 regular Favorites bots, 0 Statistics-Backed bots, all other strategies paused, `real_orders_enabled=false`**. Worker feed reported `ready`, four fresh strategy books, low input backlog and available admission shortly after startup. Cumulative `favorites_collection_quality.unique_verified_outcomes` remained **4,637** before and after handoff; this verifies preserved aggregate observed history, **not** an independent byte-for-byte R2/SQL restore.
 - [MT-018 PR #335](https://github.com/princesspikachuu/kalshi-scanner-data/pull/335) remains **draft and unmerged** while its exact-head full suite runs (at last check head `ac414bf6ea6b73865a436d29dbb6110aa454e881`); the 15-minute discovery defect is therefore **not yet repaired in the live worker**. Do not claim a throughput improvement based on this diagnostics-only release.
 - Next: after valid 15-minute discovery is merged/deployed, measure market-type availability, independent *first-filled events*, held-to-authoritative-settlement event outcomes and the fixed cancellation-cause breakdown across nonoverlapping windows. Maintain read-only scope, risk/fee/finality protection and no LIVE orders.
+
+
+## Post-deployment maker cancellation evidence — November 22 02:13 UTC
+
+The verified post-PR #336 worker emitted a five-minute **non-disjoint** `favorites_quote_lifecycle` sample at **2026-11-22 02:13:34 UTC / November 21 18:13:34 PST**:
+
+| Metric | Count |
+|---|---:|
+| Submitted maker orders | 7 |
+| Independently attributed submitted events | 4 |
+| First-filled maker orders | 2 |
+| First-filled independent events | 2 |
+| Canceled without fill | 2 |
+| Currently open orders | 3 |
+
+- Both confirmed unfilled cancellations were tagged `quote_unavailable`, not `same_bucket_reprice`, `crossed_quote` or `fee_guard`; both rested at least 120 seconds, median 143.14 seconds.
+- All observed orders in this window were **hourly weather** (regular Favorites portfolio only); the full case remains weather-specific, not evidence of overall market/15m cancellations.
+- Observer had `observer_errors_total=0`. This sample is useful for per-cancellation cause attribution but its seven submitted bids and two first fills are **NOT** a daily success rate or independent market-win count; first fill is distinct from eventual venue-confirmed settlement.
+- During that window the separate trading diagnostics showed **75 regular Favorites bots, zero Statistics-Backed, $5,439.93 available virtual cash**, at most eight current active/fresh markets, with 35 lots (~33.09 contracts) in nine expired markets still awaiting official recorded settlement. Latest processing capacity reported admission open, zero backlog, memory under 40% at that moment, and real-money orders disabled. Do not force settlements.
+- At the same checkpoint **both exact-head PR #335 GitHub Actions runs** (full [44974770656](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44974770656) and focused [44974770666](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44974770666)) **passed** on `ac414bf6ea6b73865a436d29dbb6110aa454e881`, but the PR remains **draft/unmerged** and therefore **not deployed**. MT-018 has exclusive scanner-fix ownership. Do not claim restored 15m throughput until merged and proved live.
