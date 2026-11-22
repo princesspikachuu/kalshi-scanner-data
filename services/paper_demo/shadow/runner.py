@@ -170,17 +170,10 @@ class ForwardRun:
         if not hasattr(self,'discovery_retry_at'):self.discovery_retry_at={}
         if not hasattr(self,'known_active'):self.known_active=set(self.selected)
         now=time.time()
-        # The disabled legacy portfolio must not strand an enabled Favorites
-        # collector behind settlement of an expired, risk-free *legacy* ticker.
-        # Keep the full old market/history; only its discovery selection moves.
-        # Legacy lots/resting orders retain their selection and settlement poll.
+        # Keep legacy selections independently until *authoritative* settlement,
+        # even when Convexity is paused. Favorites-only contracts are stored in
+        # its separate paper portfolio and never create idle legacy records.
         for series,ticker in list(self.selected.items()):
-            prior=self.engine.markets.get(ticker)
-            if (prior and prior.get('close',float('inf'))<=now and
-                    self.favorites_only_fifteen_discovery(series) and
-                    not self.legacy_ticker_needed(ticker)):
-                self.selected.pop(series,None)
-                continue
             try:
                 if await self.settlement_observed(ticker):
                     market=(await self.api.fetch('/markets/'+ticker))['market']
@@ -197,6 +190,15 @@ class ForwardRun:
         # Standalone replay/forward runs use the same scheduler in memory.
         wake_store=getattr(self,'experiments',self)
         if not hasattr(self,'discovery_postwake_until'):self.discovery_postwake_until={}
+        if not hasattr(self,'favorites_15m_pending'):self.favorites_15m_pending={}
+        # Already-accepted Favorites markets survive restarts in the experiment
+        # checkpoint. The small in-flight cache only prevents duplicate provider
+        # reads while a queued market awaits the serialized consumer.
+        portfolios=getattr(getattr(self,'experiments',None),'portfolios',None)
+        favorite_portfolio=portfolios.get('favorites') if isinstance(portfolios,dict) else None
+        favorite_markets=favorite_portfolio[0].markets if favorite_portfolio else {}
+        active_favorite_series={t.split('-')[0] for t,m in favorite_markets.items()
+            if m.get('close',0)>now and not m.get('paid') and not m.get('entry_parked')}
         wanted={};recent_wakes=set()
         for p in self.profiles:
             series=p['series']
@@ -207,7 +209,11 @@ class ForwardRun:
                 self.discovery_postwake_until.pop(series,None)
                 remember(wake_store,'fifteen:'+series,None,now)
                 continue
-            if series in self.selected:continue
+            if self.favorites_only_fifteen_discovery(series):
+                queued=self.favorites_15m_pending.get(series)
+                if series in active_favorite_series or queued and now-queued[1]<30:continue
+                self.favorites_15m_pending.pop(series,None)
+            elif series in self.selected:continue
             key='fifteen:'+series
             session=session_wake(series,now)
             if session is not None:
@@ -250,15 +256,18 @@ class ForwardRun:
         for series,profile in wanted.items():
             # Bot controls may change while the shared listing is in flight.
             if not self.legacy_discovery_required(series):continue
+            only_favorites=self.favorites_only_fifteen_discovery(series)
             try:
+                owned=favorite_markets if only_favorites else self.engine.markets
                 candidates=[m for m in rows if isinstance(m,dict) and m.get('ticker','').startswith(series+'-') and
                     m.get('status')=='active' and ts(m['open_time'])<=now and
-                    0<ts(m['close_time'])-now<=900 and m['ticker'] not in self.engine.markets]
+                    0<ts(m['close_time'])-now<=900 and m['ticker'] not in owned]
                 if not candidates:
                     # During the minute after a known opening, a delayed
                     # venue listing must not cause us to sleep through the
                     # current 15-minute opportunity.
-                    most_recent_close=max((m.get('close',0) for t,m in self.engine.markets.items()
+                    recent_markets=favorite_markets if only_favorites else self.engine.markets
+                    most_recent_close=max((m.get('close',0) for t,m in recent_markets.items()
                         if t.startswith(series+'-') and m.get('close',0)<=now),default=0)
                     near_roll=(series in self.known_active and 0<=now-most_recent_close<60)
                     if series in recent_wakes or near_roll:
@@ -316,7 +325,7 @@ class ForwardRun:
                 # Favorites-only discovery was formerly disabled with legacy
                 # Convexity. Do not let restoring it bypass measured RSS/queue,
                 # request cooldown, or existing per-market opportunity guards.
-                if self.favorites_only_fifteen_discovery(series):
+                if only_favorites:
                     suite=self.experiments
                     if not suite.extra_capacity([market['ticker']],now):
                         self.discovery_retry_at[series]=now+5
@@ -334,10 +343,20 @@ class ForwardRun:
                     open=ts(market['open_time']),event_ticker=market['event_ticker'],
                     bot_id=profile['id'],bot_name=profile['name'],strategy_version=profile['version'],
                     fee_type=metadata['fee_type'],fee_multiplier=str(metadata['fee_multiplier']))
-                self.selected[series]=market['ticker'];self.known_active.add(series)
+                payload=dict(market=normalized,taker_multiplier=str(fee.taker_multiplier),
+                    maker_multiplier=str(fee.maker_multiplier))
+                if only_favorites:
+                    # The consumer routes this into the Favorites experiment,
+                    # not the inactive legacy engine/checkpoint. Its held lots
+                    # continue through independent authoritative REST recovery.
+                    payload['favorites_15m_only']=True
+                    await self.put('market',payload)
+                    self.favorites_15m_pending[series]=(market['ticker'],now)
+                else:
+                    self.selected[series]=market['ticker']
+                    await self.put('market',payload)
+                self.known_active.add(series)
                 self.discovery_retry_at.pop(series,None)
-                await self.put('market',dict(market=normalized,taker_multiplier=str(fee.taker_multiplier),
-                    maker_multiplier=str(fee.maker_multiplier)))
             except asyncio.CancelledError:raise
             except Exception as exc:
                 self.discovery_retry_at[series]=now+2
@@ -371,7 +390,11 @@ class ForwardRun:
             active={t for e,f,_ in suite.portfolios.values() for t,m in e.markets.items()
                     if m['close']>now and not m.get('paid') and not m.get('entry_parked')
                     and suite.ticker_feed_needed(e,f,t)}
-            wanted=set(suite.extra)|set(self.selected.values())
+            # Active 15m Favorites have their own verified book, including
+            # after a restart; they no longer need an inactive legacy ticker
+            # in self.selected just to retain their subscription.
+            wanted=set(suite.extra)|set(self.selected.values())|{
+                t for t in active if t.split('-')[0].endswith('15M')}
         else:
             active={t for e,_,_ in suite.portfolios.values() for t,m in e.markets.items()
                     if m['close']>now and not m.get('paid') and not m.get('entry_parked')}

@@ -14,6 +14,7 @@ from services.api.tests.test_strategy_scope import ScopeTests
 from services.api.tests.test_strategy_folders import QuietAudit, profile
 from services.paper_demo.shadow.core import Engine, FeePolicy, StrategyFleet
 from services.paper_demo.shadow.runner import ForwardRun
+from services.paper_demo.shadow.host import legacy_market_input_allowed
 from services.paper_demo.shadow.schedules import EASTERN
 
 
@@ -47,14 +48,15 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
                     open_time=iso(now-30),close_time=iso(now+750))
         run.api=SimpleNamespace(fetch=AsyncMock(return_value={'markets':[listed]}))
         run.market_metadata=AsyncMock(return_value=(
-            {'fee_type':'linear','fee_multiplier':0}, FeePolicy(D(1),D(0))))
+            {'fee_type':'quadratic','fee_multiplier':1}, FeePolicy(D(1),D(0))))
         run.verified_fees=Mock()
         run.verified_fees.zero_maker_fees_until.return_value=True
-        run.verified_fees.schedule.return_value=('linear',D(1))
+        run.verified_fees.schedule.return_value=('quadratic',D(1))
         async def enqueue(source,payload):
-            # Mirror the serialized hosted consumer: legacy engine receives the
-            # public market but only the enabled Favorites portfolio can trade.
-            run.engine.handle(source,payload,now)
+            # Follow the same validated dispatch as HostedRun.consume: the
+            # inactive legacy engine must NOT receive Favorites-only markets.
+            if legacy_market_input_allowed(source,payload):
+                run.engine.handle(source,payload,now)
             suite.handle(source,payload,now)
         run.put=AsyncMock(side_effect=enqueue)
         return run,suite,rows,listed,now
@@ -67,7 +69,10 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
             await run.discover_once()
         t=listed['ticker']
-        self.assertEqual(run.selected,{'KXBTC15M':t})
+        self.assertEqual(run.selected,{})
+        self.assertNotIn(t,run.engine.markets,'do not inflate inactive legacy checkpoint')
+        self.assertEqual(run.favorites_15m_pending['KXBTC15M'][0],t)
+        self.assertTrue(run.put.await_args.args[1]['favorites_15m_only'])
         self.assertIn(t,suite.portfolios['favorites'][0].markets)
         self.assertNotIn(t,suite.portfolios['sequential'][0].markets)
         self.assertIn(t,run.subscription_tickers(now))
@@ -113,6 +118,8 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
             await run.discover_once()
         self.assertEqual(run.selected['KXBTC15M'],listed['ticker'])
+        self.assertIn(listed['ticker'],run.engine.markets)
+        self.assertFalse(run.put.await_args.args[1].get('favorites_15m_only',False))
         self.assertNotIn(listed['ticker'],suite.portfolios['favorites'][0].markets)
         self.assertTrue(run.strategy.bots['KXBTC15M'].enabled)
         run.suspend_idle_feeds=False
@@ -148,7 +155,10 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
             await run.discover_once()
         self.assertIn(previous,run.engine.markets,'do not delete historical legacy market')
-        self.assertEqual(run.selected['KXBTC15M'],listed['ticker'])
+        self.assertEqual(run.selected['KXBTC15M'],previous,
+                         'keep verifying legacy settlement until venue final')
+        run.settlement_observed.assert_awaited_once_with(previous)
+        self.assertNotIn(listed['ticker'],run.engine.markets)
         self.assertIn(listed['ticker'],suite.portfolios['favorites'][0].markets)
 
     async def test_expired_legacy_with_risk_keeps_settlement_gate(self):
@@ -163,7 +173,44 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
         run.settlement_observed.assert_awaited_once_with(previous)
         self.assertEqual(run.selected['KXBTC15M'],previous)
         self.assertIn(previous,run.engine.markets)
+        self.assertIn(listed['ticker'],suite.portfolios['favorites'][0].markets)
+        self.assertNotIn(listed['ticker'],run.engine.markets)
+        self.assertTrue(run.put.await_args.args[1]['favorites_15m_only'])
+
+    async def test_restored_favorites_market_resubscribes_without_legacy_selection(self):
+        run,suite,rows,listed,now=self.fixture()
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        ticker=listed['ticker']
+        self.assertIn(ticker,run.subscription_tickers(now))
+        # After a worker restart only the experiment checkpoint survives.
+        # It must still own the book feed and must not re-read the same venue.
+        del run.favorites_15m_pending
+        run.api.fetch.reset_mock()
+        run.put.reset_mock()
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now+10):
+            await run.discover_once()
+        run.api.fetch.assert_not_awaited()
         run.put.assert_not_awaited()
+        self.assertIn(ticker,run.subscription_tickers(now+10))
+
+    async def test_next_favorites_15m_roll_does_not_erase_unsettled_prior_market(self):
+        run,suite,rows,first,now=self.fixture()
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=now):
+            await run.discover_once()
+        previous=first['ticker']
+        new_time=now+751
+        current=dict(first,ticker='KXBTC15M-26NOV21-NEXT',event_ticker='BTC-NEXT',
+                     open_time=iso(new_time-10),close_time=iso(new_time+750))
+        run.api.fetch.return_value={'markets':[current]}
+        with patch('services.paper_demo.shadow.runner.time.time',return_value=new_time):
+            await run.discover_once()
+        e=suite.portfolios['favorites'][0]
+        self.assertIn(previous,e.markets,'prior outcome retained until verified')
+        self.assertIn(current['ticker'],e.markets)
+        self.assertNotIn(previous,run.engine.markets)
+        self.assertNotIn(current['ticker'],run.engine.markets)
+        self.assertEqual(run.selected,{})
 
     async def test_cash_index_weekend_remains_asleep_until_local_session(self):
         run,suite,_,_,now=self.fixture()
@@ -185,3 +232,14 @@ class FavoritesIndependent15mDiscovery(unittest.IsolatedAsyncioTestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+class FavoritesRoutingValidation(unittest.TestCase):
+    def test_only_real_15m_favorites_marker_skips_legacy_engine(self):
+        self.assertTrue(legacy_market_input_allowed('market',{'market':{'ticker':'KXBTC15M-ONE'}}))
+        self.assertTrue(legacy_market_input_allowed('hourly_market',{'favorites_15m_only':True}))
+        self.assertFalse(legacy_market_input_allowed('market',dict(
+            favorites_15m_only=True,market={'ticker':'KXBTC15M-ONE'})))
+        with self.assertRaises(ValueError):
+            legacy_market_input_allowed('market',dict(
+                favorites_15m_only=True,market={'ticker':'KXBTCD-HOURLY'}))

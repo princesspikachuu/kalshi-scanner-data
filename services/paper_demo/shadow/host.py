@@ -49,6 +49,19 @@ def book_conflation_interval(experiments):
     # Public trade prints remain on a separate real-time subscription.
     return 1000
 
+def legacy_market_input_allowed(source,payload):
+    """An enabled Favorites 15m collector needs public markets, not a legacy wallet.
+
+    Reject accidental use of this internal routing tag on any other family.
+    The experiment consumer still validates live strategy controls and fees.
+    """
+    if source!='market' or payload.get('favorites_15m_only') is not True:return True
+    ticker=payload.get('market',{}).get('ticker')
+    if not isinstance(ticker,str) or not ticker.split('-',1)[0].endswith('15M'):
+        raise ValueError('Favorites-only market route requires a 15-minute ticker')
+    return False
+
+
 class NoCapture:
     def write(self,data):pass
     def flush(self):pass
@@ -497,7 +510,8 @@ class HostedRun(ForwardRun):
                         if received<last-.01:source,payload='gap',{'reason':'local clock regressed'}
                         last=now
                         try:
-                            legacy_input=self.legacy_input_needed(source,payload)
+                            legacy_input=(legacy_market_input_allowed(source,payload) and
+                                self.legacy_input_needed(source,payload))
                             if legacy_input:payload=self.prepare_fees(source,payload,now)
                             if source=='rest_settlement_confirmed':
                                 if not self.allow_rest_settlement_recovery:raise ValueError('REST settlement recovery disabled')
