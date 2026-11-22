@@ -23,7 +23,7 @@
 | **3.1** | Trading Throughput | MT-035 handed off to 3.2 after prepared successor check-in | **Succeeded by 3.2 — 2026-11-22 UTC** |
 | **3.2** | Trading Throughput (topic metadata only) | ACTIVE successor to 3.1; MT-035 regular Favorites finance-hourly read-only weekday evidence, Issue #339; scanner remains stream 1 | **ACTIVE — registered 2026-11-22 UTC** |
 | **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
-| **4.1** | Profitability Validation | MT-033 DONE; MT-036 PR #349/#353 both merged, exact PR CI and staging assets verified; postmerge API and Render runtime/per-fill fee ledger verification pending; exclusive 4.1 claim | **Active — registered 2026-11-22 UTC** |
+| **4.1** | Profitability Validation | MT-036 #349/#353 merged; GitHub CI and staging assets PASS; verified 75 regular Favorites running and 230 recent paper BUY fill rows all with $0 recorded fees; API still LIVE on pre-#349 c1c44dc6 (manual deployment authorization required); no SQL read possible without unsafe allowlist change; 4.1 retains MT-036 | **Active — registered 2026-11-22 UTC** |
 
 **Prepared successors:** `1.2` remains **PREPARED / NOT ACTIVE**. `3.2` activated after `continue` and succeeds `3.1`; its next successor ID is `3.3`. **Other planned successors:** `2.2`, `4.2`. **After 1.2 activates, its next ID will be `1.3`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
