@@ -14,6 +14,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -91,7 +92,22 @@ query WorkerCpuAuditBasic(
 # An older public Cloudflare tutorial declares time variables with the
 # provider-specific "string" scalar; newer examples use Time. This is the
 # last compatibility probe if the strict Time query fails validation.
-GRAPHQL_QUERY_MINIMAL_STRING = GRAPHQL_QUERY_MINIMAL.replace("Time!", "string!")
+GRAPHQL_QUERY_MINIMAL_STRING = (GRAPHQL_QUERY_MINIMAL
+    .replace("Time!", "string")
+    .replace("string!", "string"))
+
+# Zero-data, no-PII read-only probes. The first checks the token endpoint, the
+# second checks that this token may see this account, and the third checks the
+# Workers aggregate dataset. Only fixed result labels are ever printed.
+GRAPHQL_PREFLIGHT_VIEWER = "query MT017Viewer { viewer { __typename } }"
+GRAPHQL_PREFLIGHT_ACCOUNT = """
+query MT017Account($accountTag: string) {
+  viewer {
+    accounts(filter: { accountTag: $accountTag }) { __typename }
+  }
+}
+"""
+
 
 
 class AnalyticsUnavailable(RuntimeError):
@@ -113,21 +129,42 @@ def select_window(period: str, now: datetime) -> tuple[str, str]:
     return format_utc(start), format_utc(end)
 
 
-def _read_analytics_query(account: str, token: str, worker: str,
-                          start: str, end: str, query: str) -> dict:
-    """Read one aggregate GraphQL query; never expose provider response text."""
-    payload = {
-        "query": query,
-        "variables": {
-            "accountTag": account,
-            "datetimeStart": start,
-            "datetimeEnd": end,
-            "scriptName": worker,
-        },
-    }
+def _error_category(errors: object) -> str:
+    """Classify provider errors against a CLOSED vocabulary for public logs.
+
+    Never echo raw error messages, paths, extension values, or account fields.
+    """
+    if not isinstance(errors, list):
+        return "unknown"
+    words = " ".join(
+        str(item.get("message", "")).lower()[:2000]
+        for item in errors if isinstance(item, dict)
+    )
+    if any(term in words for term in (
+        "cannot request data older than", "query time range is too large",
+        "time range exceeds", "maximum time range",
+    )):
+        return "window_not_supported"
+    if any(term in words for term in ("unknown field", "cannot query field", "unknown argument")):
+        return "unsupported_field"
+    if any(term in words for term in ("unknown type", "expected type", "variable", "validation")):
+        return "schema_or_variable_type"
+    if "error parsing args" in words or "syntax" in words:
+        return "query_parse_failure"
+    if any(term in words for term in ("not authorized", "unauthorized", "not permitted", "access denied")):
+        return "account_access_denied"
+    if any(term in words for term in ("rate limit", "budget depleted")):
+        return "rate_limited"
+    if "dataset" in words and any(x in words for x in ("not found", "not allowed", "unavailable")):
+        return "dataset_unavailable"
+    return "unclassified"
+
+
+def _post_graphql(token: str, query: str, variables: dict) -> dict:
+    """POST only to the fixed read-only GraphQL endpoint; sanitize all errors."""
     request = urllib.request.Request(
         GRAPHQL_URL,
-        data=json.dumps(payload).encode("utf-8"),
+        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
         headers={
             "Authorization": "Bearer " + token,
             "Accept": "application/json",
@@ -139,25 +176,72 @@ def _read_analytics_query(account: str, token: str, worker: str,
         with urllib.request.urlopen(request, timeout=30) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
-        # Do not print body, URL, request headers, account ID or provider
-        # exception. HTTP 400 may mean an invalid GraphQL schema selection.
-        if exc.code == 400:
-            raise AnalyticsUnavailable("Cloudflare GraphQL HTTP 400 (query validation)") from None
-        raise AnalyticsUnavailable("Cloudflare Analytics returned HTTP " + str(exc.code)) from None
+        # A GitHub Actions runner in this PUBLIC repo may receive messages
+        # including private IDs. Read for classification, never echo content.
+        try:
+            response = json.loads(exc.read(16384))
+            category = _error_category(response.get("errors") if isinstance(response, dict) else None)
+        except (ValueError, UnicodeDecodeError, OSError):
+            category = "non_json_or_unreadable"
+        # Even provider error objects and HTTP reason phrases remain private.
+        code = exc.code if exc.code in (400, 401, 403, 429, 500, 503) else 0
+        raise AnalyticsUnavailable("Cloudflare GraphQL HTTP " + str(code)
+                                   + " (" + category + ")") from None
     except (urllib.error.URLError, TimeoutError):
         raise AnalyticsUnavailable("Cloudflare Analytics network request unavailable") from None
     except (ValueError, UnicodeDecodeError):
         raise AnalyticsUnavailable("Cloudflare Analytics returned invalid JSON") from None
 
-    if not isinstance(result, dict) or result.get("errors"):
-        # Same constant regardless of the error body. Logs are PUBLIC.
-        raise AnalyticsUnavailable(
-            "Cloudflare GraphQL query failed; verify Account Analytics Read permission and dataset access"
-        )
+    if not isinstance(result, dict):
+        raise AnalyticsUnavailable("Cloudflare GraphQL invalid response")
+    if result.get("errors"):
+        raise AnalyticsUnavailable("Cloudflare GraphQL response error ("
+                                   + _error_category(result.get("errors")) + ")")
+    return result
+
+
+def _read_analytics_query(account: str, token: str, worker: str,
+                          start: str, end: str, query: str) -> dict:
+    result = _post_graphql(token, query, {
+        "accountTag": account,
+        "datetimeStart": start,
+        "datetimeEnd": end,
+        "scriptName": worker,
+    })
     accounts = ((result.get("data") or {}).get("viewer") or {}).get("accounts")
     if not isinstance(accounts, list) or len(accounts) != 1:
         raise AnalyticsUnavailable("No readable Cloudflare analytics account returned")
     return accounts[0]
+
+
+def safe_preflight(account: str, token: str, worker: str, start: str, end: str) -> dict:
+    """Read-only connection checks. Returned values use fixed safe labels."""
+    if re.fullmatch(r"[0-9a-fA-F]{32}", account) is None:
+        return {"stage": "account_id", "result": "not_32_hex_characters"}
+
+    probes = (
+        ("viewer", GRAPHQL_PREFLIGHT_VIEWER, {}),
+        ("account", GRAPHQL_PREFLIGHT_ACCOUNT, {"accountTag": account}),
+        ("dataset", GRAPHQL_QUERY_MINIMAL_STRING, {
+            "accountTag": account, "datetimeStart": start,
+            "datetimeEnd": end, "scriptName": worker,
+        }),
+    )
+    for stage, query, vars_ in probes:
+        try:
+            response = _post_graphql(token, query, vars_)
+        except AnalyticsUnavailable as exc:
+            # _post_graphql errors are sanitized before reaching this handler.
+            return {"stage": stage, "result": "failed",
+                    "category": str(exc)}
+        if stage == "viewer" and not isinstance((response.get("data") or {}).get("viewer"), dict):
+            return {"stage": stage, "result": "no_viewer"}
+        if stage in ("account", "dataset"):
+            accounts = ((response.get("data") or {}).get("viewer") or {}).get("accounts")
+            if not isinstance(accounts, list) or len(accounts) != 1:
+                return {"stage": stage, "result": "account_not_readable"}
+    return {"stage": "dataset", "result": "valid"}
+
 
 
 def read_analytics(account: str, token: str, worker: str, start: str, end: str) -> dict:
@@ -241,6 +325,11 @@ def main() -> int:
         ]
     except AnalyticsUnavailable as exc:
         print("Cloudflare audit unavailable: " + str(exc), file=sys.stderr)
+        # A second blind retry is not useful. Identify the failure boundary
+        # with fixed-label probes, NEVER printing provider error objects.
+        diagnostic = safe_preflight(account, token, DEFAULT_WORKERS[0], start, end)
+        print("MT017_SAFE_PREFLIGHT " + json.dumps(diagnostic, sort_keys=True),
+              file=sys.stderr)
         return 1
 
     print("MT017_CLOUDFLARE_CPU_SUMMARY " + json.dumps({
