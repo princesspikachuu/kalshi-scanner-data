@@ -128,23 +128,59 @@ class ForwardRun:
         await self.put('metadata_retry',dict(scope=scope,ticker=None if rate_limited else ticker,
             series=series,reason=reason,status=status,code=code or type(exc).__name__))
 
-    def legacy_discovery_required(self,series):
-        """Only active hosted legacy bots may discover additional contracts.
+    def favorites_fifteen_discovery_enabled(self,series):
+        """The regular Favorites collector can use the 15m public discovery feed.
 
-        Selected positions are still checked for settlement separately.
-        Standalone/replay operation retains its original discovery semantics.
+        This grants discovery only, never permission for a paused legacy bot to
+        place an order. Statistics-Backed Favorites and other portfolios cannot
+        enable it. Controls are checked live, not cached across pause/resume.
+        """
+        suite=getattr(self,'experiments',None)
+        portfolios=getattr(suite,'portfolios',None)
+        favorite=portfolios.get('favorites') if isinstance(portfolios,dict) else None
+        if not favorite:return False
+        fleet=favorite[1]
+        bot=getattr(fleet,'bots',{}).get(series)
+        profile=getattr(bot,'profile',None)
+        return bool(bot and bot.enabled and isinstance(profile,dict) and
+                    profile.get('strategy')=='favorites' and not profile.get('retired',False))
+
+    def favorites_only_fifteen_discovery(self,series):
+        if getattr(self,'suspend_idle_feeds',False) is not True:return False
+        bots=getattr(getattr(self,'strategy',None),'bots',None)
+        bot=bots.get(series) if isinstance(bots,dict) else None
+        return bool(bot is not None and not getattr(bot,'enabled',True) and
+                    self.favorites_fifteen_discovery_enabled(series))
+
+    def legacy_discovery_required(self,series):
+        """Scan 15m when the legacy owner OR regular Favorites is enabled.
+
+        Discovery is a shared read-only feed, not a legacy trading permission.
+        Standalone/replay retains existing behavior. Already-held legacy risk
+        remains protected independently of this new-market admission gate.
         """
         if getattr(self,'suspend_idle_feeds',False) is not True:return True
         bots=getattr(getattr(self,'strategy',None),'bots',None)
         if not isinstance(bots,dict):return True
         bot=bots.get(series)
-        return bot is None or bool(getattr(bot,'enabled',True))
+        return (bot is None or bool(getattr(bot,'enabled',True)) or
+                self.favorites_fifteen_discovery_enabled(series))
 
     async def discover_once(self):
         if not hasattr(self,'discovery_retry_at'):self.discovery_retry_at={}
         if not hasattr(self,'known_active'):self.known_active=set(self.selected)
-        # A failed lookup for one expired market must not strand other families.
+        now=time.time()
+        # The disabled legacy portfolio must not strand an enabled Favorites
+        # collector behind settlement of an expired, risk-free *legacy* ticker.
+        # Keep the full old market/history; only its discovery selection moves.
+        # Legacy lots/resting orders retain their selection and settlement poll.
         for series,ticker in list(self.selected.items()):
+            prior=self.engine.markets.get(ticker)
+            if (prior and prior.get('close',float('inf'))<=now and
+                    self.favorites_only_fifteen_discovery(series) and
+                    not self.legacy_ticker_needed(ticker)):
+                self.selected.pop(series,None)
+                continue
             try:
                 if await self.settlement_observed(ticker):
                     market=(await self.api.fetch('/markets/'+ticker))['market']
@@ -156,7 +192,6 @@ class ForwardRun:
             except asyncio.CancelledError:raise
             except Exception as exc:
                 await self.metadata_unavailable('settlement',exc,ticker=ticker,series=series)
-        now=time.time()
         # The hosted experiment checkpoint owns durable wake hints, including
         # 15-minute contracts with exchange-confirmed future open timestamps.
         # Standalone replay/forward runs use the same scheduler in memory.
@@ -278,6 +313,14 @@ class ForwardRun:
                     self.discovery_retry_at[series]=now+900
                     continue
                 market=min(candidates,key=lambda m:ts(m['close_time']))
+                # Favorites-only discovery was formerly disabled with legacy
+                # Convexity. Do not let restoring it bypass measured RSS/queue,
+                # request cooldown, or existing per-market opportunity guards.
+                if self.favorites_only_fifteen_discovery(series):
+                    suite=self.experiments
+                    if not suite.extra_capacity([market['ticker']],now):
+                        self.discovery_retry_at[series]=now+5
+                        continue
                 metadata,fee=await self.market_metadata(market,series)
                 # The hosted path verifies event overrides and scheduled changes
                 # through close. Non-hosted simulations at least reject a known
