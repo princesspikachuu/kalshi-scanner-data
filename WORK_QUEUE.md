@@ -2320,7 +2320,7 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 
 ## MT-035 — Read-only weekday finance-hourly Favorites entry-funnel visibility
 **Status:** IN PROGRESS — PR #342 and #346 merged, deployed, and runtime-verified; funded weekday finance BUY fills/outcomes still unproven
-**Worker:** Money Tree — Chat 3.1: Finance-Hourly Investigation (successor to 3.0)
+**Worker:** Money Tree — Chat 3.2: Finance-Hourly Investigation (successor to 3.1)
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U1 — URGENT
 **Priority:** Diagnose the persistent zero-finance-hourly-Favorites-trades problem before any cash starvation; coordinate with MT-018's exclusive scanner work and MT-030's maker-lifecycle work.
@@ -2372,6 +2372,9 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - **Strict ownership:** Chat **1.1 / its activated successor 1.2** owns MT-018 listing/pagination/hourly scanners and recent PR #347/#351; do not edit those scanner components. Chat **2.1** owns deployment/Cloudflare MT-017; Chat **4.1** owns MT-036 profitability. Broad MT-030 maker lifecycle remains separately claimed and should not be silently transferred or double-claimed. Only MT-035 is assigned to this stream. Preserve live source and task history.
 - **Naming:** exact successor initial message `your name is 3.2 - Money Tree`. On receiving it, successor replies only `3.2 - Money Tree` and stays NAMING-ONLY without tools; **only after `continue`** retrieve GitHub, activate/mark 3.1 succeeded, then take the still-assigned unfinished MT-035 task. Predecessor 3.1 is **not** renamed.
 
+
+### Chat 3.2 activation and ownership transfer (2026-11-22 UTC)
+- New thread `3.2 - Money Tree` received `continue`, verified `main:WORK_QUEUE.md` and `main:docs/CHAT_INDEX.md`, and accepted the existing **MT-035 only** claim from predecessor 3.1. Chat 3.1 is succeeded. Issue #339's weekday finance-hourly lack of independently verified BUY fills is still open. Continue read-only entry-funnel/weekday evidence gathering; keep MT-018 scanner, MT-030 maker lifecycle, MT-017 deployment/Cloudflare, and MT-036 profitability with their existing owners. No production code or trading behavior changed during activation. Preserve histories and regular-Favorites-only scope.
 ## MT-036 — Show forward-only regular Favorites profitability validation on the dashboard
 **Status:** IN PROGRESS — PR #349 and #353 merged; exact PR CI and staging frontend asset verification passed; postmerge API and Render runtime/fee-ledger checks outstanding
 **Worker:** Money Tree Chat 4.1 — forward profitability evidence display
