@@ -95,20 +95,20 @@ class Scan(unittest.IsolatedAsyncioTestCase):
 
     async def test_hourly_incomplete_future_page_keeps_cursor_and_finds_ready_market(self):
         host,suite=self.setup_host();now=1000
-        suite.enabled_profiles=lambda asset:([dict(series='KXBTCD')]
+        suite.enabled_profiles=lambda asset:([dict(series='KXUSDCADAH')]
             if asset=='hourly' else [])
         date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
-        future=dict(ticker='KXBTCD-future',event_ticker='FUTURE',status='active',
+        future=dict(ticker='KXUSDCADAH-future',event_ticker='FUTURE',status='active',
             open_time=date(now+3600),close_time=date(now+7200),
             yes_bid_dollars='.80',no_bid_dollars='.18')
-        ready=dict(ticker='KXBTCD-ready',event_ticker='READY',status='active',
+        ready=dict(ticker='KXUSDCADAH-ready',event_ticker='READY',status='active',
             open_time=date(now-100),close_time=date(now+1800),
             yes_bid_dollars='.81',no_bid_dollars='.16')
         cursors=[]
         def call(method,path,query=None):
             if path.startswith('/series/'):return dict(series=dict(frequency='hourly'))
             self.assertEqual(path,'/markets')
-            self.assertEqual(query['series_ticker'],'KXBTCD')
+            self.assertEqual(query['series_ticker'],'KXUSDCADAH')
             cursor=query.get('cursor','');cursors.append(cursor)
             if not cursor:return dict(markets=[future],cursor='page-two')
             self.assertEqual(cursor,'page-two')
@@ -116,16 +116,17 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         host.verified_data.call.side_effect=call
         with patch('services.paper_demo.shadow.hourly.time.time',return_value=now):
             await hourly_once(host)
-        self.assertEqual(suite.hourly_pages['KXBTCD'],'page-two')
-        self.assertNotIn('hourly:KXBTCD',suite.discovery_wakes)
-        self.assertLessEqual(suite.hourly_retry_at['KXBTCD'],now+15)
+        self.assertEqual(suite.hourly_pages['KXUSDCADAH'],'page-two')
+        self.assertNotIn('hourly:KXUSDCADAH',suite.discovery_wakes)
+        self.assertLessEqual(suite.hourly_retry_at['KXUSDCADAH'],now+15)
         host.put.assert_not_awaited()
         with patch('services.paper_demo.shadow.hourly.time.time',return_value=now+16):
             await hourly_once(host)
         self.assertEqual(cursors,['','page-two'])
-        self.assertEqual(suite.hourly_pages['KXBTCD'],'')
+        self.assertEqual(suite.hourly_pages['KXUSDCADAH'],'')
+        self.assertEqual(suite.hourly_scan['by_category']['finance']['subscribed'],1)
         host.put.assert_awaited_once()
-        self.assertEqual(host.put.await_args.args[1]['market']['ticker'],'KXBTCD-ready')
+        self.assertEqual(host.put.await_args.args[1]['market']['ticker'],'KXUSDCADAH-ready')
 
     async def test_weather_incomplete_future_page_keeps_cursor_and_finds_ready_market(self):
         now=1000;series='KXHIGHNYH'
