@@ -2129,3 +2129,21 @@ Calculate and display **90% event-level held-return uncertainty** for populated 
 - **Draft PR [#340](https://github.com/princesspikachuu/kalshi-scanner-data/pull/340)** on branch `feat/mt033-forward-only-favorites-validation-20261121`, head `c039769cd758fb51d0cde8ab72b4379929000167`. Read-only new `favorite_forward_validation.py`, once-per-minute API report in `services/api/shadow.py`, seven deterministic regression tests in `services/api/tests/test_regular_favorites_forward_validation.py`.
 - Strict future venue event **label** after 2026-11-22, frozen four Nov 21 research coordinates, deduped event-level held ROI; never treat the label as verified original fill/settlement timestamp. No calendar-day cluster requirement, no trading, other portfolio, SQL/R2, settlement, history or risk changes.
 - Full hosted API/PostgreSQL PR-head CI [run 44977398195](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44977398195) started and is **pending** at this checkpoint. PR remains draft and **must not merge/deploy without exact-head passing CI and final review**. Further work should update this status rather than claiming completion.
+
+
+---
+
+## MT-034 — Fail safely on malformed future-entry timestamp hints (regular Favorites)
+**Status:** IN PROGRESS — independent PR #314 wake-helper regression task
+**Worker:** Money Tree — Chat 01: Discovery Optimization
+**Claimed:** 2026-11-22 UTC
+**Urgency:** U2 — HIGH
+**Priority:** Guard regular Favorites discovery against malformed venue schedule hints without overlapping MT-018 market scanner ownership
+
+### Reproduced source issue / scope
+PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `services/paper_demo/shadow/discovery_wake.py`. Its `ts` parser calls `value.replace(...)` for anything other than int/float. JSON `null` or array/object schedule values raise **AttributeError** (not among the wake helper's caught KeyError/ValueError/TypeError/OverflowError), so a nonessential future hint can propagate a scanner exception and skip all remaining market discovery work for that scan pass. Boolean values also masquerade as numeric epoch timestamps.
+
+**Bounded fix:** In the shared helper, reject booleans and unsupported input types with a caught TypeError before ISO timestamp parsing. Add focused unittest cases for null/list/object/bool in hourly, 15m, weather daily and sports schedule fields, while preserving valid venue times and the existing fail-open-to-discovery unknown-schedule policy. Do not edit `hourly.py`, `weather.py`, `runner.py`, market discovery/admission, entry/cancel, fees, trading, cash, settlement, or persistence. No changes to Statistics-Backed Favorites or other strategies; paper-only. Recheck latest base before a safe independent PR and run full hosted API/PostgreSQL CI before merge/deploy.
+
+### Completion notes
+Pending focused regression, isolated PR and CI. MT-018 remains the sole owner of pagination/full listing and weekday finance no-trade work ([#339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339)); MT-030 retains order/fill throughput.
