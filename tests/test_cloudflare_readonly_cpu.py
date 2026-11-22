@@ -51,7 +51,72 @@ class CloudflareCpuReadonlyTests(unittest.TestCase):
     def test_query_uses_only_read_analytics_endpoint(self):
         self.assertEqual(audit.GRAPHQL_URL, "https://api.cloudflare.com/client/v4/graphql")
         self.assertIn('status: "exceededCpu"', audit.GRAPHQL_QUERY)
+        self.assertIn("$datetimeStart: Time!", audit.GRAPHQL_QUERY)
+        self.assertIn("$datetimeEnd: Time!", audit.GRAPHQL_QUERY)
+        self.assertIn("$datetimeStart: Time!", audit.GRAPHQL_QUERY_MINIMAL)
+        self.assertIn("$datetimeStart: string!", audit.GRAPHQL_QUERY_MINIMAL_STRING)
         self.assertNotIn("mutation", audit.GRAPHQL_QUERY.lower())
+        self.assertNotIn("mutation", audit.GRAPHQL_QUERY_MINIMAL.lower())
+
+    def test_http_400_retries_minimal_query_and_marks_unknown_cpu_error_count(self):
+        sample = {
+            "total": [{"sum": {"requests": 30, "errors": 2},
+                       "quantiles": {"cpuTimeP50": 1500, "cpuTimeP99": 9900}}],
+        }
+        with mock.patch.object(audit, "_read_analytics_query",
+                               side_effect=[audit.AnalyticsUnavailable(
+                                   "Cloudflare GraphQL HTTP 400 (query validation)"
+                               ), sample]) as request:
+            result = audit.read_analytics("private-account", "private-token", "worker",
+                                          "2026-11-21T00:00:00Z", "2026-11-22T00:00:00Z")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[-1], audit.GRAPHQL_QUERY)
+        self.assertEqual(request.call_args_list[1].args[-1], audit.GRAPHQL_QUERY_MINIMAL)
+        item = audit.summarize_worker("worker", result)
+        self.assertEqual(item["state"], "estimated_analytics_partial")
+        self.assertIsNone(item["exceeded_cpu"])
+        self.assertIsNone(item["cpu_ms_p95"])
+        self.assertEqual(item["requests"], 30)
+        self.assertEqual(item["cpu_ms_p99"], 9.9)
+
+    def test_http_400_can_fallback_to_legacy_string_scalar(self):
+        sample = {
+            "total": [{"sum": {"requests": 1, "errors": 0},
+                       "quantiles": {"cpuTimeP50": 1200, "cpuTimeP99": 1200}}],
+        }
+        with mock.patch.object(audit, "_read_analytics_query",
+                               side_effect=[audit.AnalyticsUnavailable(
+                                   "Cloudflare GraphQL HTTP 400 (query validation)"
+                               ), audit.AnalyticsUnavailable(
+                                   "Cloudflare GraphQL HTTP 400 (query validation)"
+                               ), sample]) as request:
+            result = audit.read_analytics("a", "b", "worker", "start", "end")
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[-1].args[-1], audit.GRAPHQL_QUERY_MINIMAL_STRING)
+        self.assertIsNone(audit.summarize_worker("worker", result)["exceeded_cpu"])
+
+    def test_no_retry_on_auth_error(self):
+        with mock.patch.object(audit, "_read_analytics_query",
+                               side_effect=audit.AnalyticsUnavailable(
+                                   "Cloudflare Analytics returned HTTP 403")) as request:
+            with self.assertRaisesRegex(audit.AnalyticsUnavailable, "HTTP 403"):
+                audit.read_analytics("a", "b", "worker", "start", "end")
+        self.assertEqual(request.call_count, 1)
+
+    def test_http_400_body_and_token_not_in_error(self):
+        import urllib.error
+        from io import BytesIO
+        secret = "secret-token-please-do-not-log"
+        response = BytesIO(b'{"errors":[{"message":"secret-token-please-do-not-log"}]}')
+        def throw_bad_query(_request, timeout):
+            raise urllib.error.HTTPError(audit.GRAPHQL_URL, 400, "bad query",
+                                         hdrs={}, fp=response)
+        with mock.patch.object(audit.urllib.request, "urlopen", side_effect=throw_bad_query):
+            with self.assertRaisesRegex(audit.AnalyticsUnavailable, "HTTP 400") as raised:
+                audit._read_analytics_query("private-account", secret, "worker",
+                                            "start", "end", audit.GRAPHQL_QUERY)
+        self.assertNotIn(secret, str(raised.exception))
+        self.assertNotIn("private-account", str(raised.exception))
 
     def test_missing_credentials_does_not_access_network(self):
         with mock.patch.dict(os.environ, {
