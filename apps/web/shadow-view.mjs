@@ -290,7 +290,7 @@ export function favoriteSingleOverviewMarkup(bots=[],summary=null,open=new Set()
  }).join('');
  return '<section class="favorite-collector-overview favorite-single-overview"><h3>High-Probability Favorites · single bucket</h3><p class="small">All verified event-level held returns pooled across entry prices and times, including records that cannot be placed in the 3 × 3 table. Repeated events count once per table.</p>'+sections+'</section>';
 }
-export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new Set()){
+export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new Set(),source={}){
  const labels=new Map(marketTypeGroups(bots).map(g=>[g.id,g.label]));
  const categories=[...new Set([...labels.keys(),...Object.keys(summary?.rows||{})])];
  const prices=summary?.price_buckets||['70–<78¢','78–<86¢','86–95¢'];
@@ -308,8 +308,20 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new
    return '<td class="stat-observed '+favoriteProfitClass(signal)+'">'+star(price,slot)+'<details><summary><strong>n='+e(String(n))+' · '+e(favoriteEvidenceTier(n))+'</strong><small>Wins '+e(eventAccuracy(wins,n))+'</small><small>Hold P/L '+e(ret)+'</small><small>Win margin '+e(c.margin)+'</small><small>Win-rate error '+e(c.error)+'</small></summary><p class="small">90% win-rate interval '+e(c.interval)+' · '+e(String(row.return_observations))+' hold-return observations.'+(row.estimated_return_observations>0?' '+e(String(row.estimated_return_observations))+' estimated from historical entry averages.':'')+'</p></details></td>';
   }).join('')+'</tr>').join('');
   const excluded=Number(coverage.excluded_legacy_observations)||0;
-  const note=(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
-  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary><p class="small">'+e(note)+'</p>'+(times.length?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':'<p class="small">Waiting for exact entry times to establish the betting window.</p>')+'</details>';
+  // For daily weather, genuine event outcomes can precede usable entry-time
+  // bounds. Keep those original cohorts visible; never invent third placements.
+  const original=source.timed?.rows?.[category]||[];
+  const hasWide=times.length>0&&rows.some(r=>Number(r.events)>0);
+  const hasOriginal=Array.isArray(original)&&original.some(r=>Number(r.events)>0);
+  const fallback=!hasWide?(hasOriginal?
+    '<p class="small">Three equal entry-time thirds are not verifiable. Showing the recorded price × time cohorts instead.</p>'+
+    favoriteResearchGrid(favoriteCategoryRows(original,true),{mode:'detailed',starScope:'collector:'+category,starredBuckets:stars}):
+    Number(source.single?.rows?.[category]?.return_observations)>0?
+      '<p class="small">Entry-time thirds are unavailable; showing verified held-event returns without guessing their entry times.</p>'+
+      favoriteSingleCellMarkup(source.single.rows[category],{starScope:'collector:'+category,starredBuckets:stars}):
+      '<p class="small">No verified timed event evidence is available yet.</p>'):'';
+  const note=(hasWide?(coverage.time_basis==='observed_entry_window'?'Time thirds use the observed betting window. ':'Time thirds use the market duration. '):'No reliable three-way entry-time division is available. ')+(excluded?excluded+' legacy observations cross a time boundary and are excluded.':'');
+  return '<details class="favorite-collector-category" data-research="'+e(key)+'" '+(open.has(key)?'open':'')+'><summary>'+e(labels.get(category)||category)+'</summary><p class="small">'+e(note)+'</p>'+(hasWide?'<div class="table-scroll"><table class="favorite-stat-matrix favorite-wide-matrix"><thead><tr><th>Entry price</th>'+times.map(t=>'<th>'+e(t)+' left</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>':fallback)+'</details>';
  }).join('');
  return '<section class="favorite-collector-overview"><h3>High-Probability Favorites · wider 3 × 3</h3><p class="small">Distinct resolved events · hold-only return after fees · 90% confidence intervals. Wider bins pool different entry states.</p>'+sections+'</section>';
 }
@@ -317,7 +329,17 @@ export function favoriteWideOverviewMarkup(bots,summary,open=new Set(),stars=new
 export function favoriteTimingMarkup(rows,wideRows=null,options={}){
  const panelKey=options.panelKey?` data-ui-panel="${e(options.panelKey)}"`:'';
  if(options.mode==='single')return `<details class="favorite-timing"${panelKey}><summary>All entries · single bucket</summary>${favoriteSingleCellMarkup(options.single,{starScope:options.starScope,starredBuckets:options.starredBuckets})}</details>`;
- if(wideRows!==null)return `<details class="favorite-timing"${panelKey}><summary>Wider entry price × time thirds</summary>${favoriteResearchGrid(wideRows,{mode:'wide',starScope:options.starScope,starredBuckets:options.starredBuckets})}</details>`;
+  if(wideRows!==null){
+    const valid=wideRows.some(r=>Number(r.events)>0);
+    const content=valid?
+      favoriteResearchGrid(wideRows,{mode:'wide',starScope:options.starScope,starredBuckets:options.starredBuckets}):
+      Array.isArray(rows)&&rows.some(r=>Number(r.events)>0)?
+        favoriteResearchGrid(favoriteCategoryRows(rows),{mode:'detailed',starScope:options.starScope,starredBuckets:options.starredBuckets}):
+        favoriteSingleCellMarkup(options.single,{starScope:options.starScope,starredBuckets:options.starredBuckets});
+    return '<details class="favorite-timing"'+panelKey+'><summary>Wider entry price × time thirds</summary>'+
+      (valid?'':'<p class="small">Exact time thirds unavailable. Showing original verified evidence without guessing timestamps.</p>')+
+      content+'</details>';
+  }
  if(!rows?.length)return '<p class="small">Time × percentage research starts with the next verified entry fill. Earlier trades are not assigned guessed timings.</p>';
  return `<details class="favorite-timing"${panelKey}><summary>Entry percentage × time remaining · combined sides</summary>${researchNote}${favoriteResearchGrid(favoriteCategoryRows(rows),{mode:'detailed',starScope:options.starScope,starredBuckets:options.starredBuckets})}</details>`;
 }
@@ -464,6 +486,19 @@ export function accountMarkup(account,now=Date.now()/1000,positions=[]){
 }
 
 export const folderPeriods={all:'All', '1H':'1h', '6H':'6h', '24H':'24h', '7D':'7d', '30D':'30d'};
+// Counts are unique exchange events with an actual BUY fill, not contracts,
+// bids or settled-outcome counters. Older/untracked windows are lower bounds.
+export function filledEventsSmall(windows,period='all'){
+ const sample=windows?.[period],count=Number(sample?.count);
+ if(sample?.count==null||!Number.isSafeInteger(count)||count<0)return '';
+ const incomplete=sample.complete!==true;
+ const label=(incomplete?'≥':'')+count.toLocaleString('en-US')+' filled events'+
+  (incomplete?' · partial history':'');
+ const title=incomplete?
+   'Earlier actual fills may be outside the tracked period. Count includes verified historical settled entries where available for All Time.':
+   'Distinct venue events with at least one executed buy fill in this period; partial fills and contracts do not multiply the count.';
+ return '<small class="filled-events-subtitle" title="'+e(title)+'">'+e(label)+'</small>';
+}
 export function monitoringMarkup(m){
  if(!m)return '';
  const names={weather:'Hourly weather',weather_daily:'Daily weather',hourly:'Hourly prices',sports:'Sports',market_maker:'Market Maker',complete_set:'Complete sets'};
@@ -567,12 +602,12 @@ function marketTypeEventCounts(bots,positions,orders,account){
  return {active_events:count('active',account.active_cost),pending_events:count('pending',account.pending_cost),
          unfilled_bid_events:count('bid',account.unfilled_bids)};
 }
-export function marketTypeSummaryMarkup(group,period='all',positions=[],shown=null,orders=[]){
+export function marketTypeSummaryMarkup(group,period='all',positions=[],shown=null,orders=[],filled=null){
  const v=marketTypeSummaryValues(group.bots,period,positions);
  const events=marketTypeEventCounts(group.bots,positions,orders,v.account);
  const running=group.bots.filter(b=>b.desired==='running').length;
  const coverage=v.missing?`${v.missing} ${v.missing===1?'bot':'bots'} missing P/L history`:v.partial?'Partial P/L history':v.period==='all'?'Current session':'Rolling '+folderPeriods[v.period];
- return `<span class="market-type-heading"><span class="market-type-name">${e(group.label)}</span><span class="badge">${running}/${group.bots.length} running${shown!==null?' · '+shown+' shown':''}</span><span class="market-type-disclosure" aria-hidden="true"></span></span><span class="folder-card-values market-type-values"><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${rangeClass(v.pnl)} ${v.pnl?.unpriced?'value-range':''}">${e(rangeText(v.pnl))}</strong>${v.missing?'<small>'+e(coverage)+'</small>':''}</span>${exposureHeaderMarkup({...v.account,...events})}</span>`;
+ return `<span class="market-type-heading"><span class="market-type-name">${e(group.label)}</span><span class="badge">${running}/${group.bots.length} running${shown!==null?' · '+shown+' shown':''}</span><span class="market-type-disclosure" aria-hidden="true"></span></span><span class="folder-card-values market-type-values"><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${rangeClass(v.pnl)} ${v.pnl?.unpriced?'value-range':''}">${e(rangeText(v.pnl))}</strong>${filledEventsSmall(filled,v.period)}${v.missing?'<small>'+e(coverage)+'</small>':''}</span>${exposureHeaderMarkup({...v.account,...events})}</span>`;
 }
 export function folderSummaryValues(f,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
@@ -588,7 +623,7 @@ export function folderSummaryValues(f,period='all',now=Date.now()/1000){
  let detail=period==='all'?'Current session':result?.missing_history||!result?'Waiting for balance history':result.partial?'Tracked since '+since:'Rolling '+folderPeriods[period]+' · minute snapshots';
  if(pnl.uncertain)detail+=' · estimate uses fallback position marks';
  return {period,balance:rangeText(balance),balanceUncertain:!!balance?.unpriced,cash:dollars(a?.cash),pnl,detail,
-  realized:result?.realized_pnl!=null?dollars(result.realized_pnl):null,stale:!!account&&now-account.at>30};
+  realized:result?.realized_pnl!=null?dollars(result.realized_pnl):null,fills:f.filled_events,stale:!!account&&now-account.at>30};
 }
 export function folderPeriodButtons(period,folderId=null){
  return Object.entries(folderPeriods).map(([key,label])=>`<button type="button" class="secondary" ${folderId?`data-folder-summary-period="${key}" data-summary-folder="${e(folderId)}"`:`data-folder-period="${key}"`} aria-pressed="${period===key}">${label}</button>`).join('');
@@ -597,14 +632,14 @@ export function folderCardSummaryMarkup(folder,period='all',counts={},now=Date.n
  const v=folderSummaryValues(folder,period,now);
  const action=counts.running?'pause':'resume',label=counts.pending?'Saving…':counts.running?'Pause folder':'Resume folder';
  const control=counts.controls===false?'':`<button type="button" class="secondary folder-run-control" data-folder-${action}="${e(folder.id)}" aria-label="${counts.running?'Pause':'Resume'} all bots in ${e(folder.name)}" ${counts.pending||!counts.bots?'disabled':''}>${label}</button>`;
- return `<span class="folder-summary-heading"><span class="folder-name">${e(folder.name)}</span>${control}<span class="folder-disclosure" aria-hidden="true"></span></span><span class="folder-card-values"><span class="folder-estimated-balance"><span class="folder-card-label">Estimated portfolio value</span><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>${counts.running||0}/${counts.bots||0} running</small></span><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${v.period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong>${v.stale?'<small>Snapshot stale</small>':''}</span>${exposureHeaderMarkup(folder.accounting?.portfolio)}</span><span class="folder-summary-periods" role="group" aria-label="P/L period for ${e(folder.name)}">${folderPeriodButtons(v.period,folder.id)}</span>`;
+ return `<span class="folder-summary-heading"><span class="folder-name">${e(folder.name)}</span>${control}<span class="folder-disclosure" aria-hidden="true"></span></span><span class="folder-card-values"><span class="folder-estimated-balance"><span class="folder-card-label">Estimated portfolio value</span><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong><small>${counts.running||0}/${counts.bots||0} running</small></span><span class="summary-total-pnl"><span class="folder-card-label">Total P/L · ${e(folderPeriods[v.period])}</span><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${v.period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong>${filledEventsSmall(v.fills,v.period)}${v.stale?'<small>Snapshot stale</small>':''}</span>${exposureHeaderMarkup(folder.accounting?.portfolio)}</span><span class="folder-summary-periods" role="group" aria-label="P/L period for ${e(folder.name)}">${folderPeriodButtons(v.period,folder.id)}</span>`;
 }
 export function folderOverviewMarkup(folders,period='all',now=Date.now()/1000){
  if(!Object.hasOwn(folderPeriods,period))period='all';
  const rows=folders.map(f=>{
   const v=folderSummaryValues(f,period,now),x=summaryExposure(f.accounting?.portfolio);
   const account=f.accounting?.portfolio;
-  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="folder-estimated-balance" data-label="Estimated portfolio value"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong></td><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong><small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}${e(eventSuffix(account,'unfilled_bid_events'))}</strong></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(account,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(account,'pending_events'))}</small></td></tr>`;
+  return `<tr><th scope="row"><a href="#folder-${e(f.id)}">${e(f.name)}</a></th><td class="folder-estimated-balance" data-label="Estimated portfolio value"><strong class="${v.balanceUncertain?'value-range':''}">${e(v.balance)}</strong></td><td class="summary-total-pnl" data-label="Total P/L · ${e(folderPeriods[period])}"><strong class="${v.pnl.className||''} ${v.pnl.uncertain?'value-range':''}">${period!=='all'&&v.pnl.available?'≈ ':''}${e(v.pnl.text)}</strong>${filledEventsSmall(v.fills,period)}<small>${e(v.detail)}${v.stale?' · snapshot stale':''}</small>${v.realized?`<small>Realized ${e(v.realized)}</small>`:''}</td><td data-label="Open bids"><strong>${e(dollars(x.bids))}${e(eventSuffix(account,'unfilled_bid_events'))}</strong></td><td data-label="Open/pending positions"><strong>${e(dollars(x.positions))}</strong><small>Open ${e(dollars(x.active))}${e(eventSuffix(account,'active_events'))} · pending ${e(dollars(x.pending))}${e(eventSuffix(account,'pending_events'))}</small></td></tr>`;
  }).join('');
  return `<div class="overview-heading"><h2>At a glance</h2><div class="folder-summary-periods" role="group" aria-label="P/L period for all folders">${folderPeriodButtons(period)}</div></div><div class="folder-overview-wrap"><table class="folder-overview"><thead><tr><th>Strategy folder</th><th>Estimated portfolio value</th><th>Total P/L · ${e(folderPeriods[period])}</th><th>Open bids</th><th>Open/pending positions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -618,7 +653,7 @@ export function botPnlMarkup(bot,period='all',positions=[]){
  const unreal=total&&realized!==null?{low:total.low-realized,high:total.high-realized}:null;
  const text=total?rangeText(total):all?fallback.text:'—';
  const coverage=all?'Current session · all versions':r?.missing_history||!r?'Waiting for balance history':r.partial?`Partial window · tracked since ${new Date(r.since*1000).toLocaleString()}`:`Last ${folderPeriods[period]} · sampled to the minute`;
- return `<span class="market-pnl-compact"><span>Total P/L</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong></span>`;
+ return `<span class="market-pnl-compact"><span>Total P/L</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong>${filledEventsSmall(bot.experiment?.filled_events,period)}</span>`;
 }
 
 export function botPnlDetailsMarkup(bot,period='all',positions=[]){
@@ -630,5 +665,5 @@ export function botPnlDetailsMarkup(bot,period='all',positions=[]){
  const unreal=total&&realized!==null?{low:total.low-realized,high:total.high-realized}:null;
  const text=total?rangeText(total):all?fallback.text:'—';
  const coverage=all?'Current session · all versions':r?.missing_history||!r?'Waiting for balance history':r.partial?`Partial window · tracked since ${new Date(r.since*1000).toLocaleString()}`:`Last ${folderPeriods[period]} · sampled to the minute`;
- return `<div class="bot-pnl-panel"><div class="bot-pnl-values"><div class="summary-total-pnl"><span>Total P/L${all?'':' change'}</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong></div>${exposureHeaderMarkup(bot.account)}</div>${botSummaryPeriodMarkup(bot.id,period,true)}<p class="small">${e(coverage)} · after fees${r?.unpriced?' · estimate uses fallback position marks':''}. ${all?'Realized P/L':'Realized P/L change'} ${e(dollars(realized))} · ${all?'Unrealized P/L':'Change in unrealized P/L'} ${e(unreal?rangeText(unreal):all?dollars(bot.account?.unrealized_pnl):'—')}. Exposure amounts show money reserved or committed now, independent of the P/L window.</p></div>`;
+ return `<div class="bot-pnl-panel"><div class="bot-pnl-values"><div class="summary-total-pnl"><span>Total P/L${all?'':' change'}</span><strong class="${total?rangeClass(total):all?fallback.className:''}">${e(text)}</strong>${filledEventsSmall(bot.experiment?.filled_events,period)}</div>${exposureHeaderMarkup(bot.account)}</div>${botSummaryPeriodMarkup(bot.id,period,true)}<p class="small">${e(coverage)} · after fees${r?.unpriced?' · estimate uses fallback position marks':''}. ${all?'Realized P/L':'Realized P/L change'} ${e(dollars(realized))} · ${all?'Unrealized P/L':'Change in unrealized P/L'} ${e(unreal?rangeText(unreal):all?dollars(bot.account?.unrealized_pnl):'—')}. Exposure amounts show money reserved or committed now, independent of the P/L window.</p></div>`;
 }

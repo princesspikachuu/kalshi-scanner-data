@@ -481,6 +481,16 @@ class Engine:
                 observer.observe(kind,order,self.now,self.markets.get(order.ticker,{}),fields.get('reason'))
             except Exception:
                 self._favorite_quote_lifecycle_errors=getattr(self,'_favorite_quote_lifecycle_errors',0)+1
+        # A separate, bounded read-only observer counts unique *filled events*.
+        # Its failures must never affect audit durability or paper execution.
+        if kind == 'FILL' and order is not None and order.action == 'buy':
+            filled = getattr(self, '_favorite_filled_events', None)
+            if filled is not None:
+                try:
+                    filled.observe(order, self.now, self.markets.get(order.ticker, {}))
+                except Exception:
+                    self._favorite_filled_events_errors = getattr(
+                        self, '_favorite_filled_events_errors', 0) + 1
 
     def refill(self, amount: D):
         if not amount.is_finite() or amount <= 0:
