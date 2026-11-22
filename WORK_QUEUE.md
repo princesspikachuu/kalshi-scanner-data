@@ -1580,7 +1580,7 @@ _DONE. PR #154 passed CI, merged as `ce87c5f738ea18cc440978199ad4b97d2c537ef8`, 
 
 ## MT-017 — Audit Cloudflare Workers CPU usage and free-tier limit errors
 **Status:** IN PROGRESS — second read-only Cloudflare Analytics query HTTP 400 confirmed; PR #348 safer diagnostic merged, awaiting user manual rerun and verified provider access  
-**Worker:** Money Tree — Chat 2.0: Deployment Verification (read-only observability onboarding, old inactive MT-017 task)  
+**Worker:** Money Tree — Chat 2.1: Deployment Verification (successor to 2.0; read-only Cloudflare observability)  
 **Claimed:** 2026-11-09 19:20 UTC; user integration request 2026-11-21 Pacific
 **Urgency:** U1 — URGENT  
 **Priority:** High
@@ -1642,6 +1642,10 @@ Cloudflare emailed the account owner on 2026-11-09 with "[Action required] Worke
 - Manual Cloudflare read-only audit [GitHub run #44980433098](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980433098) reported **all 11 offline tests passing**, then HTTP 400 from the Cloudflare GraphQL metrics request after three query variants; both configured GitHub secrets were present, values masked. **No Render/Worker deployment failed.** Exact provider error category remains unknown because raw errors intentionally are not printed in PUBLIC Actions logs.
 - **Follow-up [PR #348](https://github.com/princesspikachuu/kalshi-scanner-data/pull/348)** (merged `80df3fc186569d24d7486de65f6b1e764d79ec76` to main; exact PR-head [17 offline tests passed](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980642663)). Adds a read-only, credential-redacting three-stage fallback diagnostic: Cloudflare viewer authorization, account visibility, Workers aggregate dataset, plus **account-ID secret shape** validation. The printed result `MT017_SAFE_PREFLIGHT` uses only fixed safe labels, not provider messages/IDs/IPs/paths/token data. Last query fallback now uses Cloudflare's documented nullable string variables.
 - **Next:** user must manually rerun [MT-017 Cloudflare CPU (read-only)](https://github.com/princesspikachuu/kalshi-scanner-data/actions/workflows/cloudflare-cpu-readonly.yml) on `main` with `last_24h` to obtain a sanitized preflight or aggregate CPU report. Do **not** request credentials in chat, bypass the public-log redaction, loosen permissions, or infer CPU fixed without a successful provider response. No other task ownership changes.
+
+### Chat 2.1 ownership continuation (2026-11-22 UTC)
+- Stream 2 successor **2.1** registered in `main:docs/CHAT_INDEX.md` (commit `ce859ebc`). Existing MT-017 read-only Cloudflare CPU analytics diagnostic ownership transferred from Chat 2.0 to Chat 2.1; task remains **IN PROGRESS**, with external provider metrics still blocked by HTTP 400. No application, trading, Cloudflare, or Render changes authorized by the transfer.
+- Start by checking PR #350 postmerge checks and the latest Cloudflare read-only Actions audit status; next safe run is one manual `last_24h` audit on `main` if still required. Preserve redaction, secrets and historical records.
 
 ### Chat 2.0 Cloudflare GraphQL third-run triage and token verification (2026-11-22 UTC)
 - **Actual failed run:** [GitHub Actions #44980816586](https://github.com/princesspikachuu/kalshi-scanner-data/actions/runs/44980816586) had **17/17 passing offline tests** and reached Cloudflare; the audit returned **HTTP 400 (unclassified)**. Safe preflight reported `{"stage":"viewer","result":"failed"}` using the generic `viewer { __typename }` GraphQL probe. Account visibility/dataset/CPU data was **not queried successfully**; worker/API deployment has not failed. Both necessary GitHub secrets are present, but presence does **not** prove Cloudflare accepts the token.
