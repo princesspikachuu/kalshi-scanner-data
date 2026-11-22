@@ -2360,7 +2360,7 @@ PR #314 introduced `known_entry_wake` as a read-only venue schedule hint in `ser
 - **This fixes observability, not trading.** MT-035 and [Issue #339](https://github.com/princesspikachuu/kalshi-scanner-data/issues/339) remain open until weekday finance opportunities can be verified after discovery, admission, fresh book/price/fee/cash checks, actual first BUY fill and independently confirmed final venue outcome. Chat 1.1 retains scanner ownership; do not relax market hours, fees, risk, settlement or cash conditions to fabricate fills.
 
 ## MT-036 — Show forward-only regular Favorites profitability validation on the dashboard
-**Status:** IN PROGRESS — PR #349 merged; postmerge CI, staging frontend and hosted API runtime acceptance pending
+**Status:** IN PROGRESS — PR #349 merged; exact postmerge CI and staging frontend verified; Render API runtime check pending; fee-language follow-up PR #353 under test
 **Worker:** Money Tree Chat 4.1 — forward profitability evidence display
 **Claimed:** 2026-11-22 UTC
 **Urgency:** U2 — HIGH
