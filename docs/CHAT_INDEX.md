@@ -20,7 +20,7 @@
 | **3.0** | Trading Throughput | Previous round: finance-hourly MT-035, diagnostics PR #342, MT-030 shared inquiry; handoff to 3.1 | **Succeeded by 3.1** |
 | **3.1** | Trading Throughput | Successor to 3.0; owner of MT-035 regular Favorites finance-hourly read-only funnel, weekday validation Issue #339; scanner owned by 1.1; MT-030 broad ownership requires separate claim | **Active — registered 2026-11-22 UTC** |
 | **4.0** | Profitability Validation | MT-033 merged, deployed and verified; predecessor to 4.1 | **Succeeded by 4.1** |
-| **4.1** | Profitability Validation | Successor to 4.0; read-only future event profitability follow-up; MT-033 remains DONE; no new task claimed | **Active — registered 2026-11-22 UTC** |
+| **4.1** | Profitability Validation | Successor to 4.0; MT-033 DONE; MT-036 regular Favorites forward profitability dashboard PR #349 IN PROGRESS, owned by 4.1; awaiting exact-head CI / safe release | **Active — registered 2026-11-22 UTC** |
 
 **Next successor conversation IDs (reserved as *planned*, not yet active or claimed): `1.2`, `2.1`, `3.2`, `4.2`.** There is no blanket next-new-chat number `05` under this four-stream plan. Do not create a fifth stream without user instruction.
 
