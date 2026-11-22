@@ -1,7 +1,10 @@
 import unittest
 from decimal import Decimal as D
 
-from services.paper_demo.shadow.favorite_single import summarize_single
+from copy import deepcopy
+from services.paper_demo.shadow.favorite_single import (
+    summarize_single, summarize_regular_attribution_subsets,
+)
 
 
 class SingleFavoritesBucketTests(unittest.TestCase):
@@ -120,6 +123,81 @@ class SingleFavoritesBucketTests(unittest.TestCase):
         self.assertIsNone(result['by_bot']['btc']['uncertainty90_pct'])
         self.assertEqual(result['by_bot']['empty']['return_observations'],0)
         self.assertIsNone(result['by_bot']['empty']['uncertainty90_pct'])
+
+
+
+    def test_attribution_sensitivity_pools_events_and_excludes_partial_attribution(self):
+        # One estimated cohort makes the whole repeated event estimated.
+        a=self.row('repeated',cost='8',net='2')
+        b=self.row('repeated',cost='8',net='-8',estimated=True,price='.85')
+        c=self.row('exact-event',cost='8',net='2')
+        d=self.row('estimated-event',cost='8',net='-8',estimated=True,outcome=0)
+        e=self.row('missing-event',cost='8',net='2')
+        f=self.row('missing-event',cost='8',net='2',price='.90')
+        f['return_events']={}
+        bots={'btc':dict(entry_timing=[a,b,c,d,e,f])}
+        original=deepcopy(bots)
+        profiles={'btc':dict(series='KXBTC15M',asset='crypto')}
+        subset=summarize_regular_attribution_subsets(
+            bots,profiles,lambda p:'crypto-15m')['crypto-15m']
+        combined=self.summary(bots)['rows']['crypto-15m']
+        self.assertEqual(bots,original)
+        self.assertEqual(combined['resolved_events'],4)
+        self.assertEqual(combined['return_observations'],3)
+        self.assertEqual(combined['estimated_return_observations'],2)
+        exact,estimated=subset['exact_only'],subset['estimated_only']
+        self.assertEqual(exact['return_observations'],1)
+        self.assertEqual(exact['positive_return_events'],1)
+        self.assertEqual(exact['negative_return_events'],0)
+        self.assertEqual(D(exact['average_return_pct']),25)
+        self.assertEqual(estimated['return_observations'],2)
+        self.assertEqual(estimated['positive_return_events'],0)
+        self.assertEqual(estimated['negative_return_events'],2)
+        self.assertEqual(D(estimated['average_return_pct']),D('-68.75'))
+        self.assertEqual(exact['return_observations']+estimated['return_observations'],
+                         combined['return_observations'])
+        self.assertIsNone(exact['uncertainty90_pct'])
+        self.assertIsNone(estimated['uncertainty90_pct'])
+
+    def test_exact_only_uses_fifty_event_threshold_and_requires_gains_and_losses(self):
+        rows=[self.row('exact-'+str(i),cost='8',net='2') for i in range(48)]
+        rows.append(self.row('loss-one',cost='8',net='-8',outcome=0))
+        profiles={'btc':dict(series='KXBTC15M',asset='crypto')}
+        def exact():
+            return summarize_regular_attribution_subsets(
+                {'btc':dict(entry_timing=rows)},profiles,
+                lambda p:'crypto-15m')['crypto-15m']['exact_only']
+        early=exact()
+        self.assertEqual(early['return_observations'],49)
+        self.assertIsNone(early['uncertainty90_pct'])
+        rows.append(self.row('loss-two',cost='8',net='-8',outcome=0))
+        ready=exact()
+        self.assertEqual(ready['return_observations'],50)
+        self.assertEqual(ready['positive_return_events'],48)
+        self.assertEqual(ready['negative_return_events'],2)
+        self.assertIsNotNone(ready['uncertainty90_pct'])
+        self.assertLess(D(ready['ci90_low_pct']),D(ready['average_return_pct']))
+        self.assertGreater(D(ready['ci90_high_pct']),D(ready['average_return_pct']))
+        all_wins=[self.row('win-'+str(i),cost='8',net='2') for i in range(60)]
+        rows[:]=all_wins
+        no_losses=exact()
+        self.assertEqual(no_losses['return_observations'],60)
+        self.assertIsNone(no_losses['uncertainty90_pct'])
+
+    def test_exact_attribution_counts_one_event_per_category_not_contract(self):
+        bots={'btc':dict(entry_timing=[self.row('same',cost='8',net='2')]),
+              'eth':dict(entry_timing=[self.row('same',cost='16',net='4')]),
+              'hour':dict(entry_timing=[self.row('same',cost='8',net='-8',outcome=0)])}
+        profiles={'btc':dict(series='KXBTC15M',asset='crypto'),
+                  'eth':dict(series='KXETH15M',asset='crypto'),
+                  'hour':dict(series='KXBTCD',asset='hourly')}
+        subset=summarize_regular_attribution_subsets(
+            bots,profiles,lambda p:'crypto-15m' if p['series'].endswith('15M') else 'crypto-hourly')
+        self.assertEqual(subset['crypto-15m']['exact_only']['return_observations'],1)
+        self.assertEqual(subset['crypto-hourly']['exact_only']['return_observations'],1)
+        self.assertEqual(D(subset['crypto-15m']['exact_only']['average_return_pct']),25)
+        self.assertEqual(D(subset['crypto-hourly']['exact_only']['average_return_pct']),-100)
+        self.assertEqual(subset['crypto-15m']['estimated_only']['return_observations'],0)
 
 
 if __name__ == '__main__':
