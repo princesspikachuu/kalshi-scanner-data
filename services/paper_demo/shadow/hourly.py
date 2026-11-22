@@ -1,5 +1,5 @@
 """Verified hourly-series favorites; bounded fast scans on the shared read budget."""
-import asyncio,json,time
+import asyncio,json,math,time
 from decimal import Decimal as D,ROUND_FLOOR
 ZERO=D(0)
 from .runner import ts
@@ -63,6 +63,48 @@ def next_hourly_profile(profiles, blocked, cursor, active):
     return profile,index+1
 
 
+def hourly_listing_stages(raw_markets, series, now):
+    """Counts provider page appearances, not distinct exchange events.
+
+    Missing/malformed schedule fields must never abort a whole scan page and
+    hide a later, independently eligible regular Favorites event.
+    """
+    if not isinstance(raw_markets, list):
+        raw_markets = []
+    stages = dict(returned=len(raw_markets), matched=0, active=0,
+                  future_open=0, closing_later=0, closing_soon=0,
+                  invalid_schedule=0, in_window=0)
+    ready = []
+    for market in raw_markets:
+        if not isinstance(market, dict):
+            continue
+        ticker = market.get('ticker')
+        if not isinstance(ticker, str) or not ticker.startswith(series + '-'):
+            continue
+        stages['matched'] += 1
+        if market.get('status') != 'active':
+            continue
+        stages['active'] += 1
+        try:
+            opens = ts(market['open_time'])
+            closes = ts(market['close_time'])
+            if not (math.isfinite(opens) and math.isfinite(closes)):
+                raise ValueError('Nonfinite market schedule')
+        except (KeyError, AttributeError, TypeError, ValueError, OverflowError):
+            stages['invalid_schedule'] += 1
+            continue
+        if opens > now:
+            stages['future_open'] += 1
+        elif closes - now <= 60:
+            stages['closing_soon'] += 1
+        elif closes - now > 3600:
+            stages['closing_later'] += 1
+        else:
+            ready.append(market)
+            stages['in_window'] += 1
+    return ready, stages
+
+
 async def hourly_once(host):
     suite=host.experiments;now=time.time();markets=suite.feed_markets()
     if not hasattr(suite,'hourly_metadata'):suite.hourly_metadata={};suite.hourly_retry_at={}
@@ -72,6 +114,7 @@ async def hourly_once(host):
     active=candidate_markets(suite,markets,'hourly',now)
     ps=balanced_hourly_profiles(suite.enabled_profiles('hourly'));staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
+              count_basis='scanned_page_appearances_not_unique_events',
               reason='No eligible listed favorite',by_category={})
     # Three profiles per pass rather than one per 15 seconds. Empty/incompatible
     # series back off; stable frequency metadata is cached independently of fees.
@@ -82,7 +125,11 @@ async def hourly_once(host):
         p,cursor=next_hourly_profile(ps,blocked,suite.hourly_cursor,active)
         if not p:break
         suite.hourly_cursor=cursor;series=p['series'];scan['checked_series']+=1
-        category=scan['by_category'].setdefault(hourly_category(series),dict(checked=0,eligible=0,subscribed=0,capacity_blocked=0))
+        category=scan['by_category'].setdefault(hourly_category(series),
+            dict(checked=0,eligible=0,subscribed=0,capacity_blocked=0,
+                 returned=0,active=0,in_window=0,future_open=0,
+                 closing_later=0,closing_soon=0,invalid_schedule=0,
+                 excluded=0,quote_rejected=0))
         category['checked']+=1
         wake=session_wake(series,now)
         if wake is not None:
@@ -114,9 +161,12 @@ async def hourly_once(host):
         suite.hourly_pages[series]=next_page
         if next_page:suite.hourly_page_bounds[series]=bounds
         else:suite.hourly_page_bounds.pop(series,None)
-        listed=[m for m in result.get('markets',[]) if m.get('ticker','').startswith(series+'-') and m.get('status')=='active'
-                and ts(m['open_time'])<=now and 60<ts(m['close_time'])-now<=3600]
+        market_rows=result.get('markets') or []
+        listed,stages=hourly_listing_stages(market_rows,series,now)
         scan['listed_markets']+=len(listed)
+        for field in ('returned','active','in_window','future_open','closing_later',
+                      'closing_soon','invalid_schedule'):
+            category[field]+=stages[field]
         scalping=any(b.enabled and b.series==series for folder,(e,f,ps) in suite.portfolios.items()
             if folder in ('volatility_scalper','scalper_fixed','scalper_grid') for b in f.bots.values())
         def liquid_scalp(m):
@@ -124,7 +174,19 @@ async def hourly_once(host):
             yes=D(str(m.get('yes_bid_dollars') or D(str(m.get('yes_bid') or 0))/100))
             no=D(str(m.get('no_bid_dollars') or D(str(m.get('no_bid') or 0))/100))
             return yes>0 and no>0 and ZERO<=1-yes-no<=D('.10')
-        rows=[m for m in listed if m['ticker'] not in markets and suite.candidate_allowed(m['ticker'],now) and (favorite_bid(m) is not None or liquid_scalp(m))]
+        rows=[];already_monitored=0;candidate_rejected=0;quote_rejected=0
+        for market in listed:
+            ticker=market['ticker']
+            if ticker in markets:
+                already_monitored+=1
+            elif not suite.candidate_allowed(ticker,now):
+                candidate_rejected+=1
+            elif favorite_bid(market) is None and not liquid_scalp(market):
+                quote_rejected+=1
+            else:
+                rows.append(market)
+        category['excluded']+=already_monitored+candidate_rejected
+        category['quote_rejected']+=quote_rejected
         scan['eligible_markets']+=len(rows);category['eligible']+=len(rows)
         capacity=suite.search_capacity('hourly',time.time(),staged+1)
         reason=('Incomplete market listing; next page pending' if next_page and not listed else
@@ -132,15 +194,24 @@ async def hourly_once(host):
             'Active markets found · no 70–95¢ maker entry' if not rows else
             'Active qualifying markets · feed capacity paused' if not capacity else
             'Active qualifying market · subscribing to order book')
-        suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),eligible_markets=len(rows),reason=reason)
+        # The existing per-series diagnostic reads this human-readable reason.
+        # Keep it concise; all counts are from this one REST page, not
+        # distinct events or a historical opportunity denominator.
+        reason+=(f" [ret={stages['returned']} active={stages['active']} win={stages['in_window']}"
+                 f" ex={already_monitored+candidate_rejected} quote={quote_rejected}"
+                 f" badts={stages['invalid_schedule']}]")
+        suite.hourly_coverage[series]=dict(at=time.time(),active_markets=len(listed),
+            eligible_markets=len(rows),reason=reason)
         suite.hourly_retry_at[series]=now+(15 if listed or next_page else 60)
         if not listed and not page_cursor and not next_page:
             # A future wake is safe only for a COMPLETE, single-page listing.
             # A nonempty cursor means another page may contain an eligible
             # market now. Later pages alone cannot prove the earliest wake.
             # Keep following incomplete listings on the existing read budget.
-            future=[known_entry_wake(m,'hourly',now) for m in result.get('markets',[])
-                    if m.get('status')=='active' and m.get('ticker','').startswith(series+'-')]
+            future=[known_entry_wake(m,'hourly',now) for m in market_rows
+                    if isinstance(m,dict) and m.get('status')=='active'
+                    and isinstance(m.get('ticker'),str)
+                    and m['ticker'].startswith(series+'-')]
             future=[wake for wake in future if wake is not None]
             if future:
                 wake=min(future)

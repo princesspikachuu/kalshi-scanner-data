@@ -5,7 +5,7 @@ from decimal import Decimal as D
 from unittest.mock import Mock,AsyncMock,patch
 from services.api.tests import test_strategy_scope as scope
 from services.api.tests.test_strategy_folders import market
-from services.paper_demo.shadow.hourly import hourly_once,balanced_hourly_profiles,next_hourly_profile
+from services.paper_demo.shadow.hourly import hourly_once,balanced_hourly_profiles,next_hourly_profile,hourly_listing_stages
 from services.paper_demo.shadow.weather import candidates as weather_candidates,weather_once
 from services.paper_demo.shadow.experiments import ExperimentSuite
 
@@ -92,6 +92,66 @@ class Scan(unittest.IsolatedAsyncioTestCase):
         metadata=[c for c in host.verified_data.call.call_args_list if c.args[1].startswith('/series/')]
         self.assertEqual(len(metadata),3) # Frequency cache never substitutes for live quotes/fees.
         self.assertEqual(host.fee_policy.await_count,2)
+
+    def test_hourly_stage_counts_are_page_appearances_not_event_counts(self):
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        now=1000;series='KXUSDCADAH'
+        base=dict(status='active',open_time=date(now-100),close_time=date(now+900))
+        rows=[dict(base,ticker=series+'-ready'),
+              dict(base,ticker=series+'-invalid',close_time=None),
+              dict(base,ticker=series+'-future',open_time=date(now+120)),
+              dict(base,ticker=series+'-later',close_time=date(now+7200)),
+              dict(base,ticker=series+'-inactive',status='closed'),
+              dict(base,ticker='KXOTHERTICKER-market'),
+              None]
+        valid,counts=hourly_listing_stages(rows,series,now)
+        self.assertEqual([row['ticker'] for row in valid],[series+'-ready'])
+        self.assertEqual(counts['returned'],7)
+        self.assertEqual(counts['matched'],5)
+        self.assertEqual(counts['active'],4)
+        self.assertEqual(counts['future_open'],1)
+        self.assertEqual(counts['closing_later'],1)
+        self.assertEqual(counts['invalid_schedule'],1)
+        self.assertEqual(counts['in_window'],1)
+
+    async def test_finance_hourly_malformed_first_row_does_not_hide_valid_candidate(self):
+        host,suite=self.setup_host();now=1000;series='KXUSDCADAH'
+        suite.enabled_profiles=lambda asset:[dict(series=series)] if asset=='hourly' else []
+        date=lambda n:datetime.fromtimestamp(n,timezone.utc).isoformat()
+        base=dict(status='active',open_time=date(now-100),close_time=date(now+900),
+                  event_ticker=series+'-event',yes_bid_dollars='.81',no_bid_dollars='.16')
+        rows=[dict(base,ticker=series+'-badtime',open_time=None),
+              dict(base,ticker=series+'-future',open_time=date(now+300)),
+              dict(base,ticker=series+'-later',close_time=date(now+7200)),
+              dict(base,ticker=series+'-unquoted',yes_bid_dollars='.90',no_bid_dollars='0'),
+              dict(base,ticker=series+'-ready'),
+              dict(base,ticker=series+'-inactive',status='closed'),
+              dict(base,ticker='KXOTHERTICKER-market')]
+        def call(method,path,query=None):
+            if path.startswith('/series/'):
+                return dict(series=dict(frequency='hourly'))
+            self.assertEqual(path,'/markets')
+            self.assertEqual(query['series_ticker'],series)
+            return dict(markets=rows,cursor='')
+        host.verified_data.call.side_effect=call
+        with patch('services.paper_demo.shadow.hourly.time.time',return_value=now):
+            await hourly_once(host)
+        host.put.assert_awaited_once()
+        self.assertEqual(host.put.await_args.args[1]['market']['ticker'],series+'-ready')
+        stage=suite.hourly_scan['by_category']['finance']
+        self.assertEqual(stage['returned'],7)
+        self.assertEqual(stage['active'],5)
+        self.assertEqual(stage['in_window'],2)
+        self.assertEqual(stage['future_open'],1)
+        self.assertEqual(stage['closing_later'],1)
+        self.assertEqual(stage['invalid_schedule'],1)
+        self.assertEqual(stage['quote_rejected'],1)
+        self.assertEqual(stage['eligible'],1)
+        self.assertEqual(stage['subscribed'],1)
+        self.assertEqual(suite.hourly_scan['count_basis'],
+                         'scanned_page_appearances_not_unique_events')
+        self.assertIn('ret=7',suite.hourly_coverage[series]['reason'])
+        self.assertIn('badts=1',suite.hourly_coverage[series]['reason'])
 
     async def test_hourly_incomplete_future_page_keeps_cursor_and_finds_ready_market(self):
         host,suite=self.setup_host();now=1000
