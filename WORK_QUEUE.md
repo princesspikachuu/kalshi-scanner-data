@@ -1967,7 +1967,7 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 - **Next:** Collect new maker order and cancellation activity by market type after the verified worker handoff, including first fills and real settled independent event outcomes. Distinguish unknown, missing and zero, and don't change quote lifetimes without causal evidence. No forced lock break or history mutation. Coordinate with MT-018's PR #335: restored 15m subscriptions, actual first fills and subsequently authoritative independent settlements are required. MT-030 stays IN PROGRESS until post-fix activity is verified.
 
 ## MT-031 — Restore Daily Weather research table and period-specific distinct filled-event counts
-**Status:** IN PROGRESS — dashboard/API and regression fixes
+**Status:** DONE — merged, full CI passed, staging frontend/API/worker deployed, runtime checked
 **Worker:** ChatGPT / Daily Weather research and filled-events period UI
 **Claimed:** 2026-11-22 01:55 UTC
 **Urgency:** U2 — HIGH
@@ -1981,7 +1981,7 @@ A concrete baseline table by market type and hour; measured gating and loss-of-o
 - Development based on `build/google-auth-foundation`, draft PR until CI, then verify exact staging release, worker health and research visibility.
 
 ### Completion notes
-- **Root cause:** Daily Weather had confirmed event-level research (19 settled category events) but `favorite_wide.summarize_wide` could not establish a reliable 3-way entry-time span, so it emitted no Wider cells; the frontend showed only a waiting paragraph despite populated Detailed/Single data.
+NaN- **Root cause:** Daily Weather had confirmed event-level research (19 settled category events) but `favorite_wide.summarize_wide` could not establish a reliable 3-way entry-time span, so it emitted no Wider cells; the frontend showed only a waiting paragraph despite populated Detailed/Single data.
 - **Draft [PR #337](https://github.com/princesspikachuu/kalshi-scanner-data/pull/337)** on branch `fix/mt031-weather-wide-and-filled-event-periods-20261121`: category and market-level Wider views now fall back to actual verified detailed cohorts (then Single if only those are available), without guessing time thirds.
 - Introduced a bounded, durable-checkpoint-compatible **actual BUY FILL event** observer in regular Favorites only. Distinct event identity counts per all/1H/6H/24H/7D/30D are sent as safe counts on folder, category and bot snapshots; repeats, contract counts, sell fills, and outcomes without fill timestamps cannot inflate recent totals. Older/incomplete coverage is explicitly partial.
 - The small event-count subtitle renders under P/L in top overview, folder, market-category and individual bot views; bot-time and folder-time controls update the number.
