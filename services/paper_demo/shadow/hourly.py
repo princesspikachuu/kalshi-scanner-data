@@ -112,6 +112,13 @@ async def hourly_once(host):
     if not isinstance(getattr(suite,'hourly_empty_listing_probe_at',None),dict):suite.hourly_empty_listing_probe_at={}
     # Keep pagination filters stable for each in-memory cursor chain.
     if not isinstance(getattr(suite,'hourly_page_bounds',None),dict):suite.hourly_page_bounds={}
+    # Crypto markets can be listed earlier than a previously observed entry hint.
+    # Bound stale persisted sleeps without bypassing any fresh admission checks.
+    for crypto_series in ('KXBTCD','KXETHD'):
+        key='hourly:'+crypto_series
+        wake=getattr(suite,'discovery_wakes',{}).get(key,0)
+        if isinstance(wake,(int,float)) and wake>now+60:
+            remember(suite,key,now+60,now)
     active=candidate_markets(suite,markets,'hourly',now)
     ps=balanced_hourly_profiles(suite.enabled_profiles('hourly'));staged=0
     scan=dict(at=now,checked_series=0,listed_markets=0,eligible_markets=0,subscribed=0,metadata_checks=0,
@@ -265,6 +272,8 @@ async def hourly_once(host):
             future=[wake for wake in future if wake is not None]
             if future:
                 wake=min(future)
+                if series in ('KXBTCD','KXETHD'):
+                    wake=min(wake,now+60)
                 remember(suite,'hourly:'+series,wake,now)
                 suite.hourly_retry_at[series]=wake
                 suite.hourly_pages[series]=''
