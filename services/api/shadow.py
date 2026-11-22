@@ -281,6 +281,18 @@ def workspace_response(payload,*,compressed=False,request_started=None):
                                 for kind,cov in aggregate['coverage'].items()},
                     research_evidence=evidence,
                     source='worker_entry_timing',real_orders_enabled=False)),flush=True)
+                # A separate bounded, read-only dependence diagnostic.
+                # Group distinct exchange events by strictly parsed venue
+                # event date; never log any raw event or market identifiers.
+                # MT-027 retains independent ownership of exact/estimated
+                # financial sensitivity, so this does not change that audit.
+                from services.paper_demo.shadow.favorite_event_correlation import summarize_regular_favorites_event_correlation
+                correlation=summarize_regular_favorites_event_correlation(
+                    held_bots,profiles,favorite_timing_category,
+                    known_single=folder['collector_single_summary'])
+                print(json.dumps(dict(event='favorites_event_correlation',
+                    audit=correlation,source='worker_entry_timing',
+                    real_orders_enabled=False)),flush=True)
         if folder.get('id')=='favorites_statistics':
             from services.paper_demo.shadow.favorite_single import summarize_statistics_holds
             folder['statistics_hold_summary']=summarize_statistics_holds(hold_sources,profiles)
