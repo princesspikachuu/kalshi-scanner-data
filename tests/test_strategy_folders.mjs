@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteForwardValidationMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup,filledEventsSmall} from '../apps/web/shadow-view.mjs';
+import {marketTypeSummaryValues,marketTypeSummaryMarkup,marketTypeGroups,summaryExposure,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteForwardValidationMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup,filledEventsSmall,individualMarketActivityMarkup} from '../apps/web/shadow-view.mjs';
 import {proxyAuth} from '../apps/gateway/index.mjs';
 const source=fs.readFileSync(new URL('../apps/web/shadow.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/\nload\(\);\n/,'\n');
 function fixture(){
@@ -21,7 +21,7 @@ function setup(data,{storage=new Map(),queries={}}={}){
   demoCall:async()=>({}),e:s=>String(s??'').replaceAll('<','&lt;'),escapeHTML:s=>s,
   botSummaryPeriodPreferences:()=>({}),botSummaryPeriodMarkup:()=>'<p>Period controls</p>',dollars:x=>x===null?'—':'$'+x,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
-  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteForwardValidationMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
+  scalperMarkup,marketTypeGroups,marketTypeSummaryMarkup,executionMarkup,folderOverviewMarkup,folderPeriods,folderCardSummaryMarkup,sequentialComparisonMarkup,monitoringMarkup,botPnlMarkup,botPnlDetailsMarkup,favoriteTimingMarkup,favoriteCategoryRows,favoriteResearchMarkup,favoriteCategoryResearchMarkup,favoriteStatisticsMatrixMarkup,favoriteCollectorOverviewMarkup,favoriteProfitLegendMarkup,favoriteTableSettingsMarkup,favoriteForwardValidationMarkup,favoriteWideOverviewMarkup,favoriteSingleOverviewMarkup,favoriteSingleCellMarkup,favoriteBucketKey,favoriteBucketStarMarkup,winConfidence90,favoriteEvidenceTier,learningDiagnosticsMarkup,individualMarketActivityMarkup,accountMarkup:()=>'<p>Paper account $1,000</p>',exposureMarkup:()=>'<p>No exposure</p>',accountPnl:()=>({className:'',text:'$0',uncertain:false})};
  vm.createContext(context);vm.runInContext(source+'\ndata=fixture;draw();',context);return {context,nodes,listeners};
 }
 test('historical query degradation still renders Favorites portfolio and research notice',async()=>{
@@ -1425,4 +1425,38 @@ test('submitted maker BUY attempts appear beside distinct filled events for each
  assert.match(nodes.get('groups').innerHTML,/≥150 attempted fills · partial history/);
  const html=marketTypeSummaryMarkup(group,'6H',[],null,[],filled,attempts);
  assert.match(html,/≥22 attempted fills · partial history/);
+});
+
+test('individual regular Favorites period cards distinguish submitted orders from filled events',()=>{
+ const exp={attempts:999,completed:888,
+  attempted_orders:{all:{count:80,complete:false},'1H':{count:6,complete:true},'6H':{count:10,complete:false},'24H':{count:20,complete:true}},
+  filled_events:{all:{count:20,complete:false},'1H':{count:2,complete:true},'6H':{count:3,complete:false},'24H':{count:5,complete:true}}};
+ const one=individualMarketActivityMarkup(exp,'1H');
+ assert.match(one,/Attempted fills · 1h<\/span><strong>6<\/strong>/);
+ assert.match(one,/Filled events · 1h<\/span><strong>2<\/strong>/);
+ assert.doesNotMatch(one,/999|888|≥80|≥20/);
+ assert.match(individualMarketActivityMarkup(exp,'6H'),/≥10/);
+ assert.match(individualMarketActivityMarkup(exp,'6H'),/≥3/);
+ assert.match(individualMarketActivityMarkup(exp,'all'),/≥80/);
+ assert.match(individualMarketActivityMarkup(exp,'all'),/≥20/);
+ assert.match(individualMarketActivityMarkup(exp,'7D'),/Attempt tracking unavailable/);
+ assert.match(individualMarketActivityMarkup(exp,'7D'),/Fill tracking unavailable/);
+ assert.doesNotMatch(individualMarketActivityMarkup({attempted_orders:{'1H':{count:-1}}},'1H'),/<strong>-1<\/strong>/);
+});
+
+test('individual regular Favorites time selector changes expanded attempts and filled events',()=>{
+ const d=fixture(),bot=d.bots.find(x=>x.id==='favorites');
+ bot.experiment={...bot.experiment,attempts:999,completed:888,
+  attempted_orders:{all:{count:77,complete:false},'1H':{count:4,complete:true}},
+  filled_events:{all:{count:25,complete:false},'1H':{count:1,complete:true}}};
+ const control={dataset:{botSummary:'favorites',summaryPeriod:'1H'}};
+ const {nodes}=setup(d,{queries:{'[data-bot-summary]':[control]}});
+ assert.match(nodes.get('groups').innerHTML,/≥77<\/strong>/);
+ assert.doesNotMatch(nodes.get('groups').innerHTML,/>999<\/strong>/);
+ control.onclick({preventDefault(){},stopPropagation(){}});
+ const html=nodes.get('groups').innerHTML;
+ assert.match(html,/Attempted fills · 1h<\/span><strong>4<\/strong>/);
+ assert.match(html,/Filled events · 1h<\/span><strong>1<\/strong>/);
+ assert.doesNotMatch(html,/≥77<\/strong>/);
+ assert.doesNotMatch(html,/>999<\/strong>/);
 });

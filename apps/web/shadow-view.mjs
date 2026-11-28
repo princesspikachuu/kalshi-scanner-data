@@ -612,6 +612,24 @@ export function filledEventsSmall(windows,period='all',attempts=null){
    'Attempt telemetry has not been received yet. Do not interpret missing data as zero attempts.';
  return '<small class="filled-events-subtitle" title="'+e(title+' '+attemptTitle)+'">'+e(label)+' · '+e(attemptLabel)+'</small>';
 }
+// Individual regular-Favorites cards share the same period-specific event/order
+// definitions as the P/L subtitle. Never silently substitute lifetime counters.
+export function individualMarketActivityMarkup(experiment,period='all'){
+ if(!Object.hasOwn(folderPeriods,period))period='all';
+ const format=(windows,missing)=>{
+  const value=windows?.[period],count=Number(value?.count);
+  if(value?.count==null||!Number.isSafeInteger(count)||count<0)return {number:'—',note:missing};
+  const partial=value.complete!==true;
+  return {number:(partial?'≥':'')+count.toLocaleString('en-US'),
+    note:partial?'Partial history · at least this many':'Tracked period'};
+ };
+ const fills=format(experiment?.filled_events,'Fill tracking unavailable');
+ const attempts=format(experiment?.attempted_orders,'Attempt tracking unavailable');
+ return '<div class="bot-stats market-period-activity" aria-label="Individual market activity for '+e(folderPeriods[period])+'">'+
+   '<div><span>Attempted fills · '+e(folderPeriods[period])+'</span><strong>'+e(attempts.number)+'</strong><small>'+e(attempts.note)+'</small></div>'+
+   '<div><span>Filled events · '+e(folderPeriods[period])+'</span><strong>'+e(fills.number)+'</strong><small>'+e(fills.note)+'</small></div>'+
+   '</div><p class="small">Attempts are submitted paper maker BUY orders; filled events are distinct exchange events with a BUY fill. Multiple attempts can belong to one event. Not a fill-success percentage.</p>';
+}
 export function monitoringMarkup(m){
  if(!m)return '';
  const names={weather:'Hourly weather',weather_daily:'Daily weather',hourly:'Hourly prices',sports:'Sports',market_maker:'Market Maker',complete_set:'Complete sets'};
