@@ -62,6 +62,7 @@ def assert_no_hidden_control_tail(connection):
 
 SELECT_PREFIX=f"""SELECT {SELECT_FIELDS} FROM research_job
     WHERE idempotency_key>=%s AND idempotency_key<%s
+    AND starts_with(idempotency_key,%s)
     AND (%s::text IS NULL OR idempotency_key>%s)"""
 
 
@@ -110,7 +111,7 @@ def collect_snapshot(pool):
                 query=select_prefix_query(predicate)
                 while True:
                     page=connection.execute(query,(
-                        prefix,prefix+'zzzz',cursor,cursor,PAGE_SIZE)).fetchall()
+                        prefix,prefix+'zzzz',prefix,cursor,cursor,PAGE_SIZE)).fetchall()
                     if not page:break
                     for record in page:append(record)
                     cursor=page[-1]['idempotency_key']
@@ -200,7 +201,7 @@ def collect_snapshot_spooled(pool):
                     cursor=None;query=select_prefix_query(predicate)
                     while True:
                         page=connection.execute(query,(
-                            prefix,prefix+'zzzz',cursor,cursor,PAGE_SIZE)).fetchall()
+                            prefix,prefix+'zzzz',prefix,cursor,cursor,PAGE_SIZE)).fetchall()
                         if not page:break
                         for record in page:add(record)
                         cursor=page[-1]['idempotency_key']

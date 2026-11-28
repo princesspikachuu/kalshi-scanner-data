@@ -68,5 +68,13 @@ class ProcessMetrics:
             import os
             value['rss_bytes']=int(Path('/proc/self/statm').read_text().split()[1])*os.sysconf('SC_PAGE_SIZE')
         except (OSError,ValueError,IndexError):value['rss_bytes']=None
+        try:
+            value['cgroup_current_bytes']=int(Path('/sys/fs/cgroup/memory.current').read_text())
+            wanted={'anon','file','kernel','shmem','inactive_file'}
+            value['cgroup_memory_bytes']={key:int(amount) for key,amount in
+                (line.split() for line in Path('/sys/fs/cgroup/memory.stat').read_text().splitlines())
+                if key in wanted}
+        except (OSError,ValueError):
+            pass
         self.wall,self.cpu=now,cpu
         return value

@@ -179,6 +179,7 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
  }
  const readOnlySetup=demo&&['/api/demo/connection','/api/demo/paper-connection'].includes(url.pathname)||liveBots&&['/api/live/connection','/api/live/preflight','/api/live/onboarding'].includes(url.pathname);
  const shadowWorkspace=method==='GET'&&url.pathname==='/api/demo/shadow/workspace';
+ const favoritesResearch=method==='GET'&&url.pathname==='/api/demo/shadow/research-folder/favorites';
  if(shadowWorkspace&&request.headers.get('x-pocket-workspace-encoding')==='gzip-base64-v1')headers.set('x-pocket-workspace-encoding','gzip-base64-v1');
  let streaming=false;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),shadowWorkspace?Math.max(timeoutMs,45000):readOnlySetup?Math.max(timeoutMs,30000):timeoutMs);
@@ -202,6 +203,13 @@ export async function proxyAuth(request,env,{fetcher=fetch,timeoutMs=8000}={}){
   }else{
    if(url.pathname==='/api/auth/logout')throw Error('invalid logout response');
    if(upstream.status!==200||!/^application\/json(?:\s*;|$)/i.test(upstream.headers.get('content-type')||''))throw Error('invalid response');
+   if(favoritesResearch&&upstream.headers.get('x-pocket-favorites-research-contract')==='demo-v1'){
+    const limit=2097152;
+    if(Number(upstream.headers.get('content-length'))>limit){await upstream.body?.cancel();throw new RangeError('body limit')}
+    streaming=true;
+    return new Response(boundedResponse(upstream.body,limit,()=>clearTimeout(timer)),
+     {status:200,headers:{...BASE_HEADERS,'content-type':'application/json'}});
+   }
    if(shadowWorkspace&&upstream.headers.get('x-pocket-workspace-contract')==='demo-v1'){
     if(Number(upstream.headers.get('content-length'))>8388608){await upstream.body?.cancel();throw new RangeError('body limit')}
     const streamHeaders={...BASE_HEADERS,'content-type':'application/json','cache-control':'no-store, no-transform'};

@@ -663,7 +663,13 @@ def install_shadow(app,auth,mutate,pool):
                         rows=[regular_favorites_held_row(row) for row in rows]
                     research[key]=rows
             if research:out[bot_id]=research
-        return dict(contract='demo-v1',folder_id=identifier,at=status.get('at'),bots=out,real_orders_enabled=False)
+        payload=dict(contract='demo-v1',folder_id=identifier,at=status.get('at'),bots=out,real_orders_enabled=False)
+        if identifier=='favorites' and len(out)<=800:
+            # The owner-authenticated route constructs every top-level field,
+            # bot ID and research array above. Allow the edge to stream these
+            # validated bytes without a second full JSON parse.
+            return JSONResponse(payload,headers={'x-pocket-favorites-research-contract':'demo-v1'})
+        return payload
 
     @app.get('/demo/shadow/research/{identifier}')
     def research_details(identifier:str,request:Request):

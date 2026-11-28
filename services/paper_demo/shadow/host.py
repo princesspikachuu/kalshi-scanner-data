@@ -185,6 +185,7 @@ class HostedRun(ForwardRun):
         self.status={};self.data_versions={};self.health_log_at=0
         self.suspend_idle_feeds=True
         self.experiments=ExperimentSuite(self,all_rows,prior['progress'].get('experiments') if prior else None)
+        del prior  # The restored engines own the live state; release the decoded checkpoint shell.
         # A bounded restart-local observer on REGULAR Favorites only.
         # The statistics portfolio and all other engines stay untouched.
         self.favorite_quote_lifecycle=FavoriteQuoteLifecycle()
@@ -321,12 +322,21 @@ class HostedRun(ForwardRun):
 
     async def fee_policy(self,market,metadata):
         ticker=market['ticker']
-        async with self.fee_locks.setdefault(ticker,asyncio.Lock()):
-            async with self.fee_slots:
-                # A cold cache is restored before any book/clock input is consumed.
-                await asyncio.to_thread(self.verified_fees.load,ticker,market,time.time())
-            kind,multiplier=self.verified_fees.schedule(ticker,time.time())
-            return FeePolicy(D(str(multiplier)),D(str(multiplier)) if kind=='quadratic_with_maker_fees' else D(0))
+        flight=self.fee_locks.get(ticker)
+        if flight is None:
+            flight=self.fee_locks[ticker]=[asyncio.Lock(),0]
+        flight[1]+=1
+        try:
+            async with flight[0]:
+                async with self.fee_slots:
+                    # A cold cache is restored before any book/clock input is consumed.
+                    await asyncio.to_thread(self.verified_fees.load,ticker,market,time.time())
+                kind,multiplier=self.verified_fees.schedule(ticker,time.time())
+                return FeePolicy(D(str(multiplier)),D(str(multiplier)) if kind=='quadratic_with_maker_fees' else D(0))
+        finally:
+            flight[1]-=1
+            if not flight[1]:
+                del self.fee_locks[ticker]
 
     async def refresh_fee(self,ticker):
         try:
@@ -361,6 +371,7 @@ class HostedRun(ForwardRun):
         # Independent of the once-per-second UI/control loop. Four bounded
         # verifiers share the data adapter's global request pacing/cooldown.
         while not self.done.is_set():
+            self.verified_fees.prune_expired(time.time())
             remaining=PRODUCTION_READS.remaining()
             if remaining:
                 await asyncio.sleep(min(5,remaining));continue
@@ -785,6 +796,9 @@ class HostedRun(ForwardRun):
                         market_states={t:dict(close=m['close'],paid=bool(m.get('paid')),data_valid=self.engine.wallet.stat(t).valid,
                             book_valid=self.engine.books[t].valid,entries_paused=t in self.strategy.halted) for t,m in self.engine.markets.items()},
                         orders=orders,positions=positions,experiments=experiment_snapshot,monitoring=self.experiments.monitoring_snapshot(now)))
+                    # An async loop local otherwise retains the old full dashboard
+                    # snapshot while building the next one and between publishes.
+                    del experiment_snapshot
                 # Reports/audit are durable in PostgreSQL. Keep only unsettled cycle
                 # execution state in the hot checkpoint; never rewrite years of history.
                 self.engine.prune_terminal_orders()
@@ -794,7 +808,6 @@ class HostedRun(ForwardRun):
                          not any(o.ticker==t and o.id in pending_ids for o in self.engine.orders.values())]
                 for ticker in retired:
                     self.engine.markets.pop(ticker,None);self.engine.books.pop(ticker,None)
-                    self.verified_fees.cache.pop(ticker,None);self.fee_locks.pop(ticker,None)
                     self.settlement_checks.pop(ticker,None);self.engine.gap_reasons.pop(ticker,None)
                     self.engine.fees.pop(ticker,None);self.engine.wallet.stats.pop(ticker,None)
                     self.engine.closed_reports.discard(ticker);self.engine.settled.discard(ticker)
