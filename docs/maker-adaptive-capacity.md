@@ -1,0 +1,11 @@
+# Adaptive Market Maker monitoring allocation
+
+The previous fixed two-market Maker cap was independent of measured processing cost. A live November 8 sample measured the two Maker portfolios together at approximately 0.63 CPU-seconds in 30 seconds with two physical markets, compared with 25.67 process CPU-seconds overall. Both Maker portfolios processed 56,692 inputs, mostly unrelated to their markets. This supports removing the arbitrary two-market ceiling, but does not establish that the worker can immediately admit sixteen additional subscriptions during a backlog.
+
+Maker candidate targets are now 8, 12 and 16 at the existing measured health levels. Global limits remain 32/40/48 subscriptions and 12/16/20 entry candidates. The effective Maker allowance also subtracts other strategies' existing subscriptions and entry probes, and leaves two additional free discovery slots for them. New Maker admission pauses on stale/overloaded telemetry. Existing orders, positions and protective exits are never evicted when the allowance shrinks. Serialized admission rechecks the same limits to prevent concurrent discovery races.
+
+These are physical market counts: both independent Maker portfolios share each incoming stream. Discovery continues one pass per 30 seconds and verifies one ranked candidate per pass, rather than multiplying API calls to populate the higher limit. Health output exposes `maker_entry_limit` and `maker_slots_free`, so the target can be distinguished from currently available capacity. No paid resources or portfolio exposure limits change.
+
+A flat Maker portfolio with no delayed actions now consumes only the subscription sequence for unrelated book/trade frames. Relevant market frames, clocks, heartbeats, lifecycle, settlement and gaps retain normal processing. Sequence discontinuities fall back to the normal engine invalidation path; duplicates cannot create fills. Any live order, inventory or pending action retains the complete causal execution path. Per-portfolio `unrelated_inputs_skipped_total` makes the saved work measurable.
+
+Regression tests verify targets above four, sixteen physical streams shared by both portfolios, headroom for other strategies, serialized cap enforcement and overload pauses, plus sequence continuity/recovery and preservation of active-order and inventory processing.

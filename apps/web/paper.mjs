@@ -1,0 +1,142 @@
+import {paperCall} from './paper-client.mjs';
+import {appendActivity} from './paper-activity.mjs';
+const setupCache=new Map(),openSetups=new Set(),openAudits=new Set(),selectedDayIds=new Set();
+let rangeDays=null;
+const $=id=>document.getElementById(id);let workspace,busy=false,requestKey=null,pendingCancel=null;
+function requestCancel(run){
+ pendingCancel=run.id;
+ $('cancelReplayName').textContent=run.name||run.strategy_names?.slice(0,3).join(' + ')||'Portfolio replay';
+ $('confirmCancelReplay').disabled=false;
+ $('cancelReplayDialog').showModal();
+}
+$('keepReplay').addEventListener('click',()=>{$('cancelReplayDialog').close();pendingCancel=null});
+$('cancelReplayDialog').addEventListener('close',()=>{pendingCancel=null});
+$('confirmCancelReplay').addEventListener('click',async()=>{
+ if(!pendingCancel)return;
+ const id=pendingCancel;
+ $('confirmCancelReplay').disabled=true;
+ try{
+  await paperCall('replays/'+id+'/cancel',{});
+  $('cancelReplayDialog').close();pendingCancel=null;
+  await load();
+ }catch(error){
+  $('status').textContent=error.message;
+  $('confirmCancelReplay').disabled=false;
+ }
+});
+const checked=id=>[...$(id).querySelectorAll('input:checked')].map(e=>e.value);
+function options(id,items){const selected=id==='datasets'?selectedDayIds:new Set(checked(id));$(id).replaceChildren(...items.map(item=>{const label=document.createElement('label');label.className='check';const input=document.createElement('input');input.type='checkbox';input.value=item.id;input.checked=selected.has(String(item.id));const span=document.createElement('span');span.textContent=item.label;label.append(input,span);return label}));if(!items.length)$(id).textContent=id==='strategies'?'No table-based strategies saved. Choose New bet on the statistics table.':'No analyzed trade datasets yet. They will appear as analysis finishes.';}
+function money(cents){return '$'+(cents/100).toFixed(2)}
+async function load(){try{
+ workspace=await paperCall('workspace');
+ options('strategies',workspace.strategies.filter(s=>s.strategy.bid_offset==null).map(s=>({id:s.id,label:`${s.strategy.name} · ${s.asset} · reference bid-grid ROI ${s.strategy.statistical_yield_percent.toFixed(2)}% (not validated for ask entries) · n=${s.strategy.sampled_markets}`})));
+ const eligibleDays=(rangeDays??workspace.datasets).filter(d=>$('fillModel').value==='all_filled'||d.has_trade_evidence);
+ const picked=[...selectedDayIds];
+ const optionsForDays=eligibleDays.filter(d=>!$('daySearch').value.trim()||(`${d.day} ${d.asset}`).toLowerCase().includes($('daySearch').value.trim().toLowerCase())).map(d=>({id:d.id,label:`${d.day} · ${d.asset} · ${d.markets} markets · version ${d.id}${d.has_trade_evidence?'':' · candles only'}`}));
+ options('datasets',optionsForDays);
+ $('dayCount').textContent=`${eligibleDays.length} eligible saved versions · ${new Set(eligibleDays.map(d=>d.day)).size} distinct dates · ${picked.length} selected`;
+ $('results').replaceChildren(...workspace.runs.map(run=>{const card=document.createElement('article');card.className='run-card';const title=document.createElement('strong'),p=document.createElement('p'),note=document.createElement('p'),r=run.result;
+ title.textContent=(run.name||run.strategy_names?.slice(0,3).join(' + ')||'Portfolio replay')+' · '+(r?`${money(r.profit_loss_cents)} P/L · ${money(r.ending_cash_cents)} ending balance`:`Replay ${run.status}`);
+ p.textContent=r?`${r.orders_placed??r.attempts} orders placed · ${r.reconciliation?`${r.reconciliation.qualified_contracts} contracts ordered · ${r.reconciliation.filled_contracts} contracts filled (${r.reconciliation.fill_rate_percent?.toFixed(1)??'N/A'}%) · ${r.reconciliation.cancelled_unfilled_contracts} contracts unfilled`:`${r.filled_contracts??r.simulated_fills} filled contracts (total ordered not recorded)`} · ${r.expired_orders??r.no_fill_evidence} orders expired · ${r.priority_cancellations??0} priority cancellations · ${r.loss_prevention_sales??0} loss-prevention sales`:(run.status==='cancelled'?'Canceled by you. No further work will be published.':run.error_code?'Replay could not finish. Choose fewer days and retry.':'Waiting for the paper processor.');
+ note.className='small';note.textContent=r?`${r.fill_model}. ${r.assumptions??'Historical fill proxy; actual queue position is unknown.'}`:'';card.append(title,p,note);
+ if(['queued','running'].includes(run.status)){
+  const progress=run.activity||{},phase=progress.phase||
+   (run.status==='queued'?'Queued — awaiting replay worker':'Preparing replay');
+  const pct=Number.isFinite(progress.percent_complete)?
+    Math.max(0,Math.min(100,progress.percent_complete)):null;
+  const section=document.createElement('div');section.className='paper-replay-progress';
+  const label=document.createElement('p');label.className='small';
+  label.textContent=`${phase}${pct==null?'':` · ${pct.toFixed(1)}%`}`+
+   (progress.datasets_total?` · ${progress.datasets_loaded||0}/${progress.datasets_total} saved datasets loaded`:'')+
+   (progress.events_total?` · ${progress.events_processed||0}/${progress.events_total} market events processed`:'')+
+   (progress.records_loaded?` · ${progress.records_loaded} records loaded`:'');
+  const bar=document.createElement('progress');bar.max=100;
+  if(pct!=null)bar.value=pct;
+  bar.style.width='100%';
+  bar.setAttribute('aria-label',`Paper replay: ${phase}`);
+  section.append(label,bar);card.append(section);
+ }
+ if(r?.cohort_comparison){
+  const comparison=r.cohort_comparison,details=document.createElement('details'),title=document.createElement('summary');
+  title.textContent='Matched cohort · research vs actual replay prices';details.append(title);
+  const intro=document.createElement('p');intro.textContent=comparison.methodology;details.append(intro);
+  const ledger=document.createElement('p');ledger.textContent=`Independently reconciled exact-order hold P/L: ${money(comparison.same_orders_ledger_hold_pnl_cents)}. This must equal the all-filled P/L when that model is selected.`;details.append(ledger);
+  const formatPct=v=>v==null?'N/A':v.toFixed(2)+'%';
+  for(const c of comparison.strategies){
+   const line=document.createElement('p');
+   line.textContent=`${c.strategy} · fixed-minute reference: ${c.reference_band_markets}/${c.markets_checked} qualifying markets, ${c.reference_distinct_events} independent events, ROI ${formatPct(c.fixed_reference_roi_percent)}. Matched same-side orders: ${c.paired_markets}, ${c.paired_contracts} contracts; fixed-checkpoint bid ROI ${formatPct(c.paired_reference_roi_percent)} vs actual replay bid ROI ${formatPct(c.paired_replay_roi_percent)}. P/L reference ${money(c.paired_fixed_bid_pnl_cents)} vs replay ${money(c.paired_replay_bid_pnl_cents)}. Price difference ${money(c.paired_price_difference_cents)}; reference-band opportunities without replay orders ${c.reference_markets_without_order}; replay orders outside paired cohort ${c.unmatched_replay_orders}; side mismatches ${c.different_side}; quote missing/stale ${c.missing_or_stale_fixed_quote}.`;
+   details.append(line);
+  }
+  card.append(details);
+ }
+ if(r?.reconciliation){
+  const audit=r.reconciliation;
+  const review=document.createElement('details'),heading=document.createElement('summary');
+  heading.textContent='Why did this replay gain or lose money?';
+  review.addEventListener('toggle',()=>{if(review.open)openAudits.add(run.id);else openAudits.delete(run.id)});
+  if(openAudits.has(run.id))review.open=true;
+  review.append(heading);
+  const intro=document.createElement('p');intro.textContent='Exact ask-qualified replay orders, not the bid-qualified research table. Hypothetical all-filled outcomes assume every qualifying order filled and are NOT actual performance.';
+  review.append(intro);
+  const overview=document.createElement('p');
+  overview.textContent=`Qualifying bids: ${audit.qualified_orders}; qualifying contracts: ${audit.qualified_contracts}; filled contracts: ${audit.filled_contracts}; filled winners: ${audit.filled_winners}; hypothetical P/L if every qualifying bid filled: ${money(audit.all_qualified_filled_pnl_cents)}; same opportunities valued at the displayed best bid: ${money(audit.same_orders_best_bid_pnl_cents)} (NOT an achievable-fill estimate); extra price paid versus best bid: ${money(audit.entry_price_premium_cents)}; hold-to-settlement P/L of simulated fills: ${money(audit.filled_hold_pnl_cents)}; early-sale effect: ${money(audit.loss_prevention_delta_cents)}; realized replay P/L: ${money(audit.reconciled_realized_pnl_cents)}.`;
+  review.append(overview);
+  for(const s of audit.strategies){
+   const pct=v=>v==null?'N/A':v.toFixed(2)+'%';
+   const line=document.createElement('p');line.textContent=`${s.name} (${s.asset}, ASK ${s.ask_band_cents[0]}–${s.ask_band_cents[1]}¢): bid-based reference grid ${pct(s.reference_bid_grid_roi_percent)} (DIFFERENT cohort); qualified ${s.qualified_orders} bids / ${s.qualified_contracts} contracts, win rate ${pct(s.qualified_win_rate_percent)}, hypothetical all-filled ROI ${pct(s.qualified_all_fill_roi_percent)}, break-even win rate ${pct(s.qualified_break_even_win_rate_percent)}; distinct markets ${s.distinct_markets??'N/A'} / distinct events ${s.distinct_events??'N/A'}; average entry ${s.average_entry_minutes_before_close??'N/A'} minutes before close (window midpoint distance ${s.average_distance_from_window_midpoint_minutes??'N/A'} min); filled ${s.filled_contracts} contracts (${pct(s.fill_rate_percent)} fill rate), winners ${s.filled_winners}, conditional win rate ${pct(s.filled_win_rate_percent)} vs break-even ${pct(s.filled_break_even_win_rate_percent)}, hold ROI ${pct(s.filled_hold_roi_percent)}; maker price based on ${s.bid_reference==='best_bid'?'best bid':'ask'} with adjustment ${s.bid_adjustment_cents}¢; displayed bid–ask spread averaged ${s.avg_displayed_spread_cents??'N/A'}¢; bid placed ${s.avg_entry_premium_over_best_bid_cents??'N/A'}¢ above the displayed best bid (filled: ${s.avg_filled_entry_premium_cents??'N/A'}¢); hypothetical all-qualified P/L ${money(s.all_qualified_filled_pnl_cents)} versus ${money(s.same_orders_best_bid_pnl_cents)} at best bid (fill rates would differ); filled hold P/L ${money(s.filled_hold_pnl_cents)}.`;
+   review.append(line);
+  }
+  card.append(review);
+ }
+ appendActivity(card,run,document);
+ const setup=document.createElement('details'),setupTitle=document.createElement('summary');setupTitle.textContent='View run setup';setup.append(setupTitle);
+ setup.addEventListener('toggle',async()=>{if(!setup.open){openSetups.delete(run.id);return}openSetups.add(run.id);if(setup.dataset.loaded)return;setup.dataset.loaded='true';try{
+ const saved=setupCache.get(run.id)??(await paperCall('replays/'+run.id)).run;setupCache.set(run.id,saved);const config=saved.configuration;
+ const lines=[`Created ${new Date(saved.created_at).toLocaleString()} · starting balance ${money(config.starting_cash_cents??config.strategy?.starting_cash_cents??10000)} · fill model ${config.fill_model??'legacy conservative'}`,
+ 'Saved days: '+saved.source_days.map(d=>`${d.day} / ${d.asset} / version ${d.id}`).join('; '),
+ ...(config.strategies??[config.strategy]).filter(Boolean).map(s=>`${s.name} · ${s.asset} · ask ${s.min_price}–${s.max_price}¢ · ${s.entry_minute_min??'?'}–${s.entry_minute_max??s.minutes?.join(',')} minutes before close · bid based on ${s.bid_reference==='best_bid'?'best bid':'ask'} ${s.bid_adjustment_cents??-(s.below_ask_cents??1)}¢ · maximum ${s.maximum_bid_cents==null?'none':s.maximum_bid_cents+'¢'} · ${s.contracts} contracts · ${s.balance_percent??10}% of balance · loss prevention ${s.loss_trigger_cents==null?'off':'sell at '+s.loss_trigger_cents+'¢ or lower'}`)];
+ for(const text of lines){const line=document.createElement('p');line.textContent=text;setup.append(line)}
+ }catch(error){setup.dataset.loaded='';const line=document.createElement('p');line.textContent=error.message;setup.append(line)}});if(openSetups.has(run.id))setup.open=true;card.append(setup);
+ if(['queued','running'].includes(run.status)){
+  const actions=document.createElement('div');actions.className='run-actions';
+  const menu=document.createElement('details');menu.className='run-more';
+  const menuTitle=document.createElement('summary');menuTitle.textContent='More actions';
+  const cancel=document.createElement('button');cancel.type='button';cancel.className='danger';cancel.textContent='Cancel this run…';
+  cancel.addEventListener('click',()=>requestCancel(run));
+  menu.append(menuTitle,cancel);actions.append(menu);card.append(actions);
+ }return card}));
+ if(!busy)$('status').textContent='Paper workspace ready · live trading disabled';
+ }catch(error){$('status').textContent=error.message}}
+$('run').addEventListener('click',async()=>{
+ if(busy)return;busy=true;$('run').disabled=true;
+ try{const strategy_ids=checked('strategies'),dataset_ids=[...selectedDayIds].map(Number);if(!strategy_ids.length||!dataset_ids.length)throw Error('Select at least one strategy and one saved day.');if(dataset_ids.length>24)throw Error('Select at most 24 saved dataset versions per replay.');
+ requestKey??=crypto.randomUUID();const queued=await paperCall('replays',{name:$('runName').value.trim(),strategy_ids,dataset_ids,starting_cash_cents:Math.round(Number($('cash').value)*100),fill_model:$('fillModel').value,request_key:requestKey});requestKey=null;
+ $('status').textContent=`Replay ${queued.id} queued. Follow its status and order activity below.`;await load();
+ }catch(error){$('status').textContent=error.message}finally{busy=false;$('run').disabled=false}
+});
+const now=new Date(),today=now.toISOString().slice(0,10),monthAgo=new Date(now.getTime()-29*86400000).toISOString().slice(0,10);
+$('rangeStart').value=monthAgo;$('rangeEnd').value=today;
+$('findDays').addEventListener('click',async()=>{
+ const start=$('rangeStart').value,end=$('rangeEnd').value,asset=$('dayAsset').value,mode=$('fillModel').value;
+ if(!start||!end||end<start){$('dayRangeStatus').textContent='Choose a valid beginning and ending date.';return}
+ $('findDays').disabled=true;$('dayRangeStatus').textContent='Searching saved dates…';
+ try{
+  const query=new URLSearchParams({start,end,mode,asset});
+  const result=await paperCall('datasets?'+query.toString());
+  rangeDays=result.datasets;
+  $('dayRangeStatus').textContent=`${result.days_available} of ${result.days_requested} UTC dates have eligible saved markets · ${rangeDays.length} category versions available. Dates not shown have no qualifying saved evidence; find additional dates using the research collection page.`;
+  await load();
+ }catch(error){$('dayRangeStatus').textContent=error.message}finally{$('findDays').disabled=false}
+});
+$('selectFoundDays').addEventListener('click',()=>{
+ const options=(rangeDays??workspace?.datasets??[]).filter(d=>$('fillModel').value==='all_filled'||d.has_trade_evidence);
+ for(const d of options){if(selectedDayIds.size>=24)break;selectedDayIds.add(String(d.id))}
+ requestKey=null;void load();
+ $('dayRangeStatus').textContent+=` · ${selectedDayIds.size} selected (24-version limit per run).`;
+});
+$('clearFoundDays').addEventListener('click',()=>{selectedDayIds.clear();requestKey=null;void load()});
+$('fillModel').addEventListener('change',()=>{rangeDays=null;$('dayRangeStatus').textContent='Fill model changed. Search the date range again to see compatible saved data.';void load()});
+$('daySearch').addEventListener('input',()=>{void load()});
+for(const id of ['strategies','datasets','cash','fillModel','runName'])$(id).addEventListener('change',()=>{requestKey=null});
+$('datasets').addEventListener('change',event=>{if(event.target?.type==='checkbox'){if(event.target.checked)selectedDayIds.add(event.target.value);else selectedDayIds.delete(event.target.value)}});
+void load();const refreshTimer=setInterval(load,5000);refreshTimer?.unref?.();

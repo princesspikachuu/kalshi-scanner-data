@@ -1,0 +1,43 @@
+name: Validate one-contract Favorites research (no deploy)
+
+on:
+  pull_request:
+    branches: [build/google-auth-foundation]
+    paths:
+      - '.github/workflows/validate-favorites-one-contract.yml'
+      - 'services/paper_demo/shadow/favorite_entries.py'
+      - 'services/paper_demo/shadow/favorites.py'
+      - 'services/api/tests/test_favorite_data_mode.py'
+      - 'services/api/tests/test_favorite_maker_entries.py'
+      - 'services/paper_demo/shadow/host.py'
+      - 'services/paper_demo/shadow/scope.py'
+      - 'services/paper_demo/shadow/folders.py'
+      - 'services/paper_demo/shadow/weather.py'
+      - 'services/paper_demo/shadow/sports.py'
+      - 'services/api/tests/test_strategy_folders.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        run: python -m pip install -r services/api/requirements.txt
+      - name: Verify Favorites one-contract pricing and migration
+        run: |
+          python -m unittest \
+            services.api.tests.test_strategy_folders.OneContractFavoritesResearchTests \
+            services.api.tests.test_strategy_folders.FavoriteTests \
+            services.api.tests.test_favorite_maker_entries \
+            services.api.tests.test_favorite_data_mode \
+            services.api.tests.test_favorite_15m_restore.RestoreBehavior \
+            services.api.tests.test_favorite_scan.Revisit \
+            services.api.tests.test_worker_delay_and_windows.DelayAndWindows -v

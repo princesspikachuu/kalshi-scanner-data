@@ -1,0 +1,137 @@
+# 28-market production shadow deployment
+
+This integrates the standalone convexity strategy and frictional execution model into the existing single fenced trading worker. The DEMO entry redirects to `/shadow` once the one-time migration completes. The original bot records, previous paper wallet and exchange Demo history remain readable through `/bots?history=1`; current shadow results use their own namespace and versions.
+
+The 28 profile families come from the existing market registry. Each has a separate strategy instance and state; feed subscriptions, trade-volume budgets and virtual cash are shared. LIVE bots remain paused. No real order-routing method exists in the new engine. The initial **virtual** bankroll is $1,000, enabling 28 paired 100-contract 10-cent quotes without claiming to allocate real funds.
+
+Worker startup pauses old paper entries and cancels their resting virtual orders. An old paper position prevents handover until the old executor closes or settles it. A completed handover is idempotent and logs `shadow_cohort_initialized` with `bots: 28` and `real_orders_enabled: false`. If the production Read key has not been connected, the verified expected state is `shadow_connection_required`; deployment does not imply fills or an active authenticated feed.
+
+Hosted checkpoints and all audit rows for each bounded input batch commit in a single PostgreSQL transaction. Batches preserve receipt order and every event's cash value, take at most 32 inputs and stop adding inputs after 5 milliseconds of processing, and flush before waiting for another input. Backpressure cannot reorder producer timestamps. Restarts retain cash, inventory, lot arming flags, versions and RNG state, cancel uncertain virtual submissions, and exclude interrupted cycles. Completed execution state is removed from the hot checkpoint after its durable report is saved. No per-tick database history is written. Existing monitoring, verified archive and backup facilities remain in use; shadow mutable state and bot controls are included in backups. Failed archive verification retains original records.
+
+The standalone core still provides full event capture/replay for local tests. The hosted worker stores trading audit and reports, **not every raw L2/spot update**; the local replay workflow must be used to capture a complete replay tape. Browser CSV exports explicitly identify the shown latest 100 audit rows rather than claiming to export all history.
+
+Known modeling assumptions: 150ms configured action latency; FIFO estimated from public L2 and subsequent matching prints; volume-bounded trade-through and probabilistic toxic-fill stress; depth-limited IOC with partial/unfilled remainder; current verified series/event fee schedules and centicent rounding. BTC remains a shared external stress proxy, not a calibrated native spot feed for the other assets. No IOC fill guarantee or exact hidden-queue reconstruction is claimed. Win-rate and PnL analysis excludes incomplete-data cycles; the virtual wallet still retains all simulated cash flows.
+
+Owner-authenticated API paths `/demo/shadow/workspace`, `/events`, `/bots/{asset}`, `/bulk`, and `/funds` retain the existing gateway and CSRF controls. Settings changes increment the bot revision and stop new entries in the current cycle; existing inventory continues its original policy. Lifetime, 1h, 6h and 24h buttons require no dropdown. Prior versions remain available via the full-history checkbox. Virtual refill request IDs are idempotent and commit with wallet state.
+
+Validation includes the existing API/browser suites plus pure execution/replay tests and actual-PostgreSQL rollout, metrics, refill and authorization cases. Deployment must follow a passing hosted PostgreSQL run. Verify API readiness and worker fence acquisition after Render reports live, and retain the real-source frontend deployment receipt. Do not enter keys or activate real trading during deployment verification.
+
+Favorites maker entry policy (v2): initial purchases remain strictly post-only;
+there is no automatic taker fallback. Each bid expires within 15 seconds and is
+reassessed inside the original maximum 60-second entry window, with earlier
+sports-verification and market-close cutoffs. Replacements wait for the previous
+order to become terminal, never bid above the original entry ceiling, and stop
+after any fill. Stale/invalid data, ineligible live status, changed fees or an
+insufficient value estimate cancel the outstanding entry. Cancellation still has
+modeled latency, so fills racing a cancellation remain possible and accounted for.
+
+Entry evidence is learned only from filled trials with confirmed settlement and
+valid data, separately by series, side, 5-cent bid bucket and remaining-time band.
+At most 500 recent event outcomes are retained per cell; correlated thresholds
+from one event count once, keeping the adverse outcome if they disagree. Starting
+at 30 distinct events, a Wilson lower estimate must cover actual maker fees plus
+a default 2-cent uncertainty buffer. This is an exploratory historical estimate,
+not an independent forecast or an out-of-sample proof of profitability. With less
+evidence, the bot joins the bid with one clearly labeled demo contract; profile
+`paper_exploration: false` disables these trials. Existing balances, inventory,
+exits, settled history and paused controls are preserved. Evidence shares the
+existing durable checkpoint and is cleared by an explicit session reset.
+
+
+Convexity recovery v2: newly filled lots retain their original entry cash cost,
+including maker fees. During phases 1–2, a fresh post-entry book with sufficient
+available depth at 40¢ or better can trigger the smallest whole-contract IOC
+that recovers that cost after conservatively rounded taker fees. At least one
+contract remains. Actual net receipts, not the decision quote, reduce the target;
+partial IOC fills retry only the remaining cash target after the normal 500ms
+exit cooldown. Protective exits take precedence and final-phase freeze is checked
+again at delayed arrival. Stop arming requires depth above its existing arm price
+for the entire remaining lot. Existing pause controls and virtual balances persist.
+
+Recovery targets and receipts are checkpointed. Old checkpoints lacking original
+recovery targets retain their existing exit policy; targets are not fabricated
+from an already-reduced lot. Old reports lacking execution counters show no
+measurement coverage. New reports and current snapshots expose submitted/filled
+maker quantity, rejections, partial/unfilled IOC attempts, modeled latency,
+partial-profit receipts, and full-cycle fees/slippage. Counters begin with new
+orders in each cycle, include working/rejected submissions, and count retried IOC
+quantity again; these are execution diagnostics, not a profitability estimate.
+Each fill audit carries its purpose and modeled latency. No per-tick history or
+new market-data requests are introduced. New market strategy labels identify
+convexity-recovery-v2 separately from earlier cycles.
+Favorites activity/recovery update: valid maker bids now retain their queue
+position. Each fresh value/fee/eligibility check renews a maximum 30-second safety
+lease, bounded by the final-minute cutoff and current sports verification. If
+checks stop, the lease expires. Cancelled/expired unfilled attempts can retry when
+conditions recover, beyond the former one-minute lifetime; replacements retain
+the original price ceiling. Any fill still ends entry accumulation for that market.
+
+A fresh full book snapshot may restore current entry eligibility after a gap;
+previous gap flags, cash flows and exclusions remain unchanged, and gap-affected
+history is not used to train entry estimates. Restart-only halts may be cleared
+after verification, while explicit halts, pause state and session-reset guards
+remain effective. An ordinary delta or heartbeat cannot restore eligibility.
+
+Shared discovery supports up to 12 hourly-price, 8 hourly-weather, 7 daily-weather
+and 4 sports candidates. Owned markets retain subscriptions without consuming
+candidate slots. Discovery prioritizes unrepresented series; idle unfilled
+candidates rotate after two minutes while active maker orders keep their queue.
+Admission uses the shared adaptive monitoring budget: 32–48 total subscriptions
+and 12–20 entry candidates, growing only with sustained healthy processing. Requests
+still use the existing provider pacing, fee TTL and verified live-sports rules.
+Per-event fee checks cover only the affected market and due actions; clock sweeps
+retain the full check. The idle clock runs at 10 Hz instead of 20 Hz; incoming
+feed events still advance due actions in causal receipt order.
+
+Hourly discovery refresh: scans up to three unrepresented series per pass with a
+five-second loop delay, caches declared frequency for 15 minutes, backs off empty
+listings for 60 seconds and listings without a 70–95¢ favorite for 15 seconds.
+Only currently listed 70–95¢ bids receive new hourly subscriptions; authoritative
+fee verification and shared read pacing remain unchanged. Structured scan logs
+report checked series, listed/eligible markets, admissions and capacity blocks.
+
+Idle rotation now uses a 60-second cooldown rather than excluding a candidate
+until close. Legacy exclusions are clamped to that cooldown on restart. Explicit
+readmission clears the parked flag and reopens only unfilled attempts, preserving
+the original price ceiling and historical accounting; a replacement snapshot is
+still required. Completed hourly entries are not rearmed for repeated buying.
+
+Transport lifecycle filtering: the hosted worker drops only unsequenced
+market_lifecycle_v2 notices whose explicit ticker is absent from every portfolio's
+tracked markets. This happens before queue admission and does not alter public
+books, trade prints, sequenced/control frames, malformed/unknown envelopes,
+tracked-market settlements, clocks or gap signals. Discovery remains REST-based.
+A cumulative unrelated_lifecycle_dropped counter is logged and included in feed
+health so reduced input volume can be distinguished from additional buying.
+
+Paper data collection v3: Favorites now uses the saved contracts/order setting
+for exploratory entries rather than forcing one contract or limiting an order to
+5% of available virtual cash. Actual available cash, reservations and verified
+fees still constrain simulated execution. Exploration continues for unknown or
+weak probability estimates so the dataset is not restricted to apparently good
+cells. `paper_exploration: false` retains the value-filtered comparison policy.
+
+Data-mode buys improve the bid by one tick when the spread permits, remain
+strictly post-only, and stay within 70–95¢ and the existing category/time rules.
+An unfilled bid that falls at least two ticks behind can refresh after ten
+seconds; unchanged competitive bids retain queue priority. Partial fills may keep
+the original remainder working toward the configured quantity while entry
+conditions remain valid. They never create duplicate full-size orders. Risk exits
+still cancel outstanding entry quantity before liquidating acquired lots.
+
+Each entry decision links to its virtual order and records configured quantity,
+price, estimate and `favorites-paper-data-v3` policy. Calibration observations
+use a separate paper-data-v3 cohort; larger contract counts do not manufacture
+independent event samples. Existing cash/history and earlier positions persist.
+Production data is read-only and all orders/positions in this executor remain
+virtual. Queue, depth, latency, fee and slippage modeling are not bypassed to
+manufacture additional fills.
+
+15-minute Favorites restoration: a one-time guarded migration un-retires the
+original 28 Favorites rows, preserving bot IDs, keys, configured sizes, revisions,
+wallets, checkpoints and historical results. They join the paper-data-v3 policy.
+They resume when the existing Favorites cohort is running; a current folder-wide
+pause remains effective. The marker prevents subsequent restarts from undoing
+later pauses. Existing legacy public-feed selections are shared into restored
+portfolios before feed startup, with their own bot attribution and a required
+fresh snapshot; no additional subscription is needed for the same ticker.
