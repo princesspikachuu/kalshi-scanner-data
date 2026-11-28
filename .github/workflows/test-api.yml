@@ -22,6 +22,7 @@ on:
       - 'tools/favorites_worker_alerts.py'
       - '.github/workflows/test-api.yml'
       - '.github/workflows/deploy-pocket-app.yml'
+      - '.github/workflows/deploy-money-tree-staging.yml'
       - 'scripts/check_staging_gateway.mjs'
       - 'scripts/check_staging_http.py'
   workflow_dispatch:
