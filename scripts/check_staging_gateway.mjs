@@ -19,9 +19,11 @@ assert.deepEqual(config.observability,{
  logs:{enabled:true,invocation_logs:true,head_sampling_rate:1},traces:{enabled:false}
 });
 assert.deepEqual(Object.keys(config).sort(),['assets','compatibility_date','keep_vars','main','name','observability','preview_urls','vars','workers_dev']);
-const workflow=fs.readFileSync('.github/workflows/deploy-pocket-app.yml','utf8').replaceAll('\r\n','\n');
-assert.match(workflow,/deploy:\n    if: github.ref == 'refs\/heads\/main'/);
-assert.match(workflow,/staging:\n    if: github.ref == 'refs\/heads\/build\/google-auth-foundation'/);
-assert.match(workflow,/wrangler@4\.153\.0 deploy --config infra\/wrangler\.staging\.json/);
-assert.doesNotMatch(workflow.split('\n  staging:')[1],/secret put|GITHUB_ACTIONS_TOKEN|wrangler\.jsonc/);
+const legacy=fs.readFileSync('.github/workflows/deploy-pocket-app.yml','utf8').replaceAll('\r\n','\n');
+assert.match(legacy,/deploy:\n    if: github.ref == 'refs\/heads\/main'/);
+assert.doesNotMatch(legacy,/build\/google-auth-foundation|wrangler\.staging\.json/);
+const staging=fs.readFileSync('.github/workflows/deploy-money-tree-staging.yml','utf8');
+assert.match(staging,/branches: \[build\/google-auth-foundation\]/);
+assert.match(staging,/wrangler@4 deploy --config infra\/wrangler\.staging\.json/);
+assert.doesNotMatch(staging,/secret put|GITHUB_ACTIONS_TOKEN|wrangler\.jsonc/);
 console.log('Staging target, public origins, secret preservation and branch gates passed');
