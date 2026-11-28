@@ -64,3 +64,24 @@ class FeeRequestDedup(unittest.TestCase):
         fees=Fees(data)
         with self.assertRaises(RuntimeError):fees.load('S-one',dict(event_ticker='E'),time.time())
         self.assertNotIn('S',fees.series);self.assertNotIn('S-one',fees.cache)
+
+    def test_rollovers_release_expired_metadata_without_changing_freshness(self):
+        def call(method,path,params=None):
+            if path=='/series/S':return dict(series=dict(fee_type='quadratic',fee_multiplier=1))
+            if path=='/series/fee_changes':return {'series_fee_change_arr':[]}
+            return {'event_fee_changes':[]}
+
+        fees=Fees(Mock(call=call));now=time.time()
+        for index in range(600):
+            elapsed=index/8
+            fees.load(f'S-{index}',dict(event_ticker=f'E-{index}'),now+elapsed)
+        fees.prune_expired(now+90)
+        self.assertFalse(fees.series_locks)
+        self.assertFalse(fees.event_locks)
+        self.assertLessEqual(len(fees.events),240)
+        self.assertLessEqual(len(fees.cache),480)
+        self.assertNotIn('S-0',fees.cache)
+        self.assertNotIn('E-0',fees.events)
+        self.assertIn('S-240',fees.cache)  # Exactly 60 seconds is still usable.
+        self.assertIn('E-480',fees.events)  # The provider TTL remains 30 seconds.
+        self.assertEqual(fees.schedule('S-599',now+90),('quadratic',1))

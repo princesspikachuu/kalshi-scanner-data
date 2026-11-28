@@ -298,8 +298,15 @@ async function load(){
     $('accountSummary').innerHTML='<p>Account data could not load. Retrying automatically. Use Reload data to try again.</p>';
    }
   }
- }finally{busy=false;timer=setTimeout(load,10000)}
+ }finally{
+  busy=false;
+  if(!document.hidden)timer=setTimeout(load,10000);
+ }
 }
+document.addEventListener('visibilitychange',()=>{
+ clearTimeout(timer);
+ if(!document.hidden)void load();
+});
 async function change(id,fields){try{const bot=data.bots.find(b=>b.id===id);await demoCall('shadow/bots/'+id,{revision:bot.revision,...fields});note('Saved. New entries follow the worker’s next verified update; existing risk management continues.');await load()}catch(error){note(error.message)}}
 $('find').oninput=()=>{if(data)draw()};$('latest').onchange=load;$('reload').onclick=load;
 $('activity').ontoggle=()=>{if($('activity').open)return refreshRecentActivity(true)};

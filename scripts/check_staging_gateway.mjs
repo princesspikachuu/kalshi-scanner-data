@@ -15,8 +15,11 @@ assert.deepEqual(config.vars,{
  APP_ORIGIN:'https://pocket-analytics-staging.ezrealrose831.workers.dev',
  API_ORIGIN:'https://pocket-api-staging.onrender.com'
 });
-assert.deepEqual(Object.keys(config).sort(),['assets','compatibility_date','keep_vars','main','name','preview_urls','vars','workers_dev']);
-const workflow=fs.readFileSync('.github/workflows/deploy-pocket-app.yml','utf8');
+assert.deepEqual(config.observability,{
+ logs:{enabled:true,invocation_logs:true,head_sampling_rate:1},traces:{enabled:false}
+});
+assert.deepEqual(Object.keys(config).sort(),['assets','compatibility_date','keep_vars','main','name','observability','preview_urls','vars','workers_dev']);
+const workflow=fs.readFileSync('.github/workflows/deploy-pocket-app.yml','utf8').replaceAll('\r\n','\n');
 assert.match(workflow,/deploy:\n    if: github.ref == 'refs\/heads\/main'/);
 assert.match(workflow,/staging:\n    if: github.ref == 'refs\/heads\/build\/google-auth-foundation'/);
 assert.match(workflow,/wrangler@4\.153\.0 deploy --config infra\/wrangler\.staging\.json/);

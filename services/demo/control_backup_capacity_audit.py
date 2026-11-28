@@ -57,7 +57,8 @@ def prefix_query(predicate):
     where=' AND '+predicate if predicate else ''
     return ("""SELECT pg_column_size(parameters)::bigint AS parameter_bytes,
        pg_column_size(progress)::bigint AS progress_bytes
-       FROM research_job WHERE idempotency_key >= %s AND idempotency_key < %s"""
+       FROM research_job WHERE idempotency_key >= %s AND idempotency_key < %s
+       AND starts_with(idempotency_key,%s)"""
        +where+""" ORDER BY idempotency_key LIMIT %s""")
 
 SINGLETON_QUERY="""SELECT pg_column_size(parameters)::bigint AS parameter_bytes,
@@ -77,7 +78,8 @@ SHADOW_BOT_CENSUS_SQL="""SELECT count(*)::bigint AS source_rows,
     coalesce(max(pg_column_size(parameters)+pg_column_size(progress)),0)::bigint
        AS maximum_record_payload_bytes
     FROM research_job WHERE idempotency_key >= 'demo/shadow/bot/'
-      AND idempotency_key < 'demo/shadow/bot/zzzz'"""
+      AND idempotency_key < 'demo/shadow/bot/zzzz'
+      AND starts_with(idempotency_key,'demo/shadow/bot/')"""
 
 def census_shadow_bots(pool):
     """Explicit 10s-bounded exact count only; returns no row contents."""
@@ -97,7 +99,7 @@ def inspect_control_backup(pool):
     for name,prefix,predicate in PREFIX_SCOPES:
         try:
             metrics=sample_rows(pool,prefix_query(predicate),
-                (prefix,prefix+'zzzz',MAX_PER_SCOPE))
+                (prefix,prefix+'zzzz',prefix,MAX_PER_SCOPE))
             scopes.append(dict(scope=name,**metrics))
         except Exception as error:
             failed.append(dict(scope=name,error_type=type(error).__name__))

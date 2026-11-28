@@ -1,5 +1,6 @@
 """Production GET-only data adapter; virtual portfolio routes never touch HTTP."""
 import re,time,json,threading
+from contextlib import contextmanager
 from datetime import datetime
 from cryptography.fernet import Fernet
 import httpx
@@ -51,22 +52,57 @@ class Fees:
     def __init__(self,data):
         self.data=data;self.cache={};self.series={};self.series_locks={}
         self.events={};self.event_locks={}
+        self._cache_lock=threading.Lock()
+        self._next_prune=0
+
+    @contextmanager
+    def _flight(self, flights, key):
+        with self._cache_lock:
+            flight=flights.get(key)
+            if flight is None:
+                flight=flights[key]=[threading.Lock(),0]
+            flight[1]+=1
+        try:
+            with flight[0]:
+                yield
+        finally:
+            with self._cache_lock:
+                flight[1]-=1
+                if not flight[1]:
+                    del flights[key]
+
+    def prune_expired(self,now):
+        """Release schedules that can no longer authorize a quote or a cache hit."""
+        with self._cache_lock:
+            if now<self._next_prune:
+                return
+            self._next_prune=now+30
+            for cache,ttl,flights in ((self.series,30,self.series_locks),
+                                      (self.events,30,self.event_locks),
+                                      (self.cache,60,())):
+                for key in [key for key,saved in cache.items()
+                            if now-saved['at']>ttl and key not in flights]:
+                    del cache[key]
+
     def load(self,ticker,market,now):
+        self.prune_expired(now)
         series=market.get('series_ticker') or ticker.split('-')[0];event=market['event_ticker']
         # Several admitted markets can share a cold series. Recheck inside a
         # per-series lock so four fee verifiers don't fetch the same two routes
         # four times. Different series remain concurrent; TTLs are unchanged.
-        with self.series_locks.setdefault(series,threading.Lock()):
+        with self._flight(self.series_locks,series):
             cached=self.series.get(series)
             if not cached or now-cached['at']>30:
                 raw=self.data.call('GET','/series/'+series).get('series',{})
                 change=self.data.call('GET','/series/fee_changes',dict(series_ticker=series)).get('series_fee_change_arr')
                 if not isinstance(change,list) or len(change)>1000:raise ExchangeFailure('paper_fee_schedule_unknown')
-                cached=dict(at=now,base=(raw.get('fee_type'),raw.get('fee_multiplier')),changes=change);self.series[series]=cached
+                cached=dict(at=now,base=(raw.get('fee_type'),raw.get('fee_multiplier')),changes=change)
+                with self._cache_lock:
+                    self.series[series]=cached
         # Event fee-change history is identical for every market in the same
         # event. Reuse that verified response for the same 30-second freshness
         # window instead of issuing one identical paginated request per market.
-        with self.event_locks.setdefault(event,threading.Lock()):
+        with self._flight(self.event_locks,event):
             event_cached=self.events.get(event)
             if not event_cached or now-event_cached['at']>30:
                 events=[];cursor=None
@@ -80,15 +116,21 @@ class Fees:
                     cursor=nxt
                 else:raise ExchangeFailure('paper_fee_schedule_unknown')
                 event_cached=dict(at=now,changes=events)
-                self.events[event]=event_cached
+                with self._cache_lock:
+                    self.events[event]=event_cached
             events=event_cached['changes']
         try:
             for change in cached['changes']+events:
                 if not isinstance(change.get('scheduled_ts'),str):raise ValueError()
                 datetime.fromisoformat(change['scheduled_ts'].replace('Z','+00:00')).timestamp()
             state=dict(at=now,base=cached['base'],changes=cached['changes'],events=events)
-            self.cache[ticker]=state;self.schedule(ticker,now)
-        except (TypeError,ValueError,KeyError):self.cache.pop(ticker,None);raise ExchangeFailure('paper_fee_schedule_unknown') from None
+            with self._cache_lock:
+                self.cache[ticker]=state
+            self.schedule(ticker,now)
+        except (TypeError,ValueError,KeyError):
+            with self._cache_lock:
+                self.cache.pop(ticker,None)
+            raise ExchangeFailure('paper_fee_schedule_unknown') from None
     def schedule(self,ticker,at):
         saved=self.cache.get(ticker)
         if not saved or time.time()-saved['at']>60:raise ExchangeFailure('paper_fee_schedule_stale')

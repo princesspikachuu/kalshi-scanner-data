@@ -595,6 +595,19 @@ test('slow shadow workspace reads get time to finish without extending activity 
 });
 
 
+test('regular Favorites research streams only with the authenticated origin contract',async()=>{
+ const path='https://app.test/api/demo/shadow/research-folder/';
+ const payload=JSON.stringify({contract:'demo-v1',folder_id:'favorites',bots:{fav_btc:{entry_timing:[{value:'x'.repeat(16000)}]}}});
+ const tagged=body=>async()=>new Response(body,{headers:{'content-type':'application/json','x-pocket-favorites-research-contract':'demo-v1'}});
+ const streamed=await proxyAuth(new Request(path+'favorites'),env,{fetcher:tagged(payload)});
+ assert.equal(streamed.status,200);
+ assert.equal(await streamed.text(),payload);
+ const invalid=await proxyAuth(new Request(path+'favorites_statistics'),env,{fetcher:tagged('{"bad":true}')});
+ assert.equal(invalid.status,502);
+ const oversize=await proxyAuth(new Request(path+'favorites'),env,{fetcher:tagged('x'.repeat(2097153))});
+ await assert.rejects(oversize.text(),/body limit/);
+});
+
 test('trusted shadow snapshots stream without buffering or parsing at the edge',async()=>{
  let reads=0;let finish;
  const body=new ReadableStream({pull(controller){reads++;if(reads===1)controller.enqueue(new TextEncoder().encode('{"contract":"demo-v1","bots":['));else finish=()=>{controller.enqueue(new TextEncoder().encode(']}'));controller.close()}}});
